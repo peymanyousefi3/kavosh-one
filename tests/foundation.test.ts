@@ -105,6 +105,15 @@ check('refuses a privileged database connection even with a valid bearer', async
   assert.equal(response.status,503);
   assert.doesNotMatch(await response.text(),/UNSAFE_DATABASE_ROLE|token_hash|postgres/);
 });
+check('refuses runtime credentials that inherit table ownership', async f => {
+  await f.pg.exec('CREATE ROLE synthetic_owner NOLOGIN; ALTER TABLE public.people OWNER TO synthetic_owner; GRANT synthetic_owner TO kavosh_runtime');
+  assert.equal((await f.request('hubs')).status,503);
+  await f.pg.exec('REVOKE synthetic_owner FROM kavosh_runtime');
+});
+check('refuses a runtime identity that owns the public schema', async f => {
+  await f.pg.exec('ALTER SCHEMA public OWNER TO kavosh_runtime');
+  assert.equal((await f.request('hubs')).status,503);
+});
 check('GET only returns this academy; query/header cannot override tenant', async f => {
   const response=await f.request('hubs',{headers:{'x-academy-id':f.b}});
   assert.equal(response.status,200);
