@@ -29,7 +29,7 @@ try {
   await client.query("INSERT INTO auth_private.credentials (id,academy_id,person_id,token_hash,capabilities,all_hubs,expires_at) VALUES ($1,$2,$3,$4,$5,true,now()+interval '7 days')", [credential, academy, bot, hashToken(token), ['hubs.view','hubs.edit','people.view','people.edit','audit.view','credentials.revoke']]);
   await client.query('COMMIT');
   console.log('Provisioned inactive academy:', academy);
-  console.log('Master must complete real verification before activation. No activation endpoint exists in this milestone.');
+  console.log('Master must accept an invitation and complete email, phone and new-device verification before activation.');
   console.log('One-time bot credential (store securely; do not commit or share in chat):', token);
 } catch {
   try { await client.query('ROLLBACK'); } catch { /* unavailable connection */ }

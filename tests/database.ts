@@ -2,8 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../src/core/database.ts';
+import { Kysely,PostgresDialect,PGliteDialect,CompiledQuery } from 'kysely';
 
 export interface TestDatabase {
+  identityDb(role?:'kavosh_identity'|'kavosh_delivery'): Kysely<unknown>;
   runtime?: Database;
   query<Row=Record<string,unknown>>(sql: string, params?: unknown[]): Promise<{ rows: Row[]; affectedRows?: number }>;
   exec(sql: string): Promise<unknown>;
@@ -11,7 +13,10 @@ export interface TestDatabase {
 }
 export async function testDatabase(): Promise<TestDatabase> {
   const connectionString = process.env.TEST_DATABASE_URL;
-  if (!connectionString) return new PGlite();
+  if (!connectionString) {
+    const engine=new PGlite();
+    return Object.assign(engine,{identityDb:()=>new Kysely<unknown>({dialect:new PGliteDialect({pglite:engine})}).withSchema('identity')});
+  }
   const url = new URL(connectionString);
   if (!['localhost','127.0.0.1','[::1]'].includes(url.hostname)) throw new Error('Integration tests require an isolated loopback PostgreSQL instance');
   const admin = new pg.Client({ connectionString }); await admin.connect();
@@ -23,6 +28,10 @@ export async function testDatabase(): Promise<TestDatabase> {
   await client.connect();
   const pool = new pg.Pool({ connectionString: url.toString(), max: 4 });
   return {
+    identityDb:(role='kavosh_identity')=>new Kysely<unknown>({dialect:new PostgresDialect({
+      pool:new pg.Pool({connectionString:url.toString(),max:4}),
+      async onCreateConnection(connection){await connection.executeQuery(CompiledQuery.raw(`SET ROLE ${role}`));}
+    })}).withSchema('identity'),
     runtime: {
       async connect() {
         const connection=await pool.connect();

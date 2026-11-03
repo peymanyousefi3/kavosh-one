@@ -2,34 +2,1464 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.1.0",
-    "description": "Backend foundation only. Human sign-in, financial actions, approvals and other planned modules are not implemented. Bearer credentials identify a bot and its academy; clients cannot choose a tenant. Effective access intersects credential capabilities, role grants and hub scope. Explicit denials win. Responses are never publicly cached."
+    "version": "0.2.0",
+    "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
-  "security": [{ "botBearer": [] }],
+  "security": [
+    {
+      "botBearer": []
+    },
+    {
+      "humanSession": [],
+      "academySelection": []
+    }
+  ],
   "components": {
-    "securitySchemes": { "botBearer": { "type": "http", "scheme": "bearer", "description": "Expiring kvo_ opaque credential. Store securely and send in Authorization; never use query parameters." } },
+    "securitySchemes": {
+      "botBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Expiring kvo_ opaque credential. Store securely and send in Authorization; never use query parameters."
+      },
+      "humanSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Secure-kavosh.session_token",
+        "description": "Opaque HttpOnly signed cookie set by login/MFA, never read or stored by frontend JavaScript. Local HTTP development uses kavosh.session_token."
+      },
+      "academySelection": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Academy-Id",
+        "description": "Academy UUID; selecting it does not grant membership or permission."
+      }
+    },
     "parameters": {
-      "idempotency": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Reuse for retries of this exact operation. Changed payload returns 409. Permission is rechecked on replay." },
-      "limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
-      "after": { "name": "after", "in": "query", "schema": { "type": "string", "format": "uuid" }, "description": "Pass nextCursor from the preceding result." }
+      "idempotency": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "Reuse for retries of this exact operation. Changed payload returns 409. Permission is rechecked on replay."
+      },
+      "limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "after": {
+        "name": "after",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": "Pass nextCursor from the preceding result."
+      }
     },
     "responses": {
-      "error": { "description": "Error: 400 invalid input/reference, 401 unauthorized, 403 forbidden, 409 idempotency conflict, 413 oversized body, 415 wrong content type, 429 rate limit or 503 unavailable. Body contains error.code and error.requestId; X-Request-Id is also returned. No stack traces, tokens or database details are exposed." },
-      "list": { "description": "JSON object with data array and nextCursor (UUID or null). All records are permission-filtered." }
+      "error": {
+        "description": "Error: 400 invalid input/reference, 401 unauthorized, 403 forbidden, 409 idempotency conflict, 413 oversized body, 415 wrong content type, 429 rate limit or 503 unavailable. Body contains error.code and error.requestId; X-Request-Id is also returned. No stack traces, tokens or database details are exposed."
+      },
+      "list": {
+        "description": "JSON object with data array and nextCursor (UUID or null). All records are permission-filtered."
+      }
     }
   },
   "paths": {
-    "/api/health": { "get": { "security": [], "summary": "Process liveness (does not imply database readiness)", "responses": { "200": { "description": "Process is up" } } } },
-    "/api/ready": { "get": { "security": [], "summary": "Database schema and least-privilege runtime readiness", "responses": { "200": { "description": "Ready" }, "503": { "description": "Not ready; no configuration details returned" } } } },
+    "/api/health": {
+      "get": {
+        "security": [],
+        "summary": "Process liveness (does not imply database readiness)",
+        "responses": {
+          "200": {
+            "description": "Process is up"
+          }
+        }
+      }
+    },
+    "/api/ready": {
+      "get": {
+        "security": [],
+        "summary": "Database schema and least-privilege runtime readiness",
+        "responses": {
+          "200": {
+            "description": "Ready"
+          },
+          "503": {
+            "description": "Not ready; no configuration details returned"
+          }
+        }
+      }
+    },
     "/api/v1/hubs": {
-      "get": { "summary": "List permitted hubs (hubs.view)", "parameters": [{ "$ref": "#/components/parameters/limit" },{ "$ref": "#/components/parameters/after" }], "responses": { "200": { "$ref": "#/components/responses/list" }, "default": { "$ref": "#/components/responses/error" } } },
-      "post": { "summary": "Create hub (academy-wide hubs.edit required)", "parameters": [{ "$ref": "#/components/parameters/idempotency" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["name","city","countryCode"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 }, "city": { "type": "string", "minLength": 1, "maxLength": 100 }, "countryCode": { "type": "string", "pattern": "^[A-Z]{2}$" } } } } } }, "responses": { "201": { "description": "Created with audit and outbox event atomically" }, "default": { "$ref": "#/components/responses/error" } } }
+      "get": {
+        "summary": "List permitted hubs (hubs.view)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/after"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/list"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create hub (academy-wide hubs.edit required)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "city",
+                  "countryCode"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "city": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "countryCode": {
+                    "type": "string",
+                    "pattern": "^[A-Z]{2}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created with audit and outbox event atomically"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
     },
     "/api/v1/people": {
-      "get": { "summary": "List permitted people (people.view)", "parameters": [{ "$ref": "#/components/parameters/limit" },{ "$ref": "#/components/parameters/after" }], "responses": { "200": { "$ref": "#/components/responses/list" }, "default": { "$ref": "#/components/responses/error" } } },
-      "post": { "summary": "Create pending human record (people.edit within selected hub)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["name","hubId"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 }, "email": { "type": "string", "format": "email", "maxLength": 254 }, "hubId": { "type": "string", "format": "uuid" } } } } } }, "parameters": [{ "$ref": "#/components/parameters/idempotency" }], "responses": { "201": { "description": "Pending person recorded; does not create a login, verification or enrollment" }, "default": { "$ref": "#/components/responses/error" } } }
+      "get": {
+        "summary": "List permitted people (people.view)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/after"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/list"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create pending human record (people.edit within selected hub)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "hubId"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "maxLength": 254
+                  },
+                  "hubId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Pending person recorded; does not create a login, verification or enrollment"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
     },
-    "/api/v1/audit-events": { "get": { "summary": "Read hub-scoped change history (audit.view)", "parameters": [{ "$ref": "#/components/parameters/limit" },{ "$ref": "#/components/parameters/after" }], "responses": { "200": { "$ref": "#/components/responses/list" }, "default": { "$ref": "#/components/responses/error" } } } },
-    "/api/v1/credentials/{id}/revoke": { "post": { "summary": "Revoke another bot credential (academy-wide credentials.revoke)", "description": "Revocation remains available in read-only academies. The current credential cannot revoke itself; use another authorized credential. Invalid or foreign credential IDs return the same 404.", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/idempotency" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } }, "responses": { "200": { "description": "Revoked" }, "default": { "$ref": "#/components/responses/error" } } } }
+    "/api/v1/audit-events": {
+      "get": {
+        "summary": "Read hub-scoped change history (audit.view)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/after"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/list"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/credentials/{id}/revoke": {
+      "post": {
+        "summary": "Revoke another bot credential (academy-wide credentials.revoke)",
+        "description": "Revocation remains available in read-only academies. The current credential cannot revoke itself; use another authorized credential. Invalid or foreign credential IDs return the same 404.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Revoked"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/sign-up/email": {
+      "post": {
+        "security": [],
+        "summary": "sign up · email",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          },
+          {
+            "name": "X-Kavosh-Invitation",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "password"
+            },
+            "description": "Single-use private kvi_ invitation for this email."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 15,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "name",
+                  "email",
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/sign-in/email": {
+      "post": {
+        "security": [],
+        "summary": "sign in · email",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "rememberMe": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/send-verification-email": {
+      "post": {
+        "security": [],
+        "summary": "send verification email",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  }
+                },
+                "required": [
+                  "email"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/request-password-reset": {
+      "post": {
+        "security": [],
+        "summary": "request password reset",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  }
+                },
+                "required": [
+                  "email"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "security": [],
+        "summary": "reset password",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 512
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "minLength": 15,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "token",
+                  "newPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/phone-number/send-otp": {
+      "post": {
+        "security": [],
+        "summary": "phone number · send otp",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "phoneNumber": {
+                    "type": "string",
+                    "pattern": "^\\+[1-9]\\d{7,14}$"
+                  }
+                },
+                "required": [
+                  "phoneNumber"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/phone-number/verify": {
+      "post": {
+        "security": [],
+        "summary": "phone number · verify",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "phoneNumber": {
+                    "type": "string",
+                    "pattern": "^\\+[1-9]\\d{7,14}$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  }
+                },
+                "required": [
+                  "phoneNumber",
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/accept-invitation": {
+      "post": {
+        "security": [],
+        "summary": "accept invitation",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "invitation": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "invitation"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/enable": {
+      "post": {
+        "security": [],
+        "summary": "two factor · enable",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "otp",
+                      "totp"
+                    ]
+                  }
+                },
+                "required": [
+                  "password",
+                  "method"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/disable": {
+      "post": {
+        "security": [],
+        "summary": "two factor · disable",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/send-otp": {
+      "post": {
+        "security": [],
+        "summary": "two factor · send otp",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "trustDevice": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/verify-otp": {
+      "post": {
+        "security": [],
+        "summary": "two factor · verify otp",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "trustDevice": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/verify-totp": {
+      "post": {
+        "security": [],
+        "summary": "two factor · verify totp",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "trustDevice": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/verify-backup-code": {
+      "post": {
+        "security": [],
+        "summary": "two factor · verify backup code",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 100
+                  },
+                  "trustDevice": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/two-factor/generate-backup-codes": {
+      "post": {
+        "security": [],
+        "summary": "two factor · generate backup codes",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "security": [],
+        "summary": "change password",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "minLength": 15,
+                    "maxLength": 128
+                  },
+                  "revokeOtherSessions": {
+                    "default": true,
+                    "type": "boolean",
+                    "const": true
+                  }
+                },
+                "required": [
+                  "currentPassword",
+                  "newPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/sign-out": {
+      "post": {
+        "security": [],
+        "summary": "sign out",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/revoke-sessions": {
+      "post": {
+        "security": [],
+        "summary": "revoke sessions",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/revoke-other-sessions": {
+      "post": {
+        "security": [],
+        "summary": "revoke other sessions",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/revoke-session": {
+      "post": {
+        "security": [],
+        "summary": "revoke session",
+        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "sessionId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/get-session": {
+      "get": {
+        "security": [],
+        "summary": "get session",
+        "description": "Session-backed endpoints do not expose session tokens. Memberships require completed verification and MFA when enabled. verify-email is a bounded signed verification link; it does not sign in.",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "302": {
+            "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/list-sessions": {
+      "get": {
+        "security": [],
+        "summary": "list sessions",
+        "description": "Session-backed endpoints do not expose session tokens. Memberships require completed verification and MFA when enabled. verify-email is a bounded signed verification link; it does not sign in.",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "302": {
+            "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "get": {
+        "security": [],
+        "summary": "verify email",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          {
+            "name": "callbackURL",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Only same-origin redirects accepted by authentication library."
+          }
+        ],
+        "description": "Session-backed endpoints do not expose session tokens. Memberships require completed verification and MFA when enabled. verify-email is a bounded signed verification link; it does not sign in.",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "302": {
+            "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/memberships": {
+      "get": {
+        "security": [],
+        "summary": "memberships",
+        "description": "Session-backed endpoints do not expose session tokens. Memberships require completed verification and MFA when enabled. verify-email is a bounded signed verification link; it does not sign in.",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "302": {
+            "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    }
   }
 }

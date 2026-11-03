@@ -7,6 +7,7 @@ const base=process.env.SMOKE_BASE_URL ?? `http://127.0.0.1:${port}`;
 const env={...process.env};
 // This check deliberately runs with no live credentials or database.
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
+delete env.IDENTITY_DATABASE_URL;delete env.AUTH_SECRET;delete env.EDGE_AUTH_SECRET;
 const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
 let output='';
 child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
@@ -18,7 +19,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
-  for (const [path,status] of [['/api/health',200],['/api/ready',503],['/api/v1/hubs',401],['/api/v1/people',401],['/api/v1/audit-events',401]]) {
+  for (const [path,status] of [['/api/health',200],['/api/ready',503],['/api/v1/hubs',401],['/api/v1/people',401],['/api/v1/audit-events',401],['/api/auth/get-session',503]]) {
     const response=await fetch(base+path);assert.equal(response.status,status,path);
     assert.equal(response.headers.get('cache-control'),'no-store');
     assert.equal(response.headers.get('x-content-type-options'),'nosniff');

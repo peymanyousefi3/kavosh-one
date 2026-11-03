@@ -1,7 +1,7 @@
 export const capabilities = ['hubs.view', 'hubs.edit', 'people.view', 'people.edit', 'audit.view', 'credentials.revoke'] as const;
 export type Capability = typeof capabilities[number];
 export interface Grant { capability: Capability; effect: 'allow' | 'deny'; allHubs: boolean; hubIds: string[] }
-export interface Credential { token_id: string; academy_id: string; person_id: string; capabilities: Capability[]; all_hubs: boolean; hub_ids: string[]; allowed: boolean }
+export interface Credential { token_id: string; academy_id: string; person_id: string; capabilities: Capability[]; all_hubs: boolean; hub_ids: string[]; allowed: boolean; kind?: 'human' | 'bot' }
 export interface Scope { all: boolean; hubs: string[] }
 
 export function scopeFor(credential: Credential, grants: Grant[], capability: Capability): Scope {

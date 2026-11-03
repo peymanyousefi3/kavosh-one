@@ -40,7 +40,9 @@ async function loadGrants(db: Connection, personId: string): Promise<Grant[]> {
 }
 
 async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
-  await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,credential_id,request_id,action,entity_id,hub_id,changes)
+  if(c.kind==='human') await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes)
+    VALUES ($1,$2,$3,$4,'human',$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
+  else await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,credential_id,request_id,action,entity_id,hub_id,changes)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
   await db.query(`INSERT INTO public.outbox_events (academy_id,id,event_type,entity_id,request_id) VALUES ($1,$2,$3,$4,$5)`, [c.academy_id, randomUUID(), action, entityId, requestId]);
 }
@@ -122,23 +124,31 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
   return reply;
 }
 
-export function createApi(database: Database) {
+export interface HumanSession { userId:string; sessionId:string; academyId:string }
+export function createApi(database: Database, resolveHuman?: (request:Request)=>Promise<HumanSession|null>) {
   return async (request: Request, path: string) => {
     const requestId = randomUUID(); let db: Connection | undefined; let transaction = false; let destroyConnection = false;
     const headers = { 'Cache-Control': 'no-store', 'X-Request-Id': requestId, 'X-Content-Type-Options': 'nosniff' };
     try {
       const token = parseBearer(request.headers.get('authorization'));
-      if (!token) throw new ApiError(401, 'UNAUTHORIZED');
+      // Never fall back to a cookie when an invalid Authorization header was sent.
+      const human = !token && !request.headers.has('authorization') && request.headers.has('cookie') && resolveHuman ? await resolveHuman(request) : null;
+      if (!token && !human) throw new ApiError(401, 'UNAUTHORIZED');
       db = await database.connect();
       await assertRuntimeRole(db);
       // Autocommitted before domain work so failed requests still consume quota.
-      const result = await db.query<Credential>('SELECT * FROM public.authenticate_bot($1)', [hashToken(token)]);
+      const result = human
+        ? await db.query<Credential>('SELECT * FROM public.authenticate_human($1,$2,$3)', [human.sessionId,human.userId,human.academyId])
+        : await db.query<Credential>('SELECT * FROM public.authenticate_bot($1)', [hashToken(token!)]);
       const c = result.rows[0];
       if (!c) throw new ApiError(401, 'UNAUTHORIZED');
+      if(human)c.kind='human';
       if (!c.allowed) throw new ApiError(429, 'RATE_LIMITED');
       await db.query('BEGIN'); transaction = true;
       await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
-      const lock = await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);
+      const lock = human
+        ? await db.query<{ valid: boolean }>('SELECT public.lock_human($1,$2) AS valid',[human.sessionId,human.userId])
+        : await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);
       if (!lock.rows[0]?.valid) throw new ApiError(401, 'UNAUTHORIZED');
       const academy = await db.query<{ status: string }>('SELECT status FROM public.academies WHERE id=$1', [c.academy_id]);
       const status = academy.rows[0]?.status;
@@ -146,7 +156,7 @@ export function createApi(database: Database) {
       const securityRevocation = request.method === 'POST' && /^credentials\/[^/]+\/revoke$/.test(path);
       if (status === 'read_only' && request.method !== 'GET' && !securityRevocation) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
-      if (actor.rows[0]?.kind !== 'bot' || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
+      if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
       const reply = await operation(db, c, await loadGrants(db, c.person_id), request, path, requestId);
       await db.query('COMMIT'); transaction = false;
       return Response.json(reply.body, { status: reply.status, headers });
