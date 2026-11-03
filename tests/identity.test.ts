@@ -8,6 +8,7 @@ import { IdentityStore } from '../src/auth/store.ts';
 import { identityGateway,verifiedProxyIp,humanResolver } from '../src/auth/gateway.ts';
 import { queuedDelivery,deliverOne,providerDelivery } from '../src/auth/delivery.ts';
 import { createApi } from '../src/core/api.ts';
+import { business as businessRoutes } from '../src/modules/business.ts';
 import type { Database } from '../src/core/database.ts';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -97,7 +98,7 @@ async function fixture() {
   }
   const database:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
     async query<Row>(sql:string,params?:unknown[]){const result=await pg.query<Row>(sql,params);return {rows:result.rows,rowCount:result.affectedRows};},release(){}};}};
-  const api=createApi(database,humanResolver(auth,store,config));
+  const api=createApi(database,humanResolver(auth,store,config),businessRoutes);
   async function business(user:Awaited<ReturnType<typeof invitation>>,path='hubs',input?:unknown,academy=user.academy,headers:Record<string,string>={}){
     try {return await api(new Request(origin+'/api/v1/'+path,{method:input===undefined?'GET':'POST',headers:{origin,
       cookie:[...user.jar].map(([k,v])=>k+'='+v).join('; '),'x-academy-id':academy,'content-type':'application/json','idempotency-key':randomUUID(),...headers},

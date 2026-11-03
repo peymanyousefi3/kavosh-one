@@ -1,7 +1,8 @@
-import { createHash,randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { jsonBody,loadGrants,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
-import { ApiError,requireScope,scopeFor,type Capability,type Credential,type Grant,type Scope } from '../core/policy.ts';
+import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
+import { ApiError,requireScope,type Capability,scopeContains,scopeNonempty as nonempty } from '../core/policy.ts';
+import { propose,approvalRoutes,approvalContract,master,permissionScope,lockApprovalWrites,type Proposal,type ApprovalRegistry,type ApprovalAction } from '../core/approvals.ts';
 
 const uuid=z.string().uuid().transform(value=>value.toLowerCase());
 const version=z.number().int().min(1);
@@ -15,29 +16,10 @@ const assignment=z.object({roleId:uuid,allHubs:z.boolean(),hubIds:z.array(uuid).
 });
 const accessInput=z.object({expectedVersion:version,assignments:z.array(assignment).max(50)}).strict().refine(v=>new Set(v.assignments.map(a=>a.roleId)).size===v.assignments.length);
 const supervisorInput=z.object({expectedVersion:version,supervisorId:uuid.nullable()}).strict();
-const decisionInput=z.object({expectedVersion:version,decision:z.enum(['approve','reject']),reason:z.string().trim().min(1).max(2000)}).strict();
-const withdrawInput=z.object({expectedVersion:version,reason:z.string().trim().min(1).max(2000)}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),status:z.enum(['pending','applied','rejected','withdrawn','stale']).optional()}).strict();
-const storedScope=z.object({all:z.boolean(),hubs:z.array(uuid),excludedHubs:z.array(uuid).optional()}).strict();
-const storedCredential=z.object({token_id:uuid,academy_id:uuid,person_id:uuid,capabilities:z.array(capability),all_hubs:z.boolean(),hub_ids:z.array(uuid),allowed:z.boolean(),kind:z.enum(['human','bot']).optional()}).strict();
 type Permission=z.infer<typeof permission>;
 type Action='role.create'|'role.update'|'access.replace'|'supervisor.set';
-interface Proposal {
-  id:string;requester_id:string;requester_kind:'human'|'bot';credential_snapshot:unknown;grants_hash:string;
-  dependency_hash:string;review_context:Record<string,unknown>;
-  action:Action;target_id:string;target_version:number;payload:unknown;scope:Scope;status:string;version:number;
-  reason?:string|null;decision_code?:string|null;reviewer_id?:string|null;created_at?:Date|string;decided_at?:Date|string|null;
-}
 
-function scopeContains(source:Scope,target:Scope) {
-  if(target.all)return source.all&&(source.excludedHubs??[]).every(h=>(target.excludedHubs??[]).includes(h));
-  return target.hubs.every(h=>source.all?!source.excludedHubs?.includes(h):source.hubs.includes(h));
-}
-function nonempty(scope:Scope){return scope.all||scope.hubs.length>0;}
-function grantsHash(grants:Grant[]) {
-  const rows=grants.map(g=>[g.capability,g.effect,g.allHubs,[...g.hubIds].sort()]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
-  return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
-}
 async function dependencies(ctx:ApiContext,action:Action,targetId:string,input:unknown):Promise<Record<string,unknown>> {
   if(action==='access.replace') {
     const next=accessInput.parse(input),prior=await assignments(ctx,targetId);
@@ -55,11 +37,6 @@ async function dependencies(ctx:ApiContext,action:Action,targetId:string,input:u
   }
   return {};
 }
-function stateHash(value:unknown){return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
-async function master(ctx:ApiContext) {
-  return ctx.credential.kind==='human'&&(await ctx.db.query('SELECT 1 FROM public.academies WHERE master_person_id=$1',[ctx.credential.person_id])).rows.length===1;
-}
-function permissionScope(ctx:ApiContext,name:Capability){return scopeFor(ctx.credential,ctx.grants,name);}
 async function canManage(ctx:ApiContext,personId:string) {
   const target=(await ctx.db.query<{id:string;kind:string;status:string;hub_id:string|null;access_version:number;supervisor_person_id:string|null}>('SELECT id,kind,status,hub_id,access_version,supervisor_person_id FROM public.people WHERE id=$1',[personId])).rows[0];
   if(!target)throw new ApiError(404,'NOT_FOUND');
@@ -184,89 +161,13 @@ async function applyAction(ctx:ApiContext,p:Proposal):Promise<unknown> {
   const result={personId:p.target_id,supervisorId:input.supervisorId,version:person.access_version+1};
   await record(ctx.db,ctx.credential,ctx.requestId,p.action,p.target_id,null,{before:{supervisorId:person.supervisor_person_id},after:result,approvalId:p.id});return result;
 }
-async function propose(ctx:ApiContext,action:Action,targetId:string|null,targetVersion:number,input:unknown):Promise<Reply> {
-  const scope=await validateAction(ctx,action,targetId??randomUUID(),input);
-  return mutation(ctx,{input,targetVersion},async()=>{
-    const actualTarget=targetId??randomUUID(),reviewContext=await dependencies(ctx,action,actualTarget,input);
-    const p:Proposal={id:randomUUID(),requester_id:ctx.credential.person_id,requester_kind:ctx.credential.kind??'bot',
-      credential_snapshot:ctx.credential,grants_hash:grantsHash(ctx.grants),dependency_hash:stateHash(reviewContext),review_context:reviewContext,
-      action,target_id:actualTarget,target_version:targetVersion,
-      payload:input,scope,status:'pending',version:1};
-    await ctx.db.query(`INSERT INTO public.approval_requests(academy_id,id,requester_id,requester_kind,credential_snapshot,grants_hash,action,target_id,target_version,payload,scope,dependency_hash,review_context)
-      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13::jsonb)`,[ctx.credential.academy_id,p.id,p.requester_id,p.requester_kind,JSON.stringify(p.credential_snapshot),p.grants_hash,action,p.target_id,targetVersion,JSON.stringify(input),JSON.stringify(scope),p.dependency_hash,JSON.stringify(reviewContext)]);
-    if(await master(ctx)) {
-      const result=await applyAction(ctx,p);
-      await ctx.db.query("UPDATE public.approval_requests SET status='applied',version=version+1,reviewer_id=$2,reason='Master self-approved',decided_at=now() WHERE id=$1",[p.id,ctx.credential.person_id]);
-      await record(ctx.db,ctx.credential,ctx.requestId,'approval.applied',p.id,null,{action,targetId:p.target_id,selfApproved:true});
-      return {status:action==='role.create'?201:200,body:{data:result,approval:{id:p.id,status:'applied',selfApproved:true}}};
-    }
-    await record(ctx.db,ctx.credential,ctx.requestId,'approval.requested',p.id,null,{action,targetId:p.target_id,scope});
-    return {status:202,body:{approval:{id:p.id,status:'pending',version:1}}};
-  });
-}
-async function visibleProposal(ctx:ApiContext,p:Proposal,review=false) {
-  if(await master(ctx))return true;
-  if(!review&&p.requester_id===ctx.credential.person_id)return true;
-  const scope=permissionScope(ctx,review?'approvals.review':'approvals.view');
-  if(!nonempty(scope)||!scopeContains(scope,storedScope.parse(p.scope)))return false;
-  return (await ctx.db.query<{valid:boolean}>('SELECT public.is_supervisor($1,$2) AS valid',[ctx.credential.person_id,p.requester_id])).rows[0]?.valid===true;
-}
-async function decide(ctx:ApiContext,p:Proposal,input:z.infer<typeof decisionInput>):Promise<Reply> {
-  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
-  if(p.requester_id===ctx.credential.person_id&&!await master(ctx))throw new ApiError(403,'SELF_APPROVAL_FORBIDDEN');
-  if(!await visibleProposal(ctx,p,true))throw new ApiError(403,'SUPERVISOR_REQUIRED');
-  return mutation(ctx,input,async()=>{
-    const current=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1 FOR UPDATE',[p.id])).rows[0];
-    if(current.status!=='pending'||current.version!==input.expectedVersion)throw new ApiError(409,'APPROVAL_CHANGED');
-    let status='rejected',result:unknown=null,decisionCode:string|null=null;
-    if(input.decision==='approve') {
-      const snapshot=storedCredential.parse(current.credential_snapshot) as Credential;
-      const active=(await ctx.db.query('SELECT 1 FROM public.people WHERE id=$1 AND status=\'active\'',[current.requester_id])).rows.length;
-      let authority=snapshot;
-      if(current.requester_kind==='bot') {
-        const live=(await ctx.db.query<Credential>('SELECT * FROM public.current_bot_scope($1)',[snapshot.token_id])).rows[0];
-        if(!live||live.person_id!==current.requester_id||live.academy_id!==ctx.credential.academy_id){status='stale';decisionCode='CREDENTIAL_REVOKED';}else authority=live;
-      }
-      if(!active){status='stale';decisionCode='REQUESTER_INACTIVE';}
-      if(grantsHash(await loadGrants(ctx.db,authority))!==current.grants_hash){status='stale';decisionCode='AUTHORITY_CHANGED';}
-      if(stateHash(await dependencies(ctx,current.action,current.target_id,current.payload))!==current.dependency_hash){status='stale';decisionCode='DEPENDENCIES_CHANGED';}
-      if(status!=='stale') {
-        const requesterContext={...ctx,credential:authority,grants:await loadGrants(ctx.db,authority)};
-        try {
-          const requesterScope=await validateAction(requesterContext,current.action,current.target_id,current.payload);
-          const reviewerScope=await validateAction(ctx,current.action,current.target_id,current.payload);
-          if(!scopeContains(requesterScope,storedScope.parse(current.scope))||!scopeContains(reviewerScope,storedScope.parse(current.scope)))throw new ApiError(403,'AUTHORITY_CHANGED');
-          // All validation happens before application; savepoint also protects against
-          // optimistic-lock or constraint failures partway through a domain write.
-          await ctx.db.query('SAVEPOINT approval_apply');
-          try{result=await applyAction(ctx,current);await ctx.db.query('RELEASE SAVEPOINT approval_apply');status='applied';}
-          catch(error){await ctx.db.query('ROLLBACK TO SAVEPOINT approval_apply');await ctx.db.query('RELEASE SAVEPOINT approval_apply');throw error;}
-        } catch(error) {
-          if(error instanceof ApiError&&[403,404,409].includes(error.status)){status='stale';decisionCode=error.code;}else throw error;
-        }
-      }
-    }
-    await ctx.db.query('UPDATE public.approval_requests SET status=$2,version=version+1,reviewer_id=$3,reason=$4,decision_code=$5,decided_at=now() WHERE id=$1',[current.id,status,ctx.credential.person_id,input.reason,decisionCode]);
-    await record(ctx.db,ctx.credential,ctx.requestId,'approval.'+status,current.id,null,{before:'pending',after:status,reason:input.reason,decisionCode,action:current.action,targetId:current.target_id});
-    return {status:status==='stale'?409:200,body:{approval:{id:current.id,status,version:current.version+1,reason:input.reason,decisionCode},...(result?{data:result}:{})}};
-  });
-}
-
-function proposalView(p:Proposal) {
-  return {id:p.id,action:p.action,targetId:p.target_id,targetVersion:p.target_version,requesterId:p.requester_id,
-    payload:p.payload,scope:p.scope,status:p.status,version:p.version,reason:p.reason??null,decisionCode:p.decision_code??null,
-    reviewContext:p.review_context,
-    reviewerId:p.reviewer_id??null,createdAt:p.created_at,decidedAt:p.decided_at??null};
-}
-
-export async function administration(ctx:ApiContext):Promise<Reply|null> {
+export async function administration(ctx:ApiContext,registry:ApprovalRegistry=administrationActions):Promise<Reply|null> {
+  const approval=await approvalRoutes(ctx,registry);if(approval)return approval;
   const {request,path,db,credential:c}=ctx;
-  const ownPath=path==='roles'||path==='approvals'||/^roles\//.test(path)||/^approvals\//.test(path)||/^people\/[^/]+\/(access|supervisor)$/.test(path);
+  const ownPath=path==='roles'||/^roles\//.test(path)||/^people\/[^/]+\/(access|supervisor)$/.test(path);
   if(request.method!=='GET'&&ownPath) {
-    // ponytail: policy writes serialize per academy; use finer locks only if
-    // measured configuration-write contention warrants the extra complexity.
-    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,8))',[c.academy_id]);
-    ctx.grants=await loadGrants(db,c);
+    if(!nonempty(permissionScope(ctx,path.startsWith('roles')?'roles.edit':'access.edit')))throw new ApiError(403,'FORBIDDEN');
+    await lockApprovalWrites(ctx,true);
   }
   if(path==='capabilities'&&request.method==='GET') {
     requireScope(permissionScope(ctx,'roles.view'));
@@ -285,19 +186,19 @@ export async function administration(ctx:ApiContext):Promise<Reply|null> {
       WHERE ($1::uuid IS NULL OR r.id>$1) GROUP BY r.academy_id,r.id ORDER BY r.id LIMIT $2`,[after??null,limit+1])).rows;
     return {status:200,body:{data:rows.slice(0,limit),nextCursor:rows.length>limit?rows[limit-1].id:null}};
   }
-  if(path==='roles'&&request.method==='POST')return propose(ctx,'role.create',null,0,roleInput.parse(await jsonBody(request)));
+  if(path==='roles'&&request.method==='POST')return propose(ctx,registry,'role.create',null,0,roleInput.parse(await jsonBody(request)));
   const rolePath=/^roles\/([^/]+)(?:\/(update|duplicate))?$/.exec(path);
   if(rolePath) {
     const id=uuid.parse(rolePath[1]);
     if(request.method==='GET'&&!rolePath[2]){requireScope(permissionScope(ctx,'roles.view'));return {status:200,body:{data:await role(ctx,id)}};}
     if(request.method==='POST'&&rolePath[2]==='update') {
       const input=roleUpdate.parse(await jsonBody(request)),{expectedVersion,...body}=input;
-      return propose(ctx,'role.update',id,expectedVersion,body);
+      return propose(ctx,registry,'role.update',id,expectedVersion,body);
     }
     if(request.method==='POST'&&rolePath[2]==='duplicate') {
       requireScope(permissionScope(ctx,'roles.view'));
       const input=z.object({name:roleInput.shape.name}).strict().parse(await jsonBody(request)),source=await role(ctx,id);
-      return propose(ctx,'role.create',null,0,{name:input.name,description:source.description,permissions:source.permissions});
+      return propose(ctx,registry,'role.create',null,0,{name:input.name,description:source.description,permissions:source.permissions});
     }
   }
   const accessPath=/^people\/([^/]+)\/(access|supervisor)$/.exec(path);
@@ -318,37 +219,10 @@ export async function administration(ctx:ApiContext):Promise<Reply|null> {
     }
     if(request.method==='POST') {
       const input=(accessPath[2]==='access'?accessInput:supervisorInput).parse(await jsonBody(request));
-      return propose(ctx,accessPath[2]==='access'?'access.replace':'supervisor.set',id,input.expectedVersion,input);
+      return propose(ctx,registry,accessPath[2]==='access'?'access.replace':'supervisor.set',id,input.expectedVersion,input);
     }
   }
-  if(path==='approvals'&&request.method==='GET') {
-    const {limit,after,status}=paging.parse(Object.fromEntries(new URL(request.url).searchParams));
-    const scope=permissionScope(ctx,'approvals.view');
-    const rows=(await db.query<Proposal>(`SELECT * FROM public.approval_requests WHERE ($1::uuid IS NULL OR id>$1)
-      AND ($2::text IS NULL OR status=$2) AND ($4::boolean OR requester_id=$5 OR
-        ($6::boolean AND public.scope_contains($7::jsonb,scope) AND public.is_supervisor($5,requester_id))) ORDER BY id LIMIT $3`,
-      [after??null,status??null,limit+1,await master(ctx),c.person_id,nonempty(scope),JSON.stringify(scope)])).rows;
-    return {status:200,body:{data:rows.slice(0,limit).map(proposalView),nextCursor:rows.length>limit?rows[limit-1].id:null}};
-  }
-  const approvalPath=/^approvals\/([^/]+)(?:\/(decide|withdraw))?$/.exec(path);
-  if(approvalPath) {
-    const id=uuid.parse(approvalPath[1]);
-    const p=(await db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1',[id])).rows[0];
-    if(!p||!await visibleProposal(ctx,p))throw new ApiError(404,'NOT_FOUND');
-    if(request.method==='GET'&&!approvalPath[2])return {status:200,body:{data:proposalView(p)}};
-    if(request.method==='POST'&&approvalPath[2]==='decide')return decide(ctx,p,decisionInput.parse(await jsonBody(request)));
-    if(request.method==='POST'&&approvalPath[2]==='withdraw') {
-      if(p.requester_id!==c.person_id)throw new ApiError(403,'REQUESTER_REQUIRED');
-      const input=withdrawInput.parse(await jsonBody(request));
-      return mutation(ctx,input,async()=>{
-        const updated=await db.query("UPDATE public.approval_requests SET status='withdrawn',version=version+1,reason=$3,decided_at=now() WHERE id=$1 AND version=$2 AND status='pending' RETURNING id",[id,input.expectedVersion,input.reason]);
-        if(!updated.rows.length)throw new ApiError(409,'APPROVAL_CHANGED');
-        await record(db,c,ctx.requestId,'approval.withdrawn',id,null,{reason:input.reason});
-        return {status:200,body:{approval:{id,status:'withdrawn',version:input.expectedVersion+1}}};
-      });
-    }
-  }
-  if(path==='roles'||path==='approvals'||rolePath||accessPath||approvalPath)throw new ApiError(405,'METHOD_NOT_ALLOWED');
+  if(path==='roles'||rolePath||accessPath)throw new ApiError(405,'METHOD_NOT_ALLOWED');
   return null;
 }
 
@@ -363,8 +237,16 @@ export const administrationContract=[
   {path:'/api/v1/people/{id}/access',method:'get',summary:'View permitted access-assignment segments; outside-scope data redacted'},
   {path:'/api/v1/people/{id}/access',method:'post',summary:'Replace subordinate role assignments within delegation limits',schema:accessInput},
   {path:'/api/v1/people/{id}/supervisor',method:'post',summary:'Master-only, version-checked, cycle-safe supervisor change',schema:supervisorInput},
-  {path:'/api/v1/approvals',method:'get',summary:'Own and authorized subordinate cases, filtered before pagination',paged:true},
-  {path:'/api/v1/approvals/{id}',method:'get',summary:'Read exact payload, reason, review history and stale decision code'},
-  {path:'/api/v1/approvals/{id}/decide',method:'post',summary:'Human upper reviewer accepts/rejects exact unchanged proposal',schema:decisionInput},
-  {path:'/api/v1/approvals/{id}/withdraw',method:'post',summary:'Requester withdraws a still-pending proposal',schema:withdrawInput}
+  ...approvalContract
 ] as const;
+
+export const administrationActions:ApprovalRegistry=Object.fromEntries((['role.create','role.update','access.replace','supervisor.set'] as const).map(action=>{
+  const definition:ApprovalAction={
+    requestCapability:actionCapability(action),
+    policyChange:true,createdStatus:action==='role.create'?201:200,
+    validate:(ctx,target,input)=>validateAction(ctx,action,target,input),
+    dependencies:(ctx,target,input)=>dependencies(ctx,action,target,input),
+    apply:applyAction
+  };
+  return [action,definition];
+}));

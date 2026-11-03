@@ -11,10 +11,10 @@ const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), count
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
 export type Reply = { status: number; body: unknown };
-export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string }
+export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive' }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 
-export async function jsonBody(request: Request) {
+export async function jsonBody(request: Request,maximumBytes=16_384) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
   const reader = request.body?.getReader();
   if (!reader) throw new ApiError(400, 'INVALID_JSON');
@@ -24,7 +24,7 @@ export async function jsonBody(request: Request) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 16_384) { await reader.cancel(); throw new ApiError(413, 'BODY_TOO_LARGE'); }
+      if (size > maximumBytes) { await reader.cancel(); throw new ApiError(413, 'BODY_TOO_LARGE'); }
       chunks.push(value);
     }
     try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; }
