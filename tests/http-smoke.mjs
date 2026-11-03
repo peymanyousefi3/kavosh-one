@@ -3,17 +3,17 @@ import { setTimeout as delay } from 'node:timers/promises';
 import assert from 'node:assert/strict';
 
 const port=process.env.SMOKE_PORT ?? '3197';
-const base=`http://127.0.0.1:${port}`;
+const base=process.env.SMOKE_BASE_URL ?? `http://127.0.0.1:${port}`;
 const env={...process.env};
 // This check deliberately runs with no live credentials or database.
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
-const child=spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
+const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
 let output='';
-child.stdout.on('data',b=>{output+=b;});child.stderr.on('data',b=>{output+=b;});
+child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
 try {
   let ready=false;
   for (let i=0;i<80;i++) {
-    if(child.exitCode!==null) throw new Error('Production server exited before smoke test');
+    if(child && child.exitCode!==null) throw new Error('Production server exited before smoke test');
     try { const r=await fetch(`${base}/api/health`); if(r.status===200){ready=true;break;} } catch { /* wait for startup */ }
     await delay(100);
   }
@@ -33,7 +33,9 @@ try {
   // Only generic startup diagnostics are allowed; this server has no secrets.
   console.error(output.slice(-2000));throw error;
 } finally {
-  child.kill('SIGTERM');
-  await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(3000)]);
-  if(child.exitCode===null) child.kill('SIGKILL');
+  if (child) {
+    child.kill('SIGTERM');
+    await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(3000)]);
+    if(child.exitCode===null) child.kill('SIGKILL');
+  }
 }

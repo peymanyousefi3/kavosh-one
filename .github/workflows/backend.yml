@@ -46,3 +46,14 @@ jobs:
       - run: pnpm build
       - run: pnpm test:http
       - run: pnpm audit --prod --audit-level high
+      - name: Build VPS container
+        run: docker build --tag kavosh-one:ci .
+      - name: Run non-root container with a read-only filesystem
+        run: docker run --detach --name kavosh-one-ci --publish 127.0.0.1:3198:3000 --read-only --tmpfs /tmp kavosh-one:ci
+      - name: Verify the actual standalone container
+        run: pnpm test:http
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:3198
+      - name: Remove disposable test container
+        if: always()
+        run: docker rm --force kavosh-one-ci || true
