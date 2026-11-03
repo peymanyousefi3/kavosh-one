@@ -86,6 +86,13 @@ check('creation retries are durable and empty or invalid schedules never leave a
   assert.equal((await f.request('classes',{...f.input,schedule:one('2027-03-14','02:00','03:30')})).response.status,400);
   assert.equal((await f.pg.query('SELECT * FROM public.classes')).rows.length,1);
 });
+check('a bounded 500-session irregular batch persists atomically and distinct classes may meet simultaneously',async f=>{
+  const oneOff=Array.from({length:500},(_,n)=>{const day=new Date(Date.UTC(2027,0,n+1)).toISOString().slice(0,10);return {start:day+'T10:00',end:day+'T11:00'};});
+  const created=await f.request('classes',{...f.input,schedule:{oneOff}});assert.equal(created.response.status,201);assert.equal(created.body.schedule.sessionCount,500);
+  assert.equal((await f.pg.query('SELECT count(*)::int AS count FROM public.class_sessions WHERE class_id=$1',[created.body.data.id])).rows[0].count,500);
+  const second=await f.create({schedule:one('2027-01-01')});assert.notEqual(second.id,created.body.data.id);assert.notEqual(second.code,created.body.data.code);
+  assert.equal((await f.request('classes/'+second.id+'/sessions')).body.data.length,1);
+});
 check('native constraints and column privileges prevent overlaps, reparenting and immutable schedule rewrites',async f=>{
   const c=await f.create();
   await assert.rejects(f.pg.query(`INSERT INTO public.class_sessions SELECT academy_id,$2,class_id,hub_id,schedule_id,course_id,course_version,starts_at,ends_at,time_info,mode,online_url,status,version,created_at FROM public.class_sessions WHERE class_id=$1 LIMIT 1`,[c.id,randomUUID()]),/exclusion constraint/);
@@ -190,6 +197,15 @@ check('cancelled slots can be reused but conflicting restoration is blocked with
   assert.equal((await f.request('classes/'+c.id+'/schedules',{expectedVersion:1,schedule:one('2027-03-07')})).response.status,201);
   const restore=await f.request('sessions/'+s.id+'/change',{expectedVersion:2,reason:'Reconsidered',change:{kind:'restore'}});assert.equal(restore.response.status,409);
   assert.equal((await f.request('sessions/'+s.id)).body.data.status,'cancelled');assert.equal((await f.request('classes/'+c.id+'/sessions')).body.data.length,3);
+});
+check('management bots use the same scoped session API and cannot approve their own requests',async f=>{
+  const c=await f.create(),s=(await f.request('classes/'+c.id+'/sessions')).body.data[0];
+  const pending=await f.request('sessions/'+s.id+'/change',{expectedVersion:1,reason:'Agent detected a staffing conflict',change:{kind:'cancel'}},'bot');assert.equal(pending.response.status,202);
+  assert.equal((await f.approve(pending.body.approval.id,'bot')).response.status,403);
+  assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
+  assert.equal((await f.request('sessions/'+s.id)).body.data.status,'cancelled');
+  const other=await f.create({hubId:f.otherHub}),hidden=(await f.request('classes/'+other.id+'/sessions')).body.data[0];
+  assert.equal((await f.request('sessions/'+hidden.id+'/change',{expectedVersion:1,reason:'Outside scope',change:{kind:'cancel'}},'bot')).response.status,404);
 });
 
 if(process.env.TEST_DATABASE_URL) {

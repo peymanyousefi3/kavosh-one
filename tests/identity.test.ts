@@ -378,14 +378,15 @@ test('provider configuration fails closed and SMS sends only to fixed endpoint',
 
 test('HTTP concurrency with 5,000 synthetic identities and 100 simultaneous connections',{skip:!process.env.TEST_DATABASE_URL,timeout:120000},async()=>{
   const f=await fixture();
-  const academy=randomUUID(),role=randomUUID();
+  const academy=randomUUID(),role=randomUUID(),hub=randomUUID(),country=randomUUID(),region=randomUUID(),city=randomUUID(),course=randomUUID();
   const cookies:string[]=[];
+  let masterCookie='';
   const server=createServer(async(req,res)=>{
     try {
       const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
       const headers=new Headers();for(const [key,value] of Object.entries(req.headers))if(value!==undefined)headers.set(key,Array.isArray(value)?value.join('; '):value);
       const request=new Request(origin+req.url,{method:req.method,headers,...(req.method==='POST'?{body:Buffer.concat(chunks)}:{})});
-      const result=req.url!.startsWith('/api/auth/')?await f.gateway(request):await f.api(request,'hubs');
+      const result=req.url!.startsWith('/api/auth/')?await f.gateway(request):await f.api(request,new URL(request.url).pathname.slice('/api/v1/'.length));
       for(const cookie of result.headers.getSetCookie())res.appendHeader('set-cookie',cookie);
       res.writeHead(result.status,Object.fromEntries([...result.headers].filter(([key])=>key!=='set-cookie')));
       res.end(await result.text());
@@ -406,8 +407,15 @@ test('HTTP concurrency with 5,000 synthetic identities and 100 simultaneous conn
         SELECT gen_random_uuid(),id::text,'credential',id,$1,now() FROM identity."user"`,[hash]);
       await f.pg.query("INSERT INTO public.roles VALUES($1,$2,'Synthetic read-only')",[academy,role]);
       await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'hubs.view','allow')",[academy,role]);
+      await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'classes.view','allow')",[academy,role]);
       await f.pg.query('INSERT INTO public.role_assignments SELECT $1,gen_random_uuid(),id,$2,true FROM public.people',[academy,role]);
-      await f.pg.query("INSERT INTO public.hubs(academy_id,id,name,city,country_code) VALUES($1,$2,'Synthetic hub','Toronto','CA')",[academy,randomUUID()]);
+      await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[academy,country]);
+      await f.pg.query("INSERT INTO public.regions(academy_id,id,country_id,code,name) VALUES($1,$2,$3,'ON','Ontario')",[academy,region,country]);
+      await f.pg.query("INSERT INTO public.cities(academy_id,id,region_id,name) VALUES($1,$2,$3,'Toronto')",[academy,city,region]);
+      await f.pg.query("INSERT INTO public.hubs(academy_id,id,name,city,country_code,city_id,time_zone,currency) VALUES($1,$2,'Synthetic hub','Toronto','CA',$3,'America/Toronto','CAD')",[academy,hub,city]);
+      await f.pg.query("INSERT INTO public.courses(academy_id,id,code,name) VALUES($1,$2,'LOAD-101','Synthetic curriculum')",[academy,course]);
+      await f.pg.query('INSERT INTO public.course_revisions(academy_id,course_id,version,definition) VALUES($1,$2,1,$3::jsonb)',[academy,course,
+        JSON.stringify({code:'LOAD-101',name:'Synthetic curriculum',description:'',hubId:null,translations:{},active:true,modules:[]})]);
       await f.pg.exec('COMMIT');
     });
     server.listen(0,'127.0.0.1');await once(server,'listening');
@@ -416,23 +424,33 @@ test('HTTP concurrency with 5,000 synthetic identities and 100 simultaneous conn
     let next=0;
     const rss=process.memoryUsage().rss,cpu=process.cpuUsage();
     const login=await autocannon({url,connections:100,amount:100,timeout:30,
-      requests:[{method:'POST',path:'/api/auth/sign-in/email',headers:{origin,'content-type':'application/json'},body:'{}',onResponse(status,_body,_context,headers){
-        if(status===200){const raw=headers?.['set-cookie'];cookies.push((Array.isArray(raw)?raw:[String(raw)]).map(value=>value.split(';')[0]).join('; '));}
+      requests:[{method:'POST',path:'/api/auth/sign-in/email',headers:{origin,'content-type':'application/json'},body:'{}',onResponse(status,body,_context,headers){
+        if(status===200){const raw=headers?.['set-cookie'],cookie=(Array.isArray(raw)?raw:[String(raw)]).map(value=>value.split(';')[0]).join('; ');cookies.push(cookie);
+          if(JSON.parse(body).user.email==='load0@example.test')masterCookie=cookie;}
       }}],setupClient(client){client.setBody(JSON.stringify({email:`load${next++}@example.test`,password}));}});
     assert.equal(login.errors,0);assert.equal(login.timeouts,0);assert.equal(login.non2xx,0);assert.equal(cookies.length,100);
-    async function run(path:string,amount:number) {
-      let index=0;
-      const result=await autocannon({url:url+path,connections:100,amount,timeout:30,setupClient(client){
+    assert.ok(masterCookie);
+    const oneOff=Array.from({length:500},(_,n)=>{const day=new Date(Date.UTC(2027,0,n+1)).toISOString().slice(0,10);return {start:day+'T10:00',end:day+'T11:00'};});
+    const create=await fetch(url+'/api/v1/classes',{method:'POST',headers:{origin,cookie:masterCookie,'x-academy-id':academy,'content-type':'application/json','idempotency-key':randomUUID()},
+      body:JSON.stringify({hubId:hub,courseId:course,courseVersion:1,name:'Synthetic 500-session class',mode:'in_person',schedule:{oneOff}})});
+    const created=await create.json();assert.equal(create.status,201,JSON.stringify(created));assert.equal(created.schedule.sessionCount,500);
+    async function run(path:string,amount:number,expectedRows?:number) {
+      let index=0,validBodies=0;
+      const result=await autocannon({url:url+path,connections:100,amount,timeout:30,requests:[{path,onResponse(status,body){
+        if(expectedRows===undefined)return;
+        try{if(status===200&&JSON.parse(body).data?.length===expectedRows)validBodies++;}catch{/* Count malformed bodies as invalid results. */}
+      }}],setupClient(client){
         client.setHeaders({origin,cookie:cookies[index++%cookies.length],'x-academy-id':academy});
       }});
       assert.equal(result.errors,0);assert.equal(result.timeouts,0);assert.equal(result.non2xx,0);
+      if(expectedRows!==undefined)assert.equal(validBodies,amount,'every load response must contain the expected permitted records');
       assert.equal(result.requests.total,amount);return result;
     }
-    const sessions=await run('/api/auth/get-session',300),business=await run('/api/v1/hubs',300);
+    const sessions=await run('/api/auth/get-session',300),business=await run('/api/v1/hubs',300,1),calendar=await run('/api/v1/classes/'+created.data.id+'/sessions?limit=100',300,100);
     const usage=process.cpuUsage(cpu);
     console.log(JSON.stringify({check:'synthetic-auth-load',identities:5000,connections:100,
       login:{requests:login.requests.total,p99Ms:login.latency.p99},sessions:{requests:sessions.requests.total,p99Ms:sessions.latency.p99},
-      business:{requests:business.requests.total,p99Ms:business.latency.p99},rssGrowthMiB:Math.round((process.memoryUsage().rss-rss)/1048576),cpuMs:Math.round((usage.user+usage.system)/1000)}));
+      business:{requests:business.requests.total,p99Ms:business.latency.p99},calendar:{storedSessions:500,requests:calendar.requests.total,rowsPerResponse:100,p99Ms:calendar.latency.p99},rssGrowthMiB:Math.round((process.memoryUsage().rss-rss)/1048576),cpuMs:Math.round((usage.user+usage.system)/1000)}));
   }finally{
     server.closeAllConnections();if(server.listening)await new Promise<void>(resolve=>server.close(()=>resolve()));
     await f.close();
