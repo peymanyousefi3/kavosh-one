@@ -154,6 +154,9 @@ check('geographic containment agrees in SQL and application including empty area
 if(process.env.TEST_DATABASE_URL) {
   async function waitForTopologyReader(f:Fixture) {
     for(let attempt=0;attempt<100;attempt++) {
+      // The lock-holder transaction otherwise keeps its first activity snapshot.
+      // https://www.postgresql.org/docs/17/monitoring-stats.html
+      await f.pg.query('SELECT pg_stat_clear_snapshot()');
       const row=(await f.pg.query<{count:number}>(`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'
         AND query LIKE '%pg_advisory_xact_lock_shared%' AND query LIKE '%hashtextextended%9)%'`)).rows[0];
       if(row.count>0)return;
