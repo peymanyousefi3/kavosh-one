@@ -44,7 +44,8 @@ export function scopeFor(credential: Credential, grants: Grant[], capability: Ca
     {all:false,hubs:(roleAll?credential.hub_ids:[...roleHubs]).filter(h=>!denied.has(h)&&(credential.all_hubs||credential.hub_ids.includes(h)))};
   for(const [grantKey,scopeKey,deniedKey,supported] of [['classRefs','classes','excludedClasses',classCapabilities],['personRefs','people','excludedPeople',personCapabilities]] as const) {
     if(!supported.has(capability))continue;
-    const negative=[...new Map(relevant.filter(g=>g.effect==='deny').flatMap(g=>g[grantKey]??[]).map(r=>[r.id,r])).values()];
+    const negative=[...new Map(relevant.filter(g=>g.effect==='deny').flatMap(g=>g[grantKey]??[]).map(r=>[r.id,r])).values()]
+      .filter(r=>credential.all_hubs||Boolean(r.hubId&&credential.hub_ids.includes(r.hubId)));
     const negativeIds=new Set(negative.map(r=>r.id));
     const positive=[...new Map(allowed.flatMap(g=>g[grantKey]??[]).map(r=>[r.id,r])).values()].filter(r=>!negativeIds.has(r.id)&&!denied.has(r.hubId??'')&&(credential.all_hubs||Boolean(r.hubId&&credential.hub_ids.includes(r.hubId))));
     if(positive.length)result[scopeKey]=positive;

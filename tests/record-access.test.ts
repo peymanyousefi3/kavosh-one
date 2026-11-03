@@ -36,6 +36,7 @@ test('record scopes intersect bot ceilings and explicit denials without becoming
   assert.deepEqual(scopeFor(c,[selected],'classes.view'),{all:false,hubs:[],classes:[ref]});
   const denied={...selected,effect:'deny' as const,classRefs:[ref]};
   assert.deepEqual(scopeFor(c,[selected,denied],'classes.view'),{all:false,hubs:[],excludedClasses:[ref]});
+  assert.deepEqual(scopeFor(c,[selected,{...denied,classRefs:[second]}],'classes.view'),{all:false,hubs:[],classes:[ref]},'effective metadata must not expose excluded IDs outside the credential ceiling');
   const broad={...selected,allHubs:true,classRefs:[]};
   assert.equal(scopeAllowsRef(scopeFor(c,[broad,denied],'classes.view'),ref,'classes'),false);
   assert.equal(scopeAllowsRef(scopeFor(c,[broad,denied],'classes.view'),{id:'different',hubId:'one'},'classes'),true);
@@ -143,6 +144,16 @@ check('record-selector tables enforce tenant foreign keys, RLS and cleanup on ac
   assert.equal((await f.assign(f.actors.staff.person,[{roleId:r.id,allHubs:false,classIds:[f.first.id],personIds:[f.actors.manager.person]}])).response.status,200);
   const assignment=(await f.request('people/'+f.actors.staff.person+'/access')).body.data.assignments[0].id;
   await assert.rejects(f.pg.query('INSERT INTO public.assignment_people VALUES($1,$2,$3)',[f.a,assignment,f.actors.foreignMaster.person]),/foreign key/);
+  const foreignRequest=(path:string,body:unknown)=>f.request(path,body,'foreignMaster',{academy:f.b});
+  const country=await foreignRequest('locations/countries',{code:'CA',name:'Canada'});assert.equal(country.response.status,201);
+  const region=await foreignRequest('locations/regions',{countryId:country.body.data.id,code:'ON',name:'Ontario'});assert.equal(region.response.status,201);
+  const city=await foreignRequest('locations/cities',{regionId:region.body.data.id,name:'Toronto'});assert.equal(city.response.status,201);
+  assert.equal((await foreignRequest('hubs/'+f.foreignHub+'/update',{expectedVersion:1,cityId:city.body.data.id,timeZone:'America/Toronto',currency:'CAD'})).response.status,200);
+  const course=await foreignRequest('courses',{code:'FOREIGN',name:'Foreign academy curriculum'});assert.equal(course.response.status,201);
+  const foreign=await foreignRequest('classes',{hubId:f.foreignHub,courseId:course.body.data.id,courseVersion:1,name:'Foreign academy class',mode:'in_person',
+    schedule:{oneOff:[{start:'2027-01-01T10:00',end:'2027-01-01T11:00'}]}});assert.equal(foreign.response.status,201);
+  await assert.rejects(f.pg.query('INSERT INTO public.assignment_classes VALUES($1,$2,$3)',[f.a,assignment,foreign.body.data.id]),/foreign key/);
+  assert.equal((await f.assign(f.actors.staff.person,[{roleId:r.id,allHubs:false,classIds:[foreign.body.data.id]}])).response.status,400);
   await f.pg.exec('SET ROLE kavosh_runtime');
   try {
     await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);

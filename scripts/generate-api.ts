@@ -36,4 +36,5 @@ for(const endpoint of businessContract) {
     responses:{'200':{description:'Current data or applied change'},'201':{description:'Created within granted rights or master self-approval'},'202':{description:'Pending upper approval; domain change NOT applied'},default:{$ref:'#/components/responses/error'}}};
   api.paths[endpoint.path]??={};api.paths[endpoint.path][endpoint.method]=operation;
 }
+api.paths=Object.fromEntries(Object.keys(api.paths).sort().map(path=>[path,api.paths[path]]));
 await writeFile(file,JSON.stringify(api,null,2)+'\n');
