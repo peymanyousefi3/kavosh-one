@@ -35,6 +35,7 @@ export function createIdentity(db: Kysely<unknown>, store: IdentityStore, delive
     session: { expiresIn: 86400, updateAge: 900, freshAge: 900, cookieCache: { enabled: false },
       additionalFields: { mfaVerified: { type: 'boolean', defaultValue: false, input: false, returned: false } } },
     account: { accountLinking: { enabled: false } },
+    verification:{storeIdentifier:{default:'plain',overrides:{'reset-password:':'hashed'}}},
     databaseHooks:{verification:{create:{before:async value=>{
       // The phone plugin consumes OTPs atomically but stores them verbatim by
       // default. Keyed digests preserve its attempt/replay logic without plaintext.

@@ -224,7 +224,10 @@ test('human identity: real library authentication and protected business access'
       const text=f.messages.emails.findLast(m=>m.to===master.email)!.text;
       const token=new URL(text.match(/https:\/\/[^\s]+/)![0]).hash.slice('#token='.length);
       const newPassword='Synthetic updated password 456!';
-      assert.equal((await f.request('/reset-password',{token,newPassword})).response.status,200);
+      const rows=(await f.store.query<{identifier:string}>('SELECT identifier FROM identity.verification WHERE value=$1',[master.id])).rows;
+      assert.ok(rows.every(row=>!row.identifier.includes(token)),'reset bearer secret must not be stored verbatim');
+      const racing=await Promise.all([f.request('/reset-password',{token,newPassword}),f.request('/reset-password',{token,newPassword})]);
+      assert.deepEqual(racing.map(result=>result.response.status).sort(),[200,400],'only one concurrent reset may consume the token');
       assert.equal((await f.request('/reset-password',{token,newPassword})).response.status,400);
       assert.equal((await f.business(master)).status,401);
       // Reset removes remembered-device grants; an old trusted browser must do MFA again.
@@ -233,6 +236,11 @@ test('human identity: real library authentication and protected business access'
       await f.mfa(master);
       assert.equal((await f.business(master)).status,200);
       assert.equal((await f.request('/two-factor/disable',{password:newPassword},master.jar)).response.status,403);
+      await f.request('/request-password-reset',{email:regular.email});
+      const expiredText=f.messages.emails.findLast(m=>m.to===regular.email)!.text;
+      const expiredToken=new URL(expiredText.match(/https:\/\/[^\s]+/)![0]).hash.slice('#token='.length);
+      await f.admin(()=>f.pg.query(`UPDATE identity.verification SET "expiresAt"=now()-interval '1 minute' WHERE value=$1`,[regular.id]));
+      assert.equal((await f.request('/reset-password',{token:expiredToken,newPassword})).response.status,400);
     });
     await t.test('optional MFA, session revocation and password changes remain usable for ordinary accounts',async()=>{
       const fresh=new Map<string,string>();
