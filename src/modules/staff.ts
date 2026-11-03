@@ -6,7 +6,7 @@ import { ApiError,scopeAllowsRef,scopeNonempty } from '../core/policy.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { classRow } from './classes.ts';
 
-const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive();
+const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const date=z.iso.date().refine(v=>v>='1900-01-01'&&v<='9999-12-31');
 const role=z.enum(['teacher','ta','volunteer']),reason=z.string().trim().min(1).max(2000);
 const createInput=z.object({personId:uuid,role,startsOn:date,endsOn:date.nullable().default(null),reason}).strict();
@@ -14,7 +14,7 @@ const updateInput=z.object({expectedVersion:version,role:role.optional(),startsO
   .refine(v=>['role','startsOn','endsOn','active'].some(k=>Object.hasOwn(v,k)));
 const listQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),on:date.optional(),
   active:z.enum(['true','false']).transform(v=>v==='true').optional(),personId:uuid.optional(),role:role.optional()}).strict();
-const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterVersion:z.coerce.number().int().min(0).default(0)}).strict();
+const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterVersion:z.coerce.number().int().min(0).max(2_147_483_647).default(0)}).strict();
 interface StaffRow {id:string;class_id:string;person_id:string;role:'teacher'|'ta'|'volunteer';starts_on:string;ends_on:string|null;active:boolean;version:number}
 const fields='id,class_id,person_id,role,starts_on::text,ends_on::text,active,version,created_at';
 async function assignment(ctx:ApiContext,id:string,edit=false) {

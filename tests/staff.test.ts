@@ -24,6 +24,8 @@ function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{c
 
 check('dated teacher, TA and volunteer assignments persist, filter inclusively and retain immutable reasons/revisions',async f=>{
   const added=await f.add();assert.equal(added.response.status,201,JSON.stringify(added.body));const id=added.body.data.id;
+  assert.equal((await f.request('class-staff/'+id+'/history?afterVersion=2147483648')).response.status,400);
+  assert.equal((await f.request('class-staff/'+id+'/update',{expectedVersion:2147483648,role:'ta',reason:'Invalid revision'})).response.status,400);
   for(const on of ['2027-01-01','2027-01-31'])assert.equal((await f.request('classes/'+f.first.id+'/staff?on='+on)).body.data.length,1);
   for(const on of ['2026-12-31','2027-02-01'])assert.equal((await f.request('classes/'+f.first.id+'/staff?on='+on)).body.data.length,0);
   const changed=await f.request('class-staff/'+id+'/update',{expectedVersion:1,role:'ta',reason:'Changed teaching duty'});assert.equal(changed.response.status,200);
