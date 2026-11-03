@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 import type { Identity, IdentityConfig } from './config.ts';
 import { IdentityStore } from './store.ts';
+import type { HumanSession } from '../core/api.ts';
 
 const email=z.string().email().max(254).transform(s=>s.trim().toLowerCase());
 const password=z.string().min(15).max(128);
@@ -53,6 +54,16 @@ export function verifiedProxyIp(request:Request,config:IdentityConfig) {
   const ip=request.headers.get('x-kavosh-client-ip')??'';
   if(!isIP(ip))throw new ApiError(403,'UNTRUSTED_PROXY');
   return ip;
+}
+export function humanResolver(auth:Identity,store:IdentityStore,config:IdentityConfig) {
+  return async(request:Request):Promise<HumanSession|null>=>{
+    verifiedProxyIp(request,config);
+    if(!['GET','HEAD'].includes(request.method)&&request.headers.get('origin')!==config.origin)throw new ApiError(403,'ORIGIN_REJECTED');
+    const academyId=z.string().uuid().parse(request.headers.get('x-academy-id'));
+    await store.safe();
+    const result=await auth.api.getSession({headers:request.headers,query:{disableCookieCache:true}});
+    return result?{userId:result.user.id,sessionId:result.session.id,academyId}:null;
+  };
 }
 export function identityGateway(auth:Identity,store:IdentityStore,config:IdentityConfig) {
   return async(request:Request)=>{

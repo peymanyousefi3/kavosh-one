@@ -59,11 +59,14 @@ export function createIdentity(db: Kysely<unknown>, store: IdentityStore, delive
       if(ctx.path==='/phone-number/verify'&&ctx.body?.code)
         return {context:{body:{...ctx.body,code:store.digest(`phone-otp:${ctx.body.phoneNumber}:${ctx.body.code}`)}}};
     }),after: createAuthMiddleware(async ctx => {
+      if(ctx.context.returned instanceof APIError)return;
       const current=ctx.context.newSession;
       if (current && current.user.twoFactorEnabled && ['/sign-in/email','/two-factor/verify-otp','/two-factor/verify-totp','/two-factor/verify-backup-code'].includes(ctx.path)) {
         await store.markMfaSession(current.session.id,current.user.id);
       }
-      if (current && ['/two-factor/enable','/two-factor/disable'].includes(ctx.path)) await store.revokeRecoverySessions(current.user.id,'mfa.changed');
+      if(current&&['/sign-in/email','/two-factor/verify-otp','/two-factor/verify-totp','/two-factor/verify-backup-code'].includes(ctx.path))await store.securityEvent(current.user.id,'session.created');
+      const changed=current??ctx.context.session;
+      if (changed && ['/two-factor/enable','/two-factor/disable'].includes(ctx.path)) await store.revokeRecoverySessions(changed.user.id,'mfa.changed');
     }) },
     plugins: [
       phoneNumber({
@@ -71,6 +74,9 @@ export function createIdentity(db: Kysely<unknown>, store: IdentityStore, delive
         phoneNumberValidator: value => /^\+[1-9]\d{7,14}$/.test(value),
         async sendOTP({ phoneNumber: to, code }) {
           await delivery.sms({ to, text: `Kavosh One verification code: ${code}. Expires in 5 minutes. Never share it.` });
+        },async callbackOnVerification({user}) {
+          await store.query('DELETE FROM identity.phone_challenges WHERE user_id=$1',[user.id]);
+          await store.securityEvent(user.id,'phone.verified');
         }
       }),
       twoFactor({

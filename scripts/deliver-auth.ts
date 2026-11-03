@@ -24,7 +24,11 @@ try {
     FROM pg_roles r WHERE r.rolname=current_user`);
   if(!result.rows[0]?.safe)throw new Error('UNSAFE_DELIVERY_ROLE');
   const delivery=providerDelivery();
-  while(!stopping){if(!await deliverOne(store,key,delivery))await setTimeout(1000);}
+  let sweptAt=0;
+  while(!stopping){
+    if(Date.now()-sweptAt>=3600000){await store.query('SELECT identity.cleanup_expired_auth()');sweptAt=Date.now();}
+    if(!await deliverOne(store,key,delivery))await setTimeout(1000);
+  }
 } catch {
   console.error('Auth delivery worker stopped; check configuration without logging credentials.');process.exitCode=1;
 } finally {await db.destroy();}

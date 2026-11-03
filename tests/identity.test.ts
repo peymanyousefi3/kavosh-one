@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { randomBytes,randomUUID } from 'node:crypto';
+import { randomBytes,randomUUID,createHmac } from 'node:crypto';
 import { readFile,readdir } from 'node:fs/promises';
 import { testDatabase } from './database.ts';
 import { createIdentity,type Delivery } from '../src/auth/config.ts';
 import { IdentityStore } from '../src/auth/store.ts';
-import { identityGateway,verifiedProxyIp } from '../src/auth/gateway.ts';
+import { identityGateway,verifiedProxyIp,humanResolver } from '../src/auth/gateway.ts';
 import { queuedDelivery,deliverOne,providerDelivery } from '../src/auth/delivery.ts';
 import { createApi } from '../src/core/api.ts';
 import type { Database } from '../src/core/database.ts';
@@ -18,6 +18,18 @@ const origin='https://academy.example';
 const config={origin,production:false,secret:'synthetic-test-identity-secret-not-for-production-000000'};
 const password='Synthetic correct horse battery 123!';
 type Jar=Map<string,string>;
+// Independent RFC 6238 SHA-1 calculation, only for testing authenticator interop.
+function totp(secret:string,time=Date.now()) {
+  let bits=0,value=0;const bytes:number[]=[];
+  for(const character of secret.replaceAll('=','')) {
+    const n='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'.indexOf(character.toUpperCase());assert.ok(n>=0);
+    value=(value<<5)|n;bits+=5;
+    if(bits>=8){bits-=8;bytes.push((value>>>bits)&255);}
+  }
+  const counter=Buffer.alloc(8);counter.writeBigUInt64BE(BigInt(Math.floor(time/30000)));
+  const digest=createHmac('sha1',Buffer.from(bytes)).update(counter).digest(),offset=digest.at(-1)!&15;
+  return String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');
+}
 async function fixture() {
   const pg=await testDatabase();
   const directory=new URL('../db/migrations/',import.meta.url);
@@ -85,19 +97,22 @@ async function fixture() {
   }
   const database:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
     async query<Row>(sql:string,params?:unknown[]){const result=await pg.query<Row>(sql,params);return {rows:result.rows,rowCount:result.affectedRows};},release(){}};}};
-  const api=createApi(database,async request=>{
-    if(request.method!=='GET'&&request.headers.get('origin')!==origin)throw new Error('invalid origin');
-    const session=await auth.api.getSession({headers:request.headers,query:{disableCookieCache:true}});
-    return session?{userId:session.user.id,sessionId:session.session.id,academyId:request.headers.get('x-academy-id')!}:null;
-  });
-  async function business(user:Awaited<ReturnType<typeof invitation>>,path='hubs',input?:unknown,academy=user.academy){
+  const api=createApi(database,humanResolver(auth,store,config));
+  async function business(user:Awaited<ReturnType<typeof invitation>>,path='hubs',input?:unknown,academy=user.academy,headers:Record<string,string>={}){
     try {return await api(new Request(origin+'/api/v1/'+path,{method:input===undefined?'GET':'POST',headers:{origin,
-      cookie:[...user.jar].map(([k,v])=>k+'='+v).join('; '),'x-academy-id':academy,'content-type':'application/json','idempotency-key':randomUUID()},
+      cookie:[...user.jar].map(([k,v])=>k+'='+v).join('; '),'x-academy-id':academy,'content-type':'application/json','idempotency-key':randomUUID(),...headers},
       ...(input===undefined?{}:{body:JSON.stringify(input)})}),path);}
     finally{if(!pg.runtime)await pg.exec('SET ROLE kavosh_identity');}
   }
   async function close(){await db.destroy();if(pg.runtime)await pg.close();}
-  return {pg,db,store,admin,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,close,gateway,api};
+  async function worker<T>(fn:(worker:IdentityStore)=>Promise<T>) {
+    return admin(async()=>{
+      await pg.exec('SET ROLE kavosh_delivery');
+      const worker=new IdentityStore(pg.runtime?pg.identityDb('kavosh_delivery'):db,config.secret);
+      try{return await fn(worker);}finally{if(pg.runtime)await worker.db.destroy();await pg.exec('RESET ROLE');}
+    });
+  }
+  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,close,gateway,api};
 }
 
 test('human identity: real library authentication and protected business access',async t=>{
@@ -150,6 +165,9 @@ test('human identity: real library authentication and protected business access'
       const created=await f.business(master,'hubs',{name:'Synthetic hub',city:'Toronto',countryCode:'CA'});
       assert.equal(created.status,201);
       assert.equal((await f.business(master,'hubs',undefined,randomUUID())).status,401);
+      assert.equal((await f.business(master,'hubs',{name:'Blocked',city:'Toronto',countryCode:'CA'},master.academy,{origin:'https://attacker.example'})).status,403);
+      assert.equal((await f.business(master,'hubs',undefined,master.academy,{cookie:'__Secure-kavosh.session_token=forged-cookie'})).status,401);
+      assert.equal((await f.business(master,'hubs',undefined,master.academy,{authorization:'Bearer invalid'})).status,401,'invalid bearer must not fall back to a valid cookie');
       await f.signin(regular);
       assert.equal((await f.request('/accept-invitation',{invitation:regular.token},regular.jar)).response.status,200);
       assert.equal((await f.business(regular)).status,403,'membership alone grants no roles');
@@ -233,6 +251,28 @@ test('human identity: real library authentication and protected business access'
       assert.equal((await f.request('/change-password',{currentPassword:password,newPassword:'Synthetic changed password 789!'},regular.jar)).response.status,200);
       assert.equal((await f.request('/get-session',undefined,regular.jar)).body,null);
     });
+    await t.test('authenticator app enrollment interoperates with RFC 6238 and failure budget blocks further codes',async()=>{
+      assert.equal(totp('GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',59000),'287082');
+      const currentPassword='Synthetic changed password 789!';
+      await f.signin(regular,regular.jar,currentPassword);
+      assert.equal((await f.request('/two-factor/enable',{password:'incorrect password',method:'totp'},regular.jar)).response.status,400);
+      assert.ok((await f.request('/get-session',undefined,regular.jar)).body);
+      const enrollment=await f.request('/two-factor/enable',{password:currentPassword,method:'totp'},regular.jar);
+      assert.equal(enrollment.response.status,200);assert.equal(enrollment.body.backupCodes.length,10);
+      const secret=new URL(enrollment.body.totpURI).searchParams.get('secret')!;
+      await f.signin(regular,regular.jar,currentPassword);
+      assert.equal((await f.request('/two-factor/verify-totp',{code:totp(secret)},regular.jar)).response.status,200);
+      const session=await f.request('/get-session',undefined,regular.jar);
+      assert.ok(await f.store.sessionReady(regular.id,session.body.session.id));
+      await f.request('/sign-out',{},regular.jar);
+      assert.equal((await f.signin(regular,regular.jar,currentPassword)).body.twoFactorRedirect,true);
+      assert.equal((await f.request('/two-factor/send-otp',{},regular.jar)).response.status,200);
+      const correct=f.otp(regular),wrong=correct==='000000'?'111111':'000000';
+      for(let n=0;n<5;n++)assert.ok([400,401,403].includes((await f.request('/two-factor/verify-otp',{code:wrong},regular.jar)).response.status));
+      const blocked=await f.request('/two-factor/verify-otp',{code:correct},regular.jar);
+      assert.ok(blocked.response.status>=400&&blocked.response.status<500,'exhausted MFA must reject even the correct code; status='+blocked.response.status);
+      assert.equal((await f.request('/get-session',undefined,regular.jar)).body,null);
+    });
     await t.test('identity and business credentials are separated at database boundary',async()=>{
       await assert.rejects(f.store.query('SELECT * FROM public.people'),/permission denied/);
       await assert.rejects(f.store.query('SELECT * FROM auth_private.credentials'),/permission denied/);
@@ -249,26 +289,42 @@ test('human identity: real library authentication and protected business access'
         assert.equal(rows.length,1);assert.ok(!rows[0].payload.includes('123456'));assert.ok(!rows[0].payload.includes(regular.phone));
       });
       await assert.rejects(f.store.query('SELECT * FROM identity.delivery_outbox'),/permission denied/);
-      await f.admin(async()=>{
-        await f.pg.exec('SET ROLE kavosh_delivery');
-        try {
-          // PGlite shares its connection; PostgreSQL needs an explicit worker connection.
-          const worker=new IdentityStore(f.pg.runtime?f.pg.identityDb('kavosh_delivery'):f.db,config.secret);
-          try{
-            assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){throw new Error('synthetic transport failure');}}),true);
-            assert.equal(await deliverOne(worker,config.secret,f.delivery),false,'retry must back off');
-          }finally{if(f.pg.runtime)await worker.db.destroy();}
-        }finally{await f.pg.exec('RESET ROLE');}
-        await f.pg.query("UPDATE identity.delivery_outbox SET available_at=now(),locked_until=NULL");
+      await f.worker(async worker=>{
+        await assert.rejects(worker.query('SELECT * FROM identity."user"'),/permission denied/);
+        assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){throw new Error('synthetic transport failure');}}),true);
+        assert.equal(await deliverOne(worker,config.secret,f.delivery),false,'retry must back off');
       });
-      // Test worker delivery with a dedicated least-privilege session below.
+      await f.admin(()=>f.pg.query("UPDATE identity.delivery_outbox SET available_at=now(),locked_until=NULL"));
+      await f.worker(async worker=>{assert.equal(await deliverOne(worker,config.secret,f.delivery),true);});
       await f.admin(async()=>{
-        await f.pg.exec('SET ROLE kavosh_delivery');
-        const worker=f.pg.runtime?f.pg.identityDb('kavosh_delivery'):f.db;
-        try{assert.equal(await deliverOne(new IdentityStore(worker,config.secret),config.secret,f.delivery),true);}
-        finally{if(f.pg.runtime)await worker.destroy();await f.pg.exec('RESET ROLE');}
         const row=(await f.pg.query<{payload:null;outcome:string}>('SELECT payload,outcome FROM identity.delivery_outbox')).rows[0];
         assert.equal(row.payload,null);assert.equal(row.outcome,'delivered');
+      });
+      await queued.sms({to:master.phone,text:'Synthetic expired code: 123456'});
+      await f.admin(()=>f.pg.query("UPDATE identity.delivery_outbox SET expires_at=now()-interval '1 minute' WHERE outcome IS NULL"));
+      await f.worker(async worker=>{assert.equal(await deliverOne(worker,config.secret,f.delivery),false);});
+      await f.admin(async()=>{
+        const row=(await f.pg.query<{payload:null;outcome:string}>("SELECT payload,outcome FROM identity.delivery_outbox WHERE outcome='expired'")).rows[0];
+        assert.equal(row.payload,null);assert.equal(row.outcome,'expired');
+      });
+      await queued.sms({to:master.phone,text:'Synthetic final failure: 123456'});
+      await f.admin(()=>f.pg.query('UPDATE identity.delivery_outbox SET attempts=2 WHERE outcome IS NULL'));
+      await f.worker(async worker=>{assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){throw new Error('synthetic final failure');}}),true);});
+      await f.admin(async()=>{
+        const row=(await f.pg.query<{payload:null;outcome:string}>("SELECT payload,outcome FROM identity.delivery_outbox WHERE outcome='failed'")).rows[0];
+        assert.equal(row.payload,null);assert.equal(row.outcome,'failed');
+      });
+    });
+    await t.test('expired auth cleanup removes challenges without deleting identities or audit history',async()=>{
+      await f.admin(async()=>{
+        await f.pg.query(`INSERT INTO identity.phone_challenges VALUES($1,'+16475559999',now()-interval '1 minute')`,[master.id]);
+        await f.pg.query(`INSERT INTO identity.auth_budgets VALUES('synthetic-stale-budget',now()-interval '3 days',1)`);
+        const before=(await f.pg.query<{count:string}>('SELECT count(*) FROM identity."user"')).rows[0].count;
+        await f.pg.exec('SET ROLE kavosh_delivery');await f.pg.query('SELECT identity.cleanup_expired_auth()');await f.pg.exec('RESET ROLE');
+        assert.equal((await f.pg.query('SELECT * FROM identity.phone_challenges')).rows.length,0);
+        assert.equal((await f.pg.query("SELECT * FROM identity.auth_budgets WHERE key='synthetic-stale-budget'")).rows.length,0);
+        assert.equal((await f.pg.query<{count:string}>('SELECT count(*) FROM identity."user"')).rows[0].count,before);
+        assert.ok((await f.pg.query('SELECT * FROM public.audit_events')).rows.length>0);
       });
     });
     await t.test('per-account throttling stops brute force without relying on forwarded IP headers',async()=>{

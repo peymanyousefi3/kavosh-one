@@ -4,10 +4,9 @@ import { Kysely, PostgresDialect } from 'kysely';
 import { z } from 'zod';
 import { createIdentity } from '../auth/config.ts';
 import { IdentityStore } from '../auth/store.ts';
-import { identityGateway, verifiedProxyIp } from '../auth/gateway.ts';
+import { identityGateway, humanResolver } from '../auth/gateway.ts';
 import { queuedDelivery } from '../auth/delivery.ts';
 import { postgresOptions } from '../core/postgres-config.ts';
-import { ApiError } from '../core/policy.ts';
 import type { HumanSession } from '../core/api.ts';
 
 function initialize() {
@@ -23,16 +22,10 @@ function initialize() {
   })})}).withSchema('identity');
   const store=new IdentityStore(db,config.secret);
   const auth=createIdentity(db,store,queuedDelivery(store,config.secret),config);
-  return {auth,store,config,handle:identityGateway(auth,store,config)};
+  return {auth,store,config,handle:identityGateway(auth,store,config),resolve:humanResolver(auth,store,config)};
 }
 let instance:ReturnType<typeof initialize>|undefined;
 export function getIdentity(){return instance??=initialize();}
 export async function resolveHuman(request:Request):Promise<HumanSession|null> {
-  const {auth,store,config}=getIdentity();
-  verifiedProxyIp(request,config);
-  if(!['GET','HEAD'].includes(request.method)&&request.headers.get('origin')!==config.origin)throw new ApiError(403,'ORIGIN_REJECTED');
-  const academyId=z.string().uuid().parse(request.headers.get('x-academy-id'));
-  await store.safe();
-  const result=await auth.api.getSession({headers:request.headers,query:{disableCookieCache:true}});
-  return result?{userId:result.user.id,sessionId:result.session.id,academyId}:null;
+  return getIdentity().resolve(request);
 }

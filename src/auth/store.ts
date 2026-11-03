@@ -34,6 +34,7 @@ export class IdentityStore {
   }
   async setRequiredMfa(userId:string) { await this.query('UPDATE identity."user" SET "mfaRequired"=true WHERE id=$1',[userId]); }
   async markMfaSession(sessionId:string,userId:string) { await this.query('UPDATE identity.session SET "mfaVerified"=true WHERE id=$1 AND "userId"=$2',[sessionId,userId]); }
+  async securityEvent(userId:string,event:string) {await this.query('INSERT INTO identity.security_events(user_id,event) VALUES($1,$2)',[userId,event]);}
   async hasRecovery(userId:string) { return (await this.query('SELECT 1 FROM identity."twoFactor" WHERE "userId"=$1',[userId])).rows.length>0; }
   async verifiedPhone(userId:string) {
     return (await this.query<{ phoneNumber:string }>('SELECT "phoneNumber" FROM identity."user" WHERE id=$1 AND "emailVerified" AND "phoneNumberVerified"',[userId])).rows[0]?.phoneNumber;
