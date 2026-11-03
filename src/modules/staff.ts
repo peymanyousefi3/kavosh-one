@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
 import { permissionScope } from '../core/approvals.ts';
-import { ApiError,scopeAllowsRef } from '../core/policy.ts';
+import { ApiError,scopeAllowsRef,scopeNonempty } from '../core/policy.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { classRow } from './classes.ts';
 
@@ -18,6 +18,7 @@ const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(100).defau
 interface StaffRow {id:string;class_id:string;person_id:string;role:'teacher'|'ta'|'volunteer';starts_on:string;ends_on:string|null;active:boolean;version:number}
 const fields='id,class_id,person_id,role,starts_on::text,ends_on::text,active,version,created_at';
 async function assignment(ctx:ApiContext,id:string,edit=false) {
+  if(!scopeNonempty(permissionScope(ctx,edit?'staff.edit':'staff.view')))throw new ApiError(403,'FORBIDDEN');
   const row=(await ctx.db.query<StaffRow>('SELECT '+fields+' FROM public.class_staff WHERE id=$1',[id])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');
   const c=await classRow(ctx,row.class_id,edit?'staff.edit':'staff.view',edit);

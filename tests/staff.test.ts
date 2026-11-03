@@ -46,6 +46,7 @@ check('native staff ranges reject duplicate/overlapping roles but allow adjacent
 check('staff rights are separate from class editing and selected-class grants expose no neighbouring roster or personal contacts',async f=>{
   const added=await f.add();assert.equal(added.response.status,201);const id=added.body.data.id;
   assert.equal((await f.request('classes/'+f.first.id+'/staff',undefined,'manager')).response.status,403);
+  for(const target of [id,randomUUID()])assert.equal((await f.request('class-staff/'+target+'/history',undefined,'manager')).response.status,403,'actors without roster rights cannot distinguish assignment existence');
   const role=await f.request('roles',{name:'Selected roster editor',permissions:[{capability:'staff.view',effect:'allow'},{capability:'staff.edit',effect:'allow'}]});assert.equal(role.response.status,201);
   const current=await f.request('people/'+f.actors.manager.person+'/access');
   assert.equal((await f.request('people/'+f.actors.manager.person+'/access',{expectedVersion:current.body.data.version,assignments:[{roleId:role.body.data.id,allHubs:false,classIds:[f.first.id]}]})).response.status,200);
