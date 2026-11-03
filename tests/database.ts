@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { btree_gist } from '@electric-sql/pglite/contrib/btree_gist';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../src/core/database.ts';
@@ -14,7 +15,7 @@ export interface TestDatabase {
 export async function testDatabase(): Promise<TestDatabase> {
   const connectionString = process.env.TEST_DATABASE_URL;
   if (!connectionString) {
-    const engine=new PGlite();
+    const engine=new PGlite({extensions:{btree_gist}});
     return Object.assign(engine,{identityDb:()=>new Kysely<unknown>({dialect:new PGliteDialect({pglite:engine})}).withSchema('identity')});
   }
   const url = new URL(connectionString);

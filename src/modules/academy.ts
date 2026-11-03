@@ -151,6 +151,7 @@ async function saveHub(ctx:ApiContext,id:string|null,raw:unknown):Promise<Reply>
       city=location.name;country=location.country_code;
     }else if(!city||!country)throw new ApiError(400,'LOCATION_REQUIRED');
     const actual=id??randomUUID(),point=body.coordinates as {latitude:number;longitude:number}|null;
+    if(id&&body.active===false&&(await ctx.db.query('SELECT 1 FROM public.classes WHERE hub_id=$1 AND active LIMIT 1',[id])).rows.length)throw new ApiError(409,'ACTIVE_CLASSES_EXIST');
     const params=[ctx.credential.academy_id,actual,body.name,city,country,body.cityId??null,body.timeZone??null,body.currency??null,
       body.contactEmail??null,body.contactPhone??null,body.website??null,JSON.stringify(body.address??{}),point?.latitude??null,point?.longitude??null,JSON.stringify(body.translations),body.active??true];
     if(id) {

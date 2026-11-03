@@ -181,6 +181,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       else if (error instanceof z.ZodError) { status = 400; code = 'INVALID_INPUT'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23503') { status = 400; code = 'INVALID_REFERENCE'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23505') { status = 409; code = 'CONFLICT'; }
+      else if (error && typeof error === 'object' && 'code' in error && error.code === '23P01') { status = 409; code = 'SESSION_OVERLAP'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23514') { status = 400; code = 'INVALID_INPUT'; }
       return Response.json({ error: { code, requestId } }, { status, headers: { ...headers, ...(status === 429 ? { 'Retry-After': '60' } : {}) } });
     } finally { db?.release(destroyConnection); }

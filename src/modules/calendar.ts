@@ -6,8 +6,9 @@ import { ApiError,requireScope } from '../core/policy.ts';
 
 const date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value=>{try{Temporal.PlainDate.from(value,{overflow:'reject'});return true;}catch{return false;}});
 const time=z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/);
-const local=z.string().regex(/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/).refine(value=>{try{Temporal.PlainDateTime.from(value,{overflow:'reject'});return true;}catch{return false;}});
-const disambiguation=z.enum(['reject','earlier','later']).default('reject');
+export const localDateTime=z.string().regex(/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d$/).refine(value=>{try{Temporal.PlainDateTime.from(value,{overflow:'reject'});return true;}catch{return false;}});
+const local=localDateTime;
+export const disambiguation=z.enum(['reject','earlier','later']).default('reject');
 const oneOff=z.object({start:local,end:local,disambiguation}).strict();
 const weekly=z.object({from:date,through:date,weekdays:z.array(z.number().int().min(1).max(7)).min(1).max(7),
   startTime:time,endTime:time,endDayOffset:z.number().int().min(0).max(1).default(0),everyWeeks:z.number().int().min(1).max(52).default(1),disambiguation}).strict();
