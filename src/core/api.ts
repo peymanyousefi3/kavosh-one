@@ -10,9 +10,11 @@ const name = z.string().trim().min(1).max(200);
 const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
-type Reply = { status: number; body: unknown };
+export type Reply = { status: number; body: unknown };
+export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string }
+export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 
-async function jsonBody(request: Request) {
+export async function jsonBody(request: Request) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
   const reader = request.body?.getReader();
   if (!reader) throw new ApiError(400, 'INVALID_JSON');
@@ -30,21 +32,40 @@ async function jsonBody(request: Request) {
   } finally { reader.releaseLock(); }
 }
 
-async function loadGrants(db: Connection, personId: string): Promise<Grant[]> {
+export async function loadGrants(db: Connection, c:Credential): Promise<Grant[]> {
+  if(c.kind==='human' && (await db.query('SELECT 1 FROM public.academies WHERE master_person_id=$1',[c.person_id])).rows.length) {
+    return (await db.query<{name:Capability}>('SELECT name FROM public.capability_catalog')).rows.map(row=>({capability:row.name,effect:'allow',allHubs:true,hubIds:[]}));
+  }
   const result = await db.query<{ capability: Capability; effect: 'allow' | 'deny'; all_hubs: boolean; hub_ids: string[] }>(`
     SELECT p.capability,p.effect,a.all_hubs,
       ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id) AS hub_ids
     FROM public.role_assignments a JOIN public.role_permissions p
-      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1`, [personId]);
+      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1`, [c.person_id]);
   return result.rows.map(r => ({ capability: r.capability, effect: r.effect, allHubs: r.all_hubs, hubIds: r.hub_ids }));
 }
 
-async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
+export async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
   if(c.kind==='human') await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes)
     VALUES ($1,$2,$3,$4,'human',$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
   else await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,credential_id,request_id,action,entity_id,hub_id,changes)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
   await db.query(`INSERT INTO public.outbox_events (academy_id,id,event_type,entity_id,request_id) VALUES ($1,$2,$3,$4,$5)`, [c.academy_id, randomUUID(), action, entityId, requestId]);
+}
+
+export async function mutation(context:ApiContext,input:unknown,work:()=>Promise<Reply>):Promise<Reply> {
+  const {db,credential:c,request,path}=context;
+  if(new URL(request.url).search)throw new ApiError(400,'INVALID_QUERY');
+  const key=id.parse(request.headers.get('idempotency-key'));
+  const fingerprint=createHash('sha256').update(JSON.stringify([request.method,path,input])).digest('hex');
+  const inserted=await db.query(`INSERT INTO public.request_keys(academy_id,credential_id,key,request_hash) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING key`,[c.academy_id,c.token_id,key,fingerprint]);
+  if(!inserted.rows.length) {
+    const prior=(await db.query<{request_hash:string;status_code:number;response:unknown}>('SELECT request_hash,status_code,response FROM public.request_keys WHERE credential_id=$1 AND key=$2 FOR UPDATE',[c.token_id,key])).rows[0];
+    if(!prior||prior.request_hash!==fingerprint)throw new ApiError(409,'IDEMPOTENCY_CONFLICT');
+    return {status:prior.status_code,body:prior.response};
+  }
+  const reply=await work();
+  await db.query('UPDATE public.request_keys SET status_code=$3,response=$4::jsonb WHERE credential_id=$1 AND key=$2',[c.token_id,key,reply.status,JSON.stringify(reply.body)]);
+  return reply;
 }
 
 function permit(scope: Scope) {
@@ -71,8 +92,9 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
     const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : path === 'people'
       ? 'id,name,email,hub_id,status,created_at' : 'id,actor_id,request_id,action,entity_id,hub_id,changes,created_at';
     const rows = await db.query(`SELECT ${fields} FROM public.${table}
-      WHERE ($1::boolean OR ${hubColumn}=ANY($2::uuid[])) AND ($3::uuid IS NULL OR id>$3::uuid)
-      ORDER BY id LIMIT $4`, [scope.all, scope.hubs, after ?? null, limit + 1]);
+      WHERE (($1::boolean AND (cardinality($5::uuid[])=0 OR ${hubColumn} IS NOT NULL)) OR ${hubColumn}=ANY($2::uuid[]))
+      AND NOT coalesce(${hubColumn}=ANY($5::uuid[]),false) AND ($3::uuid IS NULL OR id>$3::uuid)
+      ORDER BY id LIMIT $4`, [scope.all, scope.hubs, after ?? null, limit + 1,scope.excludedHubs??[]]);
     const more = rows.rows.length > limit;
     const data = rows.rows.slice(0, limit);
     return { status: 200, body: { data, nextCursor: more ? data.at(-1)?.id : null } };
@@ -92,17 +114,7 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
     if (revokeId === c.token_id) throw new ApiError(409, 'SELF_REVOCATION_REQUIRES_ANOTHER_CREDENTIAL');
     input = {};
   }
-  const key = id.parse(request.headers.get('idempotency-key'));
-  const fingerprint = createHash('sha256').update(JSON.stringify([request.method, path, input])).digest('hex');
-  const inserted = await db.query(`INSERT INTO public.request_keys (academy_id,credential_id,key,request_hash) VALUES ($1,$2,$3,$4)
-    ON CONFLICT DO NOTHING RETURNING key`, [c.academy_id, c.token_id, key, fingerprint]);
-  if (!inserted.rows.length) {
-    const previous = await db.query<{ request_hash: string; status_code: number; response: unknown }>(
-      `SELECT request_hash,status_code,response FROM public.request_keys WHERE credential_id=$1 AND key=$2 FOR UPDATE`, [c.token_id, key]);
-    const row = previous.rows[0];
-    if (!row || row.request_hash !== fingerprint) throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
-    return { status: row.status_code, body: row.response };
-  }
+  return mutation({db,credential:c,grants,request,path,requestId},input,async()=>{
   let reply: Reply;
   if (path === 'hubs') {
     const value = hubInput.parse(input); const entityId = randomUUID();
@@ -120,12 +132,12 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
     await record(db, c, requestId, 'credential.revoked', revokeId!, null, { revoked: true });
     reply = { status: 200, body: { revoked: true } };
   }
-  await db.query(`UPDATE public.request_keys SET status_code=$3,response=$4::jsonb WHERE credential_id=$1 AND key=$2`, [c.token_id, key, reply.status, JSON.stringify(reply.body)]);
   return reply;
+  });
 }
 
 export interface HumanSession { userId:string; sessionId:string; academyId:string }
-export function createApi(database: Database, resolveHuman?: (request:Request)=>Promise<HumanSession|null>) {
+export function createApi(database: Database, resolveHuman?: (request:Request)=>Promise<HumanSession|null>,extension?:ApiExtension) {
   return async (request: Request, path: string) => {
     const requestId = randomUUID(); let db: Connection | undefined; let transaction = false; let destroyConnection = false;
     const headers = { 'Cache-Control': 'no-store', 'X-Request-Id': requestId, 'X-Content-Type-Options': 'nosniff' };
@@ -157,7 +169,8 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (status === 'read_only' && request.method !== 'GET' && !securityRevocation) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
-      const reply = await operation(db, c, await loadGrants(db, c.person_id), request, path, requestId);
+      const grants=await loadGrants(db,c);
+      const reply = await extension?.({db,credential:c,grants,request,path,requestId}) ?? await operation(db,c,grants,request,path,requestId);
       await db.query('COMMIT'); transaction = false;
       return Response.json(reply.body, { status: reply.status, headers });
     } catch (error) {
@@ -166,6 +179,8 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (error instanceof ApiError) { status = error.status; code = error.code; }
       else if (error instanceof z.ZodError) { status = 400; code = 'INVALID_INPUT'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23503') { status = 400; code = 'INVALID_REFERENCE'; }
+      else if (error && typeof error === 'object' && 'code' in error && error.code === '23505') { status = 409; code = 'CONFLICT'; }
+      else if (error && typeof error === 'object' && 'code' in error && error.code === '23514') { status = 400; code = 'INVALID_INPUT'; }
       return Response.json({ error: { code, requestId } }, { status, headers: { ...headers, ...(status === 429 ? { 'Retry-After': '60' } : {}) } });
     } finally { db?.release(destroyConnection); }
   };

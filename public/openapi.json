@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -1454,6 +1454,712 @@
           },
           "302": {
             "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/capabilities": {
+      "get": {
+        "summary": "Registered feature rights and labels; academy-wide roles.view required",
+        "parameters": [],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/access": {
+      "get": {
+        "summary": "Current actor effective feature/data scopes and master status",
+        "parameters": [],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/roles": {
+      "get": {
+        "summary": "Paginated academy role templates (roles.view)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/after"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create role template; non-master waits for upper approval",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "permissions": {
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "capability": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "allow",
+                            "deny"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "capability",
+                        "effect"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "permissions"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/roles/{id}": {
+      "get": {
+        "summary": "Read a role template (roles.view)",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/roles/{id}/update": {
+      "post": {
+        "summary": "Version-checked role change, without self-escalation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "permissions": {
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "capability": {
+                          "type": "string",
+                          "maxLength": 100,
+                          "pattern": "^[a-z][a-z0-9_-]*\\.[a-z][a-z0-9_-]*$"
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "allow",
+                            "deny"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "capability",
+                        "effect"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "name",
+                  "permissions",
+                  "expectedVersion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/roles/{id}/duplicate": {
+      "post": {
+        "summary": "Duplicate and customize a reusable role template",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 150
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/access": {
+      "get": {
+        "summary": "View permitted access-assignment segments; outside-scope data redacted",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Replace subordinate role assignments within delegation limits",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "assignments": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "roleId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "allHubs": {
+                          "type": "boolean"
+                        },
+                        "hubIds": {
+                          "maxItems": 100,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        }
+                      },
+                      "required": [
+                        "roleId",
+                        "allHubs",
+                        "hubIds"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "assignments"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/supervisor": {
+      "post": {
+        "summary": "Master-only, version-checked, cycle-safe supervisor change",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "supervisorId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "supervisorId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "summary": "Own and authorized subordinate cases, filtered before pagination",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/limit"
+          },
+          {
+            "$ref": "#/components/parameters/after"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/{id}": {
+      "get": {
+        "summary": "Read exact payload, reason, review history and stale decision code",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/{id}/decide": {
+      "post": {
+        "summary": "Human upper reviewer accepts/rejects exact unchanged proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "reject"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "decision",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/approvals/{id}/withdraw": {
+      "post": {
+        "summary": "Requester withdraws a still-pending proposal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created by self-approved master"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
           },
           "default": {
             "$ref": "#/components/responses/error"

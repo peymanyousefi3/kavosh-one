@@ -4,13 +4,15 @@ Private source repository for the multi-academy management platform for Kavosh A
 
 ## Status
 
-The owner approved implementation on 3 November 2026. This branch adds human authentication to the API foundation. It is not a production-ready academy or accounting platform. There is no login interface yet; visual work remains a separate owner checkpoint.
+The owner authorized continuous backend implementation on 3 November 2026: implementation, tests, review and fixes proceed across milestones without another approval request. Visual UI/UX work still requires owner input. This remains an incomplete backend, not a production-ready academy or accounting platform. `backend-work.json` tracks the full approved scope and remaining dependencies; a passing milestone is not the end of the work.
 
 Implemented: PostgreSQL migrations, tenant row policies and composite references, immutable academy-master identity, multi-role permissions with deny precedence, expiring/scoped bot credentials, shared rate limits, hub/pending-person creation and listing, audit history, credential revocation, bounded JSON/pagination, and transactional audit/outbox/idempotency records.
 
 Human identity uses pinned Better Auth: invitation-only email/password signup, email verification, signed-in phone verification, master new-device MFA, optional MFA for others, trusted devices, encrypted single-use recovery codes, password recovery and session management. Unverified accounts cannot use academy APIs. The encrypted auth-message queue has a separate least-privilege delivery worker with SMTP/Twilio adapters; live providers are **not configured or delivery-verified**. The separate business-event outbox does not have an automation worker yet.
 
-Role-management screens, guardian-linked child contact verification, manual identity-recovery review, approval workflows, accounting, R2 uploads, BoldSign and other planned product modules are not implemented by this milestone. No mock verification or public activation bypass exists.
+Role-template create/read/update/duplicate, scoped staff assignments, effective-access inspection, supervisor hierarchy and exact-payload approval APIs are implemented. Masters self-approve; other actors require a permitted upper human reviewer. Expired/revoked bot credentials, changed authority and target versions invalidate pending proposals. Withdraw/reject history, reasons, audit and atomic rollback are preserved. Scoped denials exclude only affected hubs. Templates are academy-wide policy configuration; person-assignment views redact outside-scope segments.
+
+Role-management screens, guardian-linked child contact verification, manual identity-recovery review, approvals for later domain modules, accounting, R2 uploads, BoldSign and other planned modules remain in progress/planned. No mock verification or public activation bypass exists.
 
 The separate `kavosh-academy` repository contains the existing public-facing website and learning lab. Work here must not overwrite or deploy that project.
 

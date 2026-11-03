@@ -1,9 +1,10 @@
 import { readFile,writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { schemas,getPaths } from '../src/auth/gateway.ts';
+import { administrationContract } from '../src/modules/administration.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.2.0';
+api.info.version='0.3.0';
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
 api.components.securitySchemes.humanSession={type:'apiKey',in:'cookie',name:'__Secure-kavosh.session_token',description:'Opaque HttpOnly signed cookie set by login/MFA, never read or stored by frontend JavaScript. Local HTTP development uses kavosh.session_token.'};
@@ -20,4 +21,15 @@ for(const path of getPaths)api.paths['/api/auth'+path]={get:{security:[],summary
   ...(path==='/verify-email'?{parameters:[{name:'token',in:'query',required:true,schema:{type:'string',maxLength:2048}},{name:'callbackURL',in:'query',schema:{type:'string'},description:'Only same-origin redirects accepted by authentication library.'}]}:{}),
   description:'Session-backed endpoints do not expose session tokens. Memberships require completed verification and MFA when enabled. verify-email is a bounded signed verification link; it does not sign in.',
   responses:{'200':{description:'Result'},'302':{description:'Same-origin verification redirect'},default:{$ref:'#/components/responses/error'}}}};
+for(const endpoint of administrationContract) {
+  const parameters:Record<string,unknown>[]=[];
+  if(endpoint.path.includes('{id}'))parameters.push({name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}});
+  if(endpoint.method==='post')parameters.push({$ref:'#/components/parameters/idempotency'});
+  if('paged' in endpoint)parameters.push({$ref:'#/components/parameters/limit'},{$ref:'#/components/parameters/after'});
+  const operation={summary:endpoint.summary,parameters,
+    description:'Administrative backend. Explicit permissions and record scope apply. Non-master writes create exact-payload proposals; only a permitted upper human reviewer can apply. Changed targets/authority invalidate approval. Templates are academy configuration, while person assignments and review cases are scoped. No UI is implemented.',
+    ...('schema' in endpoint?{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(endpoint.schema,{io:'input'})}}}}:{}),
+    responses:{'200':{description:'Current data or applied change'},'201':{description:'Created by self-approved master'},'202':{description:'Pending upper approval; domain change NOT applied'},default:{$ref:'#/components/responses/error'}}};
+  api.paths[endpoint.path]??={};api.paths[endpoint.path][endpoint.method]=operation;
+}
 await writeFile(file,JSON.stringify(api,null,2)+'\n');
