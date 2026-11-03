@@ -8,8 +8,10 @@ import { setTimeout } from 'node:timers/promises';
 
 if(process.env.MIGRATION_DATABASE_URL)throw new Error('MIGRATION_CREDENTIALS_FORBIDDEN_IN_WORKER');
 const key=z.string().min(32).parse(process.env.AUTH_SECRET);
-const db=new Kysely<unknown>({dialect:new PostgresDialect({pool:new pg.Pool({...postgresOptions(process.env.DELIVERY_DATABASE_URL),max:2,
-  connectionTimeoutMillis:3000,statement_timeout:5000,query_timeout:7000})})});
+const pool=new pg.Pool({...postgresOptions(process.env.DELIVERY_DATABASE_URL),max:2,
+  connectionTimeoutMillis:3000,statement_timeout:5000,query_timeout:7000});
+pool.on('error',()=>{console.error('delivery_database_pool_error');});
+const db=new Kysely<unknown>({dialect:new PostgresDialect({pool})});
 const store=new IdentityStore(db,key);
 let stopping=false;
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{stopping=true;});
