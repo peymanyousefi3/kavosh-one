@@ -1,0 +1,29 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+
+# Dependencies and build output
+node_modules/
+.next/
+dist/
+coverage/
+.wrangler/
+
+# Local data, uploads and exports
+data/
+uploads/
+backups/
+exports/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+.DS_Store
+
+# Generated local tooling
+__pycache__/
+*.tsbuildinfo
