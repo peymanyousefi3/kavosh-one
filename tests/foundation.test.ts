@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { readFile,readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { testDatabase } from './database.ts';
 import { createApi } from '../src/core/api.ts';
@@ -12,7 +12,8 @@ import { postgresOptions } from '../src/core/postgres-config.ts';
 async function fixture() {
   const pg = await testDatabase();
   try {
-  await pg.exec(await readFile(new URL('../db/migrations/001_foundation.sql', import.meta.url),'utf8'));
+  for(const file of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort())
+    await pg.exec(await readFile(new URL('../db/migrations/'+file,import.meta.url),'utf8'));
   const a = randomUUID(), b = randomUUID(), master = randomUUID(), masterB = randomUUID(), bot = randomUUID(), botB = randomUUID();
   const hub = randomUUID(), otherHub = randomUUID(), foreignHub = randomUUID(), role = randomUUID(), assignment = randomUUID();
   const credential = randomUUID(), credentialB = randomUUID(), secondCredential = randomUUID();
@@ -180,9 +181,14 @@ check('credential scope cannot widen the assigned role and vice versa', async f 
   await f.pg.query('INSERT INTO public.assignment_hubs VALUES ($1,$2,$3)',[f.a,f.assignment,f.otherHub]);
   assert.equal((await f.request('hubs')).status,403);
 });
-check('runtime cannot read hashes, modify audit, assign roles or issue credentials', async f => {
+check('current runtime cannot read identity secrets, rewrite audit or proposal payloads, issue credentials or cross tenant policy boundaries', async f => {
   await f.pg.exec('SET ROLE kavosh_runtime');
-  for (const sql of ['SELECT * FROM auth_private.credentials','DELETE FROM public.audit_events','UPDATE public.role_permissions SET effect=\'allow\'','INSERT INTO public.roles VALUES (gen_random_uuid(),gen_random_uuid(),\'Bad\')']) await assert.rejects(f.pg.exec(sql),/permission denied/);
+  for (const sql of ['SELECT * FROM auth_private.credentials','SELECT * FROM identity.account','DELETE FROM public.audit_events',"UPDATE public.approval_requests SET payload='{}'"])
+    await assert.rejects(f.pg.exec(sql),/permission denied/);
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
+  // Approved role editing intentionally has runtime write privileges since 006;
+  // tenant isolation and the API approval/delegation tests protect those writes.
+  await assert.rejects(f.pg.query("INSERT INTO public.roles(academy_id,id,name) VALUES($1,$2,'Wrong tenant')",[f.b,randomUUID()]),/row-level security/);
   await f.pg.exec('RESET ROLE');
 });
 check('read-only, provisioning, suspended and disabled actors fail closed', async f => {

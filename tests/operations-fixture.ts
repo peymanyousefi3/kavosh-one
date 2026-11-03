@@ -44,8 +44,13 @@ export async function operationsFixture() {
     }
     await pg.query("INSERT INTO auth_private.credentials(id,academy_id,person_id,token_hash,capabilities,all_hubs,expires_at) VALUES($1,$2,$3,$4,$5,true,now()+interval '1 day')",[credential,a,bot,hashToken(token),allCaps]);
     await pg.exec('COMMIT');
-    const database:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
+    const baseDatabase:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
       async query<Row>(sql:string,params?:unknown[]){const result=await pg.query<Row>(sql,params);return {rows:result.rows,rowCount:result.affectedRows};},release(){}};}};
+    const metrics={businessQueries:0};
+    const database:Database={async connect(){const connection=await baseDatabase.connect();return {
+      async query<Row>(sql:string,params?:unknown[]){metrics.businessQueries++;return connection.query<Row>(sql,params);},
+      release(destroy?:boolean){connection.release(destroy);}
+    };}};
     // The injected resolver is test-only. Real session cryptography is exercised
     // by identity.test.ts; SQL still validates these actual stored human sessions.
     const api=createApi(database,async request=>{
@@ -68,6 +73,6 @@ export async function operationsFixture() {
       const result=await request('roles',{...roleInput,name},as);assert.equal(result.response.status,202);return result.body.approval;
     }
     async function approve(id:string,as='master',expectedVersion=1){return request('approvals/'+id+'/decide',{expectedVersion,decision:'approve',reason:'Reviewed exact proposal and authority'},as);}
-    return {pg,a,b,hub,otherHub,foreignHub,actors,managerRole,policyRole,staffRole,systemRole,bot,credential,token,request,newRole,proposal,approve,roleInput};
+    return {pg,a,b,hub,otherHub,foreignHub,actors,managerRole,policyRole,staffRole,systemRole,bot,credential,token,request,newRole,proposal,approve,roleInput,metrics};
   }catch(error){await pg.close();throw error;}
 }

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Database, Connection } from './database.ts';
 import { assertRuntimeRole } from './database.ts';
-import { ApiError, requireScope, scopeFor, type Capability, type Credential, type Grant, type Scope } from './policy.ts';
+import { ApiError, requireScope, scopeFor,scopeNonempty, type Capability, type Credential, type Grant, type Scope,type ResourceRef } from './policy.ts';
 import { hashToken, parseBearer } from './tokens.ts';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
@@ -13,6 +13,7 @@ const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default
 export type Reply = { status: number; body: unknown };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive' }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
+export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'}] as const;
 
 export async function jsonBody(request: Request,maximumBytes=16_384) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
@@ -36,12 +37,18 @@ export async function loadGrants(db: Connection, c:Credential): Promise<Grant[]>
   if(c.kind==='human' && (await db.query('SELECT 1 FROM public.academies WHERE master_person_id=$1',[c.person_id])).rows.length) {
     return (await db.query<{name:Capability}>('SELECT name FROM public.capability_catalog')).rows.map(row=>({capability:row.name,effect:'allow',allHubs:true,hubIds:[]}));
   }
-  const result = await db.query<{ capability: Capability; effect: 'allow' | 'deny'; all_hubs: boolean; hub_ids: string[] }>(`
-    SELECT p.capability,p.effect,a.all_hubs,
-      ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id) AS hub_ids
+  const result = await db.query<{ permissions:{capability:Capability;effect:'allow'|'deny'}[]; all_hubs: boolean; hub_ids: string[];class_refs:ResourceRef[];person_refs:ResourceRef[] }>(`
+    SELECT jsonb_agg(jsonb_build_object('capability',p.capability,'effect',p.effect) ORDER BY p.capability) AS permissions,a.all_hubs,
+      ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id) AS hub_ids,
+      coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'hubId',c.hub_id) ORDER BY c.id) FROM public.assignment_classes x
+        JOIN public.classes c ON c.academy_id=x.academy_id AND c.id=x.class_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS class_refs,
+      coalesce((SELECT jsonb_agg(jsonb_build_object('id',v.id,'hubId',v.hub_id) ORDER BY v.id) FROM public.assignment_people x
+        JOIN public.people v ON v.academy_id=x.academy_id AND v.id=x.person_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS person_refs
     FROM public.role_assignments a JOIN public.role_permissions p
-      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1`, [c.person_id]);
-  return result.rows.map(r => ({ capability: r.capability, effect: r.effect, allHubs: r.all_hubs, hubIds: r.hub_ids }));
+      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1 GROUP BY a.academy_id,a.id`, [c.person_id]);
+  // Read each assignment's selectors once, not once per feature permission.
+  return result.rows.flatMap(r=>r.permissions.map(p=>({ capability:p.capability,effect:p.effect,allHubs:r.all_hubs,hubIds:r.hub_ids,
+    ...(r.class_refs.length?{classRefs:r.class_refs}:{}),...(r.person_refs.length?{personRefs:r.person_refs}:{}) })));
 }
 
 export async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
@@ -69,15 +76,16 @@ export async function mutation(context:ApiContext,input:unknown,work:()=>Promise
 }
 
 function permit(scope: Scope) {
-  if (!scope.all && scope.hubs.length === 0) throw new ApiError(403, 'FORBIDDEN');
+  if (!scopeNonempty(scope)) throw new ApiError(403, 'FORBIDDEN');
 }
 
 async function operation(db: Connection, c: Credential, grants: Grant[], request: Request, path: string, requestId: string): Promise<Reply> {
   const url = new URL(request.url);
   const isRead = request.method === 'GET';
+  const personPath=/^people\/([^/]+)$/.exec(path),personId=personPath&&isRead?id.parse(personPath[1]):null;
   let capability: Capability;
   if (path === 'hubs') capability = isRead ? 'hubs.view' : 'hubs.edit';
-  else if (path === 'people') capability = isRead ? 'people.view' : 'people.edit';
+  else if (path === 'people'||personId) capability = isRead ? 'people.view' : 'people.edit';
   else if (path === 'audit-events' && isRead) capability = 'audit.view';
   else if (/^credentials\/[^/]+\/revoke$/.test(path) && request.method === 'POST') capability = 'credentials.revoke';
   else throw new ApiError(404, 'NOT_FOUND');
@@ -85,16 +93,18 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
   const scope = scopeFor(c, grants, capability);
   permit(scope);
   if (isRead) {
-    const { limit, after } = paging.parse(Object.fromEntries(url.searchParams));
+    const { limit, after } = personId?(z.object({}).strict().parse(Object.fromEntries(url.searchParams)),{limit:1,after:undefined}):paging.parse(Object.fromEntries(url.searchParams));
     // Identifiers are constants selected here, never request-controlled SQL.
-    const table = path === 'hubs' ? 'hubs' : path === 'people' ? 'people' : 'audit_events';
+    const table = path === 'hubs' ? 'hubs' : path === 'people'||personId ? 'people' : 'audit_events';
     const hubColumn = path === 'hubs' ? 'id' : 'hub_id';
-    const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : path === 'people'
+    const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : table === 'people'
       ? 'id,name,email,hub_id,status,created_at' : 'id,actor_id,request_id,action,entity_id,hub_id,changes,created_at';
     const rows = await db.query(`SELECT ${fields} FROM public.${table}
-      WHERE (($1::boolean AND (cardinality($5::uuid[])=0 OR ${hubColumn} IS NOT NULL)) OR ${hubColumn}=ANY($2::uuid[]))
-      AND NOT coalesce(${hubColumn}=ANY($5::uuid[]),false) AND ($3::uuid IS NULL OR id>$3::uuid)
-      ORDER BY id LIMIT $4`, [scope.all, scope.hubs, after ?? null, limit + 1,scope.excludedHubs??[]]);
+      WHERE (($1::boolean AND (cardinality($5::uuid[])=0 OR ${hubColumn} IS NOT NULL)) OR ${hubColumn}=ANY($2::uuid[]) OR id=ANY($6::uuid[]))
+      AND NOT coalesce(${hubColumn}=ANY($5::uuid[]),false) AND NOT id=ANY($7::uuid[]) AND ($3::uuid IS NULL OR id>$3::uuid)
+      AND ($8::uuid IS NULL OR id=$8) ORDER BY id LIMIT $4`, [scope.all, scope.hubs, after ?? null, limit + 1,scope.excludedHubs??[],
+        table==='people'?(scope.people??[]).map(r=>r.id):[],table==='people'?(scope.excludedPeople??[]).map(r=>r.id):[],personId]);
+    if(personId){if(!rows.rows.length)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:rows.rows[0]}};}
     const more = rows.rows.length > limit;
     const data = rows.rows.slice(0, limit);
     return { status: 200, body: { data, nextCursor: more ? data.at(-1)?.id : null } };

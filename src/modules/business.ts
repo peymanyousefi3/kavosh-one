@@ -1,4 +1,4 @@
-import type { ApiContext,Reply } from '../core/api.ts';
+import { coreContract,type ApiContext,type Reply } from '../core/api.ts';
 import { administration,administrationActions,administrationContract } from './administration.ts';
 import { academy,academyContract } from './academy.ts';
 import { calendar,calendarContract } from './calendar.ts';
@@ -10,4 +10,4 @@ const approvalActions={...administrationActions,...sessionActions};
 export async function business(ctx:ApiContext):Promise<Reply|null> {
   return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions);
 }
-export const businessContract=[...administrationContract,...academyContract,...calendarContract,...classesContract];
+export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract];

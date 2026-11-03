@@ -30,13 +30,14 @@ interface SessionRow {id:string;class_id:string;hub_id:string;starts_at:Date|str
 function scope(ctx:ApiContext,capability:Capability){const result=permissionScope(ctx,capability);if(!scopeNonempty(result))throw new ApiError(403,'FORBIDDEN');return result;}
 function scopeParams(value:Scope){return [value.all,value.hubs,value.excludedHubs??[]];}
 // Code-owned SQL identifiers only; all values remain query parameters.
-const permittedHub='(($1::boolean OR hub_id=ANY($2::uuid[])) AND NOT coalesce(hub_id=ANY($3::uuid[]),false))';
+function permittedClass(column:'id'|'class_id',allowed=5,denied=6){return `(($1::boolean OR hub_id=ANY($2::uuid[]) OR ${column}=ANY($${allowed}::uuid[])) AND NOT coalesce(hub_id=ANY($3::uuid[]),false) AND NOT ${column}=ANY($${denied}::uuid[]))`;}
+function classIds(value:Scope){return [(value.classes??[]).map(r=>r.id),(value.excludedClasses??[]).map(r=>r.id)];}
 async function classRow(ctx:ApiContext,id:string,capability:Capability='classes.view',lock=false) {
-  const row=(await ctx.db.query<ClassRow>('SELECT * FROM public.classes WHERE '+permittedHub+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(scope(ctx,capability)),id])).rows[0];
+  const s=scope(ctx,capability),row=(await ctx.db.query<ClassRow>('SELECT * FROM public.classes WHERE '+permittedClass('id')+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(s),id,...classIds(s)])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');return row;
 }
 async function sessionRow(ctx:ApiContext,id:string,capability:Capability='classes.view',lock=false) {
-  const row=(await ctx.db.query<SessionRow>('SELECT * FROM public.class_sessions WHERE '+permittedHub+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(scope(ctx,capability)),id])).rows[0];
+  const s=scope(ctx,capability),row=(await ctx.db.query<SessionRow>('SELECT * FROM public.class_sessions WHERE '+permittedClass('class_id')+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(s),id,...classIds(s)])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');return row;
 }
 function validateMode(value:{mode:string;onlineUrl:string|null}) {
@@ -103,10 +104,9 @@ async function appendSchedule(ctx:ApiContext,id:string):Promise<Reply> {
 async function readClasses(ctx:ApiContext,id?:string):Promise<Reply> {
   if(id){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const data=await classRow(ctx,id);const curriculum=(await ctx.db.query('SELECT version,definition FROM public.course_revisions WHERE course_id=$1 AND version=$2',[data.course_id,data.course_version])).rows[0];return {status:200,body:{data,curriculum}};}
   const s=scope(ctx,'classes.view'),q=listQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
-  if(q.hubId)requireScope(s,q.hubId);
-  const rows=(await ctx.db.query<ClassRow>('SELECT * FROM public.classes WHERE '+permittedHub+` AND ($4::uuid IS NULL OR id>$4) AND ($5::uuid IS NULL OR hub_id=$5)
+  const rows=(await ctx.db.query<ClassRow>('SELECT * FROM public.classes WHERE '+permittedClass('id',10,11)+` AND ($4::uuid IS NULL OR id>$4) AND ($5::uuid IS NULL OR hub_id=$5)
     AND ($6::uuid IS NULL OR course_id=$6) AND ($7::boolean IS NULL OR active=$7) AND ($8::text IS NULL OR position(lower($8) in lower(name||' '||code))>0) ORDER BY id LIMIT $9`,
-    [...scopeParams(s),q.after??null,q.hubId??null,q.courseId??null,q.active??null,q.q??null,q.limit+1])).rows;
+    [...scopeParams(s),q.after??null,q.hubId??null,q.courseId??null,q.active??null,q.q??null,q.limit+1,...classIds(s)])).rows;
   return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
 }
 async function readSessions(ctx:ApiContext,id:string):Promise<Reply> {
@@ -132,7 +132,7 @@ async function validateChange(ctx:ApiContext,id:string,raw:unknown,purpose:'requ
     const c=await classRow(ctx,s.class_id,capability);
     compileSchedule({oneOff:[{start:input.change.start,end:input.change.end,disambiguation:input.change.disambiguation}]},c.time_zone);
   }
-  return {all:false,hubs:[s.hub_id]};
+  return {all:false,hubs:[],classes:[{id:s.class_id,hubId:s.hub_id}]};
 }
 async function changeDependencies(ctx:ApiContext,id:string) {
   const row=(await ctx.db.query(`SELECT s.version,s.status,s.starts_at,s.ends_at,s.mode,s.online_url,s.time_info,c.active AS class_active,c.time_zone,h.active AS hub_active

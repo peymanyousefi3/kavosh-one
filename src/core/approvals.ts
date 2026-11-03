@@ -9,7 +9,8 @@ const capability=z.string().regex(/^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/).max(10
 const decisionInput=z.object({expectedVersion:version,decision:z.enum(['approve','reject']),reason:z.string().trim().min(1).max(2000)}).strict();
 const withdrawInput=z.object({expectedVersion:version,reason:z.string().trim().min(1).max(2000)}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),status:z.enum(['pending','applied','rejected','withdrawn','stale']).optional()}).strict();
-const storedScope=z.object({all:z.boolean(),hubs:z.array(uuid),excludedHubs:z.array(uuid).optional()}).strict();
+const resourceRef=z.object({id:uuid,hubId:uuid.nullable()}).strict();
+const storedScope=z.object({all:z.boolean(),hubs:z.array(uuid),excludedHubs:z.array(uuid).optional(),classes:z.array(resourceRef).optional(),people:z.array(resourceRef).optional(),excludedClasses:z.array(resourceRef).optional(),excludedPeople:z.array(resourceRef).optional()}).strict();
 const storedCredential=z.object({token_id:uuid,academy_id:uuid,person_id:uuid,capabilities:z.array(capability),all_hubs:z.boolean(),hub_ids:z.array(uuid),allowed:z.boolean(),kind:z.enum(['human','bot']).optional()}).strict();
 export interface Proposal {
   id:string;requester_id:string;requester_kind:'human'|'bot';credential_snapshot:unknown;grants_hash:string;
@@ -42,7 +43,8 @@ export async function lockApprovalWrites(ctx:ApiContext,exclusive=false) {
   ctx.grants=await loadGrants(ctx.db,ctx.credential);ctx.policyLock=mode;
 }
 function grantsHash(grants:Grant[]) {
-  const rows=grants.map(g=>[g.capability,g.effect,g.allHubs,[...g.hubIds].sort()]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const rows=grants.map(g=>[g.capability,g.effect,g.allHubs,[...g.hubIds].sort(),...(g.classRefs?.length||g.personRefs?.length?
+    [[...(g.classRefs??[])].sort((a,b)=>a.id.localeCompare(b.id)),[...(g.personRefs??[])].sort((a,b)=>a.id.localeCompare(b.id))]:[])]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
   return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
 }
 function stateHash(value:unknown){return createHash('sha256').update(JSON.stringify(value)).digest('hex');}
