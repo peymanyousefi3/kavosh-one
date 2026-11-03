@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
-import { ApiError,requireScope,type Capability,type Scope,type ResourceRef,type Grant,scopeFor,scopeContains,scopeAllowsRef,featureScope,scopeNonempty as nonempty } from '../core/policy.ts';
+import { ApiError,requireScope,type Capability,type Scope,type ResourceRef,type AreaRef,type Grant,scopeFor,scopeContains,scopeAllowsRef,featureScope,scopeNonempty as nonempty } from '../core/policy.ts';
+import { selectedAreas,hubsForAreas,areaDependencies } from '../core/geography.ts';
 import { propose,approvalRoutes,approvalContract,master,permissionScope,lockApprovalWrites,type Proposal,type ApprovalRegistry,type ApprovalAction } from '../core/approvals.ts';
 
 const uuid=z.string().uuid().transform(value=>value.toLowerCase());
@@ -11,13 +12,13 @@ const permission=z.object({capability,effect:z.enum(['allow','deny'])}).strict()
 const roleInput=z.object({name:z.string().trim().min(1).max(150),description:z.string().trim().max(1000).default(''),permissions:z.array(permission).max(200)}).strict();
 const roleUpdate=roleInput.extend({expectedVersion:version});
 const ids=z.array(uuid).max(1000).default([]);
-const assignment=z.object({roleId:uuid,allHubs:z.boolean(),hubIds:ids,classIds:ids,personIds:ids}).strict().superRefine((value,ctx)=>{
-  const groups=[value.hubIds,value.classIds,value.personIds],count=groups.reduce((sum,group)=>sum+group.length,0);
+const assignment=z.object({roleId:uuid,allHubs:z.boolean(),hubIds:ids,classIds:ids,personIds:ids,countryIds:ids,regionIds:ids,cityIds:ids}).strict().superRefine((value,ctx)=>{
+  const groups=[value.hubIds,value.classIds,value.personIds,value.countryIds,value.regionIds,value.cityIds],count=groups.reduce((sum,group)=>sum+group.length,0);
   if((value.allHubs&&count)||(!value.allHubs&&!count)||groups.some(group=>new Set(group).size!==group.length))
     ctx.addIssue({code:'custom',message:'Choose academy-wide access or unique selected hubs, classes and people.'});
-}).describe('Choose allHubs=true without selectors, or allHubs=false with unique hubIds/classIds/personIds. A selector applies only to the feature scope kinds listed by /capabilities; it never grants access to an entire parent hub.');
+}).describe('Choose allHubs=true without selectors, or unique selected hubs/classes/people/countries/regions/cities. Geographic selectors include future hubs within that saved hierarchy; individual class/person selectors never grant parent-hub access. /capabilities lists supported scope kinds.');
 const accessInput=z.object({expectedVersion:version,assignments:z.array(assignment).max(50)}).strict().refine(v=>new Set(v.assignments.map(a=>a.roleId)).size===v.assignments.length)
-  .refine(v=>v.assignments.reduce((sum,a)=>sum+a.hubIds.length+a.classIds.length+a.personIds.length,0)<=2000,'Select at most 2000 individual resources per request.');
+  .refine(v=>v.assignments.reduce((sum,a)=>sum+a.hubIds.length+a.classIds.length+a.personIds.length+a.countryIds.length+a.regionIds.length+a.cityIds.length,0)<=2000,'Select at most 2000 individual resources per request.');
 const supervisorInput=z.object({expectedVersion:version,supervisorId:uuid.nullable()}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),status:z.enum(['pending','applied','rejected','withdrawn','stale']).optional()}).strict();
 type Permission=z.infer<typeof permission>;
@@ -31,12 +32,15 @@ async function dependencies(ctx:ApiContext,action:Action,targetId:string,input:u
       coalesce(jsonb_agg(jsonb_build_object('capability',p.capability,'effect',p.effect) ORDER BY p.capability) FILTER(WHERE p.capability IS NOT NULL),'[]'::jsonb) AS permissions
       FROM public.roles r LEFT JOIN public.role_permissions p ON p.academy_id=r.academy_id AND p.role_id=r.id
       WHERE r.id=ANY($1::uuid[]) GROUP BY r.academy_id,r.id ORDER BY r.id`,[ids])).rows;
-    return {roles};
+    const areas=[...prior.flatMap(a=>a.area_refs),...await selectedAreas(ctx.db,{countryIds:[...new Set(next.assignments.flatMap(a=>a.countryIds))],regionIds:[...new Set(next.assignments.flatMap(a=>a.regionIds))],cityIds:[...new Set(next.assignments.flatMap(a=>a.cityIds))]})];
+    return {roles,...areas.length?{geography:await areaDependencies(ctx.db,areas)}:{}};
   }
   if(action==='role.update') {
     const affected=(await ctx.db.query(`SELECT p.id,p.access_version FROM public.role_assignments a JOIN public.people p
       ON p.academy_id=a.academy_id AND p.id=a.person_id WHERE a.role_id=$1 ORDER BY p.id`,[targetId])).rows;
-    return {affected};
+    const areas=(await ctx.db.query<{ref:AreaRef}>(`SELECT DISTINCT g.ref FROM public.assignment_geography g JOIN public.role_assignments a
+      ON a.academy_id=g.academy_id AND a.id=g.assignment_id WHERE a.role_id=$1`,[targetId])).rows.map(r=>r.ref);
+    return {affected,...areas.length?{geography:await areaDependencies(ctx.db,areas)}:{}};
   }
   return {};
 }
@@ -72,25 +76,31 @@ async function validatePermissions(ctx:ApiContext,permissions:Permission[]) {
   }
 }
 async function assignments(ctx:ApiContext,personId:string) {
-  return (await ctx.db.query<{id:string;role_id:string;all_hubs:boolean;hub_ids:string[];class_ids:string[];person_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[]}>(`SELECT a.id,a.role_id,a.all_hubs,
+  return (await ctx.db.query<{id:string;role_id:string;all_hubs:boolean;hub_ids:string[];class_ids:string[];person_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[];country_ids:string[];region_ids:string[];city_ids:string[];area_refs:AreaRef[];geo_hubs:string[]}>(`SELECT a.id,a.role_id,a.all_hubs,
     ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id ORDER BY h.hub_id) AS hub_ids,
     ARRAY(SELECT x.class_id FROM public.assignment_classes x WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id ORDER BY x.class_id) AS class_ids,
     ARRAY(SELECT x.person_id FROM public.assignment_people x WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id ORDER BY x.person_id) AS person_ids,
     coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'hubId',c.hub_id) ORDER BY c.id) FROM public.assignment_classes x JOIN public.classes c
       ON c.academy_id=x.academy_id AND c.id=x.class_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS class_refs,
     coalesce((SELECT jsonb_agg(jsonb_build_object('id',v.id,'hubId',v.hub_id) ORDER BY v.id) FROM public.assignment_people x JOIN public.people v
-      ON v.academy_id=x.academy_id AND v.id=x.person_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS person_refs
+      ON v.academy_id=x.academy_id AND v.id=x.person_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS person_refs,
+    ARRAY(SELECT x.country_id FROM public.assignment_countries x WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id ORDER BY x.country_id) AS country_ids,
+    ARRAY(SELECT x.region_id FROM public.assignment_regions x WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id ORDER BY x.region_id) AS region_ids,
+    ARRAY(SELECT x.city_id FROM public.assignment_cities x WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id ORDER BY x.city_id) AS city_ids,
+    coalesce((SELECT jsonb_agg(g.ref ORDER BY g.kind,g.id) FROM public.assignment_geography g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id),'[]'::jsonb) AS area_refs,
+    ARRAY(SELECT g.id FROM public.assignment_geographic_hubs g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id AND g.strict_match ORDER BY g.id) AS geo_hubs
     FROM public.role_assignments a WHERE person_id=$1 ORDER BY role_id`,[personId])).rows;
 }
-function assignedScope(a:{all_hubs:boolean;hub_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[]}):Scope {
-  return {all:a.all_hubs,hubs:a.hub_ids,...a.class_refs.length?{classes:a.class_refs}:{},...a.person_refs.length?{people:a.person_refs}:{}};
+function assignedScope(a:{all_hubs:boolean;hub_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[];area_refs:AreaRef[];geo_hubs:string[]}):Scope {
+  return {all:a.all_hubs,hubs:[...new Set([...a.hub_ids,...a.geo_hubs])],...a.class_refs.length?{classes:a.class_refs}:{},...a.person_refs.length?{people:a.person_refs}:{},...a.area_refs.length?{areas:a.area_refs}:{}};
 }
 async function selectedScope(ctx:ApiContext,item:z.infer<typeof assignment>):Promise<Scope> {
   const classes=(await ctx.db.query<ResourceRef>('SELECT id,hub_id AS "hubId" FROM public.classes WHERE id=ANY($1::uuid[]) ORDER BY id',[item.classIds])).rows;
   const people=(await ctx.db.query<ResourceRef>('SELECT id,hub_id AS "hubId" FROM public.people WHERE id=ANY($1::uuid[]) ORDER BY id',[item.personIds])).rows;
   const hubs=(await ctx.db.query('SELECT id FROM public.hubs WHERE id=ANY($1::uuid[])',[item.hubIds])).rows;
   if(classes.length!==item.classIds.length||people.length!==item.personIds.length||hubs.length!==item.hubIds.length)throw new ApiError(400,'INVALID_REFERENCE');
-  return {all:item.allHubs,hubs:item.hubIds,...classes.length?{classes}:{},...people.length?{people}:{}};
+  const areas=await selectedAreas(ctx.db,item),geoHubs=await hubsForAreas(ctx.db,areas);
+  return {all:item.allHubs,hubs:[...new Set([...item.hubIds,...geoHubs])],...classes.length?{classes}:{},...people.length?{people}:{},...areas.length?{areas}:{}};
 }
 async function validateDelegatedAssignment(ctx:ApiContext,item:z.infer<typeof assignment>,permissions:Permission[],checkFeatureRights=true) {
   const targetScope=await selectedScope(ctx,item);
@@ -117,7 +127,7 @@ async function validateAction(ctx:ApiContext,action:Action,targetId:string,input
         for(const row of assigned) {
           await canManage(ctx,row.person_id);
           for(const a of (await assignments(ctx,row.person_id)).filter(a=>a.role_id===targetId)) {
-            await validateDelegatedAssignment(ctx,{roleId:targetId,allHubs:a.all_hubs,hubIds:a.hub_ids,classIds:a.class_ids,personIds:a.person_ids},body.permissions);
+            await validateDelegatedAssignment(ctx,{roleId:targetId,allHubs:a.all_hubs,hubIds:a.hub_ids,classIds:a.class_ids,personIds:a.person_ids,countryIds:a.country_ids,regionIds:a.region_ids,cityIds:a.city_ids},body.permissions);
           }
         }
       }
@@ -131,7 +141,9 @@ async function validateAction(ctx:ApiContext,action:Action,targetId:string,input
       const r=await role(ctx,item.roleId);
       if(r.system_role)throw new ApiError(403,'SYSTEM_ROLE_PROTECTED');
       const selected=await validateDelegatedAssignment(ctx,item,r.permissions,false);nextScopes.push(selected);
-      for(const p of r.permissions)nextGrants.push({capability:p.capability,effect:p.effect,allHubs:selected.all,hubIds:selected.hubs,classRefs:selected.classes,personRefs:selected.people});
+      const deniedHubs=selected.areas?.length&&r.permissions.some(p=>p.effect==='deny')?await hubsForAreas(ctx.db,selected.areas,true):[];
+      for(const p of r.permissions)nextGrants.push({capability:p.capability,effect:p.effect,allHubs:selected.all,hubIds:item.hubIds,classRefs:selected.classes,personRefs:selected.people,
+        ...(selected.areas?.length?{areaRefs:selected.areas,areaHubIds:p.effect==='deny'?[...new Set([...selected.hubs,...deniedHubs])]:selected.hubs}:{})});
     }
     // Evaluate the complete replacement, so an allow + explicit-deny bundle can
     // safely match the delegator's own limits without ever delegating away a deny.
@@ -145,7 +157,8 @@ async function validateAction(ctx:ApiContext,action:Action,targetId:string,input
     const all=previous.some(a=>a.all_hubs)||body.assignments.some(a=>a.allHubs)||person.hub_id===null;
     const scopes=[...previous.map(assignedScope),...nextScopes];
     const classes=[...new Map(scopes.flatMap(s=>s.classes??[]).map(r=>[r.id,r])).values()],people=[...new Map(scopes.flatMap(s=>s.people??[]).map(r=>[r.id,r])).values()];
-    return {all,hubs:all?[]:[...new Set([...scopes.flatMap(s=>s.hubs),person.hub_id!])],...classes.length?{classes}:{},...people.length?{people}:{}};
+    const areas=[...new Map(scopes.flatMap(s=>s.areas??[]).map(a=>[a.kind+':'+a.id,a])).values()];
+    return {all,hubs:all?[]:[...new Set([...scopes.flatMap(s=>s.hubs),person.hub_id!])],...classes.length?{classes}:{},...people.length?{people}:{},...areas.length?{areas}:{}};
   } else {
     if(!await master(ctx))throw new ApiError(403,'MASTER_REQUIRED');
     const body=supervisorInput.parse(input),person=await canManage(ctx,targetId);
@@ -184,6 +197,8 @@ async function applyAction(ctx:ApiContext,p:Proposal):Promise<unknown> {
       for(const hub of item.hubIds)await ctx.db.query('INSERT INTO public.assignment_hubs VALUES($1,$2,$3)',[ctx.credential.academy_id,id,hub]);
       if(item.classIds.length)await ctx.db.query('INSERT INTO public.assignment_classes SELECT $1,$2,unnest($3::uuid[])',[ctx.credential.academy_id,id,item.classIds]);
       if(item.personIds.length)await ctx.db.query('INSERT INTO public.assignment_people SELECT $1,$2,unnest($3::uuid[])',[ctx.credential.academy_id,id,item.personIds]);
+      for(const [table,values] of [['assignment_countries',item.countryIds],['assignment_regions',item.regionIds],['assignment_cities',item.cityIds]] as const)
+        if(values.length)await ctx.db.query('INSERT INTO public.'+table+' SELECT $1,$2,unnest($3::uuid[])',[ctx.credential.academy_id,id,values]);
     }
     await ctx.db.query('UPDATE public.people SET access_version=access_version+1 WHERE id=$1',[p.target_id]);
     const result={personId:p.target_id,version:person.access_version+1,assignments:await assignments(ctx,p.target_id)};
@@ -241,13 +256,15 @@ export async function administration(ctx:ApiContext,registry:ApprovalRegistry=ad
       const person=(await db.query<{hub_id:string|null;access_version:number;supervisor_person_id:string|null}>('SELECT hub_id,access_version,supervisor_person_id FROM public.people WHERE id=$1',[id])).rows[0];
       if(!person)throw new ApiError(404,'NOT_FOUND');
       const scope=permissionScope(ctx,'access.view');requireScope(scope,person.hub_id??undefined);
-      const assigned=await assignments(ctx,id),full=scope.all&&!scope.excludedHubs?.length;
+      const assigned=await assignments(ctx,id),full=scope.all&&!scope.excludedHubs?.length&&!scope.excludedAreas?.length;
       const visibleHubs=!full&&scope.all?(await db.query<{id:string}>('SELECT id FROM public.hubs WHERE NOT id=ANY($1::uuid[])',[scope.excludedHubs??[]])).rows.map(h=>h.id):scope.hubs;
       const local=assigned.flatMap(item=>{
         if(full)return [item];
-        const hubs=item.all_hubs?visibleHubs:item.hub_ids.filter(h=>scope.all?!scope.excludedHubs?.includes(h):scope.hubs.includes(h));
+        const hubs=item.all_hubs?visibleHubs:[...new Set([...item.hub_ids,...item.geo_hubs])].filter(h=>scope.all?!scope.excludedHubs?.includes(h):scope.hubs.includes(h));
         const classes=item.class_refs.filter(r=>scopeAllowsRef(scope,r,'classes')),people=item.person_refs.filter(r=>scopeAllowsRef(scope,r,'people'));
-        return hubs.length||classes.length||people.length?[{...item,all_hubs:false,hub_ids:hubs,class_refs:classes,person_refs:people,class_ids:classes.map(r=>r.id),person_ids:people.map(r=>r.id)}]:[];
+        const areas=item.area_refs.filter(a=>scopeContains(scope,{all:false,hubs:[],areas:[a]}));
+        return hubs.length||classes.length||people.length||areas.length?[{...item,all_hubs:false,hub_ids:hubs,class_refs:classes,person_refs:people,class_ids:classes.map(r=>r.id),person_ids:people.map(r=>r.id),
+          area_refs:areas,geo_hubs:[],country_ids:areas.filter(a=>a.kind==='country').map(a=>a.id),region_ids:areas.filter(a=>a.kind==='region').map(a=>a.id),city_ids:areas.filter(a=>a.kind==='city').map(a=>a.id)}]:[];
       });
       return {status:200,body:{data:{personId:id,version:person.access_version,supervisorId:person.supervisor_person_id,assignments:local,partiallyHidden:!full}}};
     }

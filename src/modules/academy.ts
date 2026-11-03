@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
+import { jsonBody,mutation,record,loadGrants,type ApiContext,type Reply } from '../core/api.ts';
 import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
-import { ApiError,requireScope,scopeNonempty,type Capability,type Scope } from '../core/policy.ts';
+import { ApiError,requireScope,scopeNonempty,areaAllowsNewRecord,areaContains,type Capability,type Scope,type AreaRef } from '../core/policy.ts';
+import { areaFor } from '../core/geography.ts';
 
 const uuid=z.string().uuid().transform(value=>value.toLowerCase());
 const title=z.string().trim().min(1).max(150);
@@ -55,7 +56,8 @@ function values(scope:Scope):unknown[]{return [scope.all,scope.hubs,scope.exclud
 function hubFilter(column:'h.id'|'c.hub_id'){return `(($1::boolean OR ${column}=ANY($2::uuid[])) AND NOT coalesce(${column}=ANY($3::uuid[]),false))`;}
 const hubFrom=`public.hubs h LEFT JOIN public.cities city ON city.academy_id=h.academy_id AND city.id=h.city_id
   LEFT JOIN public.regions region ON region.academy_id=city.academy_id AND region.id=city.region_id
-  LEFT JOIN public.countries country ON country.academy_id=region.academy_id AND country.id=region.country_id`;
+  LEFT JOIN public.countries country ON country.academy_id=h.academy_id AND
+    ((h.city_id IS NOT NULL AND country.id=region.country_id) OR (h.city_id IS NULL AND country.code=h.country_code))`;
 const hubFields=`h.id,h.name,coalesce(city.name,h.city) AS city,coalesce(country.code,h.country_code) AS country_code,h.city_id,
   region.id AS region_id,country.id AS country_id,h.version,h.active,h.time_zone,h.currency,h.contact_email,h.contact_phone,h.website,h.address,
   h.latitude::float8 AS latitude,h.longitude::float8 AS longitude,h.translations,h.created_at,
@@ -81,6 +83,7 @@ export async function lockAcademyTopology(ctx:ApiContext,exclusive=false) {
   await lockApprovalWrites(ctx);
   const query=exclusive?'SELECT pg_advisory_xact_lock(hashtextextended($1,9))':'SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))';
   await ctx.db.query(query,[ctx.credential.academy_id]);
+  ctx.grants=await loadGrants(ctx.db,ctx.credential);
 }
 async function geoInUse(ctx:ApiContext,kind:GeoKind,id:string) {
   const query=kind==='countries'?'SELECT 1 FROM public.regions WHERE country_id=$1 AND active LIMIT 1'
@@ -125,18 +128,22 @@ async function readGeo(ctx:ApiContext,kind:GeoKind,id?:string):Promise<Reply> {
   const parentWhere=kind==='countries'?'':kind==='regions'?' AND ($9::uuid IS NULL OR r.country_id=$9)':' AND ($9::uuid IS NULL OR r.region_id=$9) AND ($10::uuid IS NULL OR parent.country_id=$10)';
   const params=[...values(scope),id??null,query.after??null,query.q??null,query.active??null,query.limit+1,
     ...(kind==='regions'?[('countryId' in query?query.countryId:null)??null]:kind==='cities'?[('regionId' in query?query.regionId:null)??null,('countryId' in query?query.countryId:null)??null]:[])];
-  const rows=(await ctx.db.query<Fields>(`SELECT r.* FROM public.${kind} r${joins} WHERE
-    (($1::boolean AND cardinality($3::uuid[])=0) OR EXISTS(SELECT 1 FROM ${hubFrom} WHERE ${ancestry} AND ${hubFilter('h.id')}))
+  const scopeAt=params.length+1,enabledAt=params.length+2;
+  params.push(JSON.stringify(scope),Boolean(scope.areas?.length||scope.excludedAreas?.length));
+  const rows=(await ctx.db.query<Fields>(`SELECT r.* FROM public.${kind} r${joins} JOIN public.geographic_areas g ON g.academy_id=r.academy_id AND g.id=r.id AND g.kind='${kind==='countries'?'country':kind==='regions'?'region':'city'}' WHERE
+    ((($1::boolean AND cardinality($3::uuid[])=0) OR EXISTS(SELECT 1 FROM ${hubFrom} WHERE ${ancestry} AND ${hubFilter('h.id')}))
+      OR ($${enabledAt}::boolean AND public.scope_area_visible($${scopeAt}::jsonb,g.ref)))
+    AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce($${scopeAt}::jsonb->'excludedAreas','[]'::jsonb)) e WHERE public.area_contains(e,g.ref))
     AND ($4::uuid IS NULL OR r.id=$4) AND ($5::uuid IS NULL OR r.id>$5) AND ($6::text IS NULL OR position(lower($6) in lower(r.name))>0)
     AND ($7::boolean IS NULL OR r.active=$7)${parentWhere} ORDER BY r.id LIMIT $8`,params)).rows;
   if(id&&!rows.length)throw new ApiError(404,'NOT_FOUND');
   return {status:200,body:id?{data:rows[0]}:{data:rows.slice(0,query.limit),nextCursor:rows.length>query.limit?rows[query.limit-1].id:null}};
 }
 async function saveHub(ctx:ApiContext,id:string|null,raw:unknown):Promise<Reply> {
-  const initial=permitted(ctx,'hubs.edit');requireScope(initial,id??undefined);
+  const initial=permitted(ctx,'hubs.edit');if(id||!initial.areas?.length)requireScope(initial,id??undefined);
   const input=(id?hubUpdate:hubCreate).parse(raw) as Fields;
   await lockAcademyTopology(ctx,true);const scope=permitted(ctx,'hubs.edit');
-  if(id)requireScope(scope,id);else requireScope(scope);
+  if(id||!scope.areas?.length)requireScope(scope,id??undefined);
   return mutation(ctx,input,async()=>{
     const before=id?await hub(ctx,id):null;
     if(before&&before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');
@@ -150,6 +157,16 @@ async function saveHub(ctx:ApiContext,id:string|null,raw:unknown):Promise<Reply>
       if((input.city&&input.city!==location.name)||(input.countryCode&&input.countryCode!==location.country_code))throw new ApiError(400,'CHOOSE_LOCATION_INSTEAD_OF_DERIVED_LABELS');
       city=location.name;country=location.country_code;
     }else if(!city||!country)throw new ApiError(400,'LOCATION_REQUIRED');
+    if(!id||before?.city_id!==(body.cityId??null)||before?.country_code!==country) {
+      let destination:AreaRef|undefined;
+      if(body.cityId)destination=await areaFor(ctx.db,'city',String(body.cityId));
+      else destination=(await ctx.db.query<{ref:AreaRef}>(`SELECT g.ref FROM public.geographic_areas g JOIN public.countries c
+        ON c.academy_id=g.academy_id AND c.id=g.id WHERE g.kind='country' AND c.code=$1`,[country])).rows[0]?.ref;
+      const fixed=id&&ctx.grants.some(g=>g.capability==='hubs.edit'&&g.effect==='allow'&&(g.allHubs||g.hubIds.includes(id)));
+      const blocked=destination&&scope.excludedAreas?.some(a=>areaContains(a,destination!)||(!body.cityId&&a.countryId===destination!.countryId));
+      if(blocked||(!scope.all&&!fixed&&(!destination||!areaAllowsNewRecord(scope,destination))))throw new ApiError(403,'FORBIDDEN_LOCATION');
+      if(!destination&&scope.excludedAreas?.length)throw new ApiError(403,'NORMALIZED_LOCATION_REQUIRED');
+    }
     const actual=id??randomUUID(),point=body.coordinates as {latitude:number;longitude:number}|null;
     if(id&&body.active===false&&(await ctx.db.query('SELECT 1 FROM public.classes WHERE hub_id=$1 AND active LIMIT 1',[id])).rows.length)throw new ApiError(409,'ACTIVE_CLASSES_EXIST');
     const params=[ctx.credential.academy_id,actual,body.name,city,country,body.cityId??null,body.timeZone??null,body.currency??null,

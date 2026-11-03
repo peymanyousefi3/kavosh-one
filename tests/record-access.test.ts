@@ -137,7 +137,7 @@ check('class-only selectors never activate unrelated feature rights and hostile 
     {roleId:r.id,allHubs:false,classIds:[randomUUID()]},{roleId:r.id,allHubs:false,classIds:[f.first.id],hubId:f.otherHub},
     {roleId:r.id,allHubs:false,classIds:[f.first.id],classRefs:[{id:f.first.id,hubId:f.otherHub}]}])
     assert.equal((await f.assign(f.actors.staff.person,[item])).response.status,400);
-  const caps=await f.request('capabilities');assert.deepEqual(caps.body.data.find((c:{name:string})=>c.name==='classes.view').scope_kinds,['hub','class']);
+  const caps=await f.request('capabilities');assert.deepEqual(caps.body.data.find((c:{name:string})=>c.name==='classes.view').scope_kinds,['hub','class','country','region','city']);
 });
 check('record-selector tables enforce tenant foreign keys, RLS and cleanup on access replacement',async f=>{
   const r=await f.role(['classes.view','people.view']);

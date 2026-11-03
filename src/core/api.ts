@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Database, Connection } from './database.ts';
 import { assertRuntimeRole } from './database.ts';
-import { ApiError, requireScope, scopeFor,scopeNonempty, type Capability, type Credential, type Grant, type Scope,type ResourceRef } from './policy.ts';
+import { ApiError, requireScope, scopeFor,scopeNonempty, type Capability, type Credential, type Grant, type Scope,type ResourceRef,type AreaRef } from './policy.ts';
 import { hashToken, parseBearer } from './tokens.ts';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
@@ -37,18 +37,22 @@ export async function loadGrants(db: Connection, c:Credential): Promise<Grant[]>
   if(c.kind==='human' && (await db.query('SELECT 1 FROM public.academies WHERE master_person_id=$1',[c.person_id])).rows.length) {
     return (await db.query<{name:Capability}>('SELECT name FROM public.capability_catalog')).rows.map(row=>({capability:row.name,effect:'allow',allHubs:true,hubIds:[]}));
   }
-  const result = await db.query<{ permissions:{capability:Capability;effect:'allow'|'deny'}[]; all_hubs: boolean; hub_ids: string[];class_refs:ResourceRef[];person_refs:ResourceRef[] }>(`
+  const result = await db.query<{ permissions:{capability:Capability;effect:'allow'|'deny'}[]; all_hubs: boolean; hub_ids: string[];class_refs:ResourceRef[];person_refs:ResourceRef[];area_refs:AreaRef[];geo_hubs:string[];geo_deny_hubs:string[] }>(`
     SELECT jsonb_agg(jsonb_build_object('capability',p.capability,'effect',p.effect) ORDER BY p.capability) AS permissions,a.all_hubs,
       ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id) AS hub_ids,
       coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'hubId',c.hub_id) ORDER BY c.id) FROM public.assignment_classes x
         JOIN public.classes c ON c.academy_id=x.academy_id AND c.id=x.class_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS class_refs,
       coalesce((SELECT jsonb_agg(jsonb_build_object('id',v.id,'hubId',v.hub_id) ORDER BY v.id) FROM public.assignment_people x
-        JOIN public.people v ON v.academy_id=x.academy_id AND v.id=x.person_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS person_refs
+        JOIN public.people v ON v.academy_id=x.academy_id AND v.id=x.person_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS person_refs,
+      coalesce((SELECT jsonb_agg(g.ref ORDER BY g.kind,g.id) FROM public.assignment_geography g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id),'[]'::jsonb) AS area_refs,
+      ARRAY(SELECT g.id FROM public.assignment_geographic_hubs g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id AND g.strict_match ORDER BY g.id) AS geo_hubs,
+      ARRAY(SELECT g.id FROM public.assignment_geographic_hubs g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id ORDER BY g.id) AS geo_deny_hubs
     FROM public.role_assignments a JOIN public.role_permissions p
       ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1 GROUP BY a.academy_id,a.id`, [c.person_id]);
   // Read each assignment's selectors once, not once per feature permission.
   return result.rows.flatMap(r=>r.permissions.map(p=>({ capability:p.capability,effect:p.effect,allHubs:r.all_hubs,hubIds:r.hub_ids,
-    ...(r.class_refs.length?{classRefs:r.class_refs}:{}),...(r.person_refs.length?{personRefs:r.person_refs}:{}) })));
+    ...(r.class_refs.length?{classRefs:r.class_refs}:{}),...(r.person_refs.length?{personRefs:r.person_refs}:{}),
+    ...(r.area_refs.length?{areaRefs:r.area_refs,areaHubIds:p.effect==='deny'?r.geo_deny_hubs:r.geo_hubs}:{}) })));
 }
 
 export async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
@@ -168,6 +172,9 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (!c.allowed) throw new ApiError(429, 'RATE_LIMITED');
       await db.query('BEGIN'); transaction = true;
       await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
+      // Freeze geography before identity row locks. This avoids reading records
+      // using a hub list expanded before a concurrent move across area boundaries.
+      if(request.method==='GET')await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
       const lock = human
         ? await db.query<{ valid: boolean }>('SELECT public.lock_human($1,$2) AS valid',[human.sessionId,human.userId])
         : await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);
