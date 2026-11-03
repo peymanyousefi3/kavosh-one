@@ -166,7 +166,8 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       const status = academy.rows[0]?.status;
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       const securityRevocation = request.method === 'POST' && /^credentials\/[^/]+\/revoke$/.test(path);
-      if (status === 'read_only' && request.method !== 'GET' && !securityRevocation) throw new ApiError(403, 'ACADEMY_READ_ONLY');
+      const readOnlyPreview=request.method==='POST'&&path==='calendar/preview';
+      if (status === 'read_only' && request.method !== 'GET' && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
       const grants=await loadGrants(db,c);

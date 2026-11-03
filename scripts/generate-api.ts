@@ -24,7 +24,7 @@ for(const path of getPaths)api.paths['/api/auth'+path]={get:{security:[],summary
 for(const endpoint of businessContract) {
   const parameters:Record<string,unknown>[]=[];
   if(endpoint.path.includes('{id}'))parameters.push({name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}});
-  if(endpoint.method==='post')parameters.push({$ref:'#/components/parameters/idempotency'});
+  if(endpoint.method==='post'&&!('readOnly' in endpoint&&endpoint.readOnly))parameters.push({$ref:'#/components/parameters/idempotency'});
   if('paged' in endpoint)parameters.push({$ref:'#/components/parameters/limit'},{$ref:'#/components/parameters/after'});
   if('querySchema' in endpoint&&endpoint.querySchema) {
     const query=z.toJSONSchema(endpoint.querySchema,{io:'input'});

@@ -21,6 +21,7 @@
     "api:generate": "node --import tsx scripts/generate-api.ts"
   },
   "dependencies": {
+    "@js-temporal/polyfill": "0.5.1",
     "better-auth": "1.7.15",
     "kysely": "0.29.8",
     "next": "16.4.4",

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@js-temporal/polyfill':
+        specifier: 0.5.1
+        version: 0.5.1
       better-auth:
         specifier: 1.7.15
         version: 1.7.15(next@16.4.4(@types/node@22.20.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1))(pg@8.23.1)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -473,6 +476,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@js-temporal/polyfill@0.5.1':
+    resolution: {integrity: sha512-hloP58zRVCRSpgDxmqCWJNlizAlUgJFqG2ypq79DCvyv9tHjRYMDOcPFjzfl/A1/YxDvRCZz8wvZvmapQnKwFQ==}
+    engines: {node: '>=12'}
+
   '@minimistjs/subarg@1.0.0':
     resolution: {integrity: sha512-Q/ONBiM2zNeYUy0mVSO44mWWKYM3UHuEK43PKIOzJCbvUnPoMH1K+gk3cf1kgnCVJFlWmddahQQCmrmBGlk9jQ==}
 
@@ -919,6 +926,9 @@ packages:
 
   jose@6.2.15:
     resolution: {integrity: sha512-qdF6ewcZARtef63fJ9AKKZPgxw+t7USH6HLXYcD4CrdmSvDp79rpJSPFEKc90QBeGS63u1KQtN2MZQHC0yDIzA==}
+
+  jsbi@4.3.2:
+    resolution: {integrity: sha512-9fqMSQbhJykSeii05nxKl4m6Eqn2P6rOlYiS+C5Dr/HPIU/7yZxu5qzbs40tgaFORiw2Amd0mirjxatXYMkIew==}
 
   kysely@0.29.8:
     resolution: {integrity: sha512-ixHU1H4R+LeC5Y0nAhYgiGRFpFRHm2DXKEmJSs/vbes9sKXyssyzxzE/NYiOJX5fY0BL28biCre3GqlCqUwyXQ==}
@@ -1415,6 +1425,10 @@ snapshots:
   '@img/sharp-win32-x64@0.35.5':
     optional: true
 
+  '@js-temporal/polyfill@0.5.1':
+    dependencies:
+      jsbi: 4.3.2
+
   '@minimistjs/subarg@1.0.0':
     dependencies:
       minimist: 1.2.8
@@ -1781,6 +1795,8 @@ snapshots:
   is-fullwidth-code-point@3.0.0: {}
 
   jose@6.2.15: {}
+
+  jsbi@4.3.2: {}
 
   kysely@0.29.8: {}
 

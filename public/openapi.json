@@ -3920,6 +3920,172 @@
           }
         }
       }
+    },
+    "/api/v1/calendar/preview": {
+      "post": {
+        "summary": "Preview weekly/irregular dates and exclusions in the selected hub time zone without saving or notifying",
+        "parameters": [],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "hubId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "schedule": {
+                    "type": "object",
+                    "properties": {
+                      "weekly": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                          },
+                          "through": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                          },
+                          "weekdays": {
+                            "minItems": 1,
+                            "maxItems": 7,
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 7
+                            }
+                          },
+                          "startTime": {
+                            "type": "string",
+                            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                          },
+                          "endTime": {
+                            "type": "string",
+                            "pattern": "^(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                          },
+                          "endDayOffset": {
+                            "default": 0,
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 1
+                          },
+                          "everyWeeks": {
+                            "default": 1,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 52
+                          },
+                          "disambiguation": {
+                            "default": "reject",
+                            "type": "string",
+                            "enum": [
+                              "reject",
+                              "earlier",
+                              "later"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "through",
+                          "weekdays",
+                          "startTime",
+                          "endTime"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "oneOff": {
+                        "default": [],
+                        "maxItems": 500,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "start": {
+                              "type": "string",
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                            },
+                            "end": {
+                              "type": "string",
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}T(?:[01]\\d|2[0-3]):[0-5]\\d$"
+                            },
+                            "disambiguation": {
+                              "default": "reject",
+                              "type": "string",
+                              "enum": [
+                                "reject",
+                                "earlier",
+                                "later"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "start",
+                            "end"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "exclude": {
+                        "default": [],
+                        "maxItems": 366,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "date": {
+                              "type": "string",
+                              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                            },
+                            "reason": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 300
+                            }
+                          },
+                          "required": [
+                            "date",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "hubId",
+                  "schedule"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
     }
   }
 }
