@@ -94,6 +94,11 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
   else if (/^credentials\/[^/]+\/revoke$/.test(path) && request.method === 'POST') capability = 'credentials.revoke';
   else throw new ApiError(404, 'NOT_FOUND');
   if (!['GET','POST'].includes(request.method) || (path === 'audit-events' && !isRead)) throw new ApiError(405, 'METHOD_NOT_ALLOWED');
+  if(!isRead) {
+    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,8))',[c.academy_id]);
+    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
+    grants=await loadGrants(db,c);
+  }
   const scope = scopeFor(c, grants, capability);
   permit(scope);
   if (isRead) {
@@ -174,7 +179,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
       // Freeze geography before identity row locks. This avoids reading records
       // using a hub list expanded before a concurrent move across area boundaries.
-      if(request.method==='GET')await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
+      if(request.method==='GET'||(request.method==='POST'&&path==='calendar/preview'))await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
       const lock = human
         ? await db.query<{ valid: boolean }>('SELECT public.lock_human($1,$2) AS valid',[human.sessionId,human.userId])
         : await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);

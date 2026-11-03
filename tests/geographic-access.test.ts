@@ -185,4 +185,16 @@ if(process.env.TEST_DATABASE_URL) {
       const result=await pending;assert.equal(result.response.status,403);assert.equal((await f.pg.query('SELECT * FROM public.classes')).rows.length,0);
     }finally{if(open)await f.pg.exec('ROLLBACK');await pending;}
   });
+  for(const preview of [false,true])check(`a waiting ${preview?'calendar preview':'person creation'} cannot use geography from before a hub move`,async f=>{
+    const r=await f.role(['hubs.view','people.edit']);assert.equal((await f.assign(f.actors.staff.person,[{roleId:r.id,allHubs:false,countryIds:[f.ca.id]}])).response.status,200);
+    await f.pg.exec('BEGIN');let open=true;
+    await f.pg.query('SELECT pg_advisory_xact_lock(hashtextextended($1,9))',[f.a]);
+    const pending=f.request(preview?'calendar/preview':'people',preview?{hubId:f.hub,schedule:{oneOff:[{start:'2027-01-01T10:00',end:'2027-01-01T11:00'}]}}:{hubId:f.hub,name:'Must not be created'},'staff');
+    try {
+      await waitForTopologyReader(f);await f.pg.query('UPDATE public.hubs SET city_id=$2 WHERE id=$1',[f.hub,f.newYork.id]);
+      await f.pg.exec('COMMIT');open=false;
+      const result=await pending;assert.equal(result.response.status,403,JSON.stringify(result.body));
+      assert.equal((await f.pg.query("SELECT * FROM public.people WHERE name='Must not be created'")).rows.length,0);
+    }finally{if(open)await f.pg.exec('ROLLBACK');await pending;}
+  });
 }
