@@ -32,7 +32,7 @@ function scopeParams(value:Scope){return [value.all,value.hubs,value.excludedHub
 // Code-owned SQL identifiers only; all values remain query parameters.
 function permittedClass(column:'id'|'class_id',allowed=5,denied=6){return `(($1::boolean OR hub_id=ANY($2::uuid[]) OR ${column}=ANY($${allowed}::uuid[])) AND NOT coalesce(hub_id=ANY($3::uuid[]),false) AND NOT ${column}=ANY($${denied}::uuid[]))`;}
 function classIds(value:Scope){return [(value.classes??[]).map(r=>r.id),(value.excludedClasses??[]).map(r=>r.id)];}
-async function classRow(ctx:ApiContext,id:string,capability:Capability='classes.view',lock=false) {
+export async function classRow(ctx:ApiContext,id:string,capability:Capability='classes.view',lock=false) {
   const s=scope(ctx,capability),row=(await ctx.db.query<ClassRow>('SELECT * FROM public.classes WHERE '+permittedClass('id')+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(s),id,...classIds(s)])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');return row;
 }
