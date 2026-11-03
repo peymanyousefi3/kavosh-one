@@ -1,8 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import pg from 'pg';
 import { randomUUID } from 'node:crypto';
+import type { Database } from '../src/core/database.ts';
 
 export interface TestDatabase {
+  runtime?: Database;
   query<Row=Record<string,unknown>>(sql: string, params?: unknown[]): Promise<{ rows: Row[]; affectedRows?: number }>;
   exec(sql: string): Promise<unknown>;
   close(): Promise<void>;
@@ -19,10 +21,20 @@ export async function testDatabase(): Promise<TestDatabase> {
   url.pathname=`/${name}`;
   const client = new pg.Client({ connectionString: url.toString() });
   await client.connect();
+  const pool = new pg.Pool({ connectionString: url.toString(), max: 4 });
   return {
+    runtime: {
+      async connect() {
+        const connection=await pool.connect();
+        try { await connection.query('SET ROLE kavosh_runtime'); }
+        catch(error) { connection.release(true); throw error; }
+        return connection;
+      }
+    },
     async query<Row>(sql: string, params?: unknown[]) { const result=await client.query(sql,params); return { rows: result.rows as Row[],affectedRows:result.rowCount??undefined }; },
     async exec(sql:string) { return client.query(sql); },
     async close() {
+      await pool.end();
       await client.end();
       await admin.query(`DROP DATABASE "${name}"`);
       await admin.end();

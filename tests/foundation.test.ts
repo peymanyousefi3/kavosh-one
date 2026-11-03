@@ -11,6 +11,7 @@ import { postgresOptions } from '../src/core/postgres-config.ts';
 
 async function fixture() {
   const pg = await testDatabase();
+  try {
   await pg.exec(await readFile(new URL('../db/migrations/001_foundation.sql', import.meta.url),'utf8'));
   const a = randomUUID(), b = randomUUID(), master = randomUUID(), masterB = randomUUID(), bot = randomUUID(), botB = randomUUID();
   const hub = randomUUID(), otherHub = randomUUID(), foreignHub = randomUUID(), role = randomUUID(), assignment = randomUUID();
@@ -29,7 +30,7 @@ async function fixture() {
   for (const [key, academy, actor, value] of [[credential,a,bot,token],[credentialB,b,botB,tokenB],[secondCredential,a,bot,secondToken]]) {
     await pg.query("INSERT INTO auth_private.credentials (id,academy_id,person_id,token_hash,capabilities,all_hubs,expires_at) VALUES ($1,$2,$3,$4,$5,true,now()+interval '1 hour')", [key,academy,actor,hashToken(value), [...capabilities]]);
   }
-  const database: Database = {
+  const database: Database = pg.runtime ?? {
     async connect() {
       await pg.exec('SET ROLE kavosh_runtime');
       return {
@@ -52,6 +53,7 @@ async function fixture() {
     } finally { await pg.exec('RESET ROLE'); }
   }
   return { pg, a,b,master,bot,hub,otherHub,foreignHub,role,assignment,credential,credentialB,secondCredential,secondToken,token,tokenB,request,api,database };
+  } catch(error) { await pg.close(); throw error; }
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 function check(name: string, run: (f: Fixture) => Promise<void>) {
@@ -223,4 +225,18 @@ check('transaction-local tenant context does not leak to the next pooled request
   assert.equal((await f.pg.query('SELECT * FROM public.hubs')).rows.length,0);
   await f.pg.exec('RESET ROLE');
   assert.equal((await f.request('hubs',{token:f.tokenB})).status,403);
+});
+
+if (process.env.TEST_DATABASE_URL) check('real PostgreSQL: simultaneous retries commit one mutation and one audit event', async f => {
+  const api=createApi(f.database),key=randomUUID();
+  const call=()=>api(new Request('https://academy.example/api/v1/hubs',{
+    method:'POST',headers:{authorization:`Bearer ${f.token}`,'content-type':'application/json','idempotency-key':key},
+    body:JSON.stringify({name:'Concurrent hub',city:'Toronto',countryCode:'CA'})
+  }),'hubs');
+  const [a,b]=await Promise.all([call(),call()]);
+  assert.equal(a.status,201);assert.equal(b.status,201);
+  assert.deepEqual(await a.json(),await b.json());
+  assert.equal((await f.pg.query("SELECT * FROM public.hubs WHERE name='Concurrent hub'")).rows.length,1);
+  assert.equal((await f.pg.query('SELECT * FROM public.audit_events')).rows.length,1);
+  assert.equal((await f.pg.query('SELECT * FROM public.outbox_events')).rows.length,1);
 });
