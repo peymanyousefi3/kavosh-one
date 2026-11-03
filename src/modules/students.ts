@@ -7,7 +7,9 @@ import { lockAcademyTopology } from './academy.ts';
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const name=z.string().trim().min(1).max(200),reason=z.string().trim().max(2000).default('');
 const preferredName=name.nullable(),shirtSize=z.string().trim().min(1).max(40).nullable();
-const birthDate=z.iso.date().refine(v=>v>='1900-01-01'&&v<=new Date().toISOString().slice(0,10));
+// A birth certificate records a local calendar date, not a UTC timestamp.
+// Permit today's date anywhere on Earth (UTC+14), without guessing birthplace.
+const birthDate=z.iso.date().refine(v=>v>='1900-01-01'&&v<=new Date(Date.now()+14*60*60*1000).toISOString().slice(0,10));
 const recruiter=z.discriminatedUnion('kind',[
   z.object({kind:z.literal('academy')}).strict(),z.object({kind:z.literal('hub'),id:uuid}).strict(),z.object({kind:z.literal('person'),id:uuid}).strict()
 ]);

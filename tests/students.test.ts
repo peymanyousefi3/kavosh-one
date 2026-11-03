@@ -102,3 +102,13 @@ if(process.env.TEST_DATABASE_URL) {
     assert.deepEqual(results.map(r=>r.response.status).sort(),[200,409]);assert.equal((await f.pg.query('SELECT * FROM public.student_profile_revisions WHERE person_id=$1',[f.student])).rows.length,2);
   });
 }
+test('international birth-date validation does not confuse a local calendar date with the server UTC date',async t=>{
+  const f=await fixture();try {
+    t.mock.method(Date,'now',()=>Date.parse('2026-11-03T10:30:00Z'));
+    const todayAhead=await f.add({...f.input,personId:f.actors.manager.person,dateOfBirth:'2026-11-04'});assert.equal(todayAhead.response.status,201,JSON.stringify(todayAhead.body));
+    assert.equal((await f.request('students/'+f.actors.manager.person)).body.data.date_of_birth,'2026-11-04');
+    assert.equal((await f.add({...f.input,personId:f.actors.peer.person,dateOfBirth:'2026-11-05'})).response.status,400);
+    t.mock.method(Date,'now',()=>Date.parse('2026-11-03T09:30:00Z'));
+    assert.equal((await f.add({...f.input,personId:f.actors.peer.person,dateOfBirth:'2026-11-04'})).response.status,400,'a date that is still in the future everywhere is rejected');
+  }finally{await f.pg.close();}
+});
