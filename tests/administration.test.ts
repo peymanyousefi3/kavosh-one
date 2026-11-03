@@ -8,6 +8,7 @@ import { administration } from '../src/modules/administration.ts';
 import { scopeFor,requireScope,type Capability } from '../src/core/policy.ts';
 import { mintToken,hashToken } from '../src/core/tokens.ts';
 import type { Database } from '../src/core/database.ts';
+import { assertSchemaReady } from '../src/core/database.ts';
 
 async function fixture() {
   const pg=await testDatabase();
@@ -236,6 +237,15 @@ check('runtime cannot rewrite submitted proposal payloads or reach another acade
     await assert.rejects(f.pg.query("UPDATE public.approval_requests SET payload='{}'::jsonb WHERE id=$1",[p.id]),/permission denied/);
     assert.equal((await f.pg.query('SELECT * FROM public.people WHERE academy_id=$1',[f.b])).rows.length,0);
   }finally{await f.pg.exec('RESET ROLE');}
+});
+check('schema readiness rejects an older migration level and reserved master templates stay protected',async f=>{
+  const connection={async query<Row>(sql:string,params?:unknown[]){const result=await f.pg.query<Row>(sql,params);return {rows:result.rows};},release(){}};
+  await f.pg.exec('SET ROLE kavosh_runtime');
+  try{await assertSchemaReady(connection);}finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.exec("CREATE OR REPLACE FUNCTION public.schema_revision() RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT 6 $$");
+  await f.pg.exec('SET ROLE kavosh_runtime');
+  try{await assert.rejects(assertSchemaReady(connection),/SCHEMA_NOT_CURRENT/);}finally{await f.pg.exec('RESET ROLE');}
+  await assert.rejects(f.pg.query("UPDATE public.roles SET name='Transferred root' WHERE id=$1",[f.systemRole]),/Reserved role/);
 });
 
 if(process.env.TEST_DATABASE_URL)check('concurrent human reviewers cannot apply the same approved change twice',async f=>{

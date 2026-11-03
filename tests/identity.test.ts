@@ -157,6 +157,9 @@ test('human identity: real library authentication and protected business access'
       const accepted=await f.request('/accept-invitation',{invitation:master.token},master.jar);
       assert.equal(accepted.response.status,200,'verified master must activate academy');
       assert.equal(accepted.body.academyId,master.academy);
+      await f.admin(async()=>{
+        assert.equal((await f.pg.query<{system_role:boolean}>("SELECT system_role FROM public.roles WHERE academy_id=$1 AND name='Academy master'",[master.academy])).rows[0].system_role,true);
+      });
       assert.equal((await f.request('/accept-invitation',{invitation:master.token},master.jar)).response.status,403);
       assert.equal((await f.business(master)).status,200);
       assert.equal((await f.request('/two-factor/disable',{password},master.jar)).response.status,403);
@@ -288,6 +291,14 @@ test('human identity: real library authentication and protected business access'
         await f.pg.exec('SET ROLE kavosh_runtime');
         try{await assert.rejects(f.pg.query('SELECT * FROM identity."user"'),/permission denied/);}finally{await f.pg.exec('RESET ROLE');}
       });
+      const connection=f.pg.runtime?f.pg.identityDb():f.db;
+      try {
+        const original=(await f.admin(()=>f.pg.query<{restore:string}>(`SELECT format('ALTER DATABASE %I OWNER TO %I',current_database(),current_user) AS restore`))).rows[0].restore;
+        try {
+          await f.admin(async()=>{const sql=(await f.pg.query<{command:string}>(`SELECT format('ALTER DATABASE %I OWNER TO kavosh_identity',current_database()) AS command`)).rows[0].command;await f.pg.exec(sql);});
+          await assert.rejects(new IdentityStore(connection,config.secret).safe(),/UNSAFE_IDENTITY_ROLE/);
+        }finally{await f.admin(()=>f.pg.exec(original));}
+      }finally{if(f.pg.runtime)await connection.destroy();}
     });
     await t.test('encrypted delivery queue retries, expires, scrubs and isolates credentials',async()=>{
       const queued=queuedDelivery(f.store,config.secret);
