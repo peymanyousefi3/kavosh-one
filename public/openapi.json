@@ -1,0 +1,35 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Kavosh One Foundation API",
+    "version": "0.1.0",
+    "description": "Backend foundation only. Human sign-in, financial actions, approvals and other planned modules are not implemented. Bearer credentials identify a bot and its academy; clients cannot choose a tenant. Effective access intersects credential capabilities, role grants and hub scope. Explicit denials win. Responses are never publicly cached."
+  },
+  "security": [{ "botBearer": [] }],
+  "components": {
+    "securitySchemes": { "botBearer": { "type": "http", "scheme": "bearer", "description": "Expiring kvo_ opaque credential. Store securely and send in Authorization; never use query parameters." } },
+    "parameters": {
+      "idempotency": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Reuse for retries of this exact operation. Changed payload returns 409. Permission is rechecked on replay." },
+      "limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } },
+      "after": { "name": "after", "in": "query", "schema": { "type": "string", "format": "uuid" }, "description": "Pass nextCursor from the preceding result." }
+    },
+    "responses": {
+      "error": { "description": "Error: 400 invalid input/reference, 401 unauthorized, 403 forbidden, 409 idempotency conflict, 413 oversized body, 415 wrong content type, 429 rate limit or 503 unavailable. Body contains error.code and error.requestId; X-Request-Id is also returned. No stack traces, tokens or database details are exposed." },
+      "list": { "description": "JSON object with data array and nextCursor (UUID or null). All records are permission-filtered." }
+    }
+  },
+  "paths": {
+    "/api/health": { "get": { "security": [], "summary": "Process liveness (does not imply database readiness)", "responses": { "200": { "description": "Process is up" } } } },
+    "/api/ready": { "get": { "security": [], "summary": "Database schema and least-privilege runtime readiness", "responses": { "200": { "description": "Ready" }, "503": { "description": "Not ready; no configuration details returned" } } } },
+    "/api/v1/hubs": {
+      "get": { "summary": "List permitted hubs (hubs.view)", "parameters": [{ "$ref": "#/components/parameters/limit" },{ "$ref": "#/components/parameters/after" }], "responses": { "200": { "$ref": "#/components/responses/list" }, "default": { "$ref": "#/components/responses/error" } } },
+      "post": { "summary": "Create hub (academy-wide hubs.edit required)", "parameters": [{ "$ref": "#/components/parameters/idempotency" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["name","city","countryCode"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 }, "city": { "type": "string", "minLength": 1, "maxLength": 100 }, "countryCode": { "type": "string", "pattern": "^[A-Z]{2}$" } } } } } }, "responses": { "201": { "description": "Created with audit and outbox event atomically" }, "default": { "$ref": "#/components/responses/error" } } }
+    },
+    "/api/v1/people": {
+      "get": { "summary": "List permitted people (people.view)", "parameters": [{ "$ref": "#/components/parameters/limit" },{ "$ref": "#/components/parameters/after" }], "responses": { "200": { "$ref": "#/components/responses/list" }, "default": { "$ref": "#/components/responses/error" } } },
+      "post": { "summary": "Create pending human record (people.edit within selected hub)", "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["name","hubId"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 }, "email": { "type": "string", "format": "email", "maxLength": 254 }, "hubId": { "type": "string", "format": "uuid" } } } } } }, "parameters": [{ "$ref": "#/components/parameters/idempotency" }], "responses": { "201": { "description": "Pending person recorded; does not create a login, verification or enrollment" }, "default": { "$ref": "#/components/responses/error" } } }
+    },
+    "/api/v1/audit-events": { "get": { "summary": "Read hub-scoped change history (audit.view)", "parameters": [{ "$ref": "#/components/parameters/limit" },{ "$ref": "#/components/parameters/after" }], "responses": { "200": { "$ref": "#/components/responses/list" }, "default": { "$ref": "#/components/responses/error" } } } },
+    "/api/v1/credentials/{id}/revoke": { "post": { "summary": "Revoke another bot credential (academy-wide credentials.revoke)", "description": "Revocation remains available in read-only academies. The current credential cannot revoke itself; use another authorized credential. Invalid or foreign credential IDs return the same 404.", "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }, { "$ref": "#/components/parameters/idempotency" }], "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } }, "responses": { "200": { "description": "Revoked" }, "default": { "$ref": "#/components/responses/error" } } } }
+  }
+}

@@ -1,0 +1,19 @@
+export interface QueryResult<Row = Record<string, unknown>> { rows: Row[]; rowCount?: number | null }
+export interface Connection {
+  query<Row = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryResult<Row>>;
+  release(destroy?: boolean): void;
+}
+export interface Database { connect(): Promise<Connection> }
+
+export async function assertRuntimeRole(db: Connection) {
+  const result = await db.query<{ safe: boolean }>(`
+    SELECT NOT r.rolsuper AND NOT r.rolbypassrls
+      AND pg_has_role(current_user,'kavosh_runtime','member')
+      AND NOT has_schema_privilege(current_user,'auth_private','usage')
+      AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        WHERE n.nspname IN ('public','auth_private') AND pg_has_role(current_user,c.relowner,'member'))
+      AND NOT EXISTS (SELECT 1 FROM pg_roles elevated WHERE (elevated.rolsuper OR elevated.rolbypassrls)
+        AND pg_has_role(current_user,elevated.oid,'member')) AS safe
+    FROM pg_roles r WHERE r.rolname=current_user`);
+  if (!result.rows[0]?.safe) throw new Error('UNSAFE_DATABASE_ROLE');
+}

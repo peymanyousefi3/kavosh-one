@@ -1,0 +1,162 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import type { Database, Connection } from './database.ts';
+import { assertRuntimeRole } from './database.ts';
+import { ApiError, requireScope, scopeFor, type Capability, type Credential, type Grant, type Scope } from './policy.ts';
+import { hashToken, parseBearer } from './tokens.ts';
+
+const id = z.string().uuid().transform(s => s.toLowerCase());
+const name = z.string().trim().min(1).max(200);
+const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
+const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
+const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
+type Reply = { status: number; body: unknown };
+
+async function jsonBody(request: Request) {
+  if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
+  const reader = request.body?.getReader();
+  if (!reader) throw new ApiError(400, 'INVALID_JSON');
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 16_384) { await reader.cancel(); throw new ApiError(413, 'BODY_TOO_LARGE'); }
+      chunks.push(value);
+    }
+    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; }
+    catch { throw new ApiError(400, 'INVALID_JSON'); }
+  } finally { reader.releaseLock(); }
+}
+
+async function loadGrants(db: Connection, personId: string): Promise<Grant[]> {
+  const result = await db.query<{ capability: Capability; effect: 'allow' | 'deny'; all_hubs: boolean; hub_ids: string[] }>(`
+    SELECT p.capability,p.effect,a.all_hubs,
+      ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id) AS hub_ids
+    FROM public.role_assignments a JOIN public.role_permissions p
+      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1`, [personId]);
+  return result.rows.map(r => ({ capability: r.capability, effect: r.effect, allHubs: r.all_hubs, hubIds: r.hub_ids }));
+}
+
+async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
+  await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,credential_id,request_id,action,entity_id,hub_id,changes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
+  await db.query(`INSERT INTO public.outbox_events (academy_id,id,event_type,entity_id,request_id) VALUES ($1,$2,$3,$4,$5)`, [c.academy_id, randomUUID(), action, entityId, requestId]);
+}
+
+function permit(scope: Scope) {
+  if (!scope.all && scope.hubs.length === 0) throw new ApiError(403, 'FORBIDDEN');
+}
+
+async function operation(db: Connection, c: Credential, grants: Grant[], request: Request, path: string, requestId: string): Promise<Reply> {
+  const url = new URL(request.url);
+  const isRead = request.method === 'GET';
+  let capability: Capability;
+  if (path === 'hubs') capability = isRead ? 'hubs.view' : 'hubs.edit';
+  else if (path === 'people') capability = isRead ? 'people.view' : 'people.edit';
+  else if (path === 'audit-events' && isRead) capability = 'audit.view';
+  else if (/^credentials\/[^/]+\/revoke$/.test(path) && request.method === 'POST') capability = 'credentials.revoke';
+  else throw new ApiError(404, 'NOT_FOUND');
+  if (!['GET','POST'].includes(request.method) || (path === 'audit-events' && !isRead)) throw new ApiError(405, 'METHOD_NOT_ALLOWED');
+  const scope = scopeFor(c, grants, capability);
+  permit(scope);
+  if (isRead) {
+    const { limit, after } = paging.parse(Object.fromEntries(url.searchParams));
+    // Identifiers are constants selected here, never request-controlled SQL.
+    const table = path === 'hubs' ? 'hubs' : path === 'people' ? 'people' : 'audit_events';
+    const hubColumn = path === 'hubs' ? 'id' : 'hub_id';
+    const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : path === 'people'
+      ? 'id,name,email,hub_id,status,created_at' : 'id,actor_id,request_id,action,entity_id,hub_id,changes,created_at';
+    const rows = await db.query(`SELECT ${fields} FROM public.${table}
+      WHERE ($1::boolean OR ${hubColumn}=ANY($2::uuid[])) AND ($3::uuid IS NULL OR id>$3::uuid)
+      ORDER BY id LIMIT $4`, [scope.all, scope.hubs, after ?? null, limit + 1]);
+    const more = rows.rows.length > limit;
+    const data = rows.rows.slice(0, limit);
+    return { status: 200, body: { data, nextCursor: more ? data.at(-1)?.id : null } };
+  }
+  if (url.search) throw new ApiError(400, 'INVALID_QUERY');
+  const raw = await jsonBody(request);
+  let input: unknown;
+  let hubId: string | null = null;
+  let revokeId: string | undefined;
+  if (path === 'hubs') { requireScope(scope); input = hubInput.parse(raw); }
+  else if (path === 'people') {
+    const person = personInput.parse(raw); requireScope(scope, person.hubId);
+    hubId = person.hubId; input = person;
+  } else {
+    requireScope(scope); z.object({}).strict().parse(raw);
+    revokeId = id.parse(path.split('/')[1]);
+    if (revokeId === c.token_id) throw new ApiError(409, 'SELF_REVOCATION_REQUIRES_ANOTHER_CREDENTIAL');
+    input = {};
+  }
+  const key = id.parse(request.headers.get('idempotency-key'));
+  const fingerprint = createHash('sha256').update(JSON.stringify([request.method, path, input])).digest('hex');
+  const inserted = await db.query(`INSERT INTO public.request_keys (academy_id,credential_id,key,request_hash) VALUES ($1,$2,$3,$4)
+    ON CONFLICT DO NOTHING RETURNING key`, [c.academy_id, c.token_id, key, fingerprint]);
+  if (!inserted.rows.length) {
+    const previous = await db.query<{ request_hash: string; status_code: number; response: unknown }>(
+      `SELECT request_hash,status_code,response FROM public.request_keys WHERE credential_id=$1 AND key=$2 FOR UPDATE`, [c.token_id, key]);
+    const row = previous.rows[0];
+    if (!row || row.request_hash !== fingerprint) throw new ApiError(409, 'IDEMPOTENCY_CONFLICT');
+    return { status: row.status_code, body: row.response };
+  }
+  let reply: Reply;
+  if (path === 'hubs') {
+    const value = hubInput.parse(input); const entityId = randomUUID();
+    const result = await db.query(`INSERT INTO public.hubs (academy_id,id,name,city,country_code) VALUES ($1,$2,$3,$4,$5) RETURNING id,name,city,country_code`, [c.academy_id, entityId, value.name, value.city, value.countryCode]);
+    await record(db, c, requestId, 'hub.created', entityId, entityId, { before: null, after: result.rows[0] });
+    reply = { status: 201, body: { data: result.rows[0] } };
+  } else if (path === 'people') {
+    const value = personInput.parse(input); const entityId = randomUUID();
+    const result = await db.query(`INSERT INTO public.people (academy_id,id,kind,name,email,hub_id,status) VALUES ($1,$2,'human',$3,$4,$5,'pending') RETURNING id,name,email,hub_id,status`, [c.academy_id, entityId, value.name, value.email ?? null, value.hubId]);
+    await record(db, c, requestId, 'person.created', entityId, hubId, { before: null, after: result.rows[0] });
+    reply = { status: 201, body: { data: result.rows[0] } };
+  } else {
+    const result = await db.query<{ revoked: boolean }>('SELECT public.revoke_bot($1) AS revoked', [revokeId]);
+    if (!result.rows[0]?.revoked) throw new ApiError(404, 'NOT_FOUND');
+    await record(db, c, requestId, 'credential.revoked', revokeId!, null, { revoked: true });
+    reply = { status: 200, body: { revoked: true } };
+  }
+  await db.query(`UPDATE public.request_keys SET status_code=$3,response=$4::jsonb WHERE credential_id=$1 AND key=$2`, [c.token_id, key, reply.status, JSON.stringify(reply.body)]);
+  return reply;
+}
+
+export function createApi(database: Database) {
+  return async (request: Request, path: string) => {
+    const requestId = randomUUID(); let db: Connection | undefined; let transaction = false; let destroyConnection = false;
+    const headers = { 'Cache-Control': 'no-store', 'X-Request-Id': requestId, 'X-Content-Type-Options': 'nosniff' };
+    try {
+      const token = parseBearer(request.headers.get('authorization'));
+      if (!token) throw new ApiError(401, 'UNAUTHORIZED');
+      db = await database.connect();
+      await assertRuntimeRole(db);
+      // Autocommitted before domain work so failed requests still consume quota.
+      const result = await db.query<Credential>('SELECT * FROM public.authenticate_bot($1)', [hashToken(token)]);
+      const c = result.rows[0];
+      if (!c) throw new ApiError(401, 'UNAUTHORIZED');
+      if (!c.allowed) throw new ApiError(429, 'RATE_LIMITED');
+      await db.query('BEGIN'); transaction = true;
+      await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
+      const lock = await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);
+      if (!lock.rows[0]?.valid) throw new ApiError(401, 'UNAUTHORIZED');
+      const academy = await db.query<{ status: string }>('SELECT status FROM public.academies WHERE id=$1', [c.academy_id]);
+      const status = academy.rows[0]?.status;
+      if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
+      const securityRevocation = request.method === 'POST' && /^credentials\/[^/]+\/revoke$/.test(path);
+      if (status === 'read_only' && request.method !== 'GET' && !securityRevocation) throw new ApiError(403, 'ACADEMY_READ_ONLY');
+      const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
+      if (actor.rows[0]?.kind !== 'bot' || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
+      const reply = await operation(db, c, await loadGrants(db, c.person_id), request, path, requestId);
+      await db.query('COMMIT'); transaction = false;
+      return Response.json(reply.body, { status: reply.status, headers });
+    } catch (error) {
+      if (db && transaction) { try { await db.query('ROLLBACK'); } catch { destroyConnection = true; } }
+      let status = 503; let code = 'SERVICE_UNAVAILABLE';
+      if (error instanceof ApiError) { status = error.status; code = error.code; }
+      else if (error instanceof z.ZodError) { status = 400; code = 'INVALID_INPUT'; }
+      else if (error && typeof error === 'object' && 'code' in error && error.code === '23503') { status = 400; code = 'INVALID_REFERENCE'; }
+      return Response.json({ error: { code, requestId } }, { status, headers: { ...headers, ...(status === 429 ? { 'Retry-After': '60' } : {}) } });
+    } finally { db?.release(destroyConnection); }
+  };
+}
