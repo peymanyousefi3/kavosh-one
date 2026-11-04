@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.50.0",
+    "version": "0.51.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -17064,6 +17064,58 @@
                                 "year",
                                 "pay_period"
                               ]
+                            },
+                            "forecastAllocation": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "calendar_pay_dates"
+                                    },
+                                    "proration": {
+                                      "default": "manual",
+                                      "type": "string",
+                                      "enum": [
+                                        "manual",
+                                        "none"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "fixed_divisor"
+                                    },
+                                    "divisor": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 1000
+                                    },
+                                    "proration": {
+                                      "default": "manual",
+                                      "type": "string",
+                                      "enum": [
+                                        "manual",
+                                        "none"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "divisor"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -18077,6 +18129,58 @@
                                 "month",
                                 "year",
                                 "pay_period"
+                              ]
+                            },
+                            "forecastAllocation": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "calendar_pay_dates"
+                                    },
+                                    "proration": {
+                                      "default": "manual",
+                                      "type": "string",
+                                      "enum": [
+                                        "manual",
+                                        "none"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "fixed_divisor"
+                                    },
+                                    "divisor": {
+                                      "type": "integer",
+                                      "minimum": 1,
+                                      "maximum": 1000
+                                    },
+                                    "proration": {
+                                      "default": "manual",
+                                      "type": "string",
+                                      "enum": [
+                                        "manual",
+                                        "none"
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "divisor"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               ]
                             }
                           },

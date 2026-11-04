@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { operationsFixture } from './operations-fixture.ts';
 
-export async function invoiceFixture(){
- const f=await operationsFixture(),country=randomUUID(),region=randomUUID(),city=randomUUID();
+export async function invoiceFixture(options:{throughSchema?:number}={}){
+ const f=await operationsFixture(options),country=randomUUID(),region=randomUUID(),city=randomUUID();
  await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);
  await f.pg.query("INSERT INTO public.regions(academy_id,id,country_id,code,name) VALUES($1,$2,$3,'ON','Ontario')",[f.a,region,country]);
  await f.pg.query("INSERT INTO public.cities(academy_id,id,region_id,name) VALUES($1,$2,$3,'Toronto')",[f.a,city,region]);

@@ -7,6 +7,7 @@ import { ApiError,scopeNonempty } from '../core/policy.ts';
 import { parseMoney,formatMoneyTotal,allocateMoney } from '../core/money.ts';
 import { highestHourlySegments,type CompensationRule,type HourlyInterval } from '../core/work-compensation.ts';
 import { payCalendarRange,payCalendarDays,payOccurrencesOn,type PayCycle } from '../core/pay-calendar.ts';
+import { salaryAllocation } from '../core/salary-allocation.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const zone=z.string().min(1).max(100).refine(v=>{if(/^[+-]/.test(v))return false;try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}});
@@ -64,7 +65,9 @@ export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
  const scales=new Map<string,number>();for(const t of result.terms)scales.set(t.currency_id,Math.max(t.unit_scale,scales.get(t.currency_id)??0));
  const issues:{engagementId:string;termsVersion:number;componentCode:string;currencyId:string;reason:string;sessionId?:string}[]=[],issueKeys=new Set<string>();
  const issue=(t:Terms,r:CompensationRule,reason:string,sessionId?:string)=>{const k=key(t.engagement_id,t.version,r.code,reason,sessionId??'');if(issueKeys.has(k))return;if(issues.length>=2000)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');issueKeys.add(k);issues.push({engagementId:t.engagement_id,termsVersion:t.version,componentCode:r.code,currencyId:t.currency_id,reason,...sessionId?{sessionId}:{}});};
- const intervals:{personId:string;currencyId:string;interval:HourlyInterval;source:{engagementId:string;termsVersion:number;componentCode:string;sessionId:string;sessionVersion:number;assignmentId:string;assignmentVersion:number;enrolled:number|null}}[]=[],fixed:{engagementId:string;termsVersion:number;componentCode:string;currencyId:string;on:string;slot:number;minor:bigint}[]=[];
+ const intervals:{personId:string;currencyId:string;interval:HourlyInterval;source:{engagementId:string;termsVersion:number;componentCode:string;sessionId:string;sessionVersion:number;assignmentId:string;assignmentVersion:number;enrolled:number|null}}[]=[],fixed:{engagementId:string;termsVersion:number;componentCode:string;currencyId:string;on:string;slot:number;minor:bigint;allocation?:{kind:string;from:string;through:string;proration:string;divisor:number;rounding:string;fullReferencePeriodBudgetConserved:boolean}}[]=[];
+ const salaryAllocations=new Map<string,ReturnType<typeof salaryAllocation>>();
+ let salaryReferenceDays=0;
  for(const terms of groups.values()){
   const activeComponents=new Map<string,{t:Terms;r:CompensationRule}>();
   // Salary planning only uses unambiguous configured payment units. Other
@@ -74,6 +77,18 @@ export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
     if(r.kind==='project'||r.kind==='tuition_percentage'){issue(t,r,r.kind==='project'?'PROJECT_PAYMENT_DATE_REQUIRED':'TUITION_ALLOCATION_BASIS_REQUIRED');continue;}
     if(r.kind!=='salary')continue;const dates=payOccurrencesOn(t.pay_cycle,day);if(!dates.length)continue;
     if(r.assignment){issue(t,r,'SALARY_ASSIGNMENT_POLICY_REQUIRED');continue;}
+    if(r.forecastAllocation){
+     const reference=r.frequency==='year'?String(day.year):r.frequency==='month'?on.slice(0,7):on,cacheKey=key(t.engagement_id,t.version,r.code,reference);
+     let allocation=salaryAllocations.get(cacheKey);if(!allocation){
+      // ponytail: cap the aggregate reference-calendar walk, not just each
+      // employee's dates; larger salary forecasts need background report jobs.
+      if(r.forecastAllocation.kind==='calendar_pay_dates'){salaryReferenceDays+=r.frequency==='year'?day.daysInYear:day.daysInMonth;if(salaryReferenceDays>40000)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');}
+      allocation=salaryAllocation(r,t.pay_cycle,day,t.unit_scale);salaryAllocations.set(cacheKey,allocation);
+     }
+     if(allocation.proration==='manual'&&(t.starts_on>allocation.from||t.effective_on>allocation.from||r.from>allocation.from||(t.ends_on!==null&&t.ends_on<allocation.through)||(r.through!==null&&r.through<allocation.through))){issue(t,r,'SALARY_PRORATION_POLICY_REQUIRED');continue;}
+     for(const d of dates){if(fixed.length>=2000)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');const original=allocation.kind==='fixed_divisor'?allocation.perPayment:allocation.payments!.get(on+':'+d.slot);if(original===undefined)throw new Error('SALARY_ALLOCATION_SLOT_MISSING');fixed.push({engagementId:t.engagement_id,termsVersion:t.version,componentCode:r.code,currencyId:t.currency_id,on,slot:d.slot,minor:original*10n**BigInt(scales.get(t.currency_id)!-t.unit_scale),allocation:{kind:allocation.kind,from:allocation.from,through:allocation.through,proration:allocation.proration,divisor:allocation.kind==='fixed_divisor'?allocation.divisor:allocation.payments.size,rounding:allocation.kind==='fixed_divisor'?'half_away_per_payment':'largest_remainder',fullReferencePeriodBudgetConserved:allocation.referenceBudgetConserved}});}
+     continue;
+    }
     const monthStart=day.with({day:1}).toString(),endOfMonth=day.with({day:day.daysInMonth}).toString();
     if(r.frequency!=='pay_period'&&(r.frequency!=='month'||!['monthly','semimonthly'].includes(t.pay_cycle.kind))){issue(t,r,'SALARY_ALLOCATION_POLICY_REQUIRED');continue;}
     if(r.frequency==='month'&&(t.starts_on>monthStart||t.effective_on>monthStart||r.from>monthStart||(t.ends_on!==null&&t.ends_on<endOfMonth)||(r.through!==null&&r.through<endOfMonth))){issue(t,r,'SALARY_PRORATION_POLICY_REQUIRED');continue;}
@@ -115,6 +130,6 @@ export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
   const salary=fixed.filter(f=>f.currencyId===currencyId),fixedTotal=salary.reduce((sum,f)=>sum+f.minor,0n),known=hourly+fixedTotal,unpriced=issues.filter(i=>i.currencyId===currencyId);
   return {currencyId,currencyCode:result.terms.find(t=>t.currency_id===currencyId)!.currency_code,unitScale,knownHourlySubtotal:exact(hourly,unitScale),knownSalarySubtotal:exact(fixedTotal,unitScale),knownSubtotal:exact(known,unitScale),estimatedTotal:unpriced.length?null:exact(known,unitScale),unpricedComponents:unpriced,hourlyPlans,salaryPayments:salary.map(({minor,...f})=>({...f,estimatedCost:exact(minor,unitScale)}))};
  });
- return {status:200,body:{data:{report:'configured_scheduled_work_costs',...q,snapshotAt:result.snapshot_at,coverage:'visible_configured_sources_only',completeAcademyForecast:false,historyBasis:'current_recorded_terms_and_schedule',sessionRangeBasis:'session_start_in_report_time_zone',rateDateBasis:'session_start_in_work_terms_time_zone',hourlyBasis:'unrounded_scheduled_time_highest_rate_once_per_person_currency',salaryBasis:'configured_payment_units_no_proration',timingBasis:'salary_pay_dates_and_hourly_session_dates',cashFlowForecast:false,rounding:'hourly_per_person_currency_once_half_away',currencyConversion:'none',actualTimeOrAttendanceUsed:false,statutoryDeductionsCalculated:false,earnedEntitlementDetermined:false,payrollApproved:false,paymentExecuted:false,currencies}}};
+ return {status:200,body:{data:{report:'configured_scheduled_work_costs',...q,snapshotAt:result.snapshot_at,coverage:'visible_configured_sources_only',completeAcademyForecast:false,historyBasis:'current_recorded_terms_and_schedule',sessionRangeBasis:'session_start_in_report_time_zone',rateDateBasis:'session_start_in_work_terms_time_zone',hourlyBasis:'unrounded_scheduled_time_highest_rate_once_per_person_currency',salaryBasis:'versioned_configured_payment_allocation_not_earned_entitlement',timingBasis:'salary_pay_dates_and_hourly_session_dates',cashFlowForecast:false,rounding:'hourly_per_person_currency_once_half_away',currencyConversion:'none',actualTimeOrAttendanceUsed:false,statutoryDeductionsCalculated:false,earnedEntitlementDetermined:false,payrollApproved:false,paymentExecuted:false,currencies}}};
 }
 export const payrollForecastContract=[{path:'/api/v1/reports/payroll/scheduled-costs',method:'get',summary:'Permission-intersected same-snapshot work-cost forecast from pinned compensation and current visible schedules; exact known subtotals and explicit unpriced cases, not earned payroll, actual cash or statutory certification',querySchema:query}] as const;
