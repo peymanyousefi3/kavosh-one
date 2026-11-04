@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.62.0",
+    "version": "0.63.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -22400,7 +22400,7 @@
     },
     "/api/v1/reports/finance/bank-reconciliation": {
       "get": {
-        "summary": "Same-snapshot current matching review, prior outstanding and cutoff-spanning groups, independent stable pages and optional explicitly selected manual opening/closing observations; provisional arithmetic only, not finalized or externally verified reconciliation",
+        "summary": "Same-snapshot current matching review, prior outstanding and cutoff-spanning groups, independent source-snapshot-required cursors and optional explicitly selected manual opening/closing observations; account-wide source changes invalidate cursors, provisional arithmetic only, not finalized or externally verified reconciliation",
         "parameters": [
           {
             "name": "accountId",
@@ -22428,6 +22428,15 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "snapshot",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
             }
           },
           {
