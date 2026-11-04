@@ -1,4 +1,5 @@
 import { createHmac,timingSafeEqual } from 'node:crypto';
+import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 
 // https://developers.boldsign.com/webhooks/verify-webhook-events/
@@ -26,4 +27,47 @@ export function verifyBoldSignSignature(body:Uint8Array,header:string|null,secre
     for(const signature of signatures)matched|=Number(timingSafeEqual(expected,Buffer.from(signature,'hex')));
   }
   if(!matched)throw invalid();return seconds;
+}
+
+const endpoints={US:'https://api.boldsign.com',CA:'https://api-ca.boldsign.com',EU:'https://api-eu.boldsign.com',AU:'https://api-au.boldsign.com'} as const;
+const connection=z.object({region:z.enum(['US','CA','EU','AU']),apiKey:z.string().min(1).max(4096).regex(/^[\x21-\x7e]+$/)}).strict();
+export type BoldSignConnection=z.infer<typeof connection>;
+const uuid=z.string().uuid().transform(s=>s.toLowerCase()),status=z.string().min(1).max(80);
+const properties=z.object({documentId:uuid,status,signerDetails:z.array(z.object({
+  id:uuid,signerEmail:z.string().email().max(254),status,signerType:z.string().max(80).optional(),
+  authenticationType:z.string().max(100).nullable().optional(),enableEmailOTP:z.boolean().optional(),
+  isAuthenticationFailed:z.boolean().nullable().optional(),isReassigned:z.boolean().optional()
+})).max(100)});
+
+// Region is explicit, never inferred from the academy address. These are the
+// provider's fixed endpoints, not caller-supplied URLs:
+// https://developers.boldsign.com/api-overview/versioning/
+// https://developers.boldsign.com/documents/document-details-and-status/
+// Read-only transport; its result is evidence for reconciliation, not clearance.
+export async function getBoldSignDocument(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch) {
+  const configured=connection.safeParse(config);
+  if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
+  const selected=uuid.safeParse(documentId);if(!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_DOCUMENT_ID');
+  const unavailable=()=>new ApiError(502,'BOLDSIGN_STATUS_UNAVAILABLE');
+  try {
+    const response=await send(endpoints[configured.data.region]+'/v1/document/properties?'+new URLSearchParams({documentId:selected.data}),{
+      method:'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:'application/json'},redirect:'error',cache:'no-store',credentials:'omit',signal:AbortSignal.timeout(10000)
+    });
+    // Always cancel rejected responses; never include provider errors or keys in
+    // our exception. Check the streamed bytes, not a claimed Content-Length.
+    if(!response.ok||response.redirected||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')) {
+      await response.body?.cancel();throw unavailable();
+    }
+    const reader=response.body?.getReader();if(!reader)throw unavailable();
+    const chunks:Uint8Array[]=[];let size=0;
+    try {
+      while(true) {
+        const part=await reader.read();if(part.done)break;size+=part.value.byteLength;
+        if(size>1_048_576){await reader.cancel();throw unavailable();}chunks.push(part.value);
+      }
+    }finally{reader.releaseLock();}
+    const result=properties.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))));
+    if(result.documentId!==selected.data)throw unavailable();
+    return result;
+  }catch{throw unavailable();}
 }
