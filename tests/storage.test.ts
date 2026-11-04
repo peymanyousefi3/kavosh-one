@@ -123,7 +123,7 @@ if(process.env.TEST_DATABASE_URL)check('a reservation waiting for its budget loc
     for(let attempt=0;attempt<200;attempt++) {
       await f.pg.query('SELECT pg_stat_clear_snapshot()');
       const blocked=await f.pg.query<{count:number}>(`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
-        AND wait_event_type='Lock' AND query LIKE '%reserve_file_upload%'`);
+        AND wait_event_type='Lock' AND pg_backend_pid()=ANY(pg_blocking_pids(pid))`);
       if(blocked.rows[0].count>0){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,5));
     }
     assert.equal(waiting,true,'prove the request waited for the capacity lock before the metadata correction');

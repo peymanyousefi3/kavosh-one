@@ -17,8 +17,9 @@ const updateInput=z.object(fields).partial().extend({expectedVersion:version,rea
 const policyInput=z.union([createInput,updateInput]);
 const reservationInput=z.object({expectedMetadataVersion:version}).strict();
 const inspectionInput=reservationInput.extend({grantId:uuid});
-const grantReceipt=z.object({id:uuid,fileId:uuid,metadataVersion:version,storageTargetId:z.string().regex(/^[a-f0-9]{64}$/),issuedAt:z.iso.datetime(),expiresAt:z.iso.datetime()}).strict();
+const grantReceipt=z.object({id:uuid,fileId:uuid,metadataVersion:version,storageTargetId:z.string().regex(/^[a-f0-9]{64}$/),issuedAt:z.iso.datetime(),expiresAt:z.iso.datetime(),formatPolicyVersion:version.nullable().default(null)}).strict();
 const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterVersion:z.coerce.number().int().min(0).max(2_147_483_647).default(0)}).strict();
+const grantHistoryQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterIssuedAt:z.iso.datetime().optional(),afterId:uuid.optional()}).strict().refine(v=>Boolean(v.afterIssuedAt)===Boolean(v.afterId),'Use both cursor fields together.');
 interface Policy {academyId:string;uploadsEnabled:boolean;maximumFileBytes:number;maximumReservedBytes:number;maximumFiles:number;allowedMimeTypes:string[];reservedBytes:number;reservedFiles:number;version:number}
 const policyFields=`academy_id AS "academyId",uploads_enabled AS "uploadsEnabled",maximum_file_bytes::float8 AS "maximumFileBytes",maximum_reserved_bytes::float8 AS "maximumReservedBytes",
  maximum_files AS "maximumFiles",allowed_mime_types AS "allowedMimeTypes",reserved_bytes::float8 AS "reservedBytes",reserved_files AS "reservedFiles",version`;
@@ -60,6 +61,13 @@ async function lockUploadFile(ctx:ApiContext,id:string,expectedVersion:number,al
 }
 const inspectionFields='id,file_id AS "fileId",grant_id AS "grantId",metadata_version AS "metadataVersionAtRequest",requested_by AS "requestedBy",requested_at AS "requestedAt"';
 function inspectionReply(data:Record<string,unknown>) {return {...data,stage:'inspection_requested',uploadVerified:false,physicalStorageVerified:false,safeToServe:false};}
+async function grantHistory(ctx:ApiContext,id:string):Promise<Reply> {
+  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+  await permittedFile(ctx,id,true,false,'files.upload');const q=grantHistoryQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+  const rows=(await ctx.db.query<{id:string;issuedAt:Date|string}>(`SELECT id,file_id AS "fileId",metadata_version AS "metadataVersion",created_by AS "createdBy",issued_at AS "issuedAt",expires_at AS "expiresAt",format_policy_version AS "formatPolicyVersion",format_policy_snapshot AS "formatPolicy",(format_policy_version IS NOT NULL) AS "formatPolicyRecorded"
+    FROM public.file_upload_grants WHERE file_id=$1 AND ($2::timestamptz IS NULL OR (issued_at,id)>($2::timestamptz,$3::uuid)) ORDER BY issued_at,id LIMIT $4`,[id,q.afterIssuedAt??null,q.afterId??null,q.limit+1])).rows;
+  const tail=rows[q.limit-1];return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?{issuedAt:new Date(tail.issuedAt).toISOString(),id:tail.id}:null}};
+}
 async function inspection(ctx:ApiContext,id:string):Promise<Reply> {
   if(ctx.request.method==='GET') {
     await permittedFile(ctx,id);const row=(await ctx.db.query('SELECT '+inspectionFields+' FROM public.file_inspection_requests WHERE file_id=$1',[id])).rows[0];
@@ -90,11 +98,11 @@ async function uploadLink(ctx:ApiContext,id:string,input:z.infer<typeof reservat
     if((await ctx.db.query('SELECT 1 FROM public.file_inspection_requests WHERE file_id=$1',[id])).rows.length)throw new ApiError(409,'UPLOAD_CLOSED_FOR_INSPECTION');
     if(f.expected_bytes>Math.min(p.maximumFileBytes,service.maximumUploadBytes))throw new ApiError(409,'FILE_EXCEEDS_STORAGE_LIMIT');
     const reply=await mutation(ctx,input,async()=>{
-      let row:{id:string;fileId:string;metadataVersion:number;storageTargetId:string;issuedAt:Date|string;expiresAt:Date|string};
-      try {row=(await ctx.db.query<typeof row>('SELECT id,file_id AS "fileId",metadata_version AS "metadataVersion",storage_target_id AS "storageTargetId",issued_at AS "issuedAt",expires_at AS "expiresAt" FROM public.issue_file_upload_grant($1,$2,$3,$4)',[id,ctx.credential.person_id,input.expectedMetadataVersion,service.storageTargetId])).rows[0];}
+      let row:{id:string;fileId:string;metadataVersion:number;storageTargetId:string;issuedAt:Date|string;expiresAt:Date|string;formatPolicyVersion:number};
+      try {row=(await ctx.db.query<typeof row>('SELECT id,file_id AS "fileId",metadata_version AS "metadataVersion",storage_target_id AS "storageTargetId",issued_at AS "issuedAt",expires_at AS "expiresAt",format_policy_version AS "formatPolicyVersion" FROM public.issue_file_upload_grant($1,$2,$3,$4)',[id,ctx.credential.person_id,input.expectedMetadataVersion,service.storageTargetId])).rows[0];}
       catch(error){storageFailure(error);}
       const data={...row,issuedAt:new Date(row.issuedAt).toISOString(),expiresAt:new Date(row.expiresAt).toISOString()};
-      await record(ctx.db,ctx.credential,ctx.requestId,'file.upload.link.issued',id,f.effective_hub_id,{grantId:data.id,metadataVersion:data.metadataVersion,expiresAt:data.expiresAt});
+      await record(ctx.db,ctx.credential,ctx.requestId,'file.upload.link.issued',id,f.effective_hub_id,{grantId:data.id,metadataVersion:data.metadataVersion,expiresAt:data.expiresAt,formatPolicyVersion:data.formatPolicyVersion});
       // Only non-secret grant intent is cached; never a URL or provider key.
       return {status:201,body:{data}};
     });
@@ -104,11 +112,11 @@ async function uploadLink(ctx:ApiContext,id:string,input:z.infer<typeof reservat
     if(storageTargetId!==service.storageTargetId)throw new ApiError(409,'STORAGE_TARGET_CHANGED');
     const upload=await service.quarantineUpload(id,{bytes:f.expected_bytes,contentType:f.claimed_mime_type},300,data.issuedAt);
     if(upload.expiresAt!==data.expiresAt)throw new ApiError(503,'FILE_GRANT_UNAVAILABLE');
-    return {status:reply.status,body:{data:{...data,stage:'awaiting_upload',uploadVerified:false,physicalStorageVerified:false,upload}}};
+    return {status:reply.status,body:{data:{...data,formatPolicyRecorded:data.formatPolicyVersion!==null,stage:'awaiting_upload',uploadVerified:false,physicalStorageVerified:false,upload}}};
   }finally{service.close();}
 }
 export async function storage(ctx:ApiContext,registry:ApprovalRegistry=storageActions,connections?:R2UploadConnections):Promise<Reply|null> {
-  const isPolicy=ctx.path==='storage-policy',isHistory=ctx.path==='storage-policy/history',reservation=/^files\/([^/]+)\/(upload-reservation|upload-limits|upload-link|inspection)$/.exec(ctx.path);
+  const isPolicy=ctx.path==='storage-policy',isHistory=ctx.path==='storage-policy/history',reservation=/^files\/([^/]+)\/(upload-reservation|upload-limits|upload-link|upload-grants|inspection)$/.exec(ctx.path);
   if(!isPolicy&&!isHistory&&!reservation)return null;
   if(isPolicy||isHistory) {
     authority(ctx,ctx.request.method==='POST');
@@ -120,7 +128,8 @@ export async function storage(ctx:ApiContext,registry:ApprovalRegistry=storageAc
     if(isHistory){const q=historyQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const rows=(await ctx.db.query<{version:number}>('SELECT version,definition,changed_by,approval_id,reason,created_at FROM public.file_storage_policy_revisions WHERE version>$1 ORDER BY version LIMIT $2',[q.afterVersion,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextVersion:rows.length>q.limit?rows[q.limit-1].version:null}};}
     z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const p=await policy(ctx);return {status:200,body:{configured:Boolean(p),data:p?{...p,usageBasis:'reserved_claims',physicalStorageVerified:false}:null}};
   }
-  const id=uuid.parse(reservation![1]);z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+  const id=uuid.parse(reservation![1]);if(reservation![2]==='upload-grants')return grantHistory(ctx,id);
+  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
   if(reservation![2]==='inspection')return inspection(ctx,id);
   if(reservation![2]==='upload-link') {
     if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');return uploadLink(ctx,id,reservationInput.parse(await jsonBody(ctx.request)),connections);
@@ -153,7 +162,8 @@ export const storageContract=[
   {path:'/api/v1/storage-policy/history',method:'get',summary:'Private immutable upload policy revisions',querySchema:historyQuery},
   {path:'/api/v1/files/{id}/upload-reservation',method:'get',summary:'Read authorized capacity reservation; no signed link or physical upload proof'},
   {path:'/api/v1/files/{id}/upload-reservation',method:'post',summary:'Atomically reserve capacity under current file/domain/upload permissions and school policy; does not transfer bytes',schema:reservationInput},
-  {path:'/api/v1/files/{id}/upload-link',method:'post',summary:'Reserve capacity and issue a five-minute conditional quarantine PUT link; fresh access and policy checks on retries, no URL in stored intent, no upload/clean proof',schema:reservationInput},
+  {path:'/api/v1/files/{id}/upload-link',method:'post',summary:'Issue a five-minute conditional quarantine PUT with immutable format-policy provenance; replays retain original policy version/expiry but recheck current access/settings, legacy receipts stay explicitly unknown',schema:reservationInput},
+  {path:'/api/v1/files/{id}/upload-grants',method:'get',summary:'Uploader/editor-scoped grant history with exact original allowed-format snapshots; no URLs, storage keys, school budgets or content-safety clearance',querySchema:grantHistoryQuery},
   {path:'/api/v1/files/{id}/inspection',method:'get',summary:'Read authorized request, worker progress and immutable attempts including bounded content-signature hints; not format validity, uploaded or safe content clearance'},
   {path:'/api/v1/files/{id}/inspection',method:'post',summary:'Request inspection for an existing upload grant and close new link issuance atomically; no browser claim establishes file safety',schema:inspectionInput,acceptedDescription:'Inspection request recorded; content is not verified or available'},
   {path:'/api/v1/files/{id}/upload-limits',method:'get',summary:'Uploader-safe enabled/per-file limits and declared-format choices for an authorized file, without school totals or other files'}

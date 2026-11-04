@@ -9,10 +9,10 @@ import { mintToken,hashToken } from '../src/core/tokens.ts';
 import type { Database } from '../src/core/database.ts';
 import type { R2UploadConnections } from '../src/integrations/r2-config.ts';
 
-export async function operationsFixture(options:{connections?:R2UploadConnections}={}) {
+export async function operationsFixture(options:{connections?:R2UploadConnections;throughSchema?:number}={}) {
   const pg=await testDatabase();
   try {
-    for(const file of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort())
+    for(const file of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&(options.throughSchema===undefined||Number.parseInt(n,10)<=options.throughSchema)).sort())
       await pg.exec(await readFile(new URL('../db/migrations/'+file,import.meta.url),'utf8'));
     const a=randomUUID(),b=randomUUID(),hub=randomUUID(),otherHub=randomUUID(),foreignHub=randomUUID();
     const actors=Object.fromEntries(['master','manager','staff','peer','foreignMaster'].map(key=>[key,{person:randomUUID(),user:randomUUID(),session:randomUUID()}]));

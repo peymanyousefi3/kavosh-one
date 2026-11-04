@@ -33,6 +33,7 @@ try {
   assert.equal(upload.status,401);assert.equal(upload.headers.get('cache-control'),'no-store');assert.doesNotMatch(await upload.text(),/X-Amz|secretAccessKey|storageTargetId|stack/);
   const inspection=await fetch(base+'/api/v1/files/73e6a708-ad23-484b-9b12-91db85854593/inspection',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expectedMetadataVersion:1,grantId:'73e6a708-ad23-484b-9b12-91db85854593'})});
   assert.equal(inspection.status,401);assert.equal(inspection.headers.get('cache-control'),'no-store');assert.doesNotMatch(await inspection.text(),/X-Amz|secretAccessKey|storageTargetId|stack/);
+  const grantHistory=await fetch(base+'/api/v1/files/73e6a708-ad23-484b-9b12-91db85854593/upload-grants?limit=1');assert.equal(grantHistory.status,401);assert.equal(grantHistory.headers.get('cache-control'),'no-store');assert.doesNotMatch(await grantHistory.text(),/formatPolicy|X-Amz|storageTargetId|stack/);
   const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
   assert.match(spec.paths['/api/v1/files/{id}/inspection']?.post?.responses?.['202']?.description??'',/not verified/);
   console.log('Production HTTP smoke checks passed: liveness, fail-closed readiness, authorization, cache/security headers and API contract.');
