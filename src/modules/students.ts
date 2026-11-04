@@ -24,10 +24,13 @@ interface Profile {person_id:string;legal_name:string;preferred_name:string|null
   recruiter_kind:'academy'|'hub'|'person';recruiter_hub_id:string|null;recruiter_person_id:string|null;version:number}
 const fields='person_id,legal_name,preferred_name,date_of_birth::text,shirt_size,recruiter_kind,recruiter_hub_id,recruiter_person_id,version,created_at';
 export async function permittedPerson(ctx:ApiContext,id:string,capability:Capability,lock=false) {
+  return (await permittedPeople(ctx,[id],capability,lock))[0];
+}
+export async function permittedPeople(ctx:ApiContext,ids:string[],capability:Capability,lock=false) {
+  if(ids.length>1000||new Set(ids).size!==ids.length)throw new ApiError(400,'INVALID_PERSON_SELECTION');if(!ids.length)return [];
   const scope=permissionScope(ctx,capability);if(!scopeNonempty(scope))throw new ApiError(403,'FORBIDDEN');
-  const person=(await ctx.db.query<{id:string;hub_id:string|null;kind:string;status:string}>('SELECT id,hub_id,kind,status FROM public.people WHERE id=$1'+(lock?' FOR SHARE':''),[id])).rows[0];
-  if(!person||!scopeAllowsRef(scope,{id:person.id,hubId:person.hub_id},'people'))throw new ApiError(404,'NOT_FOUND');
-  if(person.kind!=='human')throw new ApiError(400,'HUMAN_PROFILE_REQUIRED');return person;
+  const rows=(await ctx.db.query<{id:string;hub_id:string|null;kind:string;status:string}>('SELECT id,hub_id,kind,status FROM public.people WHERE id=ANY($1::uuid[]) ORDER BY id'+(lock?' FOR SHARE':''),[ids])).rows,byId=new Map(rows.map(p=>[p.id,p]));
+  return ids.map(id=>{const person=byId.get(id);if(!person||!scopeAllowsRef(scope,{id:person.id,hubId:person.hub_id},'people'))throw new ApiError(404,'NOT_FOUND');if(person.kind!=='human')throw new ApiError(400,'HUMAN_PROFILE_REQUIRED');return person;});
 }
 async function profile(ctx:ApiContext,id:string,lock=false) {
   const row=(await ctx.db.query<Profile>('SELECT '+fields+' FROM public.student_profiles WHERE person_id=$1'+(lock?' FOR UPDATE':''),[id])).rows[0];
