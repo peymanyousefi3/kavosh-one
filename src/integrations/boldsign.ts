@@ -38,36 +38,74 @@ const properties=z.object({documentId:uuid,status,signerDetails:z.array(z.object
   authenticationType:z.string().max(100).nullable().optional(),enableEmailOTP:z.boolean().optional(),
   isAuthenticationFailed:z.boolean().nullable().optional(),isReassigned:z.boolean().optional()
 })).max(100)});
+const templateProperties=z.object({templateId:uuid,title:z.string().max(1000),roles:z.array(z.object({
+  name:z.string().max(200),index:z.number().int().nonnegative(),signerType:z.string().min(1).max(80),
+  formFields:z.array(z.object({id:z.string().min(1).max(200),fieldType:z.string().min(1).max(80),isRequired:z.boolean(),isReadOnly:z.boolean().optional()})).max(1000)
+})).max(100)});
+
+// Shared bounded read-only transport. The fixed resource union cannot become
+// an arbitrary URL or mutation method. The absolute deadline also covers a
+// transport/stream implementation that fails to honor its AbortSignal.
+async function readBoldSignJson(config:BoldSignConnection,id:string,resource:'document'|'template',send:typeof fetch,externalSignal?:AbortSignal) {
+ const configured=connection.safeParse(config),upper=resource.toUpperCase();
+ if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
+ const selected=uuid.safeParse(id);if(!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_'+upper+'_ID');
+ const unavailable=()=>new ApiError(502,'BOLDSIGN_'+(resource==='document'?'STATUS':'TEMPLATE')+'_UNAVAILABLE');
+ const abort=new AbortController(),cancel=()=>abort.abort(),timer=setTimeout(cancel,10000);
+ let rejectAbort:(error:Error)=>void=()=>{};
+ const interrupted=new Promise<never>((_,reject)=>{rejectAbort=reject;});
+ void interrupted.catch(()=>{});
+ const onAbort=()=>rejectAbort(unavailable());abort.signal.addEventListener('abort',onAbort,{once:true});
+ externalSignal?.addEventListener('abort',cancel,{once:true});
+ let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined;
+ const discard=(body:ReadableStream<Uint8Array>|null|undefined)=>{try{void body?.cancel().catch(()=>{});}catch{/* Never expose upstream cancellation errors. */}};
+ try {
+  if(externalSignal?.aborted)throw unavailable();
+  const request=send(endpoints[configured.data.region]+'/v1/'+resource+'/properties?'+new URLSearchParams({[resource+'Id']:selected.data}),{
+   method:'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:'application/json'},redirect:'error',cache:'no-store',credentials:'omit',signal:abort.signal
+  });
+  // A non-cooperative transport may settle after cancellation. Dispose of its
+  // late response without waiting or retaining the body in the worker.
+  void request.then(value=>{if(abort.signal.aborted)discard(value.body);},()=>{});
+  response=await Promise.race([request,interrupted]);
+  if(abort.signal.aborted)throw unavailable();
+  if(!response.ok||response.redirected||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
+  reader=response.body?.getReader();if(!reader)throw unavailable();
+  const chunks:Uint8Array[]=[];let size=0;
+  while(true) {
+   if(abort.signal.aborted)throw unavailable();
+   const part=await Promise.race([reader.read(),interrupted]);if(part.done)break;
+   size+=part.value.byteLength;if(size>1_048_576)throw unavailable();chunks.push(part.value);
+  }
+  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))) as unknown;
+ }catch {
+  abort.abort();if(reader){try{void reader.cancel().catch(()=>{});}catch{/* Cancellation must not hold the deadline open. */}}else discard(response?.body);
+  throw unavailable();
+ }finally {
+  clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);reader?.releaseLock();
+ }
+}
 
 // Region is explicit, never inferred from the academy address. These are the
 // provider's fixed endpoints, not caller-supplied URLs:
 // https://developers.boldsign.com/api-overview/versioning/
 // https://developers.boldsign.com/documents/document-details-and-status/
 // Read-only transport; its result is evidence for reconciliation, not clearance.
-export async function getBoldSignDocument(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch) {
-  const configured=connection.safeParse(config);
-  if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
-  const selected=uuid.safeParse(documentId);if(!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_DOCUMENT_ID');
-  const unavailable=()=>new ApiError(502,'BOLDSIGN_STATUS_UNAVAILABLE');
-  try {
-    const response=await send(endpoints[configured.data.region]+'/v1/document/properties?'+new URLSearchParams({documentId:selected.data}),{
-      method:'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:'application/json'},redirect:'error',cache:'no-store',credentials:'omit',signal:AbortSignal.timeout(10000)
-    });
-    // Always cancel rejected responses; never include provider errors or keys in
-    // our exception. Check the streamed bytes, not a claimed Content-Length.
-    if(!response.ok||response.redirected||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??'')) {
-      await response.body?.cancel();throw unavailable();
-    }
-    const reader=response.body?.getReader();if(!reader)throw unavailable();
-    const chunks:Uint8Array[]=[];let size=0;
-    try {
-      while(true) {
-        const part=await reader.read();if(part.done)break;size+=part.value.byteLength;
-        if(size>1_048_576){await reader.cancel();throw unavailable();}chunks.push(part.value);
-      }
-    }finally{reader.releaseLock();}
-    const result=properties.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))));
-    if(result.documentId!==selected.data)throw unavailable();
-    return result;
-  }catch{throw unavailable();}
+export async function getBoldSignDocument(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
+ const raw=await readBoldSignJson(config,documentId,'document',send,signal);
+ try {const result=properties.parse(raw);if(result.documentId!==documentId.toLowerCase())throw new Error('WRONG_RESOURCE');return result;}
+ catch{throw new ApiError(502,'BOLDSIGN_STATUS_UNAVAILABLE');}
+}
+
+// https://developers.boldsign.com/template/template-details/
+// Role/field routing metadata is NOT a provider content revision or PDF hash.
+// It cannot establish legal-text equivalence, signature completion or admission.
+export async function getBoldSignTemplate(config:BoldSignConnection,templateId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
+ const raw=await readBoldSignJson(config,templateId,'template',send,signal);
+ try {
+  const result=templateProperties.parse(raw);
+  if(result.templateId!==templateId.toLowerCase()||new Set(result.roles.map(r=>r.index)).size!==result.roles.length
+   ||result.roles.some(r=>new Set(r.formFields.map(f=>f.id)).size!==r.formFields.length))throw new Error('AMBIGUOUS_RESOURCE');
+  return result;
+ }catch{throw new ApiError(502,'BOLDSIGN_TEMPLATE_UNAVAILABLE');}
 }
