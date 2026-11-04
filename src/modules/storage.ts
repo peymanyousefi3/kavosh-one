@@ -55,11 +55,14 @@ async function lockUploadFile(ctx:ApiContext,id:string,expectedVersion:number,al
   if(f.version!==expectedVersion)throw new ApiError(409,'TARGET_CHANGED');if(f.archived)throw new ApiError(409,'FILE_ARCHIVED');return {p,f};
 }
 const inspectionFields='id,file_id AS "fileId",grant_id AS "grantId",metadata_version AS "metadataVersionAtRequest",requested_by AS "requestedBy",requested_at AS "requestedAt"';
-function inspectionReply(data:Record<string,unknown>) {return {...data,stage:'inspection_requested',uploadVerified:false,physicalStorageVerified:false};}
+function inspectionReply(data:Record<string,unknown>) {return {...data,stage:'inspection_requested',uploadVerified:false,physicalStorageVerified:false,safeToServe:false};}
 async function inspection(ctx:ApiContext,id:string):Promise<Reply> {
   if(ctx.request.method==='GET') {
     await permittedFile(ctx,id);const row=(await ctx.db.query('SELECT '+inspectionFields+' FROM public.file_inspection_requests WHERE file_id=$1',[id])).rows[0];
-    if(!row)throw new ApiError(404,'FILE_INSPECTION_NOT_REQUESTED');return {status:200,body:{data:inspectionReply(row)}};
+    if(!row)throw new ApiError(404,'FILE_INSPECTION_NOT_REQUESTED');
+    const processing=(await ctx.db.query('SELECT state,attempt_no AS "attemptCount",last_outcome AS "lastOutcome",last_reason AS "lastReason",CASE WHEN state=\'queued\' THEN available_at ELSE NULL END AS "nextAttemptAt" FROM public.file_inspection_jobs WHERE inspection_id=$1',[row.id])).rows[0]??null;
+    const attempts=(await ctx.db.query('SELECT attempt_no AS "attempt",worker_id AS "workerId",started_at AS "startedAt",finished_at AS "finishedAt",outcome,reason_code AS "reason",measured_bytes::float8 AS "measuredBytes",sha256,provider_content_type AS "providerContentType" FROM public.file_inspection_attempts WHERE inspection_id=$1 ORDER BY attempt_no LIMIT 5',[row.id])).rows;
+    return {status:200,body:{data:inspectionReply({...row,processing,attempts})}};
   }
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input=inspectionInput.parse(await jsonBody(ctx.request));
   await permittedFile(ctx,id,true,false,'files.upload');

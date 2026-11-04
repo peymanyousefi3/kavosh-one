@@ -42,12 +42,14 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
   return {
     storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),
     maximumUploadBytes:c.maximumUploadBytes,
-    async inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000) {
+    async inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal) {
       const objectKey=key('quarantine',fileId),input=inspectionClaims.safeParse(claims);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
       if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>600000)throw new ApiError(400,'INVALID_INSPECTION_TIMEOUT');
+      if(signal?.aborted)throw new ApiError(502,'R2_INSPECTION_CANCELLED');
       const expected=input.data,controller=new AbortController();let body:Readable|undefined,meter:Transform|undefined,timedOut=false;
       let expire!:(reason:ApiError)=>void;const expired=new Promise<never>((_resolve,reject)=>{expire=reject;});
+      const cancel=()=>{controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_CANCELLED'));};signal?.addEventListener('abort',cancel,{once:true});
       const deadline=setTimeout(()=>{timedOut=true;controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_TIMEOUT'));},timeoutMs);
       try {
         const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
@@ -67,10 +69,11 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
         const sha256=hash.digest('hex');if(expected.sha256&&sha256!==expected.sha256)throw new ApiError(409,'FILE_HASH_MISMATCH');
         return {bytes,sha256,provider:provider.data,inspection:result};
       }catch(error){
+        if(signal?.aborted)throw new ApiError(502,'R2_INSPECTION_CANCELLED');
         if(timedOut)throw new ApiError(502,'R2_INSPECTION_TIMEOUT');
         if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH','R2_INVALID_OBJECT','R2_INCOMPLETE_INSPECTION'].includes(error.code))throw error;
         throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');
-      }finally{clearTimeout(deadline);controller.abort();body?.destroy();meter?.destroy();}
+      }finally{clearTimeout(deadline);signal?.removeEventListener('abort',cancel);controller.abort();body?.destroy();meter?.destroy();}
     },
     async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300,issuedAt?:string) {
       const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300,issuedAt);

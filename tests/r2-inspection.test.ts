@@ -55,6 +55,12 @@ test('R2 absolute deadline also rejects an inspector stalled after the entire ob
     assert.equal(signal?.aborted,true);assert.equal(f.body.destroyed,true);
   }finally{f.store.close();}
 });
+test('R2 external cancellation rejects a post-EOF stalled inspector and pre-cancelled requests do not contact storage',{timeout:2000},async()=>{
+  const f=fixture(),controller=new AbortController();try {
+    await assert.rejects(f.store.inspectQuarantine(file,{bytes:content.length},async source=>{await consume(source);controller.abort();return new Promise<never>(()=>{});},5000,controller.signal),{code:'R2_INSPECTION_CANCELLED',status:502});assert.equal(f.body.destroyed,true);
+  }finally{f.store.close();}
+  const untouched=fixture();try{await assert.rejects(untouched.store.inspectQuarantine(file,{bytes:content.length},consume,5000,controller.signal),{code:'R2_INSPECTION_CANCELLED',status:502});assert.equal(untouched.requests(),0);}finally{untouched.store.close();untouched.body.destroy();}
+});
 test('R2 inspection rejects paths, invalid claims, timeouts and closed handles before making a storage request',async()=>{
   const f=fixture();try {
     for(const claims of [{bytes:0},{bytes:1_000_001},{bytes:content.length,sha256:'invalid'},{bytes:content.length,clean:true}])await assert.rejects(f.store.inspectQuarantine(file,claims,consume),{code:'INVALID_INSPECTION_CLAIMS',status:400});

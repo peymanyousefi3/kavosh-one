@@ -13,6 +13,8 @@ export class IdentityStore {
       AND NOT pg_has_role(current_user,'kavosh_runtime','member')
       AND NOT pg_has_role(current_user,'kavosh_delivery','member')
       AND NOT pg_has_role(current_user,'kavosh_identity_policy','member')
+      AND NOT pg_has_role(current_user,'kavosh_file_worker','member')
+      AND NOT pg_has_role(current_user,'kavosh_file_policy','member')
       AND NOT has_schema_privilege(current_user,'auth_private','usage')
       AND NOT EXISTS(SELECT 1 FROM pg_database d WHERE d.datname=current_database() AND pg_has_role(current_user,d.datdba,'member'))
       AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
