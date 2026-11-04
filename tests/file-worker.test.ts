@@ -208,7 +208,23 @@ if(process.env.TEST_DATABASE_URL)check('a locked pending job is skipped so anoth
 });
 if(process.env.TEST_DATABASE_URL)check('one hundred concurrent native worker cycles keep one immutable attempt per job through a four-connection pool',async f=>{
   const first=await f.prepare();assert.equal((await f.request('storage-policy',{expectedVersion:1,uploadsEnabled:true,maximumFileBytes:100,maximumReservedBytes:10000,maximumFiles:200,reason:'Synthetic concurrent worker budget'})).response.status,200);
-  const files=new Set([first.fileId]);for(let i=1;i<100;i++)files.add((await f.prepare()).fileId);
+  // This is worker/database orchestration load, not an API provisioning test.
+  // Seed synthetic setup directly; never disable user/API anti-abuse limits.
+  await f.pg.exec('BEGIN');try {
+    await f.pg.exec('CREATE TEMP TABLE synthetic_worker_seed AS SELECT gen_random_uuid() AS file_id,gen_random_uuid() AS grant_id,gen_random_uuid() AS inspection_id FROM generate_series(1,99)');
+    await f.pg.query(`INSERT INTO public.file_records(academy_id,id,anchor_kind,hub_id,domain,name,claimed_mime_type,expected_bytes,expected_sha256,search_text,created_by)
+      SELECT $1,s.file_id,'hub',$2,'general','Synthetic worker.txt','text/plain',$3,$4,'Synthetic worker',$5 FROM synthetic_worker_seed s`,[f.a,f.hub,bytes.length,sha256,f.actors.master.person]);
+    await f.pg.query(`INSERT INTO public.file_record_revisions(academy_id,file_id,version,definition,changed_by,reason)
+      SELECT r.academy_id,s.file_id,1,r.definition||jsonb_build_object('id',s.file_id),r.changed_by,'Synthetic load setup' FROM public.file_record_revisions r CROSS JOIN synthetic_worker_seed s WHERE r.academy_id=$1 AND r.file_id=$2`,[f.a,first.fileId]);
+    await f.pg.query(`INSERT INTO public.file_upload_reservations(academy_id,file_id,reserved_bytes,policy_version,created_by,storage_target_id)
+      SELECT r.academy_id,s.file_id,r.reserved_bytes,p.version,r.created_by,r.storage_target_id FROM public.file_upload_reservations r JOIN public.file_storage_policies p ON p.academy_id=r.academy_id CROSS JOIN synthetic_worker_seed s WHERE r.academy_id=$1 AND r.file_id=$2`,[f.a,first.fileId]);
+    await f.pg.query(`INSERT INTO public.file_upload_grants(academy_id,id,file_id,metadata_version,storage_target_id,created_by,issued_at,expires_at)
+      SELECT g.academy_id,s.grant_id,s.file_id,1,g.storage_target_id,g.created_by,g.issued_at,g.expires_at FROM public.file_upload_grants g CROSS JOIN synthetic_worker_seed s WHERE g.academy_id=$1 AND g.file_id=$2`,[f.a,first.fileId]);
+    await f.pg.query(`INSERT INTO public.file_inspection_requests(academy_id,id,file_id,grant_id,metadata_version,storage_target_id,requested_by)
+      SELECT r.academy_id,s.inspection_id,s.file_id,s.grant_id,1,r.storage_target_id,r.requested_by FROM public.file_inspection_requests r CROSS JOIN synthetic_worker_seed s WHERE r.academy_id=$1 AND r.file_id=$2`,[f.a,first.fileId]);
+    await f.pg.query('UPDATE public.file_storage_policies SET reserved_files=100,reserved_bytes=$2 WHERE academy_id=$1',[f.a,100*bytes.length]);await f.pg.exec('COMMIT');
+  }catch(error){await f.pg.exec('ROLLBACK');throw error;}
+  const files=new Set([first.fileId,...(await f.pg.query<{file_id:string}>('SELECT file_id FROM synthetic_worker_seed')).rows.map(r=>r.file_id)]);assert.equal(files.size,100);
   const seen=new Set<string>(),durations:number[]=[];let queries=0;
   const measured:Database={async connect(){const c=await f.database.connect();return {async query<Row>(sql:string,params?:unknown[]){queries++;return c.query<Row>(sql,params);},release(destroy?:boolean){c.release(destroy);}};}};
   const results=await Promise.all(Array.from({length:100},async()=>{

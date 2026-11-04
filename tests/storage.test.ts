@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
+import { defaultUploadMimeTypes } from '../src/modules/storage.ts';
 
 async function fixture() {
   const f=await operationsFixture();
@@ -44,7 +45,7 @@ check('uploader-safe limits expose enabled/per-file rules without school capacit
   const own=await f.file(),other=await f.file(10,f.otherHub);
   assert.equal((await f.request('files/'+own.id+'/upload-limits',undefined,'staff')).body.configured,false);
   assert.equal((await f.configure()).response.status,200);
-  const limits=await f.request('files/'+own.id+'/upload-limits',undefined,'staff');assert.equal(limits.response.status,200);assert.equal(limits.body.serviceConfigured,false);assert.deepEqual(limits.body.data,{uploadsEnabled:true,maximumFileBytes:100,effectiveMaximumFileBytes:null});
+  const limits=await f.request('files/'+own.id+'/upload-limits',undefined,'staff');assert.equal(limits.response.status,200);assert.equal(limits.body.serviceConfigured,false);assert.deepEqual(limits.body.data,{uploadsEnabled:true,maximumFileBytes:100,allowedMimeTypes:defaultUploadMimeTypes,effectiveMaximumFileBytes:null});
   assert.equal((await f.request('files/'+other.id+'/upload-limits',undefined,'staff')).response.status,404);assert.equal((await f.request('storage-policy',undefined,'staff')).response.status,403);
 });
 check('a protected file reservation requires domain editing as well as file upload authority',async f=>{

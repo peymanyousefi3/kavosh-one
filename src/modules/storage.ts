@@ -8,18 +8,20 @@ import { r2Connection,type R2UploadConnections } from '../integrations/r2-config
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
-const fields={uploadsEnabled:z.boolean(),maximumFileBytes:z.number().int().min(1).max(4_294_967_296),maximumReservedBytes:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),maximumFiles:z.number().int().min(1).max(1_000_000_000)};
+export const defaultUploadMimeTypes=['image/jpeg','image/png','image/webp','image/gif','image/avif','image/heic','image/heif','video/mp4','video/quicktime','video/webm','audio/mpeg','audio/mp4','audio/wav','application/pdf','application/zip','text/plain','text/csv','application/json'];
+const mime=z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/);
+const fields={uploadsEnabled:z.boolean(),maximumFileBytes:z.number().int().min(1).max(4_294_967_296),maximumReservedBytes:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),maximumFiles:z.number().int().min(1).max(1_000_000_000),allowedMimeTypes:z.array(mime).max(64).refine(v=>new Set(v).size===v.length)};
 const definition=z.object(fields).strict().refine(v=>v.maximumFileBytes<=v.maximumReservedBytes,'The total reservation budget must fit at least one maximum-size file.');
-const createInput=z.object({...fields,uploadsEnabled:fields.uploadsEnabled.default(false),maximumFileBytes:fields.maximumFileBytes.default(67_108_864),maximumReservedBytes:fields.maximumReservedBytes.default(268_435_456),maximumFiles:fields.maximumFiles.default(10),expectedVersion:z.literal(0),reason}).strict();
+const createInput=z.object({...fields,uploadsEnabled:fields.uploadsEnabled.default(false),maximumFileBytes:fields.maximumFileBytes.default(67_108_864),maximumReservedBytes:fields.maximumReservedBytes.default(268_435_456),maximumFiles:fields.maximumFiles.default(10),allowedMimeTypes:fields.allowedMimeTypes.default(()=>[...defaultUploadMimeTypes]),expectedVersion:z.literal(0),reason}).strict();
 const updateInput=z.object(fields).partial().extend({expectedVersion:version,reason}).strict().refine(v=>Object.keys(v).some(k=>k!=='expectedVersion'&&k!=='reason'));
 const policyInput=z.union([createInput,updateInput]);
 const reservationInput=z.object({expectedMetadataVersion:version}).strict();
 const inspectionInput=reservationInput.extend({grantId:uuid});
 const grantReceipt=z.object({id:uuid,fileId:uuid,metadataVersion:version,storageTargetId:z.string().regex(/^[a-f0-9]{64}$/),issuedAt:z.iso.datetime(),expiresAt:z.iso.datetime()}).strict();
 const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterVersion:z.coerce.number().int().min(0).max(2_147_483_647).default(0)}).strict();
-interface Policy {academyId:string;uploadsEnabled:boolean;maximumFileBytes:number;maximumReservedBytes:number;maximumFiles:number;reservedBytes:number;reservedFiles:number;version:number}
+interface Policy {academyId:string;uploadsEnabled:boolean;maximumFileBytes:number;maximumReservedBytes:number;maximumFiles:number;allowedMimeTypes:string[];reservedBytes:number;reservedFiles:number;version:number}
 const policyFields=`academy_id AS "academyId",uploads_enabled AS "uploadsEnabled",maximum_file_bytes::float8 AS "maximumFileBytes",maximum_reserved_bytes::float8 AS "maximumReservedBytes",
- maximum_files AS "maximumFiles",reserved_bytes::float8 AS "reservedBytes",reserved_files AS "reservedFiles",version`;
+ maximum_files AS "maximumFiles",allowed_mime_types AS "allowedMimeTypes",reserved_bytes::float8 AS "reservedBytes",reserved_files AS "reservedFiles",version`;
 function authority(ctx:ApiContext,edit=false) {requireScope(permissionScope(ctx,'storage.view'));if(edit)requireScope(permissionScope(ctx,'storage.edit'));}
 async function policy(ctx:ApiContext,lock=false) {return (await ctx.db.query<Policy>('SELECT '+policyFields+' FROM public.file_storage_policies WHERE academy_id=$1'+(lock?' FOR UPDATE':''),[ctx.credential.academy_id])).rows[0]??null;}
 async function validate(ctx:ApiContext,raw:unknown) {
@@ -33,8 +35,8 @@ async function apply(ctx:ApiContext,p:Proposal) {
   const input=policyInput.parse(p.payload),before=await policy(ctx,true);
   if((before?.version??0)!==input.expectedVersion||p.target_version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');
   const {expectedVersion:ignoredVersion,reason:why,...patch}=input,body=definition.parse({...before?definition.strip().parse(before):{},...patch});
-  if(before)await ctx.db.query('UPDATE public.file_storage_policies SET uploads_enabled=$2,maximum_file_bytes=$3,maximum_reserved_bytes=$4,maximum_files=$5,version=version+1,last_approval_id=$6 WHERE academy_id=$1',[ctx.credential.academy_id,body.uploadsEnabled,body.maximumFileBytes,body.maximumReservedBytes,body.maximumFiles,p.id]);
-  else await ctx.db.query('INSERT INTO public.file_storage_policies(academy_id,uploads_enabled,maximum_file_bytes,maximum_reserved_bytes,maximum_files,last_approval_id) VALUES($1,$2,$3,$4,$5,$6)',[ctx.credential.academy_id,body.uploadsEnabled,body.maximumFileBytes,body.maximumReservedBytes,body.maximumFiles,p.id]);
+  if(before)await ctx.db.query('UPDATE public.file_storage_policies SET uploads_enabled=$2,maximum_file_bytes=$3,maximum_reserved_bytes=$4,maximum_files=$5,version=version+1,last_approval_id=$6,allowed_mime_types=$7 WHERE academy_id=$1',[ctx.credential.academy_id,body.uploadsEnabled,body.maximumFileBytes,body.maximumReservedBytes,body.maximumFiles,p.id,body.allowedMimeTypes]);
+  else await ctx.db.query('INSERT INTO public.file_storage_policies(academy_id,uploads_enabled,maximum_file_bytes,maximum_reserved_bytes,maximum_files,last_approval_id,allowed_mime_types) VALUES($1,$2,$3,$4,$5,$6,$7)',[ctx.credential.academy_id,body.uploadsEnabled,body.maximumFileBytes,body.maximumReservedBytes,body.maximumFiles,p.id,body.allowedMimeTypes]);
   const after=(await policy(ctx))!;
   await ctx.db.query('INSERT INTO public.file_storage_policy_revisions(academy_id,version,definition,changed_by,approval_id,reason) VALUES($1,$2,$3::jsonb,$4,$5,$6)',[ctx.credential.academy_id,after.version,JSON.stringify(body),ctx.credential.person_id,p.id,why]);
   await record(ctx.db,ctx.credential,ctx.requestId,'file.storage.policy.updated',ctx.credential.academy_id,null,{beforeVersion:before?.version??null,afterVersion:after.version,fields:Object.keys(patch),severity:'critical',hasReason:true});
@@ -46,13 +48,15 @@ export const storageActions:ApprovalRegistry={
 };
 const errors:Record<string,[number,string]>={STORAGE_POLICY_NOT_CONFIGURED:[503,'STORAGE_POLICY_NOT_CONFIGURED'],UPLOADS_DISABLED:[409,'UPLOADS_DISABLED'],FILE_NOT_FOUND:[404,'NOT_FOUND'],FILE_ARCHIVED:[409,'FILE_ARCHIVED'],INVALID_RESERVATION_ACTOR:[403,'FORBIDDEN'],FILE_EXCEEDS_STORAGE_LIMIT:[409,'FILE_EXCEEDS_STORAGE_LIMIT'],UPLOAD_RESERVATION_CLOSED:[409,'UPLOAD_RESERVATION_CLOSED'],FILE_CLAIMS_CHANGED:[409,'FILE_CLAIMS_CHANGED'],STORAGE_QUOTA_EXCEEDED:[409,'STORAGE_QUOTA_EXCEEDED'],TARGET_CHANGED:[409,'TARGET_CHANGED'],STORAGE_TARGET_CHANGED:[409,'STORAGE_TARGET_CHANGED'],INVALID_STORAGE_TARGET:[503,'R2_NOT_CONFIGURED'],UPLOAD_GRANT_NOT_FOUND:[404,'UPLOAD_GRANT_NOT_FOUND'],UPLOAD_CLOSED_FOR_INSPECTION:[409,'UPLOAD_CLOSED_FOR_INSPECTION']};
 function storageFailure(error:unknown):never {
+  if(error&&typeof error==='object'&&'code' in error&&error.code==='P0001'&&'message' in error&&error.message==='FILE_TYPE_NOT_ALLOWED')throw new ApiError(409,'FILE_TYPE_NOT_ALLOWED');
   if(error&&typeof error==='object'&&'code' in error&&error.code==='P0001'&&'message' in error&&Object.hasOwn(errors,String(error.message))){const [status,code]=errors[String(error.message)];throw new ApiError(status,code);}throw error;
 }
 async function lockUploadFile(ctx:ApiContext,id:string,expectedVersion:number,allowDisabled=false) {
   await lockAcademyTopology(ctx);const p=await policy(ctx,true);
   if(!p)throw new ApiError(503,'STORAGE_POLICY_NOT_CONFIGURED');if(!allowDisabled&&!p.uploadsEnabled)throw new ApiError(409,'UPLOADS_DISABLED');
   const f=await permittedFile(ctx,id,true,true,'files.upload');
-  if(f.version!==expectedVersion)throw new ApiError(409,'TARGET_CHANGED');if(f.archived)throw new ApiError(409,'FILE_ARCHIVED');return {p,f};
+  if(f.version!==expectedVersion)throw new ApiError(409,'TARGET_CHANGED');if(f.archived)throw new ApiError(409,'FILE_ARCHIVED');
+  if(!allowDisabled&&!p.allowedMimeTypes.includes(f.claimed_mime_type))throw new ApiError(409,'FILE_TYPE_NOT_ALLOWED');return {p,f};
 }
 const inspectionFields='id,file_id AS "fileId",grant_id AS "grantId",metadata_version AS "metadataVersionAtRequest",requested_by AS "requestedBy",requested_at AS "requestedAt"';
 function inspectionReply(data:Record<string,unknown>) {return {...data,stage:'inspection_requested',uploadVerified:false,physicalStorageVerified:false,safeToServe:false};}
@@ -126,14 +130,14 @@ export async function storage(ctx:ApiContext,registry:ApprovalRegistry=storageAc
     const config=connections?.(ctx.credential.academy_id),parsed=config?r2Connection.safeParse(config):null;
     if(parsed&&!parsed.success)throw new ApiError(503,'R2_NOT_CONFIGURED');
     const uploadClosed=(await ctx.db.query('SELECT 1 FROM public.file_inspection_requests WHERE file_id=$1',[id])).rows.length>0;
-    return {status:200,body:{configured:Boolean(p),serviceConfigured:Boolean(parsed?.success),uploadClosed,data:p?{uploadsEnabled:p.uploadsEnabled,maximumFileBytes:p.maximumFileBytes,effectiveMaximumFileBytes:parsed?.success?Math.min(p.maximumFileBytes,parsed.data.maximumUploadBytes):null}:null}};
+    return {status:200,body:{configured:Boolean(p),serviceConfigured:Boolean(parsed?.success),uploadClosed,data:p?{uploadsEnabled:p.uploadsEnabled,maximumFileBytes:p.maximumFileBytes,allowedMimeTypes:p.allowedMimeTypes,effectiveMaximumFileBytes:parsed?.success?Math.min(p.maximumFileBytes,parsed.data.maximumUploadBytes):null}:null}};
   }
   if(ctx.request.method==='GET') {
     await permittedFile(ctx,id);const row=(await ctx.db.query('SELECT file_id AS "fileId",reserved_bytes::float8 AS "reservedBytes",policy_version AS "policyVersion",created_at AS "reservedAt",released_at AS "releasedAt" FROM public.file_upload_reservations WHERE file_id=$1',[id])).rows[0];
     if(!row)throw new ApiError(404,'UPLOAD_RESERVATION_NOT_FOUND');return {status:200,body:{data:{...row,stage:row.releasedAt?'closed':'capacity_reserved',uploadVerified:false,physicalStorageVerified:false}}};
   }
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input=reservationInput.parse(await jsonBody(ctx.request));
-  await permittedFile(ctx,id,true,false,'files.upload');await lockAcademyTopology(ctx);
+  await permittedFile(ctx,id,true,false,'files.upload');await lockUploadFile(ctx,id,input.expectedMetadataVersion);
   return mutation(ctx,input,async()=>{
     const f=await permittedFile(ctx,id,true,false,'files.upload');if(f.version!==input.expectedMetadataVersion)throw new ApiError(409,'TARGET_CHANGED');if(f.archived)throw new ApiError(409,'FILE_ARCHIVED');
     let row:Record<string,unknown>;
@@ -145,12 +149,12 @@ export async function storage(ctx:ApiContext,registry:ApprovalRegistry=storageAc
 }
 export const storageContract=[
   {path:'/api/v1/storage-policy',method:'get',summary:'School upload limits and reserved-claim budget; not measured cloud storage'},
-  {path:'/api/v1/storage-policy',method:'post',summary:'Request school-wide upload policy changes; initial version zero defaults to uploads disabled',schema:policyInput},
+  {path:'/api/v1/storage-policy',method:'post',summary:'Request school-wide upload limits and exact claimed-MIME allowlist changes; empty list blocks new issuance, initial version zero defaults uploads disabled, not content validation',schema:policyInput},
   {path:'/api/v1/storage-policy/history',method:'get',summary:'Private immutable upload policy revisions',querySchema:historyQuery},
   {path:'/api/v1/files/{id}/upload-reservation',method:'get',summary:'Read authorized capacity reservation; no signed link or physical upload proof'},
   {path:'/api/v1/files/{id}/upload-reservation',method:'post',summary:'Atomically reserve capacity under current file/domain/upload permissions and school policy; does not transfer bytes',schema:reservationInput},
   {path:'/api/v1/files/{id}/upload-link',method:'post',summary:'Reserve capacity and issue a five-minute conditional quarantine PUT link; fresh access and policy checks on retries, no URL in stored intent, no upload/clean proof',schema:reservationInput},
   {path:'/api/v1/files/{id}/inspection',method:'get',summary:'Read authorized request, worker progress and immutable attempts including bounded content-signature hints; not format validity, uploaded or safe content clearance'},
   {path:'/api/v1/files/{id}/inspection',method:'post',summary:'Request inspection for an existing upload grant and close new link issuance atomically; no browser claim establishes file safety',schema:inspectionInput,acceptedDescription:'Inspection request recorded; content is not verified or available'},
-  {path:'/api/v1/files/{id}/upload-limits',method:'get',summary:'Uploader-safe enabled/per-file limits for an authorized file, without school totals or other files'}
+  {path:'/api/v1/files/{id}/upload-limits',method:'get',summary:'Uploader-safe enabled/per-file limits and declared-format choices for an authorized file, without school totals or other files'}
 ] as const;

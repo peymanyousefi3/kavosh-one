@@ -37,7 +37,7 @@ check('upload links require configured storage, an enabled school policy and the
   const item=await f.file();f.setConnection(null);const locks=f.metrics.sharedPolicyLocks;assert.equal((await f.link(item.id)).body.error.code,'R2_NOT_CONFIGURED');assert.equal(f.metrics.sharedPolicyLocks,locks);
   f.setConnection({...synthetic});assert.equal((await f.link(item.id)).body.error.code,'STORAGE_POLICY_NOT_CONFIGURED');await f.configure({uploadsEnabled:false});assert.equal((await f.link(item.id)).body.error.code,'UPLOADS_DISABLED');
   assert.equal((await f.request('storage-policy',{expectedVersion:1,uploadsEnabled:true,reason:'Enable synthetic link tests'})).response.status,200);
-  const limits=await f.request('files/'+item.id+'/upload-limits',undefined,'staff');assert.equal(limits.body.serviceConfigured,true);assert.deepEqual(limits.body.data,{uploadsEnabled:true,maximumFileBytes:100,effectiveMaximumFileBytes:80});
+  const limits=await f.request('files/'+item.id+'/upload-limits',undefined,'staff');assert.equal(limits.body.serviceConfigured,true);assert.deepEqual(limits.body.data,{uploadsEnabled:true,maximumFileBytes:100,allowedMimeTypes:(await f.request('storage-policy')).body.data.allowedMimeTypes,effectiveMaximumFileBytes:80});
   const big=await f.file(81);assert.equal((await f.link(big.id)).body.error.code,'FILE_EXCEEDS_STORAGE_LIMIT');assert.equal((await f.request('storage-policy')).body.data.reservedBytes,0);
 });
 check('current upload rights, private-domain rights, file versions and archive state are rechecked even on stored intent replays',async f=>{

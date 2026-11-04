@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.18.0",
+    "version": "0.19.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -4894,7 +4894,7 @@
     },
     "/api/v1/files/{id}/upload-limits": {
       "get": {
-        "summary": "Uploader-safe enabled/per-file limits for an authorized file, without school totals or other files",
+        "summary": "Uploader-safe enabled/per-file limits and declared-format choices for an authorized file, without school totals or other files",
         "parameters": [
           {
             "name": "id",
@@ -7687,7 +7687,7 @@
         }
       },
       "post": {
-        "summary": "Request school-wide upload policy changes; initial version zero defaults to uploads disabled",
+        "summary": "Request school-wide upload limits and exact claimed-MIME allowlist changes; empty list blocks new issuance, initial version zero defaults uploads disabled, not content validation",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -7726,6 +7726,34 @@
                         "minimum": 1,
                         "maximum": 1000000000
                       },
+                      "allowedMimeTypes": {
+                        "default": [
+                          "image/jpeg",
+                          "image/png",
+                          "image/webp",
+                          "image/gif",
+                          "image/avif",
+                          "image/heic",
+                          "image/heif",
+                          "video/mp4",
+                          "video/quicktime",
+                          "video/webm",
+                          "audio/mpeg",
+                          "audio/mp4",
+                          "audio/wav",
+                          "application/pdf",
+                          "application/zip",
+                          "text/plain",
+                          "text/csv",
+                          "application/json"
+                        ],
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9.+-]{0,99}\\/[a-z0-9][a-z0-9.+-]{0,99}$"
+                        }
+                      },
                       "expectedVersion": {
                         "type": "number",
                         "const": 0
@@ -7762,6 +7790,14 @@
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 1000000000
+                      },
+                      "allowedMimeTypes": {
+                        "maxItems": 64,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9.+-]{0,99}\\/[a-z0-9][a-z0-9.+-]{0,99}$"
+                        }
                       },
                       "expectedVersion": {
                         "type": "integer",
