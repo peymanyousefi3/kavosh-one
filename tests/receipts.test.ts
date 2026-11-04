@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { test } from 'node:test';
+import { invoiceFixture } from './invoice-fixture.ts';
+
+async function fixture(){
+ const f=await invoiceFixture(),issued=await f.issue();assert.equal(issued.response.status,201,JSON.stringify(issued.body));const invoice=issued.body.data;
+ const collector=await f.made('finance/collectors',{hubId:f.hub,code:'CASH',kind:'hub',custody:'academy_funds',name:'Synthetic academy-controlled cash',accounts:[{id:f.cash.id,version:1}],reason:'Synthetic collector'});
+ const base={amount:'50',collector:{id:collector.id,version:1},method:{id:f.method.id,version:1},holdingAccount:{id:f.cash.id,version:1},receivedAt:'2026-11-06T12:00:00Z',period:{id:f.period.id,version:1},reference:'',missingEvidenceReason:'Synthetic missing paper receipt approved as exception',taxTreatment:'settle_invoice',reason:'Private receipt review evidence'};
+ const pay=(patch:Record<string,unknown>={},as='master',key?:string)=>f.request('finance/invoices/'+invoice.id+'/receipts',{...base,...patch},as,{key});
+ const reverse=(id:string,patch:Record<string,unknown>={},as='master',key?:string)=>f.request('finance/receipts/'+id+'/reverse',{period:base.period,postedOn:'2026-11-07',reason:'Private correction approval',...patch},as,{key});
+ const status=async()=>{const r=await f.request('finance/invoices/'+invoice.id+'/payment-status');assert.equal(r.response.status,200,JSON.stringify(r.body));return r.body.data;};
+ return {...f,invoice,collector,payment:base,pay,reverse,status};
+}
+type Fixture=Awaited<ReturnType<typeof fixture>>;
+function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+async function access(f:Fixture,as:string,caps=['receipts.view','receipts.edit','invoices.view','tuition.view','collectors.view','payment-methods.view','accounts.view','journals.view','journals.edit','periods.view','people.view']){
+ const role=await f.made('roles',{name:'Receipt access '+as,permissions:caps.map(capability=>({capability,effect:'allow'}))}),person=as==='bot'?f.bot:f.actors[as].person,path='people/'+person+'/access',old=await f.request(path);
+ assert.equal((await f.request(path,{expectedVersion:old.body.data.version,assignments:[{roleId:role.id,allHubs:true},...as==='manager'?[{roleId:f.managerRole,allHubs:false,hubIds:[f.hub]}]:[]]})).response.status,200);return role;
+}
+check('partial and full receipts clear exact receivables without posting tuition or HST twice',async f=>{
+ assert.equal((await f.status()).paymentStatus,'unpaid');const r=await f.pay();assert.equal(r.response.status,201,JSON.stringify({body:r.body,failures:f.metrics.queryFailures}));assert.equal(r.body.data.amount,'50.00');assert.equal(r.body.data.invoiceBalance.balance,'63.00');assert.equal(r.body.data.invoiceBalance.paymentStatus,'partially_paid');assert.equal(r.body.data.additionalTaxPosting,false);assert.equal(r.body.data.externallyVerified,false);
+ const lines=(await f.pg.query('SELECT account_id,side,amount_minor::text AS amount FROM public.finance_journal_lines WHERE journal_id=$1 ORDER BY line_number',[r.body.data.id])).rows;assert.deepEqual(lines,[{account_id:f.cash.id,side:'debit',amount:'5000'},{account_id:f.ar.id,side:'credit',amount:'5000'}]);
+ const final=await f.pay({amount:'63'});assert.equal(final.response.status,201,JSON.stringify(final.body));assert.equal((await f.status()).paymentStatus,'paid');assert.equal((await f.status()).balance,'0.00');assert.equal((await f.pg.query('SELECT * FROM public.finance_journal_lines WHERE account_id=$1',[f.taxPayable.id])).rows.length,1);
+ assert.equal((await f.pay({amount:'0.01'})).body.error.code,'RECEIPT_EXCEEDS_OUTSTANDING');
+});
+check('third-party collectors increase money due from that collector rather than academy cash',async f=>{
+ const due=await f.made('finance/accounts',{code:'DUE',name:'Due from synthetic hub',kind:'asset',operationalRole:'collector_receivable',hubId:f.hub,currencyId:f.currency.id,currencyVersion:1,reason:'Synthetic holding account'}),third=await f.made('finance/collectors',{hubId:f.hub,code:'FRANCHISE',kind:'hub',custody:'third_party',name:'Synthetic franchise collector',accounts:[{id:due.id,version:1}],reason:'Synthetic external custody'});
+ assert.equal((await f.pay({collector:{id:third.id,version:1}})).body.error.code,'RECEIPT_MAPPING_INVALID');const r=await f.pay({collector:{id:third.id,version:1},holdingAccount:{id:due.id,version:1},amount:'113'});assert.equal(r.response.status,201,JSON.stringify(r.body));
+ assert.equal((await f.pg.query('SELECT * FROM public.finance_journal_lines WHERE account_id=$1',[f.cash.id])).rows.length,0);assert.equal((await f.pg.query('SELECT amount_minor::text AS amount FROM public.finance_journal_lines WHERE account_id=$1',[due.id])).rows[0].amount,'11300');assert.equal((await f.status()).paymentStatus,'paid');
+});
+check('receipt corrections preserve original evidence, restore outstanding amounts and cannot bypass their workflow',async f=>{
+ const r=await f.pay();assert.equal(r.response.status,201);const generic=await f.request('finance/journals/'+r.body.data.id+'/reverse',{periodId:f.period.id,periodVersion:1,postedOn:'2026-11-07',description:'Attempt generic bypass',reason:'Must use receipt workflow'});assert.equal(generic.response.status,409);assert.equal(generic.body.error.code,'RECEIPT_CORRECTION_WORKFLOW_REQUIRED');
+ const key=randomUUID(),corrected=await f.reverse(r.body.data.id,{},'master',key);assert.equal(corrected.response.status,201,JSON.stringify(corrected.body));assert.equal(corrected.body.data.status,'reversed');assert.equal((await f.status()).balance,'113.00');assert.deepEqual((await f.reverse(r.body.data.id,{},'master',key)).body,corrected.body);assert.equal((await f.reverse(r.body.data.id)).body.error.code,'RECEIPT_ALREADY_REVERSED');
+ assert.equal((await f.pg.query('SELECT * FROM public.tuition_receipts')).rows.length,1);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,3);
+});
+check('a credit after payment exposes customer credit without pretending that cash was refunded',async f=>{
+ assert.equal((await f.pay({amount:'113'})).response.status,201);const credited=await f.credit(f.invoice.id);assert.equal(credited.response.status,201,JSON.stringify(credited.body));const b=await f.status();assert.equal(b.balance,'-113.00');assert.equal(b.paymentStatus,'customer_credit');assert.equal(b.refundPerformed,false);assert.equal((await f.pay()).body.error.code,'CREDITED_INVOICE_RECEIPT_FORBIDDEN');
+});
+check('zero-price invoices distinguish no payment required from an explicitly credited document',async f=>{
+ assert.equal((await f.credit(f.invoice.id)).response.status,201);assert.equal((await f.request('finance/tuition-plans/'+f.plan.id+'/change',{...f.planInput,expectedVersion:1,originalAmount:'0',agreedAmount:'0',installments:[]})).response.status,200);
+ const zero=await f.issue({planVersion:2});assert.equal(zero.response.status,201,JSON.stringify(zero.body));const path='finance/invoices/'+zero.body.data.id+'/payment-status';assert.equal((await f.request(path)).body.data.paymentStatus,'no_payment_required');assert.equal((await f.credit(zero.body.data.id)).response.status,201);assert.equal((await f.request(path)).body.data.paymentStatus,'credited');
+});
+check('receipts require precise positive amounts, current sources and evidence or a visible reviewed exception',async f=>{
+ for(const patch of [{amount:'0'},{amount:'-1'},{amount:'1.001'},{amount:50},{taxTreatment:'exclude_cash'},{paid:true},{taxExempt:true},{missingEvidenceReason:''}])assert.equal((await f.pay(patch)).response.status,400,JSON.stringify(patch));
+ assert.equal((await f.pay({collector:{id:f.collector.id,version:99}})).response.status,409);assert.equal((await f.pay({receivedAt:'2026-11-04T12:00:00Z'})).body.error.code,'PRE_INVOICE_RECEIPT_WORKFLOW_REQUIRED');
+ const file=await f.made('files',{anchor:{kind:'person',id:f.student.id},domain:'student_private',name:'Synthetic receipt.pdf',claimedMimeType:'application/pdf',expectedBytes:100});
+ const r=await f.pay({evidence:{id:file.id,version:1},missingEvidenceReason:''});assert.equal(r.response.status,201,JSON.stringify(r.body));assert.equal(r.body.data.evidence.id,file.id);assert.equal(r.body.data.evidence.storedContentVerified,false);assert.equal(r.body.data.missingEvidenceException,false);
+ const wrong=await f.made('files',{anchor:{kind:'hub',id:f.hub},domain:'general',name:'Unrelated.pdf',claimedMimeType:'application/pdf',expectedBytes:100});assert.equal((await f.pay({evidence:{id:wrong.id,version:1}})).body.error.code,'RECEIPT_EVIDENCE_INVALID');
+});
+check('duplicate references, retries and event failures cannot duplicate or partially persist received money',async f=>{
+ const key=randomUUID(),r=await f.pay({reference:'TRANSFER-1'},'master',key);assert.equal(r.response.status,201);assert.deepEqual((await f.pay({reference:'TRANSFER-1'},'master',key)).body,r.body);assert.equal((await f.pay({reference:'TRANSFER-1'})).body.error.code,'RECEIPT_REFERENCE_EXISTS');
+ await f.pg.exec('REVOKE INSERT ON public.outbox_events FROM kavosh_runtime');try{assert.equal((await f.pay({reference:'FAIL'})).response.status,503);}finally{await f.pg.exec('GRANT INSERT ON public.outbox_events TO kavosh_runtime');}
+ assert.equal((await f.status()).received,'50.00');assert.equal((await f.pg.query('SELECT * FROM public.tuition_receipts')).rows.length,1);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,2);
+});
+check('selected-student receipt viewers need no ledger rights and cannot recover private reasons or other schools',async f=>{
+ const r=await f.pay();assert.equal(r.response.status,201);const role=await f.made('roles',{name:'Student receipt only',permissions:[{capability:'receipts.view',effect:'allow'}]}),path='people/'+f.actors.staff.person+'/access',old=await f.request(path);assert.equal((await f.request(path,{expectedVersion:old.body.data.version,assignments:[{roleId:role.id,allHubs:false,personIds:[f.student.id]}]})).response.status,200);
+ const read=await f.request('finance/receipts/'+r.body.data.id,undefined,'staff');assert.equal(read.response.status,200,JSON.stringify(read.body));assert.equal(read.body.data.amount,'50.00');assert.equal((await f.request('finance/receipts',undefined,'staff')).body.data.length,1);assert.equal((await f.request('finance/journals/'+r.body.data.id,undefined,'staff')).response.status,403);assert.ok(!JSON.stringify(read.body).includes(f.payment.reason));assert.ok(!JSON.stringify(read.body).includes('holding_account'));
+ assert.equal((await f.request('finance/receipts/'+r.body.data.id,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ const deny=await f.made('roles',{name:'Denied receipt class',permissions:[{capability:'receipts.view',effect:'deny'}]}),current=await f.request(path);assert.equal((await f.request(path,{expectedVersion:current.body.data.version,assignments:[{roleId:role.id,allHubs:false,personIds:[f.student.id]},{roleId:deny.id,allHubs:false,classIds:[f.c.id]}]})).response.status,200);
+ assert.equal((await f.request('finance/receipts?limit=1',undefined,'staff')).body.data.length,0);assert.equal((await f.request('finance/receipts/'+r.body.data.id,undefined,'staff')).response.status,404);
+});
+check('native receipt history is tenant-bound and immutable, including linked journal corrections',async f=>{
+ const r=await f.pay();assert.equal(r.response.status,201);await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.b]);assert.equal((await f.pg.query('SELECT * FROM public.tuition_receipts')).rows.length,0);await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);for(const sql of ['DELETE FROM public.tuition_receipts',"UPDATE public.tuition_receipts SET amount_minor=1",'DELETE FROM public.tuition_receipt_reversals'])await assert.rejects(f.pg.exec(sql),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+ const corrected=await f.reverse(r.body.data.id);assert.equal(corrected.response.status,201,JSON.stringify(corrected.body));const stored=(await f.pg.query('SELECT amount_minor::text AS amount FROM public.tuition_receipts')).rows[0];assert.equal(stored.amount,'5000');assert.equal(corrected.body.data.invoiceBalance.received,'0.00');
+});
+check('staff receipt proposals need upper approval and changed balances or permissions invalidate pending money',async f=>{
+ const role=await access(f,'staff');await access(f,'manager');const pending=await f.pay({},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.status()).received,'0.00');assert.equal((await f.approve(pending.body.approval.id,'staff')).response.status,403);assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
+ const stale=await f.pay({amount:'60'},'staff');assert.equal(stale.response.status,202);assert.equal((await f.pay({amount:'10'})).response.status,201);assert.equal((await f.approve(stale.body.approval.id)).response.status,409);
+ const revoked=await f.pay({amount:'1'},'staff');assert.equal(revoked.response.status,202);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='receipts.edit'",[role.id]);assert.equal((await f.request('approvals/'+revoked.body.approval.id,undefined,'staff')).response.status,404);assert.equal((await f.approve(revoked.body.approval.id)).response.status,409);
+});
+check('bots may propose receipts but only human approval can record money, and closed schools and periods reject writes',async f=>{
+ await access(f,'bot');const pending=await f.pay({},'bot');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.approve(pending.body.approval.id,'bot')).response.status,403);assert.equal((await f.approve(pending.body.approval.id)).response.status,200);
+ await f.request('finance/periods/'+f.period.id+'/change',{expectedVersion:1,state:'closed',reason:'Close synthetic accounting period'});assert.equal((await f.pay({period:{id:f.period.id,version:2}})).response.status,409);await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.pay()).response.status,403);
+});
+if(process.env.TEST_DATABASE_URL)check('eight competing native receipts never overcollect the invoice and retain balanced atomic winners',async f=>{
+ const started=performance.now(),responses=await Promise.all(Array.from({length:8},()=>f.pay({amount:'30'})));assert.equal(responses.filter(r=>r.response.status===201).length,3,JSON.stringify(responses.map(r=>r.body)));assert.equal(responses.filter(r=>r.response.status===409).length,5);assert.equal((await f.status()).received,'90.00');assert.equal((await f.pg.query('SELECT * FROM public.tuition_receipts')).rows.length,3);console.log(JSON.stringify({measurement:'brief-receipt-race',requests:8,recorded:3,rejected:5,elapsedMs:Math.ceil(performance.now()-started)}));
+});

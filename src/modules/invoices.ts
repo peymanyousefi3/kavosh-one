@@ -171,3 +171,4 @@ export const invoicesContract=[
  {path:'/api/v1/finance/invoices/{id}',method:'get',summary:'Read permitted immutable issuer/recipient/tuition/instalment snapshots and any full credit note, without private account mappings or review notes'},
  {path:'/api/v1/finance/invoices/{id}/credit',method:'post',summary:'Request a full credit note and exact inverse journal in an open period; no cash refund or CRA deduction eligibility decision',schema:credit}
 ] as const;
+export { invoice as invoiceRow };

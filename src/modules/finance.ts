@@ -14,10 +14,10 @@ const currencyDefinition=z.object(currencyFields).strip();
 const currencyCreate=z.object({...currencyFields,code:z.string().regex(/^[A-Z]{3}$/),symbol:currencyFields.symbol.default(''),active:z.boolean().default(true),translations:translations.default({}),reason}).strict();
 const currencyUpdate=z.object({...currencyFields,translations:labelsPatch}).partial().extend({expectedVersion:version,reason}).strict().refine(v=>Object.keys(v).some(k=>!['expectedVersion','reason'].includes(k)));
 const kind=z.enum(['asset','liability','equity','income','expense']),balance=z.enum(['debit','credit']);
-const operationalRole=z.enum(['unclassified','cash','bank','receivable','deferred_revenue','tax_payable','revenue','expense','other']);
+const operationalRole=z.enum(['unclassified','cash','bank','receivable','collector_receivable','deferred_revenue','tax_payable','revenue','expense','other']);
 const accountFields={code:z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/),name,description:text.max(2000),kind,normalBalance:balance,operationalRole,active:z.boolean(),translations};
 const accountDefinition=z.object(accountFields).strip().superRefine((v,ctx)=>{
- const role=v.operationalRole,valid=['unclassified','other'].includes(role)||(['cash','bank','receivable'].includes(role)&&v.kind==='asset'&&v.normalBalance==='debit')
+ const role=v.operationalRole,valid=['unclassified','other'].includes(role)||(['cash','bank','receivable','collector_receivable'].includes(role)&&v.kind==='asset'&&v.normalBalance==='debit')
   ||(['deferred_revenue','tax_payable'].includes(role)&&v.kind==='liability'&&v.normalBalance==='credit')||(role==='revenue'&&v.kind==='income'&&v.normalBalance==='credit')||(role==='expense'&&v.kind==='expense');
  if(!valid)ctx.addIssue({code:'custom',message:'The operational account role must match its kind and normal balance.'});
 });
@@ -45,6 +45,9 @@ export async function accountRow(ctx:ApiContext,id:string,edit=false,lock=false)
   if(!row)throw new ApiError(404,'NOT_FOUND');if(edit)requireScope(allowed(ctx,'accounts.edit'),row.hubId??undefined);
   if(lock){await ctx.db.query('SELECT id FROM public.finance_accounts WHERE id=$1 FOR UPDATE',[id]);return accountRow(ctx,id,edit);}
   return row;
+}
+export async function accountSelection(ctx:ApiContext,ids:string[]):Promise<Account[]>{
+  return (await ctx.db.query<Account>('SELECT '+accountFieldsSQL+' FROM public.finance_account_catalogue a WHERE '+selected+' AND a.id=ANY($5::uuid[])',[...accountScope(ctx),ids])).rows;
 }
 async function accountDestination(ctx:ApiContext,hubId:string|null){
   requireScope(allowed(ctx,'accounts.view'),hubId??undefined);requireScope(allowed(ctx,'accounts.edit'),hubId??undefined);
