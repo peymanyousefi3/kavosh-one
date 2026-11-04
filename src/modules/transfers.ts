@@ -28,7 +28,7 @@ async function basis(ctx:ApiContext,raw:unknown,lock=false,checkState=true){
  if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);[from,to]=await accounts(ctx,from.id,to.id,true);}
  if(from.id===to.id||from.currencyId!==to.currencyId||from.unitScale!==to.unitScale)throw new ApiError(400,'TRANSFER_DISTINCT_SAME_UNIT_ACCOUNTS_REQUIRED');
  const amount=parseMoney(input.amount,from.unitScale);if(amount<=0n)throw new ApiError(400,'POSITIVE_TRANSFER_REQUIRED');
- if(!['cash','bank'].includes(from.operationalRole)||!['cash','bank'].includes(to.operationalRole))throw new ApiError(400,'TRANSFER_CASH_OR_BANK_REQUIRED');
+if(!['cash','bank','credit_card'].includes(from.operationalRole)||!['cash','bank','credit_card'].includes(to.operationalRole))throw new ApiError(400,'TRANSFER_TREASURY_ACCOUNT_REQUIRED');
  const method=await paymentMethodRow(ctx,input.method.id);if(method.hubId!==null&&![from.hubId,to.hubId].includes(method.hubId))throw new ApiError(400,'TRANSFER_METHOD_OWNER_MISMATCH');
  if(checkState&&(!method.active||method.version!==input.method.version))throw new ApiError(409,'PAYMENT_METHOD_CHANGED');
  const handler=input.handledById?await permittedPerson(ctx,input.handledById,'people.view'):null;if(handler&&(handler.kind!=='human'||(checkState&&handler.status!=='active')))throw new ApiError(409,'ACTIVE_HUMAN_HANDLER_REQUIRED');
@@ -72,7 +72,7 @@ export async function transfers(ctx:ApiContext,registry:ApprovalRegistry=transfe
 }
 export const transfersContract=[
  {path:'/api/v1/finance/transfers',method:'get',summary:'Whole-record permission-filtered internal account transfers; not income, expenses or verified bank balances',querySchema:query},
- {path:'/api/v1/finance/transfers',method:'post',summary:'Request reviewed same-currency cash/bank transfer record with named method and protected evidence or explicit exception. No bank execution, fees, FX or tax supply.',schema:create},
+{path:'/api/v1/finance/transfers',method:'post',summary:'Request reviewed same-currency cash/bank/card-liability transfer record with named method and protected evidence or explicit exception. No bank execution, fees, FX or tax supply.',schema:create},
  {path:'/api/v1/finance/transfers/{id}',method:'get',summary:'Read a permitted retained transfer record without private approval notes'},
  {path:'/api/v1/finance/transfers/{id}/reverse',method:'post',summary:'Request an exact retained ledger correction in an open period; does not physically reverse a bank transfer',schema:reverse}
 ] as const;

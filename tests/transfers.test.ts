@@ -20,7 +20,7 @@ check('internal transfers create exact opposite cash/bank entries without income
 });
 check('transfer validation rejects non-money accounts, FX, imprecise values, stale versions and false tax exemptions',async f=>{
  for(const patch of [{amount:'0'},{amount:'-1'},{amount:'1.001'},{taxTreatment:'exclude_cash'},{fee:'1'},{toAccount:f.input.fromAccount}])assert.equal((await f.transfer(patch)).response.status,400,JSON.stringify(patch));
- assert.equal((await f.transfer({fromAccount:{id:f.ar.id,version:1}})).body.error.code,'TRANSFER_CASH_OR_BANK_REQUIRED');assert.equal((await f.transfer({method:{id:f.method.id,version:99}})).response.status,409);assert.equal((await f.transfer({fromAccount:{id:f.cash.id,version:99}})).response.status,409);
+assert.equal((await f.transfer({fromAccount:{id:f.ar.id,version:1}})).body.error.code,'TRANSFER_TREASURY_ACCOUNT_REQUIRED');assert.equal((await f.transfer({method:{id:f.method.id,version:99}})).response.status,409);assert.equal((await f.transfer({fromAccount:{id:f.cash.id,version:99}})).response.status,409);
  const usd=await f.made('finance/currencies',{code:'USD',name:'US dollar',unitScale:2,reason:'Synthetic FX boundary'}),foreign=await f.made('finance/accounts',{code:'USD',name:'Synthetic foreign cash',kind:'asset',operationalRole:'cash',hubId:f.hub,currencyId:usd.id,currencyVersion:1,reason:'Synthetic FX boundary'});assert.equal((await f.transfer({toAccount:{id:foreign.id,version:1}})).body.error.code,'TRANSFER_DISTINCT_SAME_UNIT_ACCOUNTS_REQUIRED');
  assert.equal((await f.request('finance/periods/'+f.period.id+'/change',{expectedVersion:1,state:'closed',reason:'Synthetic close'})).response.status,200);assert.equal((await f.transfer({period:{id:f.period.id,version:2}})).response.status,409);
 });
