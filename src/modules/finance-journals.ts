@@ -17,6 +17,15 @@ const reversal=reverse.extend({reversesId:uuid});
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),periodId:uuid.optional(),accountId:uuid.optional(),from:accountingDate.optional(),through:accountingDate.optional()}).strict().refine(v=>!v.from||!v.through||v.from<=v.through);
 type Line={accountId:string;accountVersion:number;side:'debit'|'credit';amountMinor:string;note:string};
 type Account={id:string;hubId:string|null;version:number;active:boolean;kind:string;currencyId:string;currencyVersion:number;unitScale:number};
+type Period={version:number;state:string;startsOn:string;endsOn:string;closedThrough:string|null};
+function checkPostingState(input:z.infer<typeof create>|z.infer<typeof reversal>,accounts:Pick<Account,'id'|'version'|'active'|'kind'>[],p:Period,reversing:boolean){
+  if(p.state!=='open')throw new ApiError(409,'OPEN_PERIOD_REQUIRED');if(p.version!==input.periodVersion)throw new ApiError(409,'PERIOD_CHANGED');if(input.postedOn<p.startsOn||input.postedOn>p.endsOn)throw new ApiError(409,'POSTING_DATE_OUTSIDE_PERIOD');if(p.closedThrough&&input.postedOn<=p.closedThrough)throw new ApiError(409,'FINANCIAL_CLOSED_THROUGH');
+  if(!reversing&&'lines' in input){
+    if((input.purpose==='opening'&&input.postedOn!==p.startsOn)||(input.purpose==='closing'&&input.postedOn!==p.endsOn))throw new ApiError(409,'PURPOSE_DATE_INVALID');
+    if(accounts.some(a=>input.purpose==='opening'?['income','expense'].includes(a.kind):input.purpose==='closing'?['asset','liability'].includes(a.kind):false))throw new ApiError(400,'PURPOSE_ACCOUNT_INVALID');
+    const byId=new Map(accounts.map(a=>[a.id,a]));for(const l of input.lines){const a=byId.get(l.accountId);if(!a)throw new ApiError(404,'NOT_FOUND');if(!a.active)throw new ApiError(409,'ACTIVE_ACCOUNT_REQUIRED');if(a.version!==l.accountVersion)throw new ApiError(409,'ACCOUNT_CHANGED');}
+  }
+}
 // Keep range predicates outside this correlated point lookup. On fresh native
 // statistics, flattening the join selected a whole date-range index scan for
 // each line (25 million rejected pairs). OFFSET0 is an intentional planner
@@ -50,10 +59,10 @@ async function journal(ctx:ApiContext,id:string){
 }
 async function period(ctx:ApiContext,input:z.infer<typeof reverse>,lock:boolean){
   if(lock)await ctx.db.query('SELECT id FROM public.finance_periods WHERE id=$1 FOR SHARE',[input.periodId]);
-  const p=(await ctx.db.query<{version:number;state:string;startsOn:string;endsOn:string;closedThrough:string|null}>('SELECT version,state,starts_on::text AS "startsOn",ends_on::text AS "endsOn",(SELECT max(c.ends_on)::text FROM public.finance_periods c WHERE c.active_closing_run_id IS NOT NULL AND c.state=\'closed\') AS "closedThrough" FROM public.finance_periods WHERE id=$1',[input.periodId])).rows[0];
-  if(!p)throw new ApiError(404,'NOT_FOUND');if(p.state!=='open')throw new ApiError(409,'OPEN_PERIOD_REQUIRED');if(p.version!==input.periodVersion)throw new ApiError(409,'PERIOD_CHANGED');if(input.postedOn<p.startsOn||input.postedOn>p.endsOn)throw new ApiError(409,'POSTING_DATE_OUTSIDE_PERIOD');if(p.closedThrough&&input.postedOn<=p.closedThrough)throw new ApiError(409,'FINANCIAL_CLOSED_THROUGH');return p;
+  const p=(await ctx.db.query<Period>('SELECT version,state,starts_on::text AS "startsOn",ends_on::text AS "endsOn",(SELECT max(c.ends_on)::text FROM public.finance_periods c WHERE c.active_closing_run_id IS NOT NULL AND c.state=\'closed\') AS "closedThrough" FROM public.finance_periods WHERE id=$1',[input.periodId])).rows[0];
+  if(!p)throw new ApiError(404,'NOT_FOUND');return p;
 }
-async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean){
+async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean,checkState=true){
   scope(ctx,'journals.edit');scope(ctx,'journals.view');
   const input=reversing?reversal.parse(raw):create.parse(raw);
   const source='reversesId' in input?await journal(ctx,input.reversesId):null;
@@ -68,27 +77,26 @@ async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean
   let accounts=await read();permitted(accounts);
   let selectedPeriod;
   if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);selectedPeriod=await period(ctx,input,true);await ctx.db.query('SELECT id FROM public.finance_accounts WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',[ids]);accounts=await read();permitted(accounts);}else selectedPeriod=await period(ctx,input,false);
-  if(!source&&'purpose' in input){
-    if((input.purpose==='opening'&&input.postedOn!==selectedPeriod.startsOn)||(input.purpose==='closing'&&input.postedOn!==selectedPeriod.endsOn))throw new ApiError(409,'PURPOSE_DATE_INVALID');
-    if(accounts.some(a=>input.purpose==='opening'?['income','expense'].includes(a.kind):input.purpose==='closing'?['asset','liability'].includes(a.kind):false))throw new ApiError(400,'PURPOSE_ACCOUNT_INVALID');
-  }
+  if(checkState)checkPostingState(input,accounts,selectedPeriod,reversing);
   const byId=new Map(accounts.map(a=>[a.id,a])),totals=new Map<string,bigint>(),lines:Line[]=[];
   for(const l of rawLines){
     const a=byId.get(l.accountId)!;
-    if(!reversing){if(!a.active)throw new ApiError(409,'ACTIVE_ACCOUNT_REQUIRED');if(a.version!==l.accountVersion)throw new ApiError(409,'ACCOUNT_CHANGED');}
     const minor=source?readMinorUnits((l as typeof source.lines[number]).amountMinor):parseMoney((l as z.infer<typeof line>).amount,a.unitScale);if(minor<=0n)throw new ApiError(400,'POSITIVE_POSTING_AMOUNT_REQUIRED');
     const key=a.currencyId,normalized=minor*10n**BigInt(18-a.unitScale);totals.set(key,(totals.get(key)??0n)+(l.side==='debit'?normalized:-normalized));lines.push({accountId:l.accountId,accountVersion:l.accountVersion,side:l.side,amountMinor:minor.toString(),note:l.note});
   }
   if([...totals.values()].some(total=>total!==0n))throw new ApiError(400,'JOURNAL_UNBALANCED');
   return {input,source,accounts,lines,scope:accounts.some(a=>a.hubId===null)?{all:true,hubs:[]}:{all:false,hubs:[...new Set(accounts.map(a=>a.hubId!))].sort()}};
 }
-async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown){
+async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown,purpose:'request'|'review'){
   const input=reversing?reversal.parse(raw):create.parse(raw),source='reversesId' in input?input.reversesId:null;
   const ids=source?(await ctx.db.query<{id:string}>('SELECT DISTINCT account_id AS id FROM public.finance_journal_lines WHERE journal_id=$1 ORDER BY account_id',[source])).rows.map(r=>r.id):('lines' in input?[...new Set(input.lines.map(l=>l.accountId))].sort():[]);
   // Old pending requests did not state a purpose. Invalidate their dependency
   // hash on review rather than silently assigning them the new activity default.
-  return {journalPurposeVersion:1,period:(await ctx.db.query('SELECT version,state,starts_on::text,ends_on::text FROM public.finance_periods WHERE id=$1',[input.periodId])).rows[0]??null,
-    accounts:(await ctx.db.query('SELECT id,version,active,currency_version FROM public.finance_account_catalogue WHERE id=ANY($1::uuid[]) ORDER BY id',[ids])).rows,
+  const selectedPeriod=await period(ctx,input,false),accounts=(await ctx.db.query<Pick<Account,'id'|'version'|'active'|'kind'>>('SELECT id,version,active,kind,currency_version FROM public.finance_account_catalogue WHERE id=ANY($1::uuid[]) ORDER BY id',[ids])).rows;
+  // Only new requests need current posting-state checks. Exact receipts still
+  // reauthorize every account before lookup, including after close/retirement.
+  if(purpose==='request')checkPostingState(input,accounts,selectedPeriod,reversing);
+  return {journalPurposeVersion:2,period:{version:selectedPeriod.version,state:selectedPeriod.state,starts_on:selectedPeriod.startsOn,ends_on:selectedPeriod.endsOn,closedThrough:selectedPeriod.closedThrough},accounts,
     source:source?{id:source,reversedById:(await ctx.db.query<{id:string}>('SELECT id FROM public.finance_journals WHERE reverses_id=$1',[source])).rows[0]?.id??null}:null};
 }
 async function apply(ctx:ApiContext,p:Proposal){
@@ -103,16 +111,16 @@ async function apply(ctx:ApiContext,p:Proposal){
   await record(ctx.db,ctx.credential,ctx.requestId,source?'finance.journal.reversed':'finance.journal.posted',p.target_id,prepared.scope.hubs.length===1?prepared.scope.hubs[0]:null,{approvalId:p.id,periodId:input.periodId,purpose:source?.purpose??('purpose' in input?input.purpose:'activity'),lineCount:lines.length,reversesId:source?.id??null,severity:'critical',hasReason:true});return journal(ctx,p.target_id);
 }
 export const journalActions:ApprovalRegistry={
-  'finance.journal.post':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,false,input,true)).scope,dependencies:(ctx,id,input)=>dependencies(ctx,false,input),apply},
-  'finance.journal.reverse':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,true,input,true)).scope,dependencies:(ctx,id,input)=>dependencies(ctx,true,input),apply}
+  'finance.journal.post':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,false,input,true,false)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,false,input,purpose),apply},
+  'finance.journal.reverse':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,true,input,true,false)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,true,input,purpose),apply}
 };
 export async function financeJournals(ctx:ApiContext,registry:ApprovalRegistry=journalActions):Promise<Reply|null>{
   const match=/^finance\/journals(?:\/([^/]+)(?:\/(reverse))?)?$/.exec(ctx.path);if(!match)return null;
   const id=match[1]?uuid.parse(match[1]):null,section=match[2];
   if(ctx.request.method==='POST'){
     z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));scope(ctx,'journals.edit');
-    if(!id){const input=create.parse(await jsonBody(ctx.request,262144));await prepare(ctx,false,input,false);return propose(ctx,registry,'finance.journal.post',null,0,input);}
-    if(section!=='reverse')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input={...reverse.parse(await jsonBody(ctx.request)),reversesId:id};await prepare(ctx,true,input,false);return propose(ctx,registry,'finance.journal.reverse',null,0,input);
+    if(!id){const input=create.parse(await jsonBody(ctx.request,262144));await prepare(ctx,false,input,false,false);return propose(ctx,registry,'finance.journal.post',null,0,input);}
+    if(section!=='reverse')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input={...reverse.parse(await jsonBody(ctx.request)),reversesId:id};await prepare(ctx,true,input,false,false);return propose(ctx,registry,'finance.journal.reverse',null,0,input);
   }
   if(ctx.request.method!=='GET'||section)throw new ApiError(405,'METHOD_NOT_ALLOWED');
   if(id){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await journal(ctx,id)}};}

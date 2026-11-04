@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash,randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { operationsFixture } from './operations-fixture.ts';
@@ -35,6 +35,35 @@ check('reviewed close posts balanced exact entries, retains source provenance an
  const profit=await f.request('reports/finance/profit-loss?from=2026-01-01&through=2026-12-31');assert.equal(profit.body.data.currencies[0].netResult.amount,'70.00');
  const sheet=(await f.request('reports/finance/balance-sheet?through=2026-12-31')).body.data.currencies[0];assert.equal(sheet.equity.amount,'70.00');assert.equal(sheet.unclosedPostedResult.minor,'0');assert.equal(sheet.balanced,true);
  assert.equal((await f.close(input)).response.status,409);assert.equal((await f.post(f.cash,f.income)).response.status,409);
+});
+check('exact original journal retry returns its saved receipt after formal close and prospective account retirement',async f=>{
+ const input={periodId:f.period.id,periodVersion:1,postedOn:'2026-06-01',description:'Synthetic retry source',reason:'Synthetic retry reason',lines:[{accountId:f.cash.id,accountVersion:1,side:'debit',amount:'100.00'},{accountId:f.income.id,accountVersion:1,side:'credit',amount:'100.00'}]},key=randomUUID();
+ const original=await f.request('finance/journals',input,'master',{key});assert.equal(original.response.status,201);assert.equal((await f.close(await f.input())).response.status,201);
+ assert.equal((await f.request('finance/accounts/'+f.income.id+'/change',{expectedVersion:1,active:false,reason:'Synthetic prospective retirement'})).response.status,200);
+ const retry=await f.request('finance/journals',input,'master',{key});assert.equal(retry.response.status,201,JSON.stringify(retry.body));assert.deepEqual(retry.body,original.body);assert.equal((await f.pg.query('SELECT count(*)::integer AS n FROM public.finance_journals')).rows[0].n,2);
+ assert.equal((await f.request('finance/journals',input)).response.status,409);
+});
+check('pending and applied financial retry receipts still require current full account and feature authority',async f=>{
+ await f.globalize();const input={periodId:f.period.id,periodVersion:1,postedOn:'2026-06-01',description:'Synthetic staff retry',reason:'Synthetic retry reason',lines:[{accountId:f.cash.id,accountVersion:1,side:'debit',amount:'100.00'},{accountId:f.income.id,accountVersion:1,side:'credit',amount:'100.00'}]},key=randomUUID();
+ const original=await f.request('finance/journals',input,'staff',{key});assert.equal(original.response.status,202);assert.equal((await f.approve(original.body.approval.id,'manager')).response.status,200);assert.equal((await f.close(await f.input())).response.status,201);
+ const retry=await f.request('finance/journals',input,'staff',{key});assert.equal(retry.response.status,202,JSON.stringify(retry.body));assert.deepEqual(retry.body,original.body);
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='accounts.view'",[f.staffRole]);assert.equal((await f.request('finance/journals',input,'staff',{key})).response.status,404);
+ await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'accounts.view','allow')",[f.a,f.staffRole]);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='journals.edit'",[f.staffRole]);assert.equal((await f.request('finance/journals',input,'staff',{key})).response.status,403);
+});
+check('saved exact reversal retry survives formal closure and never creates a second inverse',async f=>{
+ const posted=await f.post(f.cash,f.income);assert.equal(posted.response.status,201);const path='finance/journals/'+posted.body.data.id+'/reverse',input={periodId:f.period.id,periodVersion:1,postedOn:'2026-06-02',description:'Synthetic retry inverse',reason:'Synthetic retry inverse reason'},key=randomUUID();
+ const original=await f.request(path,input,'master',{key});assert.equal(original.response.status,201);assert.equal((await f.close(await f.input({equityMappings:[]}))).response.status,201);
+ const retry=await f.request(path,input,'master',{key});assert.equal(retry.response.status,201,JSON.stringify(retry.body));assert.deepEqual(retry.body,original.body);assert.equal((await f.pg.query('SELECT count(*)::integer AS n FROM public.finance_journals')).rows[0].n,2);
+ assert.equal((await f.request(path,{...input,reason:'Changed request'},'master',{key})).body.error.code,'IDEMPOTENCY_CONFLICT');
+});
+check('prior version-one financial proposals require fresh review while original dependency date fields remain stable',async f=>{
+ await f.globalize();const input={periodId:f.period.id,periodVersion:1,postedOn:'2026-06-01',description:'Synthetic prior proposal',reason:'Synthetic upgrade reason',lines:[{accountId:f.cash.id,accountVersion:1,side:'debit',amount:'100.00'},{accountId:f.income.id,accountVersion:1,side:'credit',amount:'100.00'}]},pending=await f.request('finance/journals',input,'staff');assert.equal(pending.response.status,202);
+ const context=(await f.request('approvals/'+pending.body.approval.id)).body.data.reviewContext;assert.equal(context.period.starts_on,'2026-01-01');assert.equal(context.period.ends_on,'2026-12-31');assert.equal(context.journalPurposeVersion,2);
+ // Exact former protocol shape from the pre-correction journal handler.
+ // Only the disposable test owner can reconstruct immutable stored cases.
+ const old={journalPurposeVersion:1,period:{version:context.period.version,state:context.period.state,starts_on:context.period.starts_on,ends_on:context.period.ends_on},accounts:context.accounts.map((a:{id:string;version:number;active:boolean;currency_version:number})=>({id:a.id,version:a.version,active:a.active,currency_version:a.currency_version})),source:null};
+ await f.pg.query('UPDATE public.approval_requests SET review_context=$2::jsonb,dependency_hash=$3 WHERE id=$1',[pending.body.approval.id,JSON.stringify(old),createHash('sha256').update(JSON.stringify(old)).digest('hex')]);
+ const reviewed=await f.approve(pending.body.approval.id);assert.equal(reviewed.response.status,409,JSON.stringify(reviewed.body));assert.equal(reviewed.body.approval.decisionCode,'DEPENDENCIES_CHANGED');assert.equal((await f.request('finance/journals')).body.data.length,0);
 });
 check('school-wide close requires full current rights, upper human review and stale-source rejection',async f=>{
  await f.post(f.cash,f.income);const input=await f.input();assert.equal((await f.close(input,'staff')).response.status,403);await f.globalize();
