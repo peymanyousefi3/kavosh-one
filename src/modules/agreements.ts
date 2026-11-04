@@ -28,7 +28,12 @@ const fields='t.id,t.hub_id,t.name,t.available,t.version,t.last_approval_id,t.cr
 const from='public.agreement_templates t JOIN public.agreement_template_revisions r ON r.academy_id=t.academy_id AND r.template_id=t.id AND r.version=t.version';
 function scopeParams(ctx:ApiContext,cap:Capability) {const s=allowed(ctx,cap);return [s.all,s.hubs,s.excludedHubs??[],!s.excludedAreas?.length];}
 async function template(ctx:ApiContext,id:string,edit=false,lock=false) {
-  const row=(await ctx.db.query<Template>('SELECT '+fields+' FROM '+from+' WHERE '+selected+' AND t.id=$5'+(lock?' FOR UPDATE OF t':''),[...scopeParams(ctx,'agreements.view'),id])).rows[0];
+  const params=[...scopeParams(ctx,'agreements.view'),id];
+  // Lock the parent alone, then read its revision in a fresh statement snapshot.
+  // A joined FOR UPDATE can recheck a newly committed parent against the old
+  // revision snapshot after waiting, incorrectly turning a conflict into 404.
+  if(lock&&!(await ctx.db.query('SELECT t.id FROM public.agreement_templates t WHERE '+selected+' AND t.id=$5 FOR UPDATE',params)).rows.length)throw new ApiError(404,'NOT_FOUND');
+  const row=(await ctx.db.query<Template>('SELECT '+fields+' FROM '+from+' WHERE '+selected+' AND t.id=$5',params)).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');
   if(edit)requireScope(allowed(ctx,'agreements.edit'),row.hub_id??undefined);return row;
 }

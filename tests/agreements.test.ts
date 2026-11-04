@@ -135,3 +135,27 @@ if(process.env.TEST_DATABASE_URL)check('concurrent agreement corrections preserv
   const made=await f.create();assert.equal(made.response.status,201);const id=made.body.data.id;
   const changed=await Promise.all(['First','Second'].map(name=>f.request('agreements/'+id+'/change',{expectedVersion:1,name,reason:'Concurrent correction'})));assert.deepEqual(changed.map(r=>r.response.status).sort(),[200,409]);assert.equal((await f.pg.query('SELECT * FROM public.agreement_template_revisions')).rows.length,2);
 });
+if(process.env.TEST_DATABASE_URL)check('an agreement correction waiting behind a committed revision returns a version conflict, never a false missing record',async f=>{
+  const made=await f.create();assert.equal(made.response.status,201);const current=made.body.data,id=current.id;
+  await f.pg.exec('BEGIN');let open=true;
+  await f.pg.query('SELECT id FROM public.agreement_templates WHERE id=$1 FOR UPDATE',[id]);
+  const pending=f.request('agreements/'+id+'/change',{expectedVersion:1,name:'Stale waiting correction',reason:'Must see the committed revision'});
+  try {
+    let waiting=false;
+    for(let attempt=0;attempt<200;attempt++) {
+      await f.pg.query('SELECT pg_stat_clear_snapshot()');
+      const blocked=await f.pg.query<{count:number}>(`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid()
+        AND wait_event_type='Lock' AND query LIKE '%agreement_templates%' AND query LIKE '%FOR UPDATE%'`);
+      if(blocked.rows[0].count>0){waiting=true;break;}await new Promise(resolve=>setTimeout(resolve,5));
+    }
+    assert.equal(waiting,true,'prove the request reached its row-lock wait before changing the revision');
+    // Test-only owner write models the earlier transaction's complete commit;
+    // the deferred current-revision FK still has to be satisfied atomically.
+    await f.pg.query('UPDATE public.agreement_templates SET version=2 WHERE id=$1',[id]);
+    await f.pg.query(`INSERT INTO public.agreement_template_revisions(academy_id,template_id,version,definition,definition_hash,changed_by,approval_id,reason)
+      VALUES($1,$2,2,$3::jsonb,$4,$5,$6,'Coordinated earlier transaction')`,[f.a,id,JSON.stringify(current.definition),current.definition_hash,f.actors.master.person,current.last_approval_id]);
+    await f.pg.exec('COMMIT');open=false;
+    const result=await pending;assert.equal(result.response.status,409,JSON.stringify(result.body));assert.equal(result.body.error.code,'TARGET_CHANGED');
+    assert.equal((await f.request('agreements/'+id)).body.data.version,2);assert.equal((await f.pg.query('SELECT * FROM public.agreement_template_revisions WHERE template_id=$1',[id])).rows.length,2);
+  }finally{if(open)await f.pg.exec('ROLLBACK');await pending;}
+});
