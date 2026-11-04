@@ -23,7 +23,7 @@ const fields='id,class_id,hub_id,student_id,student_profile_version,joins_on::te
 async function permittedClass(ctx:ApiContext,id:string,edit=false,lock=edit) {
   const c=await classRow(ctx,id,'enrollments.view',!edit&&lock);return edit?classRow(ctx,id,'enrollments.edit',lock):c;
 }
-async function enrollment(ctx:ApiContext,id:string,edit=false,lock=edit) {
+export async function enrollment(ctx:ApiContext,id:string,edit=false,lock=edit) {
   if(!scopeNonempty(permissionScope(ctx,'enrollments.view')))throw new ApiError(403,'FORBIDDEN');
   const row=(await ctx.db.query<Enrollment>('SELECT '+fields+' FROM public.class_enrollments WHERE id=$1',[id])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');return {row,c:await permittedClass(ctx,row.class_id,edit,lock)};
