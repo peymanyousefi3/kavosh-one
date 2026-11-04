@@ -68,7 +68,9 @@ export async function operationsFixture(options:{connections?:R2UploadConnection
           'content-type':'application/json','idempotency-key':options.key??randomUUID(),'x-test-actor':as,'x-academy-id':options.academy??a,
           ...(as==='bot'?{authorization:'Bearer '+token}:{cookie:'synthetic-only-resolver-cookie'})},...(body===undefined?{}:{body:JSON.stringify(body)})}),path.split('?')[0]);
         return {response,body:await response.json()};
-      }finally{await pg.exec('RESET ROLE');}
+      // Native requests use their own role-resetting pool, not the fixture's
+      // admin client. Only the single-engine embedded path shares its role.
+      }finally{if(!pg.runtime)await pg.exec('RESET ROLE');}
     }
     const roleInput={name:'New viewer',description:'Synthetic configurable preset',permissions:[{capability:'people.view',effect:'allow'}]};
     async function newRole(name='New viewer') {

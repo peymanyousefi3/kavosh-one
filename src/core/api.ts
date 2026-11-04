@@ -182,7 +182,8 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
       // Freeze geography before identity row locks. This avoids reading records
       // using a hub list expanded before a concurrent move across area boundaries.
-      if(request.method==='GET'||(request.method==='POST'&&path==='calendar/preview'))await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
+      const readOnlyPreview=request.method==='POST'&&(path==='calendar/preview'||/^finance\/tax-codes\/[0-9a-f-]{36}\/preview$/i.test(path));
+      if(request.method==='GET'||readOnlyPreview)await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
       const lock = human
         ? await db.query<{ valid: boolean }>('SELECT public.lock_human($1,$2) AS valid',[human.sessionId,human.userId])
         : await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);
@@ -191,7 +192,6 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       const status = academy.rows[0]?.status;
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       const securityRevocation = request.method === 'POST' && /^credentials\/[^/]+\/revoke$/.test(path);
-      const readOnlyPreview=request.method==='POST'&&path==='calendar/preview';
       if (status === 'read_only' && request.method !== 'GET' && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
