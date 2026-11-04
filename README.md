@@ -20,6 +20,14 @@ The separate `kavosh-academy` repository contains the existing public-facing web
 
 Overview, Academy, People, Learning, Finance, Reports, Community and Administration. Files, approvals, audit history and notifications are shared capabilities. External management agents use a scoped, documented API, with configurable approvals and limits.
 
+### Reviewed statement-to-ledger matching (backend)
+
+Finance can link groups of complete statement rows to groups of posted lines on the same account. Exact signed net totals must agree; one-to-one, many-to-one, one-to-many and mixed-sign groups are supported, with 1–200 sources on each side. Sources cannot belong to two active groups. Upper human approval is required except master self-approval. Separate `bank-matches.view/edit`, statement viewing, account viewing and ledger rights protect the operation, its history and pending approval payloads. Own-account line rights never disclose a mixed-hub journal's private headers, counterparties or notes.
+
+Exact-amount candidate lookup has explicit adjustable date windows (seven days either side by default, configurable from 0–366), stable pagination, journal-purpose/reversal provenance and an account/side/amount index. Suggestions never make decisions. Reviewed releases retain all earlier links and make sources available again. An import cannot be voided while it has active links. Native account locks, exact approval/member bindings, immutable source references and deferred complete-group/net checks protect concurrent changes and retries. Totals and balances are never rewritten.
+
+Routes: `/api/v1/finance/statement-matches`, `/candidates`, account-scoped directories and individual detail/release endpoints. A group is labelled `linked`, not externally verified or whole-statement reconciled. Partial line allocations, statement closing/finalization, outstanding-item reports, reconciliation adjustments, matching exports and live bank connectors remain required. Matching posts no journal, tax treatment, payment or notification to an external party.
+
 ### Private bank-statement imports (backend)
 
 Finance supports read-only CSV previews and reviewed imports into retained private statement records. The pinned MIT `csv-parse` 7.0.3 parser has no runtime dependencies; [its documented parser options](https://csv.js.org/parse/options/) provide strict quoting, UTF-8 BOM handling and bounded record size. No install hooks were run. The importer requires explicit date format, delimiter, decimal/group separators and signed/debit-credit column mapping; it does not guess locale or amount direction. Dates and amounts stay exact. Unicode, quoted commas and multiline descriptions are retained as text. Formula-like descriptions/references are flagged for future safe exports, not executed or declared export-safe.

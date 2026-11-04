@@ -30,7 +30,9 @@ async function basis(ctx:ApiContext,raw:unknown,lock=false,checkState=true){
  if(checkState&&(await ctx.db.query(`SELECT i.id FROM ${from} WHERE i.account_id=$1 AND i.import_hash=$2 AND v.id IS NULL`,[a.id,normalized.importHash])).rows.length)throw new ApiError(409,'STATEMENT_ALREADY_IMPORTED');
  return {a,normalized,accounts:[{id:a.id,version:a.version,hubId:a.hubId,currencyId:a.currencyId,unitScale:a.unitScale,active:a.active,operationalRole:a.operationalRole}]};
 }
-async function voidBasis(ctx:ApiContext,raw:unknown,lock=false,checkState=true){const v=voidPayload.parse(raw);let current=await batch(ctx,v.importId,true);if(lock){await locked(ctx,current.a.id);current=await batch(ctx,v.importId,true);}if(checkState&&current.b.void_id)throw new ApiError(409,'STATEMENT_ALREADY_VOID');return {...current,accounts:[{id:current.a.id,version:current.a.version,hubId:current.a.hubId}],importId:current.b.id,voidId:current.b.void_id};}
+async function voidBasis(ctx:ApiContext,raw:unknown,lock=false,checkState=true){const v=voidPayload.parse(raw);let current=await batch(ctx,v.importId,true);if(lock){await locked(ctx,current.a.id);current=await batch(ctx,v.importId,true);}if(checkState&&current.b.void_id)throw new ApiError(409,'STATEMENT_ALREADY_VOID');
+ if(checkState&&(await ctx.db.query('SELECT 1 FROM public.finance_statement_match_rows r WHERE r.import_id=$1 AND NOT EXISTS(SELECT 1 FROM public.finance_statement_match_releases v WHERE v.academy_id=r.academy_id AND v.match_id=r.match_id) LIMIT 1',[v.importId])).rows.length)throw new ApiError(409,'STATEMENT_HAS_ACTIVE_MATCHES');
+ return {...current,accounts:[{id:current.a.id,version:current.a.version,hubId:current.a.hubId}],importId:current.b.id,voidId:current.b.void_id};}
 async function dependencies(ctx:ApiContext,raw:unknown,reversing:boolean,purpose:'request'|'review'){
  try{const b=reversing?await voidBasis(ctx,raw):await basis(ctx,raw);return JSON.parse(JSON.stringify({accounts:b.accounts,...'importId'in b?{importId:b.importId,voidId:b.voidId}:{importHash:b.normalized.importHash}}));}catch(error){if(purpose==='review'&&error instanceof ApiError&&[400,403,404,409].includes(error.status))return {unavailable:error.code};throw error;}
 }
@@ -63,6 +65,7 @@ export async function statementImports(ctx:ApiContext,registry:ApprovalRegistry=
  FROM public.finance_statement_rows r WHERE r.import_id=$1 AND r.line>$2 AND($3::date IS NULL OR r.posted_on>=$3) AND($4::date IS NULL OR r.posted_on<=$4) ORDER BY r.line LIMIT $5`,[b.id,q.afterLine,q.from??null,q.through??null,q.limit+1])).rows;
  return {status:200,body:{importId:b.id,state:b.void_id?'void':'imported',data:rows.slice(0,q.limit),nextLine:rows.length>q.limit?rows[q.limit-1].line:null,duplicateCandidatesAreNotDecisions:true,reconciled:false,ledgerAdjusted:false}};
 }
+export { batch as statementBatch };
 export const statementImportsContract=[
  {path:'/api/v1/finance/statement-imports/preview',method:'post',summary:'Bounded explicit-map CSV normalization without persistence; counts/amounts are unverified and never posted',schema:requestInput,readOnly:true},
  {path:'/api/v1/finance/statement-imports',method:'post',summary:'Request reviewed private CSV import with exact source hash, mapping and retained rows; no bank connection, tax decision or accounting posting',schema:requestInput},
