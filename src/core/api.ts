@@ -28,7 +28,7 @@ export async function jsonBody(request: Request,maximumBytes=16_384) {
       if (size > maximumBytes) { await reader.cancel(); throw new ApiError(413, 'BODY_TOO_LARGE'); }
       chunks.push(value);
     }
-    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; }
+    try { return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))) as unknown; }
     catch { throw new ApiError(400, 'INVALID_JSON'); }
   } finally { reader.releaseLock(); }
 }
@@ -107,7 +107,10 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
     const table = path === 'hubs' ? 'hubs' : path === 'people'||personId ? 'people' : 'audit_events';
     const hubColumn = path === 'hubs' ? 'id' : 'hub_id';
     const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : table === 'people'
-      ? 'id,name,email,hub_id,status,created_at' : 'id,actor_id,request_id,action,entity_id,hub_id,changes,created_at';
+      ? 'id,name,email,hub_id,status,created_at' : `id,actor_id,request_id,action,entity_id,hub_id,
+        CASE WHEN changes?'reason' AND action LIKE 'approval.%' AND EXISTS(SELECT 1 FROM public.approval_requests private_case
+          WHERE private_case.academy_id=public.audit_events.academy_id AND private_case.id=public.audit_events.entity_id AND private_case.privacy_capability IS NOT NULL)
+          THEN (changes-'reason')||'{"hasReason":true}'::jsonb ELSE changes END AS changes,created_at`;
     const rows = await db.query(`SELECT ${fields} FROM public.${table}
       WHERE (($1::boolean AND (cardinality($5::uuid[])=0 OR ${hubColumn} IS NOT NULL)) OR ${hubColumn}=ANY($2::uuid[]) OR id=ANY($6::uuid[]))
       AND NOT coalesce(${hubColumn}=ANY($5::uuid[]),false) AND NOT id=ANY($7::uuid[]) AND ($3::uuid IS NULL OR id>$3::uuid)

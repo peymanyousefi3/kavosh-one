@@ -134,7 +134,7 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
       }
     }
     await ctx.db.query('UPDATE public.approval_requests SET status=$2,version=version+1,reviewer_id=$3,reason=$4,decision_code=$5,decided_at=now() WHERE id=$1',[current.id,status,ctx.credential.person_id,input.reason,decisionCode]);
-    await record(ctx.db,ctx.credential,ctx.requestId,'approval.'+status,current.id,null,{before:'pending',after:status,reason:input.reason,decisionCode,action:current.action,targetId:current.target_id});
+    await record(ctx.db,ctx.credential,ctx.requestId,'approval.'+status,current.id,null,{before:'pending',after:status,...current.privacy_capability?{hasReason:true}:{reason:input.reason},decisionCode,action:current.action,targetId:current.target_id});
     return {status:status==='stale'?409:200,body:{approval:{id:current.id,status,version:current.version+1,reason:input.reason,decisionCode},...(result?{data:result}:{})}};
   });
 }
@@ -187,7 +187,7 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
       return mutation(ctx,input,async()=>{
         const updated=await db.query("UPDATE public.approval_requests SET status='withdrawn',version=version+1,reason=$3,decided_at=now() WHERE id=$1 AND version=$2 AND status='pending' RETURNING id",[id,input.expectedVersion,input.reason]);
         if(!updated.rows.length)throw new ApiError(409,'APPROVAL_CHANGED');
-        await record(db,c,ctx.requestId,'approval.withdrawn',id,null,{reason:input.reason});
+        await record(db,c,ctx.requestId,'approval.withdrawn',id,null,p.privacy_capability?{hasReason:true}:{reason:input.reason});
         return {status:200,body:{approval:{id,status:'withdrawn',version:input.expectedVersion+1}}};
       });
     }
