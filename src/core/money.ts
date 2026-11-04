@@ -43,6 +43,24 @@ export function roundRatio(numerator:bigint,denominator:bigint,mode:RoundingMode
   const twice=absolute(remainder)*2n;
   return twice>denominator||(twice===denominator&&(mode==='half_away'||quotient%2n!==0n))?quotient+sign:quotient;
 }
+// Inventory purchase-cost shares can be fractional minor units. Sum reduced
+// ratios before rounding, rather than losing pennies on every stock row.
+// Each denominator is a stored lot quantity (at most one billion); reducing
+// only against the small shared factors avoids growing-integer GCD loops.
+export const maximumSynchronousInventoryValueTerms=1000;
+export function sumInventoryValueRatios(terms:{numerator:bigint;denominator:bigint}[]){
+  if(!Array.isArray(terms)||terms.length>maximumSynchronousInventoryValueTerms)throw new ApiError(422,'REPORT_REQUIRES_BACKGROUND_JOB');
+  const gcd=(a:bigint,b:bigint):bigint=>{while(b){const r=a%b;a=b;b=r;}return a;};
+  let numerator=0n,denominator=1n;
+  for(const t of terms){
+    if(!t||typeof t.numerator!=='bigint'||typeof t.denominator!=='bigint'||t.numerator<0n||t.denominator<1n||t.denominator>1000000000n||t.numerator.toString().length>100)throw new ApiError(400,'INVALID_MONEY_RATIO');
+    if(t.numerator===0n)continue;
+    const reduced=gcd(t.numerator,t.denominator),n=t.numerator/reduced,d=t.denominator/reduced,shared=gcd(denominator,d);
+    const next=numerator*(d/shared)+n*(denominator/shared),cancel=gcd(next,shared);
+    numerator=next/cancel;denominator=(denominator/shared)*(d/cancel);
+  }
+  return {numerator,denominator};
+}
 export function taxAmounts(value:bigint,rateMillionths:bigint,pricing:'tax_inclusive'|'tax_exclusive'|'not_applicable') {
   amount(value);
   if(typeof rateMillionths!=='bigint'||rateMillionths<0n||rateMillionths>1000000n||!['tax_inclusive','tax_exclusive','not_applicable'].includes(pricing)

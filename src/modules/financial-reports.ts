@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { permissionScope } from '../core/approvals.ts';
-import { ApiError,scopeNonempty } from '../core/policy.ts';
+import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { journalPointLookupSQL } from './finance-journals.ts';
@@ -13,8 +13,9 @@ const query=z.object({through:accountingDate,hubIds:ids.optional(),currencyIds:i
   .refine(v=>[v.afterKind,v.afterCode,v.afterId].filter(v=>v!==undefined).length%3===0,'Provide all three cursor fields together.');
 type Entry={accountId:string;chartVersion:number;hubId:string|null;code:string;name:string;translations:Record<string,string>;kind:typeof kinds[number];normalBalance:'debit'|'credit';currencyId:string;currencyVersion:number;currencyCode:string;unitScale:number;closingMinor:string;sort:number};
 type CurrencyTotal={currencyId:string;currencyCode:string;unitScale:number;debitMinor:string;creditMinor:string};
-function authority(ctx:ApiContext){
-  const scopes=(['financial-reports.view','ledger.view','accounts.view'] as const).map(cap=>permissionScope(ctx,cap));
+function authority(ctx:ApiContext,capabilities:readonly Capability[]=['financial-reports.view','ledger.view','accounts.view']){
+  if(!capabilities.length)throw new ApiError(403,'FORBIDDEN');
+  const scopes=capabilities.map(cap=>permissionScope(ctx,cap));
   if(scopes.some(s=>!scopeNonempty(s)))throw new ApiError(403,'FORBIDDEN');
   const all=scopes.every(s=>s.all),excluded=[...new Set(scopes.flatMap(s=>s.excludedHubs??[]))];
   const hubs=all?[]:scopes.find(s=>!s.all)!.hubs.filter(h=>scopes.every(s=>(s.all||s.hubs.includes(h))&&!s.excludedHubs?.includes(h)));
@@ -67,4 +68,4 @@ export async function financialReports(ctx:ApiContext):Promise<Reply|null>{
     nextCursor:next?{afterKind:next.kind,afterCode:next.code,afterId:next.accountId}:null}};
 }
 export const financialReportsContract=[{path:'/api/v1/reports/finance/trial-balance',method:'get',summary:'Same-snapshot posted trial balance with intersected account/ledger/report rights, exact per-currency totals and explicit scoped coverage; not financial certification or FX conversion',querySchema:query}] as const;
-export { authority as financialReportAccess,ids as financialIds,kinds as financialKinds };
+export { authority as financialReportAccess,authority as hubReportAccess,ids as financialIds,kinds as financialKinds };
