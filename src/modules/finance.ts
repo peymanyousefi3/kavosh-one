@@ -14,9 +14,14 @@ const currencyDefinition=z.object(currencyFields).strip();
 const currencyCreate=z.object({...currencyFields,code:z.string().regex(/^[A-Z]{3}$/),symbol:currencyFields.symbol.default(''),active:z.boolean().default(true),translations:translations.default({}),reason}).strict();
 const currencyUpdate=z.object({...currencyFields,translations:labelsPatch}).partial().extend({expectedVersion:version,reason}).strict().refine(v=>Object.keys(v).some(k=>!['expectedVersion','reason'].includes(k)));
 const kind=z.enum(['asset','liability','equity','income','expense']),balance=z.enum(['debit','credit']);
-const accountFields={code:z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/),name,description:text.max(2000),kind,normalBalance:balance,active:z.boolean(),translations};
-const accountDefinition=z.object(accountFields).strip();
-const accountCreate=z.object({...accountFields,description:accountFields.description.default(''),normalBalance:balance.optional(),active:z.boolean().default(true),translations:translations.default({}),hubId:uuid.nullable().default(null),currencyId:uuid,currencyVersion:version,reason}).strict();
+const operationalRole=z.enum(['unclassified','cash','bank','receivable','deferred_revenue','tax_payable','revenue','expense','other']);
+const accountFields={code:z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/),name,description:text.max(2000),kind,normalBalance:balance,operationalRole,active:z.boolean(),translations};
+const accountDefinition=z.object(accountFields).strip().superRefine((v,ctx)=>{
+ const role=v.operationalRole,valid=['unclassified','other'].includes(role)||(['cash','bank','receivable'].includes(role)&&v.kind==='asset'&&v.normalBalance==='debit')
+  ||(['deferred_revenue','tax_payable'].includes(role)&&v.kind==='liability'&&v.normalBalance==='credit')||(role==='revenue'&&v.kind==='income'&&v.normalBalance==='credit')||(role==='expense'&&v.kind==='expense');
+ if(!valid)ctx.addIssue({code:'custom',message:'The operational account role must match its kind and normal balance.'});
+});
+const accountCreate=z.object({...accountFields,operationalRole:operationalRole.default('unclassified'),description:accountFields.description.default(''),normalBalance:balance.optional(),active:z.boolean().default(true),translations:translations.default({}),hubId:uuid.nullable().default(null),currencyId:uuid,currencyVersion:version,reason}).strict();
 const accountUpdate=z.object({...accountFields,translations:labelsPatch}).partial().extend({expectedVersion:version,reason}).strict().refine(v=>Object.keys(v).some(k=>!['expectedVersion','reason'].includes(k)));
 const listFields={limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),q:text.trim().min(1).max(100).optional(),active:z.enum(['true','false']).transform(v=>v==='true').optional()};
 const currencyQuery=z.object(listFields).strict(),accountQuery=z.object({...listFields,hubId:uuid.optional(),currencyId:uuid.optional(),kind:kind.optional()}).strict();
@@ -24,7 +29,7 @@ const historyQuery=z.object({limit:listFields.limit,afterVersion:z.coerce.number
 type Currency=z.infer<typeof currencyDefinition>&{id:string;code:string;version:number};
 type Account=z.infer<typeof accountDefinition>&{id:string;version:number;hubId:string|null;currencyId:string;currencyVersion:number;unitScale:number};
 const currencyFieldsSQL='id,code,version,name,symbol,unit_scale AS "unitScale",active,translations,created_by AS "createdBy",created_at AS "createdAt",revised_at AS "revisedAt"';
-const accountFieldsSQL='a.id,a.code,a.version,a.hub_id AS "hubId",a.currency_id AS "currencyId",a.currency_version AS "currencyVersion",a.name,a.description,a.kind,a.normal_balance AS "normalBalance",a.active,a.translations,a.currency_code AS "currencyCode",a.unit_scale AS "unitScale",a.currency_symbol AS "currencySymbol",a.created_by AS "createdBy",a.created_at AS "createdAt",a.revised_at AS "revisedAt"';
+const accountFieldsSQL='a.id,a.code,a.version,a.hub_id AS "hubId",a.currency_id AS "currencyId",a.currency_version AS "currencyVersion",a.name,a.description,a.kind,a.operational_role AS "operationalRole",a.normal_balance AS "normalBalance",a.active,a.translations,a.currency_code AS "currencyCode",a.unit_scale AS "unitScale",a.currency_symbol AS "currencySymbol",a.created_by AS "createdBy",a.created_at AS "createdAt",a.revised_at AS "revisedAt"';
 function allowed(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
 function currencyAuthority(ctx:ApiContext,edit=false){requireScope(allowed(ctx,'currencies.view'));if(edit)requireScope(allowed(ctx,'currencies.edit'));}
 async function currencyRow(ctx:ApiContext,id:string,edit=false,lock=false):Promise<Currency> {
@@ -54,10 +59,11 @@ async function validateCurrency(ctx:ApiContext,create:boolean,id:string,raw:unkn
   return {all:true,hubs:[]};
 }
 async function validateAccount(ctx:ApiContext,create:boolean,id:string,raw:unknown){
-  if(create){const input=accountCreate.parse(raw);await accountDestination(ctx,input.hubId);currencyAuthority(ctx);await lockFinanceBook(ctx);await lockAcademyTopology(ctx);const scope=await accountDestination(ctx,input.hubId);await accountCurrency(ctx,input);return scope;}
+  if(create){const input=accountCreate.parse(raw);accountBody(null,input);await accountDestination(ctx,input.hubId);currencyAuthority(ctx);await lockFinanceBook(ctx);await lockAcademyTopology(ctx);const scope=await accountDestination(ctx,input.hubId);await accountCurrency(ctx,input);return scope;}
   const input=accountUpdate.parse(raw);await accountRow(ctx,id,true);await lockFinanceBook(ctx);await lockAcademyTopology(ctx);const before=await accountRow(ctx,id,true,true);if(before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');
-  return before.hubId?{all:false,hubs:[before.hubId]}:{all:true,hubs:[]};
+  accountBody(before,input);return before.hubId?{all:false,hubs:[before.hubId]}:{all:true,hubs:[]};
 }
+function accountBody(before:Account|null,input:z.infer<typeof accountCreate>|z.infer<typeof accountUpdate>){return accountDefinition.parse({...before,...input,normalBalance:input.normalBalance??before?.normalBalance??(['asset','expense'].includes(input.kind??'')?'debit':'credit'),translations:mergeLabels(before?.translations,input.translations)});}
 async function currencyDependencies(ctx:ApiContext,create:boolean,id:string,raw:unknown){
   const current=(await ctx.db.query('SELECT id,code,version FROM public.finance_currencies WHERE id=$1',[id])).rows[0]??null;
   const input=create?currencyCreate.parse(raw):null;
@@ -90,13 +96,13 @@ async function applyAccount(ctx:ApiContext,p:Proposal){
   // Standard defaults are editable, including contra accounts. A partial type
   // correction never silently changes an explicitly configured normal side.
   // https://openstax.org/books/principles-financial-accounting/pages/3-1-describe-principles-assumptions-and-concepts-of-accounting-and-their-relationship-to-financial-statements
-  const body=accountDefinition.parse({...before,...input,normalBalance:input.normalBalance??before?.normalBalance??(['asset','expense'].includes(input.kind??'')?'debit':'credit'),translations:mergeLabels(before?.translations,input.translations)}),next=before?before.version+1:1;
+  const body=accountBody(before,input),next=before?before.version+1:1;
   const hubId=before?before.hubId:('hubId' in input?input.hubId:null);
   try {
     if(before)await ctx.db.query('UPDATE public.finance_accounts SET code=$2,version=$3 WHERE id=$1',[p.target_id,body.code,next]);
     else if('currencyId' in input)await ctx.db.query('INSERT INTO public.finance_accounts(academy_id,id,hub_id,currency_id,currency_version,code,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)',[ctx.credential.academy_id,p.target_id,hubId,input.currencyId,input.currencyVersion,body.code,ctx.credential.person_id]);
-    await ctx.db.query(`INSERT INTO public.finance_account_revisions(academy_id,account_id,version,code,name,description,kind,normal_balance,active,translations,changed_by,approval_id,reason)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13)`,[ctx.credential.academy_id,p.target_id,next,body.code,body.name,body.description,body.kind,body.normalBalance,body.active,JSON.stringify(body.translations),ctx.credential.person_id,p.id,input.reason]);
+    await ctx.db.query(`INSERT INTO public.finance_account_revisions(academy_id,account_id,version,code,name,description,kind,normal_balance,active,translations,changed_by,approval_id,reason,operational_role)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14)`,[ctx.credential.academy_id,p.target_id,next,body.code,body.name,body.description,body.kind,body.normalBalance,body.active,JSON.stringify(body.translations),ctx.credential.person_id,p.id,input.reason,body.operationalRole]);
   }catch(error){failure(error,'ACCOUNT_CODE_EXISTS');}
   await record(ctx.db,ctx.credential,ctx.requestId,creating?'finance.account.created':'finance.account.updated',p.target_id,hubId,{beforeVersion:before?.version??null,afterVersion:next,approvalId:p.id,severity:'critical',hasReason:true});return accountRow(ctx,p.target_id);
 }
@@ -125,7 +131,7 @@ export async function finance(ctx:ApiContext,registry:ApprovalRegistry=financeAc
     if(section==='history'){
       const q=historyQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
       const sql=currencies?'SELECT version,name,symbol,unit_scale AS "unitScale",active,translations,changed_by AS "changedBy",approval_id AS "approvalId",reason,created_at AS "createdAt" FROM public.finance_currency_revisions WHERE currency_id=$1 AND version>$2 ORDER BY version LIMIT $3'
-        :'SELECT version,code,name,description,kind,normal_balance AS "normalBalance",active,translations,changed_by AS "changedBy",approval_id AS "approvalId",reason,created_at AS "createdAt" FROM public.finance_account_revisions WHERE account_id=$1 AND version>$2 ORDER BY version LIMIT $3';
+        :'SELECT version,code,name,description,kind,operational_role AS "operationalRole",normal_balance AS "normalBalance",active,translations,changed_by AS "changedBy",approval_id AS "approvalId",reason,created_at AS "createdAt" FROM public.finance_account_revisions WHERE account_id=$1 AND version>$2 ORDER BY version LIMIT $3';
       const rows=(await ctx.db.query<{version:number}>(sql,[id,q.afterVersion,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextVersion:rows.length>q.limit?rows[q.limit-1].version:null}};
     }
     if(section)throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:row}};

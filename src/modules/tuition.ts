@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,master,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
-import { ApiError,scopeNonempty,type Scope } from '../core/policy.ts';
+import { ApiError,scopeNonempty,type Scope,type Capability } from '../core/policy.ts';
 import { parseMoney,readMinorUnits,formatMoney,taxAmounts } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { enrollment } from './enrollments.ts';
@@ -23,8 +23,8 @@ const query=z.object({...paging,hubId:uuid.optional(),classId:uuid.optional(),st
 const historyQuery=z.object({limit:paging.limit,afterVersion:z.coerce.number().int().min(0).max(2_147_483_647).default(0)}).strict();
 interface Plan {id:string;enrollment_id:string;student_id:string;class_id:string;hub_id:string;currency_id:string;unit_scale:number;version:number}
 function allowed(ctx:ApiContext,edit=false){const s=permissionScope(ctx,edit?'tuition.edit':'tuition.view');if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
-function authority(ctx:ApiContext,p:Pick<Plan,'student_id'|'class_id'|'hub_id'>,edit=false):Scope {
- const s=allowed(ctx,edit),hub=p.hub_id;
+export function financialRecordAuthority(ctx:ApiContext,p:Pick<Plan,'student_id'|'class_id'|'hub_id'>,capability:Capability):Scope {
+ const s=permissionScope(ctx,capability),hub=p.hub_id;if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');
  if((!ctx.credential.all_hubs&&!ctx.credential.hub_ids.includes(hub))||s.excludedHubs?.includes(hub)||s.excludedClasses?.some(c=>c.id===p.class_id)||s.excludedPeople?.some(c=>c.id===p.student_id))throw new ApiError(404,'NOT_FOUND');
  const recordContext={hubId:hub,classId:p.class_id,studentId:p.student_id};
  if(s.all||s.hubs.includes(hub))return {all:false,hubs:[hub],recordContext};
@@ -32,6 +32,7 @@ function authority(ctx:ApiContext,p:Pick<Plan,'student_id'|'class_id'|'hub_id'>,
  if(s.people?.some(pick=>pick.id===p.student_id))return {all:false,hubs:[],people:[{id:p.student_id,hubId:hub}],recordContext};
  throw new ApiError(404,'NOT_FOUND');
 }
+function authority(ctx:ApiContext,p:Pick<Plan,'student_id'|'class_id'|'hub_id'>,edit=false){return financialRecordAuthority(ctx,p,edit?'tuition.edit':'tuition.view');}
 async function plan(ctx:ApiContext,id:string,edit=false,lock=false):Promise<Plan>{
  allowed(ctx);const p=(await ctx.db.query<Plan>('SELECT * FROM public.tuition_plans WHERE id=$1',[id])).rows[0];if(!p)throw new ApiError(404,'NOT_FOUND');authority(ctx,p);if(edit)authority(ctx,p,true);
  if(lock){await ctx.db.query('SELECT id FROM public.tuition_plans WHERE id=$1 FOR UPDATE',[id]);return plan(ctx,id,edit);}return p;
@@ -62,6 +63,7 @@ async function basis(ctx:ApiContext,input:z.infer<typeof createPayload>,before:P
 }
 async function validate(ctx:ApiContext,action:string,id:string,raw:unknown){
  await lockAcademyTopology(ctx);const creating=action==='finance.tuition.create',before=creating?null:await plan(ctx,id,true,true);
+ if(before&&(await ctx.db.query('SELECT 1 FROM public.tuition_invoices WHERE plan_id=$1 AND credit_id IS NULL LIMIT 1',[id])).rows.length)throw new ApiError(409,'TUITION_INVOICE_REQUIRES_CREDIT');
  if(!creating){const input=(action==='finance.tuition.cancel'?cancel:replace).parse(raw);if(input.expectedVersion!==before!.version)throw new ApiError(409,'TARGET_CHANGED');}
  if(action==='finance.tuition.cancel')return authority(ctx,before!,true);
  const input=creating?createPayload.parse(raw):{...replace.parse(raw),enrollmentId:before!.enrollment_id};
@@ -76,12 +78,10 @@ async function dependencies(ctx:ApiContext,action:string,id:string,raw:unknown,p
  }catch(error){if(purpose==='review'&&error instanceof ApiError&&[403,404,409].includes(error.status))return {unavailable:error.code};throw error;}
 }
 const publicColumns=`r.version,r.enrollment_version AS "enrollmentVersion",r.currency_version AS "currencyVersion",c.code AS "currencyCode",r.tax_code_id AS "taxCodeId",r.tax_code_version AS "taxCodeVersion",t.classification,t.rate_millionths AS "rateMillionths",r.supply_on::text AS "supplyOn",r.pricing,r.state,r.original_minor::text AS "originalMinor",r.agreed_minor::text AS "agreedMinor",r.net_minor::text AS "netMinor",r.tax_minor::text AS "taxMinor",r.gross_minor::text AS "grossMinor",r.source_snapshot AS "sourceSnapshot",r.created_at AS "createdAt"`;
-function formatted(r:Record<string,unknown>,scale:number){
- const result={...r};for(const [key,label] of [['originalMinor','originalAmount'],['agreedMinor','agreedAmount'],['netMinor','net'],['taxMinor','tax'],['grossMinor','plannedGross']] as const)result[label]=formatMoney(readMinorUnits(String(r[key])),scale);
- return {...result,planningOnly:true,posted:false,paymentStatus:'not_tracked_here'};
-}
+type TuitionTerms={version:number;enrollmentVersion:number;currencyVersion:number;currencyCode:string;taxCodeId:string;taxCodeVersion:number;classification:string;rateMillionths:number;supplyOn:string;pricing:string;state:string;originalMinor:string;agreedMinor:string;netMinor:string;taxMinor:string;grossMinor:string;sourceSnapshot:Record<string,unknown>;createdAt:Date|string};
+function formatted(r:TuitionTerms,scale:number){return {...r,originalAmount:formatMoney(readMinorUnits(r.originalMinor),scale),agreedAmount:formatMoney(readMinorUnits(r.agreedMinor),scale),net:formatMoney(readMinorUnits(r.netMinor),scale),tax:formatMoney(readMinorUnits(r.taxMinor),scale),plannedGross:formatMoney(readMinorUnits(r.grossMinor),scale),planningOnly:true,posted:false,paymentStatus:'not_tracked_here'};}
 async function detail(ctx:ApiContext,p:Plan,selectedVersion=p.version){
- const r=(await ctx.db.query<Record<string,unknown>>('SELECT '+publicColumns+' FROM public.tuition_plan_revisions r JOIN public.finance_currencies c ON c.academy_id=r.academy_id AND c.id=r.currency_id JOIN public.finance_tax_code_revisions t ON t.academy_id=r.academy_id AND t.tax_code_id=r.tax_code_id AND t.version=r.tax_code_version WHERE r.plan_id=$1 AND r.version=$2',[p.id,selectedVersion])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');
+ const r=(await ctx.db.query<TuitionTerms>('SELECT '+publicColumns+' FROM public.tuition_plan_revisions r JOIN public.finance_currencies c ON c.academy_id=r.academy_id AND c.id=r.currency_id JOIN public.finance_tax_code_revisions t ON t.academy_id=r.academy_id AND t.tax_code_id=r.tax_code_id AND t.version=r.tax_code_version WHERE r.plan_id=$1 AND r.version=$2',[p.id,selectedVersion])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');
  const items=(await ctx.db.query<Record<string,unknown>>(`SELECT i.ordinal,i.due_on::text AS "dueOn",i.amount_minor::text AS "amountMinor",i.method_id AS "methodId",i.method_version AS "methodVersion",m.code AS "methodCode",m.category AS "methodCategory",v.name AS "methodName" FROM public.tuition_installments i JOIN public.finance_payment_methods m ON m.academy_id=i.academy_id AND m.id=i.method_id JOIN public.finance_payment_method_revisions v ON v.academy_id=i.academy_id AND v.method_id=i.method_id AND v.version=i.method_version WHERE i.plan_id=$1 AND i.version=$2 ORDER BY i.ordinal`,[p.id,selectedVersion])).rows;
  return {...formatted(r,p.unit_scale),id:p.id,enrollmentId:p.enrollment_id,studentId:p.student_id,classId:p.class_id,hubId:p.hub_id,currencyId:p.currency_id,unitScale:p.unit_scale,
   installments:items.map(i=>({...i,amount:formatMoney(readMinorUnits(String(i.amountMinor)),p.unit_scale)}))};
@@ -150,3 +150,4 @@ export const tuitionContract=[
  {path:'/api/v1/finance/tuition-plans/{id}/cancel',method:'post',summary:'Cancel future planning without erasing old terms, issuing a refund or reversing a journal',schema:cancel},
  {path:'/api/v1/finance/tuition-plans/{id}/history',method:'get',summary:'Editor-only tuition revision/approval reasons; retrieve full pinned historical terms with version query',querySchema:historyQuery}
 ] as const;
+export { plan as tuitionPlan,detail as tuitionDetail };

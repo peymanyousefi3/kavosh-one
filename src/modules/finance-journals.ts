@@ -99,9 +99,9 @@ async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown,purpose
   return {journalPurposeVersion:2,period:{version:selectedPeriod.version,state:selectedPeriod.state,starts_on:selectedPeriod.startsOn,ends_on:selectedPeriod.endsOn,closedThrough:selectedPeriod.closedThrough},accounts,
     source:source?{id:source,reversedById:(await ctx.db.query<{id:string}>('SELECT id FROM public.finance_journals WHERE reverses_id=$1',[source])).rows[0]?.id??null}:null};
 }
-async function apply(ctx:ApiContext,p:Proposal){
+async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.journal.reverse'){
   if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
-  const prepared=await prepare(ctx,p.action==='finance.journal.reverse',p.payload,true),{input,source,lines}=prepared;
+  const prepared=await prepare(ctx,reversing,p.payload,true),{input,source,lines}=prepared;
   try{
     await ctx.db.query(`INSERT INTO public.finance_journals(academy_id,id,period_id,period_version,posted_on,description,reference,line_count,reverses_id,posted_by,approval_id,purpose)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,[ctx.credential.academy_id,p.target_id,input.periodId,input.periodVersion,input.postedOn,input.description,input.reference,lines.length,source?.id??null,ctx.credential.person_id,p.id,source?.purpose??('purpose' in input?input.purpose:'activity')]);
@@ -110,9 +110,14 @@ async function apply(ctx:ApiContext,p:Proposal){
   }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23505')throw new ApiError(409,'JOURNAL_ALREADY_REVERSED');throw error;}
   await record(ctx.db,ctx.credential,ctx.requestId,source?'finance.journal.reversed':'finance.journal.posted',p.target_id,prepared.scope.hubs.length===1?prepared.scope.hubs[0]:null,{approvalId:p.id,periodId:input.periodId,purpose:source?.purpose??('purpose' in input?input.purpose:'activity'),lineCount:lines.length,reversesId:source?.id??null,severity:'critical',hasReason:true});return journal(ctx,p.target_id);
 }
+async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
+ const prepared=await prepare(ctx,true,input,lock,false);
+ if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.tuition_invoices WHERE journal_id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'INVOICE_CREDIT_WORKFLOW_REQUIRED');
+ return prepared;
+}
 export const journalActions:ApprovalRegistry={
   'finance.journal.post':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,false,input,true,false)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,false,input,purpose),apply},
-  'finance.journal.reverse':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,true,input,true,false)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,true,input,purpose),apply}
+  'finance.journal.reverse':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await standaloneReversal(ctx,input,true)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,true,input,purpose),apply}
 };
 export async function financeJournals(ctx:ApiContext,registry:ApprovalRegistry=journalActions):Promise<Reply|null>{
   const match=/^finance\/journals(?:\/([^/]+)(?:\/(reverse))?)?$/.exec(ctx.path);if(!match)return null;
@@ -120,7 +125,7 @@ export async function financeJournals(ctx:ApiContext,registry:ApprovalRegistry=j
   if(ctx.request.method==='POST'){
     z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));scope(ctx,'journals.edit');
     if(!id){const input=create.parse(await jsonBody(ctx.request,262144));await prepare(ctx,false,input,false,false);return propose(ctx,registry,'finance.journal.post',null,0,input);}
-    if(section!=='reverse')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input={...reverse.parse(await jsonBody(ctx.request)),reversesId:id};await prepare(ctx,true,input,false,false);return propose(ctx,registry,'finance.journal.reverse',null,0,input);
+    if(section!=='reverse')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input={...reverse.parse(await jsonBody(ctx.request)),reversesId:id};await standaloneReversal(ctx,input,false);return propose(ctx,registry,'finance.journal.reverse',null,0,input);
   }
   if(ctx.request.method!=='GET'||section)throw new ApiError(405,'METHOD_NOT_ALLOWED');
   if(id){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await journal(ctx,id)}};}
@@ -133,3 +138,4 @@ export const journalsContract=[
   {path:'/api/v1/finance/journals/{id}',method:'get',summary:'Read exact amounts and immutable account/currency snapshots of a wholly permitted journal'},
   {path:'/api/v1/finance/journals/{id}/reverse',method:'post',summary:'Request one exact inverse in an open period; original posting is retained and inactive original accounts may be cleared',schema:reverse}
 ] as const;
+export { prepare as prepareJournal,dependencies as journalDependencies,apply as applyJournal };
