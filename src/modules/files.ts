@@ -26,8 +26,8 @@ interface FileRecord {id:string;anchor_kind:'academy'|'hub'|'class'|'person';hub
 const fields=`f.id,f.anchor_kind,f.hub_id,f.class_id,f.person_id,f.domain,f.name,f.description,f.tags,f.claimed_mime_type,
   f.expected_bytes::float8 AS expected_bytes,f.expected_sha256,f.archived,f.version,f.created_by,f.created_at,f.effective_hub_id,'awaiting_upload' AS upload_state`;
 const domains=[['student_private','students'],['guardian_private','guardians'],['agreement_definition','agreements']] as const;
-function access(ctx:ApiContext,edit=false) {
-  if(!scopeNonempty(permissionScope(ctx,'files.view'))||(edit&&!scopeNonempty(permissionScope(ctx,'files.edit'))))throw new ApiError(403,'FORBIDDEN');
+function access(ctx:ApiContext,edit=false,operation?:'files.upload') {
+  if(!scopeNonempty(permissionScope(ctx,'files.view'))||(edit&&!scopeNonempty(permissionScope(ctx,'files.edit')))||(operation&&!scopeNonempty(permissionScope(ctx,operation))))throw new ApiError(403,'FORBIDDEN');
   const params:unknown[]=[],bind=(value:unknown,type:string)=>{params.push(value);return '$'+params.length+'::'+type;};
   function within(cap:Capability) {
     const s=permissionScope(ctx,cap);if(!scopeNonempty(s))return 'false';
@@ -36,20 +36,21 @@ function access(ctx:ApiContext,edit=false) {
     return `((${broad} AND (f.effective_hub_id IS NOT NULL OR ${unassigned}) OR f.effective_hub_id=ANY(${hubs}) OR f.class_id=ANY(${classes}) OR f.person_id=ANY(${people}))
       AND NOT coalesce(f.effective_hub_id=ANY(${blocked}),false) AND NOT coalesce(f.class_id=ANY(${noClasses}),false) AND NOT coalesce(f.person_id=ANY(${noPeople}),false))`;
   }
-  const file=within('files.view')+(edit?' AND '+within('files.edit'):''),protectedDomains=domains.map(([label,prefix])=>`(f.domain='${label}' AND ${within((prefix+'.view') as Capability)}${edit?' AND '+within((prefix+'.edit') as Capability):''})`);
+  const file=within('files.view')+(edit?' AND '+within('files.edit'):'')+(operation?' AND '+within(operation):''),protectedDomains=domains.map(([label,prefix])=>`(f.domain='${label}' AND ${within((prefix+'.view') as Capability)}${edit?' AND '+within((prefix+'.edit') as Capability):''})`);
   return {where:`(${file}) AND (f.domain='general' OR ${protectedDomains.join(' OR ')})`,params,bind};
 }
-async function file(ctx:ApiContext,id:string,edit=false,lock=false) {
-  const a=access(ctx,edit),selected=a.bind(id,'uuid');
+async function file(ctx:ApiContext,id:string,edit=false,lock=false,operation?:'files.upload'):Promise<FileRecord> {
+  const a=access(ctx,edit,operation),selected=a.bind(id,'uuid');
   const row=(await ctx.db.query<FileRecord>('SELECT '+fields+' FROM public.file_catalogue f WHERE '+a.where+' AND f.id='+selected,a.params)).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');
   if(lock) {
     await ctx.db.query('SELECT id FROM public.file_records WHERE id=$1 FOR UPDATE',[id]);
     // No joined FOR UPDATE: reread current metadata after any row-lock wait.
-    return file(ctx,id,edit,false);
+    return file(ctx,id,edit,false,operation);
   }
   return row;
 }
+export { file as permittedFile };
 async function validateAnchor(ctx:ApiContext,value:z.infer<typeof anchor>,cap:Capability) {
   if(value.kind==='person')return {hubId:null,personId:(await permittedPerson(ctx,value.id,cap)).id,classId:null};
   if(value.kind==='class'){const c=await classRow(ctx,value.id,cap);return {hubId:c.hub_id,personId:null,classId:c.id};}
