@@ -12,9 +12,8 @@ on:
         required: false
 permissions:
   contents: read
-concurrency:
-  group: backend-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+# Keep each checkpoint's evidence. Do not cancel an earlier run when another
+# commit is pushed, including when GitHub is slow to finalize its run status.
 jobs:
   verify:
     runs-on: ubuntu-latest

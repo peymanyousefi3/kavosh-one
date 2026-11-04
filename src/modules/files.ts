@@ -12,11 +12,11 @@ const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0'),'Use valid U
 const name=text.trim().min(1).max(200).refine(v=>!/[\/\\\r\n]/.test(v)&&v!=='.'&&v!=='..','Use a filename, not a path.');
 const description=text.max(2000),tags=z.array(text.trim().min(1).max(50)).max(20).refine(v=>new Set(v.map(t=>t.toLowerCase())).size===v.length),reason=text.trim().max(2000).default('');
 const anchor=z.discriminatedUnion('kind',[z.object({kind:z.literal('academy')}).strict(),...(['hub','class','person'] as const).map(kind=>z.object({kind:z.literal(kind),id:uuid}).strict())]);
-const domain=z.enum(['general','student_private','guardian_private','agreement_definition']);
+const domain=z.enum(['general','student_private','guardian_private','agreement_definition','finance_private']);
 const createInput=z.object({anchor,domain:domain.default('general'),name,description:description.default(''),tags:tags.default([]),
   claimedMimeType:z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/),expectedBytes:z.number().int().min(1).max(4_294_967_296),
   expectedSha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).nullable().default(null),reason}).strict()
-  .refine(v=>v.domain==='general'||(['student_private','guardian_private'].includes(v.domain)&&v.anchor.kind==='person')||(v.domain==='agreement_definition'&&['academy','hub'].includes(v.anchor.kind)),'Choose an anchor compatible with the protected data domain.');
+  .refine(v=>['general','finance_private'].includes(v.domain)||(['student_private','guardian_private'].includes(v.domain)&&v.anchor.kind==='person')||(v.domain==='agreement_definition'&&['academy','hub'].includes(v.anchor.kind)),'Choose an anchor compatible with the protected data domain.');
 const updateInput=z.object({expectedVersion:version,name:name.optional(),description:description.optional(),tags:tags.optional(),archived:z.boolean().optional(),reason}).strict().refine(v=>Object.keys(v).some(k=>!['expectedVersion','reason'].includes(k)));
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),q:text.trim().min(1).max(100).optional(),domain:domain.optional(),
   anchorKind:z.enum(['academy','hub','class','person']).optional(),hubId:uuid.optional(),classId:uuid.optional(),personId:uuid.optional(),archived:z.enum(['true','false']).transform(v=>v==='true').optional()}).strict();
@@ -26,7 +26,7 @@ interface FileRecord {id:string;anchor_kind:'academy'|'hub'|'class'|'person';hub
 const fields=`f.id,f.anchor_kind,f.hub_id,f.class_id,f.person_id,f.domain,f.name,f.description,f.tags,f.claimed_mime_type,
   f.expected_bytes::float8 AS expected_bytes,f.expected_sha256,f.archived,f.version,f.created_by,f.created_at,f.effective_hub_id,
   CASE WHEN EXISTS(SELECT 1 FROM public.file_inspection_requests inspection WHERE inspection.academy_id=f.academy_id AND inspection.file_id=f.id) THEN 'inspection_requested' ELSE 'awaiting_upload' END AS upload_state`;
-const domains=[['student_private','students'],['guardian_private','guardians'],['agreement_definition','agreements']] as const;
+const domains=[['student_private','students'],['guardian_private','guardians'],['agreement_definition','agreements'],['finance_private','financial-files']] as const;
 function access(ctx:ApiContext,edit=false,operation?:'files.upload') {
   if(!scopeNonempty(permissionScope(ctx,'files.view'))||(edit&&!scopeNonempty(permissionScope(ctx,'files.edit')))||(operation&&!scopeNonempty(permissionScope(ctx,operation))))throw new ApiError(403,'FORBIDDEN');
   const params:unknown[]=[],bind=(value:unknown,type:string)=>{params.push(value);return '$'+params.length+'::'+type;};
@@ -65,7 +65,7 @@ async function validateReservation(ctx:ApiContext,input:z.infer<typeof createInp
   const extra=domains.find(([label])=>label===input.domain);
   if(extra) {
     for(const mode of ['view','edit'])await validateAnchor(ctx,input.anchor,(extra[1]+'.'+mode) as Capability);
-    if(input.domain!=='agreement_definition'&&!(await ctx.db.query('SELECT 1 FROM public.'+(input.domain==='student_private'?'student_profiles':'guardian_profiles')+' WHERE person_id=$1',[target.personId])).rows.length)throw new ApiError(404,'NOT_FOUND');
+    if(['student_private','guardian_private'].includes(input.domain)&&!(await ctx.db.query('SELECT 1 FROM public.'+(input.domain==='student_private'?'student_profiles':'guardian_profiles')+' WHERE person_id=$1',[target.personId])).rows.length)throw new ApiError(404,'NOT_FOUND');
   }
   return target;
 }

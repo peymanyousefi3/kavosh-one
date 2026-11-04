@@ -6,6 +6,7 @@ import { propose,permissionScope,master,type ApprovalRegistry,type Proposal } fr
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { parseMoney,readMinorUnits,formatMoney } from '../core/money.ts';
 import { lockFinanceBook } from '../core/finance-lock.ts';
+import { lockCollectorFunds } from '../core/collector-funds.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { financialRecordAuthority,tuitionPlan,tuitionDetail } from './tuition.ts';
 import { invoiceRow } from './invoices.ts';
@@ -45,7 +46,7 @@ function publicBalance(b:Awaited<ReturnType<typeof balances>>){return {invoiced:
  paymentStatus:b.balance<0n?'customer_credit':b.isCredited?'credited':b.gross===0n?'no_payment_required':b.balance===0n?'paid':b.received>0n?'partially_paid':'unpaid',refundPerformed:false};}
 async function basis(ctx:ApiContext,input:ReturnType<typeof paymentInput>,lock=false,checkState=true){
  const i=await invoiceRow(ctx,input.invoiceId),auth=financialRecordAuthority(ctx,i,'receipts.edit');financialRecordAuthority(ctx,i,'receipts.view');
- if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);await ctx.db.query('SELECT id FROM public.tuition_invoices WHERE id=$1 FOR UPDATE',[i.id]);}
+ if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);await collectorRow(ctx,input.collector.id);await accountRow(ctx,input.holdingAccount.id);await lockCollectorFunds(ctx,input.collector.id,input.holdingAccount.id);await ctx.db.query('SELECT id FROM public.tuition_invoices WHERE id=$1 FOR UPDATE',[i.id]);}
  const plan=await tuitionPlan(ctx,i.plan_id),terms=await tuitionDetail(ctx,plan,i.plan_version),amount=parseMoney(input.amount,plan.unit_scale);if(amount<=0n)throw new ApiError(400,'POSITIVE_RECEIPT_REQUIRED');
  const c=await collectorRow(ctx,input.collector.id),m=await paymentMethodRow(ctx,input.method.id),holding=await accountRow(ctx,input.holdingAccount.id),ar=await accountRow(ctx,(await ctx.db.query<{receivable_account:string}>('SELECT receivable_account FROM public.tuition_invoices WHERE id=$1',[i.id])).rows[0].receivable_account);
  if(c.version!==input.collector.version||!c.active)throw new ApiError(409,'COLLECTOR_CHANGED');if(m.version!==input.method.version||!m.active)throw new ApiError(409,'PAYMENT_METHOD_CHANGED');
@@ -62,7 +63,7 @@ async function basis(ctx:ApiContext,input:ReturnType<typeof paymentInput>,lock=f
  return {auth,invoice:i,collector:c,method:m,holding:{id:holding.id,version:holding.version},receiver:receiver?{id:receiver.id}:null,evidence:evidence?{id:evidence.id,version:evidence.version}:null,amount:amount.toString(),on,balance:publicBalance(b),journal,tax:{classification:terms.classification,rateMillionths:terms.rateMillionths,taxTreatment:'settle_invoice',additionalTaxPosting:false},allocation:input.allocation==='oldest_due'?await automaticAllocationBasis(ctx,i.id,amount.toString()):null};
 }
 async function reversalBasis(ctx:ApiContext,input:ReturnType<typeof reversalInput>,lock=false,checkState=true){
- const r=await receipt(ctx,input.receiptId,true);if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);await ctx.db.query('SELECT id FROM public.tuition_invoices WHERE id=$1 FOR UPDATE',[r.invoice_id]);await ctx.db.query('SELECT id FROM public.tuition_receipts WHERE id=$1 FOR UPDATE',[r.id]);}
+ const r=await receipt(ctx,input.receiptId,true);if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);await accountRow(ctx,r.holding_account);await lockCollectorFunds(ctx,r.collector_id,r.holding_account);await ctx.db.query('SELECT id FROM public.tuition_invoices WHERE id=$1 FOR UPDATE',[r.invoice_id]);await ctx.db.query('SELECT id FROM public.tuition_receipts WHERE id=$1 FOR UPDATE',[r.id]);}
  if(checkState&&r.reversal_id)throw new ApiError(409,'RECEIPT_ALREADY_REVERSED');if(input.postedOn<r.received_on)throw new ApiError(400,'CORRECTION_PRECEDES_RECEIPT');
  const journal={periodId:input.period.id,periodVersion:input.period.version,postedOn:input.postedOn,description:'Correction of recorded tuition payment',reference:r.reference,reason:input.reason,reversesId:r.id};await prepareJournal(ctx,true,journal,lock,checkState);return {receipt:r,journal};
 }
