@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { scanWithClamd,type ClamdConfiguration } from '../src/integrations/clamav.ts';
+import { privateR2 } from '../src/integrations/r2.ts';
 
 const content=Buffer.from('Synthetic transport fixture, NOT a malware scanner or EICAR detection test.');
 // Independent local protocol peer exercises actual Unix socket I/O. It never
@@ -85,5 +86,19 @@ test('invalid scanner configuration and claims cannot choose remote hosts, execu
     for(const claims of [{bytes:0},{bytes:1_000_001},{bytes:1.5},{bytes:1,sha256:'invalid'},{bytes:1,filename:'/etc/passwd'}])
       await assert.rejects(scanWithClamd(f.config,Readable.from([content]),claims),{code:'INVALID_SCAN_CLAIMS',status:400});
     assert.equal(f.connections(),0);
+  });
+});
+test('simulated S3 object transport composes with actual local scanner-protocol I/O, preserving detection and failing closed on daemon error',async()=>{
+  for(const mode of ['success','detected','error','stall'])await withPeer(mode,async f=>{
+    const body=Readable.from([content.subarray(0,5),content.subarray(5)]),store=privateR2({accountId:'a'.repeat(32),jurisdiction:'default',bucket:'synthetic-private-files',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1000},'8fbe4060-32ec-46a9-a97d-78ea54fe50e6',{
+      async handle(){return {response:{statusCode:200,headers:{'content-length':String(content.length),'content-type':'application/octet-stream',etag:'"synthetic-etag"'},body}};}
+    });
+    try {
+      const operation=store.inspectQuarantine('73e6a708-ad23-484b-9b12-91db85854593',{bytes:content.length},(source,signal)=>scanWithClamd(f.config,source,{bytes:content.length},signal),mode==='stall'?100:5000);
+      if(mode==='stall')await assert.rejects(operation,{code:'R2_INSPECTION_TIMEOUT',status:502});
+      else if(mode==='error')await assert.rejects(operation,{code:'R2_INSPECTION_UNAVAILABLE',status:502});
+      else {const result=await operation;assert.equal(result.inspection.verdict,mode==='detected'?'detected':'no_detection');assert.equal(result.sha256,result.inspection.sha256);assert.equal(result.bytes,result.inspection.bytes);assert.deepEqual(Buffer.concat(f.received),content);}
+      assert.equal(body.destroyed,true);
+    }finally{store.close();}
   });
 });

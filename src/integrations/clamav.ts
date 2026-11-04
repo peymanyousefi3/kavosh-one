@@ -19,10 +19,11 @@ export type ClamdConfiguration=z.input<typeof configuration>;
 // No local files, shell, subprocess, network hostname or inherited credentials.
 // no_detection is NOT clean eligibility: deployment configuration/signature
 // freshness, content inspection and durable worker evidence are still required.
-export async function scanWithClamd(config:ClamdConfiguration,source:Readable,expected:z.input<typeof claims>) {
+export async function scanWithClamd(config:ClamdConfiguration,source:Readable,expected:z.input<typeof claims>,signal?:AbortSignal) {
   const parsed=configuration.safeParse(config),input=claims.safeParse(expected);
   if(!parsed.success)throw new ApiError(503,'SCANNER_NOT_CONFIGURED');
   if(!input.success||input.data.bytes>parsed.data.maximumBytes)throw new ApiError(400,'INVALID_SCAN_CLAIMS');
+  if(signal?.aborted){source.destroy();throw new ApiError(503,'SCANNER_CANCELLED');}
   const c=parsed.data,claim=input.data,hash=createHash('sha256'),socket=createConnection({path:c.socketPath});
   let bytes=0,reply=Buffer.alloc(0),finishedInput=false,failure:ApiError|undefined;
   function stop(code:string) {failure??=new ApiError(503,code);source.destroy();socket.destroy(failure);}
@@ -40,6 +41,7 @@ export async function scanWithClamd(config:ClamdConfiguration,source:Readable,ex
       settled=true;resolve(text==='stream: OK'?'no_detection':'detected');
     });
   });
+  const cancel=()=>stop('SCANNER_CANCELLED');signal?.addEventListener('abort',cancel,{once:true});
   const deadline=setTimeout(()=>stop('SCANNER_TIMEOUT'),c.timeoutMs);
   async function* frame(chunks:AsyncIterable<Buffer>) {
     yield Buffer.from('zINSTREAM\0');
@@ -59,5 +61,5 @@ export async function scanWithClamd(config:ClamdConfiguration,source:Readable,ex
     const [verdict]=await Promise.all([completion,sending]);if(failure)throw failure;
     const sha256=hash.digest('hex');if(claim.sha256&&sha256!==claim.sha256)throw new ApiError(409,'FILE_HASH_MISMATCH');
     return {verdict,bytes,sha256,engine:'clamd' as const};
-  } finally {clearTimeout(deadline);source.destroy();socket.destroy();}
+  } finally {clearTimeout(deadline);signal?.removeEventListener('abort',cancel);source.destroy();socket.destroy();}
 }

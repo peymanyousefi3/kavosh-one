@@ -1,6 +1,9 @@
 import { S3Client,PutObjectCommand,GetObjectCommand,type S3ClientConfig } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
+import { Readable,Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { ApiError } from '../core/policy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
@@ -11,6 +14,7 @@ const connection=z.object({accountId:z.string().regex(/^[a-fA-F0-9]{32}$/).trans
 }).strict();
 export type R2Connection=z.input<typeof connection>;
 const uploadMetadata=z.object({contentType:z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/),bytes:z.number().int().positive().safe()}).strict();
+const inspectionClaims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional()}).strict();
 
 // Official SDK, fixed R2 endpoint, explicit credentials (no metadata-service or
 // environment credential fallback). No network is needed to sign a link.
@@ -36,6 +40,36 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     const signingDate=new Date(Math.floor(Date.now()/1000)*1000);return {expiresIn:value,signingDate,expiresAt:new Date(signingDate.getTime()+value*1000).toISOString()};
   }
   return {
+    async inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000) {
+      const objectKey=key('quarantine',fileId),input=inspectionClaims.safeParse(claims);
+      if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
+      if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>600000)throw new ApiError(400,'INVALID_INSPECTION_TIMEOUT');
+      const expected=input.data,controller=new AbortController();let body:Readable|undefined,meter:Transform|undefined,timedOut=false;
+      let expire!:(reason:ApiError)=>void;const expired=new Promise<never>((_resolve,reject)=>{expire=reject;});
+      const deadline=setTimeout(()=>{timedOut=true;controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_TIMEOUT'));},timeoutMs);
+      try {
+        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
+        const response=await Promise.race([request,expired]);
+        if(!(response.Body instanceof Readable))throw new ApiError(502,'R2_INVALID_OBJECT');body=response.Body;
+        if(!Number.isSafeInteger(response.ContentLength)||response.ContentLength!==expected.bytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
+        // Provider ContentType and ETag are metadata, not detected MIME or an
+        // independently verified hash. No complete content buffer is retained.
+        const provider=z.object({etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),contentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/)}).safeParse({etag:response.ETag,contentType:response.ContentType});
+        if(!provider.success)throw new ApiError(502,'R2_INVALID_OBJECT');
+        const hash=createHash('sha256');let bytes=0,ended=false;
+        meter=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;if(bytes>expected.bytes){callback(new ApiError(409,'FILE_SIZE_MISMATCH'));return;}hash.update(chunk);callback(null,chunk);}});
+        meter.once('end',()=>{ended=true;});const source=meter;
+        const transfer=pipeline(body,meter),inspection=(async()=>{const result=await inspect(source,controller.signal);if(!ended)throw new ApiError(502,'R2_INCOMPLETE_INSPECTION');return result;})();
+        const [,result]=await Promise.race([Promise.all([transfer,inspection]),expired]);
+        if(bytes!==expected.bytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
+        const sha256=hash.digest('hex');if(expected.sha256&&sha256!==expected.sha256)throw new ApiError(409,'FILE_HASH_MISMATCH');
+        return {bytes,sha256,provider:provider.data,inspection:result};
+      }catch(error){
+        if(timedOut)throw new ApiError(502,'R2_INSPECTION_TIMEOUT');
+        if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH','R2_INVALID_OBJECT','R2_INCOMPLETE_INSPECTION'].includes(error.code))throw error;
+        throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');
+      }finally{clearTimeout(deadline);controller.abort();body?.destroy();meter?.destroy();}
+    },
     async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300) {
       const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_UPLOAD_METADATA');
