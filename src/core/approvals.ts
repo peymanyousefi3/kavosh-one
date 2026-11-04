@@ -11,7 +11,7 @@ const withdrawInput=z.object({expectedVersion:version,reason:z.string().trim().m
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),status:z.enum(['pending','applied','rejected','withdrawn','stale']).optional()}).strict();
 const resourceRef=z.object({id:uuid,hubId:uuid.nullable()}).strict();
 const areaRef=z.object({kind:z.enum(['country','region','city']),id:uuid,countryId:uuid,regionId:uuid.nullable(),cityId:uuid.nullable()}).strict();
-const storedScope=z.object({all:z.boolean(),hubs:z.array(uuid),excludedHubs:z.array(uuid).optional(),classes:z.array(resourceRef).optional(),people:z.array(resourceRef).optional(),excludedClasses:z.array(resourceRef).optional(),excludedPeople:z.array(resourceRef).optional(),areas:z.array(areaRef).optional(),excludedAreas:z.array(areaRef).optional(),recordContext:z.object({hubId:uuid,classId:uuid,studentId:uuid}).strict().optional()}).strict();
+const storedScope=z.object({all:z.boolean(),hubs:z.array(uuid),excludedHubs:z.array(uuid).optional(),classes:z.array(resourceRef).optional(),people:z.array(resourceRef).optional(),excludedClasses:z.array(resourceRef).optional(),excludedPeople:z.array(resourceRef).optional(),areas:z.array(areaRef).optional(),excludedAreas:z.array(areaRef).optional(),recordHubIds:z.array(uuid).optional(),workContext:z.object({personId:uuid,hubId:uuid.nullable()}).strict().optional(),recordContext:z.object({hubId:uuid,classId:uuid,studentId:uuid}).strict().optional()}).strict();
 const storedCredential=z.object({token_id:uuid,academy_id:uuid,person_id:uuid,capabilities:z.array(capability),all_hubs:z.boolean(),hub_ids:z.array(uuid),allowed:z.boolean(),kind:z.enum(['human','bot']).optional()}).strict();
 export interface Proposal {
   id:string;requester_id:string;requester_kind:'human'|'bot';credential_snapshot:unknown;grants_hash:string;
@@ -89,7 +89,7 @@ export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:st
       await record(ctx.db,ctx.credential,ctx.requestId,'approval.applied',p.id,null,{action,targetId:p.target_id,selfApproved:true});
       return {status:definition.createdStatus??200,body:{data:result,approval:{id:p.id,status:'applied',selfApproved:true}}};
     }
-    const {recordContext:privateRecordContext,...auditScope}=scope;
+    const {recordContext:privateRecordContext,workContext:privateWorkContext,recordHubIds:privateRecordCeiling,...auditScope}=scope;
     await record(ctx.db,ctx.credential,ctx.requestId,'approval.requested',p.id,null,{action,targetId:p.target_id,scope:auditScope});
     return {status:202,body:{approval:{id:p.id,status:'pending',version:1}}};
   });
