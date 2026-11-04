@@ -8,6 +8,7 @@ import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { detectContentSignature,maximumSignatureSampleBytes,signatureSchema } from './content-signature.ts';
+import { imageValidationSchema } from './image-validation.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const taskSchema=z.object({academyId:uuid,inspectionId:uuid,fileId:uuid,storageTargetId:digest,leaseToken:uuid,attemptNo:z.number().int().min(1).max(5),expectedBytes:z.number().int().min(1).max(4_294_967_296),expectedSha256:digest.nullable(),claimedMimeType:z.string().min(1).max(201)}).strict();
@@ -15,7 +16,7 @@ export type InspectionTask=z.infer<typeof taskSchema>;
 const measured={bytes:z.number().int().min(1).max(4_294_967_296),sha256:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),providerContentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/),signature:signatureSchema.optional()};
 const problem=z.enum(['STORAGE_UNAVAILABLE','SCANNER_UNAVAILABLE','INSPECTION_TIMEOUT','INSPECTOR_INVALID_RESULT','WORKER_STOPPED','TARGET_UNAVAILABLE']);
 const resultSchema=z.discriminatedUnion('outcome',[
-  z.object({outcome:z.literal('no_detection'),...measured}).strict(),z.object({outcome:z.literal('detected'),...measured}).strict(),
+  z.object({outcome:z.literal('no_detection'),...measured,imageValidation:imageValidationSchema.optional()}).strict(),z.object({outcome:z.literal('detected'),...measured}).strict(),
   z.object({outcome:z.literal('content_mismatch')}).strict(),z.object({outcome:z.literal('unavailable'),reason:problem}).strict()
 ]);
 export type InspectionResult=z.infer<typeof resultSchema>;
@@ -81,15 +82,18 @@ export async function processOneInspection(database:Database,academies:string[],
   try {
     result=resultSchema.parse(await Promise.race([Promise.resolve().then(()=>{if(controller.signal.aborted)throw new Error('INSPECTION_STOPPED');return inspect(task,controller.signal);}),stopped]));
     if((result.outcome==='no_detection'||result.outcome==='detected')&&(result.bytes!==task.expectedBytes||(task.expectedSha256&&result.sha256!==task.expectedSha256)))result={outcome:'content_mismatch'};
+    if(result.outcome==='no_detection'&&result.imageValidation&&(!['image/jpeg','image/png','image/webp','image/gif','image/avif'].includes(task.claimedMimeType)||result.imageValidation.inputBytes!==result.bytes||result.imageValidation.inputSha256!==result.sha256
+      ||(result.imageValidation.outcome==='decoded'&&(result.imageValidation.mime!==task.claimedMimeType||result.signature?.mime!==task.claimedMimeType))))result={outcome:'unavailable',reason:'INSPECTOR_INVALID_RESULT'};
   }catch{result={outcome:'unavailable',reason:options.signal?.aborted?'WORKER_STOPPED':timedOut?'INSPECTION_TIMEOUT':'INSPECTOR_INVALID_RESULT'};}
   finally{clearTimeout(deadline);options.signal?.removeEventListener('abort',cancel);controller.abort();}
   const measuredResult=result.outcome==='no_detection'||result.outcome==='detected'?result:null;
+  const imageEvidence=result.outcome==='no_detection'?result.imageValidation:undefined;
   const reason=result.outcome==='no_detection'?'MEASURED_NO_DETECTION':result.outcome==='detected'?'MEASURED_DETECTION':result.outcome==='content_mismatch'?'CONTENT_MISMATCH':result.reason;
   // No connection/transaction is held during object IO or scanning. A fencing
   // token and DB clock reject late workers; stale success never overwrites work.
   const finish=await database.connect();try {
     await assertFileWorkerRole(finish);await assertSchemaReady(finish);
-    const response=await finish.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) AS recorded',[task.academyId,task.inspectionId,task.leaseToken,result.outcome,reason,measuredResult?.bytes??null,measuredResult?.sha256??null,measuredResult?.etag??null,measuredResult?.providerContentType??null,measuredResult?.signature?JSON.stringify(measuredResult.signature):null]);
+    const response=await finish.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) AS recorded',[task.academyId,task.inspectionId,task.leaseToken,result.outcome,reason,measuredResult?.bytes??null,measuredResult?.sha256??null,measuredResult?.etag??null,measuredResult?.providerContentType??null,measuredResult?.signature?JSON.stringify(measuredResult.signature):null,imageEvidence?JSON.stringify(imageEvidence):null]);
     return {claimed:true,recorded:response.rows[0]?.recorded===true};
   }finally{finish.release();}
 }
