@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID,createHash } from 'node:crypto';
 import { test } from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { readFile,readdir } from 'node:fs/promises';
 import { operationsFixture } from './operations-fixture.ts';
 import { maximumMinorUnits,formatMoney,formatMoneyTotal } from '../src/core/money.ts';
 import { financialStatementSQL } from '../src/modules/financial-statements.ts';
@@ -117,7 +117,7 @@ test('actual schema31 journals remain unclassified on migration and warnings sur
       await f.pg.exec('COMMIT');
     }catch(error){await f.pg.exec('ROLLBACK');throw error;}
     const before=(await f.pg.query('SELECT to_jsonb(j) AS original FROM public.finance_journals j ORDER BY id')).rows;
-    await f.pg.exec(await readFile(new URL('../db/migrations/032_journal_purposes.sql',import.meta.url),'utf8'));
+    for(const migration of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>Number.parseInt(n,10)>=32&&n.endsWith('.sql')).sort())await f.pg.exec(await readFile(new URL('../db/migrations/'+migration,import.meta.url),'utf8'));
     assert.deepEqual((await f.pg.query("SELECT to_jsonb(j)-'purpose' AS original FROM public.finance_journals j ORDER BY id")).rows,before);
     assert.deepEqual((await f.pg.query('SELECT DISTINCT purpose FROM public.finance_journals')).rows,[{purpose:'legacy_unclassified'}]);
     const profit=await f.request('reports/finance/profit-loss?from=2026-01-01&through=2026-12-31&limit=1');assert.equal(profit.response.status,200,JSON.stringify(profit.body));assert.equal(profit.body.data.currencies.length,0);assert.equal(profit.body.data.requiresPurposeReview,true);assert.equal(profit.body.data.unclassifiedLineCount,'2');

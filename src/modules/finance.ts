@@ -3,6 +3,7 @@ import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,requireScope,scopeNonempty,type Capability } from '../core/policy.ts';
 import { lockAcademyTopology,mergeLabels } from './academy.ts';
+import { lockFinanceBook } from '../core/finance-lock.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000);
@@ -49,12 +50,12 @@ async function accountCurrency(ctx:ApiContext,input:z.infer<typeof accountCreate
   const currency=await currencyRow(ctx,input.currencyId);if(!currency.active)throw new ApiError(409,'ACTIVE_CURRENCY_REQUIRED');if(currency.version!==input.currencyVersion)throw new ApiError(409,'CURRENCY_CHANGED');return currency;
 }
 async function validateCurrency(ctx:ApiContext,create:boolean,id:string,raw:unknown){
-  currencyAuthority(ctx,true);if(create)currencyCreate.parse(raw);else {const input=currencyUpdate.parse(raw),before=await currencyRow(ctx,id,true,true);if(before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');}
+  currencyAuthority(ctx,true);await lockFinanceBook(ctx);if(create)currencyCreate.parse(raw);else {const input=currencyUpdate.parse(raw),before=await currencyRow(ctx,id,true,true);if(before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');}
   return {all:true,hubs:[]};
 }
 async function validateAccount(ctx:ApiContext,create:boolean,id:string,raw:unknown){
-  if(create){const input=accountCreate.parse(raw);await accountDestination(ctx,input.hubId);currencyAuthority(ctx);await lockAcademyTopology(ctx);const scope=await accountDestination(ctx,input.hubId);await accountCurrency(ctx,input);return scope;}
-  const input=accountUpdate.parse(raw);await accountRow(ctx,id,true);await lockAcademyTopology(ctx);const before=await accountRow(ctx,id,true,true);if(before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');
+  if(create){const input=accountCreate.parse(raw);await accountDestination(ctx,input.hubId);currencyAuthority(ctx);await lockFinanceBook(ctx);await lockAcademyTopology(ctx);const scope=await accountDestination(ctx,input.hubId);await accountCurrency(ctx,input);return scope;}
+  const input=accountUpdate.parse(raw);await accountRow(ctx,id,true);await lockFinanceBook(ctx);await lockAcademyTopology(ctx);const before=await accountRow(ctx,id,true,true);if(before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');
   return before.hubId?{all:false,hubs:[before.hubId]}:{all:true,hubs:[]};
 }
 async function currencyDependencies(ctx:ApiContext,create:boolean,id:string,raw:unknown){

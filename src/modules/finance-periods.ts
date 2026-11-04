@@ -4,6 +4,7 @@ import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,requireScope } from '../core/policy.ts';
 import { mergeLabels } from './academy.ts';
+import { lockFinanceBook } from '../core/finance-lock.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000);
@@ -23,7 +24,7 @@ async function row(ctx:ApiContext,id:string,edit=false,lock=false):Promise<Perio
   const found=(await ctx.db.query<Period>('SELECT '+columns+' FROM public.finance_period_catalogue WHERE id=$1',[id])).rows[0];if(!found)throw new ApiError(404,'NOT_FOUND');return found;
 }
 async function validate(ctx:ApiContext,creating:boolean,id:string,raw:unknown){
-  authority(ctx,true);
+  authority(ctx,true);await lockFinanceBook(ctx);
   if(creating)create.parse(raw);
   else{
     const input=change.parse(raw),before=await row(ctx,id,true,true);if(before.version!==input.expectedVersion)throw new ApiError(409,'TARGET_CHANGED');

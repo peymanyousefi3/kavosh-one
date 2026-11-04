@@ -5,6 +5,7 @@ import { ApiError,requireScope,scopeNonempty,type Capability } from '../core/pol
 import { parseMoney,formatMoney,readMinorUnits } from '../core/money.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { accountingDate } from './finance-periods.ts';
+import { lockFinanceBook } from '../core/finance-lock.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000);
@@ -66,7 +67,7 @@ async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean
   }
   let accounts=await read();permitted(accounts);
   let selectedPeriod;
-  if(lock){await lockAcademyTopology(ctx);selectedPeriod=await period(ctx,input,true);await ctx.db.query('SELECT id FROM public.finance_accounts WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',[ids]);accounts=await read();permitted(accounts);}else selectedPeriod=await period(ctx,input,false);
+  if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);selectedPeriod=await period(ctx,input,true);await ctx.db.query('SELECT id FROM public.finance_accounts WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE',[ids]);accounts=await read();permitted(accounts);}else selectedPeriod=await period(ctx,input,false);
   if(!source&&'purpose' in input){
     if((input.purpose==='opening'&&input.postedOn!==selectedPeriod.startsOn)||(input.purpose==='closing'&&input.postedOn!==selectedPeriod.endsOn))throw new ApiError(409,'PURPOSE_DATE_INVALID');
     if(accounts.some(a=>input.purpose==='opening'?['income','expense'].includes(a.kind):input.purpose==='closing'?['asset','liability'].includes(a.kind):false))throw new ApiError(400,'PURPOSE_ACCOUNT_INVALID');
