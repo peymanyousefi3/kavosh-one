@@ -11,15 +11,10 @@ import { payeeSelection } from './payees.ts';
 import { currencyRow } from './finance.ts';
 import { paymentMethodRow } from './payment-methods.ts';
 import { classRow } from './classes.ts';
+import { payCycle,payCalendarDays,payCalendarRange,payOccurrencesOn,type PayCycle } from '../core/pay-calendar.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000),date=z.iso.date().refine(v=>v>='1900-01-01'&&v<='9999-12-31');
-const timeZone=text.min(1).max(100).refine(v=>{try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}});
-const payCycle=z.discriminatedUnion('kind',[
- z.object({kind:z.literal('monthly'),day:z.number().int().min(1).max(31),shortMonth:z.literal('last_day').default('last_day')}).strict(),
- z.object({kind:z.literal('semimonthly'),days:z.array(z.number().int().min(1).max(31)).length(2).refine(a=>a[0]<a[1]),shortMonth:z.literal('last_day').default('last_day')}).strict(),
- z.object({kind:z.literal('biweekly'),anchorOn:date}).strict(),z.object({kind:z.literal('weekly'),weekday:z.number().int().min(1).max(7)}).strict(),
- z.object({kind:z.literal('custom'),label:name,dates:z.array(date).min(1).max(100).refine(a=>new Set(a).size===a.length)}).strict()
-]);
+const timeZone=text.min(1).max(100).refine(v=>{if(/^[+-]/.test(v))return false;try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}});
 const definition=z.object({legalWorkerName:name,jobTitle:name,classification:z.enum(['employee','contractor','volunteer','undetermined']),workPattern:name,countryCode:z.string().regex(/^[A-Z]{2}$/),region:name,timeZone,startsOn:date,endsOn:date.nullable().default(null),active:z.boolean().default(true),
  reportingForm:z.enum(['T4','T4A','T4A_NR','other','undetermined']),otherReportingForm:name.nullable().default(null),classificationBasis:reason,taxReview:reason,payCycle}).strict().refine(v=>v.endsOn===null||v.endsOn>=v.startsOn).refine(v=>(v.reportingForm==='other')===(v.otherReportingForm!==null));
 const terms={effectiveOn:date,currency:workReference,employer:workReference,payee:workReference,definition,components:z.array(compensationRule).min(1).max(50),reason};
@@ -66,7 +61,7 @@ function action(creating:boolean):ApprovalRegistry[string]{return {requestCapabi
  async dependencies(ctx,id,input,purpose){try{return JSON.parse(JSON.stringify(await basis(ctx,creating,id,input)));}catch(error){if(purpose==='review'&&error instanceof ApiError&&[400,403,404,409].includes(error.status))return {unavailable:error.code};throw error;}},
  async authorizeReviewer(ctx,p){if(await master(ctx))return;const personId=creating?create.parse(p.payload).personId:(await header(ctx,p.target_id)).person_id;if(personId===ctx.credential.person_id)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');},apply};}
 export async function workEngagements(ctx:ApiContext,registry:ApprovalRegistry=workEngagementActions):Promise<Reply|null>{
- const match=/^payroll\/engagements(?:\/([^/]+)(?:\/(change|history|preview))?)?$/.exec(ctx.path);if(!match)return null;const id=match[1]?uuid.parse(match[1]):null,section=match[2];
+ const match=/^payroll\/engagements(?:\/([^/]+)(?:\/(change|history|preview|pay-calendar))?)?$/.exec(ctx.path);if(!match)return null;const id=match[1]?uuid.parse(match[1]):null,section=match[2];
  if(ctx.request.method==='POST'){
   if(id&&section==='preview'){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const i=preview.parse(await jsonBody(ctx.request,128*1024)),e=await header(ctx,id),r=await selectedRevision(ctx,e,i.version?{version:i.version}:{on:i.on});if(i.on<r.definition.startsOn||(r.definition.endsOn!==null&&i.on>r.definition.endsOn))throw new ApiError(400,'SCENARIO_OUTSIDE_ENGAGEMENT');
    for(const s of i.scenarios){const c=r.components.find(c=>c.code===s.componentCode);if(!c||i.on<c.from||(c.through!==null&&i.on>c.through))throw new ApiError(400,'COMPENSATION_NOT_EFFECTIVE');if(s.startsAt&&Temporal.Instant.from(s.startsAt).toZonedDateTimeISO(r.definition.timeZone).toPlainDate().toString()!==i.on)throw new ApiError(400,'SCENARIO_WORK_DATE_MISMATCH');}
@@ -75,7 +70,19 @@ export async function workEngagements(ctx:ApiContext,registry:ApprovalRegistry=w
   if(id&&section!=='change')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input=(id?change:create).parse(await jsonBody(ctx.request,128*1024));return propose(ctx,registry,id?'work.engagement.change':'work.engagement.create',id,'expectedVersion' in input?input.expectedVersion:0,input);
  }
  if(ctx.request.method!=='GET'||section==='change'||section==='preview')throw new ApiError(405,'METHOD_NOT_ALLOWED');
- if(id){const e=await header(ctx,id,section==='history');if(section==='history'){const q=history.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),rows=(await ctx.db.query<{version:number}>('SELECT version,effective_on::text,definition,components,changed_by,approval_id,reason,created_at FROM public.work_engagement_revisions WHERE engagement_id=$1 AND version>$2 ORDER BY version LIMIT $3',[id,q.afterVersion,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextVersion:rows.length>q.limit?rows[q.limit-1].version:null}};}return {status:200,body:{data:await detail(ctx,e,read.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)))}};}
+ if(id){const e=await header(ctx,id,section==='history');
+  if(section==='pay-calendar'){
+   const q=payCalendarRange.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),days=payCalendarDays(q);
+   type CalendarTerms={version:number;effective_on:string;starts_on:string;ends_on:string|null;active:boolean;time_zone:string;pay_cycle:PayCycle};
+   const terms=(await ctx.db.query<CalendarTerms>(`SELECT version,effective_on::text,definition->>'startsOn' AS starts_on,definition->>'endsOn' AS ends_on,(definition->>'active')::boolean AS active,definition->>'timeZone' AS time_zone,definition->'payCycle' AS pay_cycle FROM public.work_engagement_revisions WHERE engagement_id=$1 AND effective_on<=$3::date AND(effective_on>=$2::date OR version=(SELECT version FROM public.work_engagement_revisions WHERE engagement_id=$1 AND effective_on<$2::date ORDER BY effective_on DESC,version DESC LIMIT 1)) ORDER BY effective_on,version LIMIT 1001`,[id,q.from,q.through])).rows;
+   if(terms.length>1000)throw new ApiError(422,'PAY_CALENDAR_REQUIRES_BACKGROUND_JOB');
+   const data:{on:string;slot:number;termsVersion:number;timeZone:string;cycleKind:PayCycle['kind']}[]=[];let cursor=0,current:CalendarTerms|undefined;
+   for(const day of days){const on=day.toString();while(cursor<terms.length&&terms[cursor].effective_on<=on)current=terms[cursor++];if(!current||!current.active||on<current.starts_on||(current.ends_on!==null&&on>current.ends_on))continue;
+    for(const occurrence of payOccurrencesOn(current.pay_cycle,day))data.push({...occurrence,termsVersion:current.version,timeZone:current.time_zone,cycleKind:current.pay_cycle.kind});
+   }
+   return {status:200,body:{engagementId:e.id,...q,data,historyBasis:'currently_recorded_effective_terms',purpose:'configured_payment_dates_only',shortMonthPolicy:'last_day_preserve_each_semimonthly_slot',businessDayAdjustment:'none',paymentAmountsCalculated:false,earningsOrPaymentsPosted:false,earnedEntitlementDetermined:false}};
+  }
+  if(section==='history'){const q=history.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),rows=(await ctx.db.query<{version:number}>('SELECT version,effective_on::text,definition,components,changed_by,approval_id,reason,created_at FROM public.work_engagement_revisions WHERE engagement_id=$1 AND version>$2 ORDER BY version LIMIT $3',[id,q.afterVersion,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextVersion:rows.length>q.limit?rows[q.limit-1].version:null}};}return {status:200,body:{data:await detail(ctx,e,read.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)))}};}
  const q=list.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),rows=(await ctx.db.query<Header>(`SELECT e.id,e.person_id,e.hub_id,e.code,e.version,r.effective_on::text,r.definition->>'jobTitle' AS job_title,r.definition->>'classification' AS classification,(r.definition->>'active')::boolean AS active FROM public.work_engagements e JOIN public.work_engagement_revisions r ON r.academy_id=e.academy_id AND r.engagement_id=e.id AND r.version=e.version WHERE public.work_scope_allows($1::jsonb,e.hub_id,e.person_id) AND($2::boolean OR e.hub_id=ANY($3::uuid[])) AND($4::uuid IS NULL OR e.id>$4) AND($5::uuid IS NULL OR e.hub_id=$5) AND($6::uuid IS NULL OR e.person_id=$6) AND($7::boolean IS NULL OR(r.definition->>'active')::boolean=$7) AND($8::text IS NULL OR r.definition->>'classification'=$8) ORDER BY e.id LIMIT $9`,[...parameters(ctx,'work-pay.view'),q.after??null,q.hubId??null,q.personId??null,q.active??null,q.classification??null,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
 }
 export const workEngagementsContract=[
@@ -84,5 +91,6 @@ export const workEngagementsContract=[
  {path:'/api/v1/payroll/engagements/{id}',method:'get',summary:'Read pinned engagement terms by version or civil effective date; latest recorded may be future-effective',querySchema:read},
  {path:'/api/v1/payroll/engagements/{id}/change',method:'post',summary:'Request exact versioned terms amendment without rewriting prior rates or creating wages, deductions or payments',schema:change},
  {path:'/api/v1/payroll/engagements/{id}/history',method:'get',summary:'Editor-only immutable work terms and private review history',querySchema:history},
+ {path:'/api/v1/payroll/engagements/{id}/pay-calendar',method:'get',summary:'Bounded civil pay dates from currently recorded effective arrangements; preserves each short-month slot. Not earned payroll, salary proration, payment amounts or bank-day adjustment.',querySchema:payCalendarRange},
  {path:'/api/v1/payroll/engagements/{id}/preview',method:'post',summary:'Read-only explicit configured compensation scenario: highest hourly overlap, preserved actual/rounded alternatives, and separate non-hourly components. Not statutory payroll, earned entitlement, evidence approval or payment.',schema:preview,readOnly:true}
 ] as const;

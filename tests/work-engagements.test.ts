@@ -40,6 +40,24 @@ check('configured previews deduplicate highest hourly overlaps, retain salary/pe
  const keys=(await f.pg.query('SELECT * FROM public.request_keys')).rows.length;
  await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);const r=await f.request('payroll/engagements/'+e.id+'/preview',body);assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(r.body.data.actualHourly.value.amount,'80.00');assert.equal(r.body.data.configuredScenarioTotal.amount,'3217.50');assert.equal(r.body.data.payrollApproved,false);assert.equal(r.body.data.complianceReviewRequired,true);assert.equal(r.body.data.scenarioInputsVerified,false);assert.equal((await f.pg.query('SELECT * FROM public.request_keys')).rows.length,keys);assert.equal((await f.create({code:'BLOCKED'})).response.status,403);
 });
+check('pay calendars select effective terms on each civil date and never manufacture salary amounts or payments',async f=>{
+ const e=(await f.create()).body.data;
+ assert.equal((await f.amend(e.id,{effectiveOn:'2026-02-01',definition:{...f.definition,payCycle:{kind:'semimonthly',days:[15,31]}}})).response.status,200);
+ // A later-recorded backdated revision must not supersede February's later
+ // effective terms simply because it has a larger revision number.
+ assert.equal((await f.amend(e.id,{expectedVersion:2,effectiveOn:'2026-01-15',definition:{...f.definition,payCycle:{kind:'monthly',day:20}}})).response.status,200);
+ await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);
+ const calendar=await f.request('payroll/engagements/'+e.id+'/pay-calendar?from=2026-01-01&through=2026-03-31');assert.equal(calendar.response.status,200,JSON.stringify(calendar.body));
+ assert.deepEqual(calendar.body.data.map((d:{on:string;termsVersion:number})=>[d.on,d.termsVersion]),[['2026-01-20',3],['2026-02-15',2],['2026-02-28',2],['2026-03-15',2],['2026-03-31',2]]);
+ assert.equal(calendar.body.paymentAmountsCalculated,false);assert.equal(calendar.body.earningsOrPaymentsPosted,false);assert.equal(calendar.body.businessDayAdjustment,'none');
+ assert.equal((await f.request('payroll/engagements/'+e.id+'/pay-calendar?from=2026-01-01&through=2027-01-02')).response.status,422);
+ assert.equal((await f.request('payroll/engagements/'+e.id+'/pay-calendar?from=2026-01-01&through=2026-12-31',undefined,'peer')).response.status,404);
+ await f.pg.query("UPDATE public.academies SET status='active' WHERE id=$1",[f.a]);
+ assert.equal((await f.amend(e.id,{expectedVersion:3,effectiveOn:'2026-03-01',definition:{...f.definition,active:false}})).response.status,200);
+ assert.deepEqual((await f.request('payroll/engagements/'+e.id+'/pay-calendar?from=2026-01-01&through=2026-03-31')).body.data.map((d:{on:string})=>d.on),['2026-01-20','2026-02-15','2026-02-28']);
+ assert.equal((await f.request('payroll/engagements/'+e.id+'?version=1')).body.data.definition.active,true,'closing future planning must preserve prior work terms');
+ assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
+});
 check('selected-person pay rights follow engagement ownership rather than mutable primary hub and still preserve record-hub and person denials',async f=>{
  const a=await f.create();assert.equal(a.response.status,201);const b=await f.create({hubId:f.otherHub,code:'OTHER',components:[f.components[0]]});assert.equal(b.response.status,201);
  await f.pg.query('UPDATE public.people SET hub_id=$2 WHERE id=$1',[f.actors.staff.person,f.otherHub]);
@@ -86,7 +104,7 @@ check('hub-only pay authority cannot delegate an unbounded selected-worker grant
  assert.equal(result.response.status,403,JSON.stringify(result.body));assert.equal(result.body.error.code,'DELEGATION_EXCEEDS_AUTHORITY');
 });
 check('unexpected sensitive identifiers, invalid money, duplicate components and cross-hub class assignments do not enter payroll configuration',async f=>{
- for(const patch of [{definition:{...f.definition,sin:'not-collected'}},{components:[{...f.components[1],amount:'1.001'}]},{components:[f.components[0],f.components[0]]},{hubId:f.otherHub}])assert.equal((await f.create(patch)).response.status,400,JSON.stringify(patch));
+ for(const patch of [{definition:{...f.definition,sin:'not-collected'}},{definition:{...f.definition,timeZone:'+05:00'}},{components:[{...f.components[1],amount:'1.001'}]},{components:[f.components[0],f.components[0]]},{hubId:f.otherHub}])assert.equal((await f.create(patch)).response.status,400,JSON.stringify(patch));
  assert.equal((await f.pg.query('SELECT * FROM public.work_engagements')).rows.length,0);
 });
 check('closing work terms preserves pinned sources after staff, payment method and payee retirement',async f=>{
