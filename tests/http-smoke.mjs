@@ -59,6 +59,7 @@ try {
   for(const path of ['inventory/items','inventory/locations','inventory/movements','inventory/locations/00000000-0000-4000-8000-000000000001/stock']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/cost_minor|serial_number|purchased_by|stack/);}
   assert.ok(spec.paths['/api/v1/inventory/movements']?.post);
   const stockReport=await fetch(base+'/api/v1/reports/inventory/stock?on=2026-11-03&timeZone=UTC');assert.equal(stockReport.status,401);assert.equal(stockReport.headers.get('cache-control'),'no-store');assert.doesNotMatch(await stockReport.text(),/knownSubtotal|locationSeries|serialNumber|stack/);assert.ok(spec.paths['/api/v1/reports/inventory/stock']?.get);
+  const payrollForecast=await fetch(base+'/api/v1/reports/payroll/scheduled-costs?from=2027-01-01&through=2027-01-31&timeZone=UTC');assert.equal(payrollForecast.status,401);assert.equal(payrollForecast.headers.get('cache-control'),'no-store');assert.doesNotMatch(await payrollForecast.text(),/knownSalarySubtotal|unpricedComponents|componentCode|stack/);assert.ok(spec.paths['/api/v1/reports/payroll/scheduled-costs']?.get);
   assert.deepEqual(spec.paths['/api/webhooks/boldsign/{connectionId}']?.post?.security,[]);
   assert.match(spec.paths['/api/v1/files/{id}/inspection']?.post?.responses?.['202']?.description??'',/not verified/);
   console.log('Production HTTP smoke checks passed: liveness, fail-closed readiness, authorization, cache/security headers and API contract.');
