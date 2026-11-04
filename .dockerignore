@@ -3,6 +3,7 @@
 .env.*
 node_modules
 .next
+.notification-worker
 data
 uploads
 backups
