@@ -28,7 +28,7 @@ export const journalPointLookupSQL=`JOIN LATERAL (
  SELECT h.id,h.posted_on,h.purpose FROM public.finance_journals h
  WHERE h.academy_id=l.academy_id AND h.id=l.journal_id OFFSET 0
 ) j ON true`;
-const header=`j.id,j.purpose,j.period_id AS "periodId",j.period_version AS "periodVersion",j.posted_on::text AS "postedOn",j.description,j.reference,j.line_count AS "lineCount",j.reverses_id AS "reversesId",j.posted_by AS "postedBy",j.approval_id AS "approvalId",j.created_at AS "createdAt",
+const header=`j.id,j.purpose,j.closing_run_id AS "closingRunId",j.period_id AS "periodId",j.period_version AS "periodVersion",j.posted_on::text AS "postedOn",j.description,j.reference,j.line_count AS "lineCount",j.reverses_id AS "reversesId",j.posted_by AS "postedBy",j.approval_id AS "approvalId",j.created_at AS "createdAt",
  (SELECT r.id FROM public.finance_journals r WHERE r.reverses_id=j.id) AS "reversedById"`;
 function scope(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
 function parameters(ctx:ApiContext){const s=scope(ctx,'journals.view');return [s.all,s.hubs,s.excludedHubs??[],!s.excludedAreas?.length];}
@@ -50,8 +50,8 @@ async function journal(ctx:ApiContext,id:string){
 }
 async function period(ctx:ApiContext,input:z.infer<typeof reverse>,lock:boolean){
   if(lock)await ctx.db.query('SELECT id FROM public.finance_periods WHERE id=$1 FOR SHARE',[input.periodId]);
-  const p=(await ctx.db.query<{version:number;state:string;startsOn:string;endsOn:string}>('SELECT version,state,starts_on::text AS "startsOn",ends_on::text AS "endsOn" FROM public.finance_periods WHERE id=$1',[input.periodId])).rows[0];
-  if(!p)throw new ApiError(404,'NOT_FOUND');if(p.state!=='open')throw new ApiError(409,'OPEN_PERIOD_REQUIRED');if(p.version!==input.periodVersion)throw new ApiError(409,'PERIOD_CHANGED');if(input.postedOn<p.startsOn||input.postedOn>p.endsOn)throw new ApiError(409,'POSTING_DATE_OUTSIDE_PERIOD');return p;
+  const p=(await ctx.db.query<{version:number;state:string;startsOn:string;endsOn:string;closedThrough:string|null}>('SELECT version,state,starts_on::text AS "startsOn",ends_on::text AS "endsOn",(SELECT max(c.ends_on)::text FROM public.finance_periods c WHERE c.active_closing_run_id IS NOT NULL AND c.state=\'closed\') AS "closedThrough" FROM public.finance_periods WHERE id=$1',[input.periodId])).rows[0];
+  if(!p)throw new ApiError(404,'NOT_FOUND');if(p.state!=='open')throw new ApiError(409,'OPEN_PERIOD_REQUIRED');if(p.version!==input.periodVersion)throw new ApiError(409,'PERIOD_CHANGED');if(input.postedOn<p.startsOn||input.postedOn>p.endsOn)throw new ApiError(409,'POSTING_DATE_OUTSIDE_PERIOD');if(p.closedThrough&&input.postedOn<=p.closedThrough)throw new ApiError(409,'FINANCIAL_CLOSED_THROUGH');return p;
 }
 async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean){
   scope(ctx,'journals.edit');scope(ctx,'journals.view');

@@ -18,12 +18,13 @@ import { financeLedger,ledgerContract } from './finance-ledger.ts';
 import { financialReports,financialReportsContract } from './financial-reports.ts';
 import { financialStatements,financialStatementsContract } from './financial-statements.ts';
 import { financeClosing,closingContract } from './finance-closing.ts';
+import { financeClosingRuns,closingActions,closingRunsContract } from './finance-closing-runs.ts';
 import type { R2UploadConnections } from '../integrations/r2-config.ts';
 
 // All modules use the same authentication, scopes, transaction, audit and
 // approval registry. No endpoint gets a parallel, weaker authorization path.
-const approvalActions={...administrationActions,...sessionActions,...familyActions,...enrollmentActions,...agreementActions,...storageActions,...financeActions,...periodActions,...journalActions};
+const approvalActions={...administrationActions,...sessionActions,...familyActions,...enrollmentActions,...agreementActions,...storageActions,...financeActions,...periodActions,...journalActions,...closingActions};
 export async function business(ctx:ApiContext,connections?:R2UploadConnections):Promise<Reply|null> {
-  return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions)??await enrollments(ctx,approvalActions)??await agreements(ctx,approvalActions)??await files(ctx)??await storage(ctx,approvalActions,connections)??await finance(ctx,approvalActions)??await financePeriods(ctx,approvalActions)??await financeJournals(ctx,approvalActions)??await financeLedger(ctx)??await financialReports(ctx)??await financialStatements(ctx)??await financeClosing(ctx);
+  return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions)??await enrollments(ctx,approvalActions)??await agreements(ctx,approvalActions)??await files(ctx)??await storage(ctx,approvalActions,connections)??await finance(ctx,approvalActions)??await financePeriods(ctx,approvalActions)??await financeJournals(ctx,approvalActions)??await financeLedger(ctx)??await financialReports(ctx)??await financialStatements(ctx)??await financeClosing(ctx)??await financeClosingRuns(ctx,approvalActions);
 }
-export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract,...enrollmentsContract,...agreementsContract,...filesContract,...storageContract,...financeContract,...periodsContract,...journalsContract,...ledgerContract,...financialReportsContract,...financialStatementsContract,...closingContract];
+export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract,...enrollmentsContract,...agreementsContract,...filesContract,...storageContract,...financeContract,...periodsContract,...journalsContract,...ledgerContract,...financialReportsContract,...financialStatementsContract,...closingContract,...closingRunsContract];

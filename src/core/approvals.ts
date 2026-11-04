@@ -30,7 +30,7 @@ export interface ApprovalAction {
   authorizeReviewer?(ctx:ApiContext,proposal:Proposal):Promise<void>;
   createdStatus?:200|201;
   validate(ctx:ApiContext,targetId:string,input:unknown,purpose:'request'|'review'):Promise<Scope>;
-  dependencies(ctx:ApiContext,targetId:string,input:unknown):Promise<Record<string,unknown>>;
+  dependencies(ctx:ApiContext,targetId:string,input:unknown,purpose:'request'|'review'):Promise<Record<string,unknown>>;
   apply(ctx:ApiContext,proposal:Proposal):Promise<unknown>;
 }
 export type ApprovalRegistry=Readonly<Record<string,ApprovalAction>>;
@@ -68,7 +68,7 @@ export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:st
   const scope=await definition.validate(ctx,allocatedTarget,input,'request');
   if(!nonempty(scope))throw new ApiError(403,'FORBIDDEN');
   return mutation(ctx,{input,targetVersion},async()=>{
-    const actualTarget=allocatedTarget,reviewContext=await definition.dependencies(ctx,actualTarget,input);
+    const actualTarget=allocatedTarget,reviewContext=await definition.dependencies(ctx,actualTarget,input,'request');
     const p:Proposal={id:randomUUID(),requester_id:ctx.credential.person_id,requester_kind:ctx.credential.kind??'bot',
       credential_snapshot:ctx.credential,grants_hash:grantsHash(ctx.grants),dependency_hash:stateHash(reviewContext),review_context:reviewContext,
       action,target_id:actualTarget,target_version:targetVersion,
@@ -116,7 +116,7 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
       }
       if(!active){status='stale';decisionCode='REQUESTER_INACTIVE';}
       if(grantsHash(await loadGrants(ctx.db,authority))!==current.grants_hash){status='stale';decisionCode='AUTHORITY_CHANGED';}
-      if(definition&&stateHash(await definition.dependencies(ctx,current.target_id,current.payload))!==current.dependency_hash){status='stale';decisionCode='DEPENDENCIES_CHANGED';}
+      if(definition&&stateHash(await definition.dependencies(ctx,current.target_id,current.payload,'review'))!==current.dependency_hash){status='stale';decisionCode='DEPENDENCIES_CHANGED';}
       if(status!=='stale') {
         const requesterContext={...ctx,credential:authority,grants:await loadGrants(ctx.db,authority)};
         try {

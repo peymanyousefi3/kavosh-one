@@ -118,7 +118,8 @@ test('actual schema31 journals remain unclassified on migration and warnings sur
     }catch(error){await f.pg.exec('ROLLBACK');throw error;}
     const before=(await f.pg.query('SELECT to_jsonb(j) AS original FROM public.finance_journals j ORDER BY id')).rows;
     for(const migration of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>Number.parseInt(n,10)>=32&&n.endsWith('.sql')).sort())await f.pg.exec(await readFile(new URL('../db/migrations/'+migration,import.meta.url),'utf8'));
-    assert.deepEqual((await f.pg.query("SELECT to_jsonb(j)-'purpose' AS original FROM public.finance_journals j ORDER BY id")).rows,before);
+    assert.deepEqual((await f.pg.query("SELECT to_jsonb(j)-ARRAY['purpose','closing_run_id'] AS original FROM public.finance_journals j ORDER BY id")).rows,before);
+    assert.ok((await f.pg.query('SELECT closing_run_id FROM public.finance_journals')).rows.every(r=>r.closing_run_id===null));
     assert.deepEqual((await f.pg.query('SELECT DISTINCT purpose FROM public.finance_journals')).rows,[{purpose:'legacy_unclassified'}]);
     const profit=await f.request('reports/finance/profit-loss?from=2026-01-01&through=2026-12-31&limit=1');assert.equal(profit.response.status,200,JSON.stringify(profit.body));assert.equal(profit.body.data.currencies.length,0);assert.equal(profit.body.data.requiresPurposeReview,true);assert.equal(profit.body.data.unclassifiedLineCount,'2');
     const sheet=await f.request('reports/finance/balance-sheet?through=2026-12-31');assert.equal(sheet.body.data.unclassifiedLineCount,'4');assert.equal(sheet.body.data.requiresPurposeReview,true);

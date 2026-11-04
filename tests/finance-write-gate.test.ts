@@ -35,7 +35,7 @@ test('financial API lock is acquired once per context and failed acquisition is 
 });
 check('all financial source tables install enabled statement guards and gate helpers cannot bypass role or tenant checks',async f=>{
  const tables=(await f.pg.query<{table_name:string}>("SELECT c.relname AS table_name FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgname='finance_book_write' AND NOT t.tgisinternal AND t.tgenabled='O' AND (t.tgtype::integer & 1)=0 ORDER BY c.relname")).rows.map(r=>r.table_name);
- assert.deepEqual(tables,['finance_account_revisions','finance_accounts','finance_currencies','finance_currency_revisions','finance_journal_lines','finance_journals','finance_period_revisions','finance_periods']);
+ assert.deepEqual(tables,['finance_account_revisions','finance_accounts','finance_closing_runs','finance_currencies','finance_currency_revisions','finance_journal_lines','finance_journals','finance_period_revisions','finance_periods']);
  const privilege=(await f.pg.query<{identity:boolean;runtime:boolean;definer:boolean}>("SELECT has_function_privilege('kavosh_identity','public.lock_finance_book()','EXECUTE') AS identity,has_function_privilege('kavosh_runtime','public.lock_finance_book()','EXECUTE') AS runtime,(SELECT prosecdef FROM pg_proc WHERE oid='public.lock_finance_book()'::regprocedure) AS definer")).rows[0];assert.deepEqual(privilege,{identity:false,runtime:true,definer:false});
  await f.pg.exec('SET ROLE kavosh_runtime');try{
   await f.pg.exec('RESET app.academy_id');await assert.rejects(f.pg.exec('SELECT public.lock_finance_book()'),/FINANCE_CONTEXT_REQUIRED/);
@@ -66,6 +66,7 @@ if(process.env.TEST_DATABASE_URL)check('native statement triggers gate header an
   ['UPDATE public.finance_accounts SET version=version+1 WHERE id=$1',[f.cash.id],'finance_accounts',f.cash.id],
   ['UPDATE public.finance_periods SET version=version+1 WHERE id=$1',[f.period.id],'finance_periods',f.period.id],
   ...['finance_currency_revisions','finance_account_revisions','finance_period_revisions','finance_journal_lines'].map(t=>['INSERT INTO public.'+t+' SELECT * FROM public.'+t+' WHERE false',[],null,null] as [string,unknown[],null,null]),
+  ['INSERT INTO public.finance_closing_runs(academy_id,id,period_id,open_period_version,through,source_snapshot,source_stamp,equity_mappings,journal_count,pair_count,created_by,approval_id,reason) SELECT academy_id,id,period_id,open_period_version,through,source_snapshot,source_stamp,equity_mappings,journal_count,pair_count,created_by,approval_id,reason FROM public.finance_closing_runs WHERE false',[],null,null],
   ["INSERT INTO public.finance_journals(academy_id,id,period_id,period_version,posted_on,description,line_count,posted_by,approval_id) SELECT academy_id,id,period_id,period_version,posted_on,description,line_count,posted_by,approval_id FROM public.finance_journals WHERE false",[],null,null]
  ];
  for(const [sql,params,table,id] of commands){

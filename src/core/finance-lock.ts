@@ -9,3 +9,10 @@ export async function lockFinanceBook(ctx:ApiContext){
  await ctx.db.query('SELECT public.lock_finance_book()');
  ctx.financeBookLocked=true;
 }
+export async function lockClosingBook(ctx:ApiContext){
+ if(ctx.financeBookExclusive)return;
+ if(ctx.financeBookLocked)throw new Error('FINANCE_LOCK_UPGRADE_FORBIDDEN');
+ if(ctx.policyLock!=='exclusive')throw new Error('FINANCE_CLOSING_POLICY_REQUIRED');
+ await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,10))',[ctx.credential.academy_id]);
+ ctx.financeBookLocked=true;ctx.financeBookExclusive=true;
+}
