@@ -11,9 +11,10 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    # Previous complete verify job took 14m53s before financial coverage.
-    # Keep shared-role mutation tests serial; this is not a production SLO.
-    timeout-minutes: 20
+    # Run41804739143 hit20m at the final container HTTP check after its full
+    # suites/build passed. Leave headroom for runner variation and coverage.
+    # Keep shared-role tests serial; production limits/assertions are unchanged.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:17
