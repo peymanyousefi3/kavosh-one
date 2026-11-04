@@ -150,3 +150,4 @@ export const financeContract=[
   {path:'/api/v1/finance/accounts/{id}/change',method:'post',summary:'Request versioned account metadata changes; ownership and currency binding cannot be silently moved',schema:accountUpdate},
   {path:'/api/v1/finance/accounts/{id}/history',method:'get',summary:'Editor-scoped immutable account revisions and private review reasons',querySchema:historyQuery}
 ] as const;
+export { currencyRow };

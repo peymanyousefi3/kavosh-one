@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,requireScope,scopeNonempty,type Capability } from '../core/policy.ts';
-import { parseMoney,formatMoney,roundRatio } from '../core/money.ts';
+import { parseMoney,formatMoney,taxAmounts } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { lockAcademyTopology,mergeLabels } from './academy.ts';
 
@@ -77,8 +77,7 @@ async function preview(ctx:ApiContext,id:string){
  const r=(await ctx.db.query<Tax&{unitScale:number;currencyCode:string;currencyActive:boolean}>('SELECT '+columns+',c.code AS "currencyCode",u.unit_scale AS "unitScale",u.active AS "currencyActive" FROM public.finance_tax_catalogue t JOIN public.finance_currencies c ON c.academy_id=t.academy_id AND c.id=$6 AND c.version=$7 JOIN public.finance_currency_revisions u ON u.academy_id=c.academy_id AND u.currency_id=c.id AND u.version=c.version WHERE '+selected+' AND t.id=$5 AND t.version=$8',[...scope(ctx),id,input.currencyId,input.currencyVersion,input.expectedVersion])).rows[0];
  if(!r)throw new ApiError(409,'TAX_OR_CURRENCY_CHANGED');if(!r.active||!r.currencyActive||input.on<r.startsOn||(r.endsOn&&input.on>r.endsOn))throw new ApiError(409,'ACTIVE_EFFECTIVE_TAX_AND_CURRENCY_REQUIRED');
  const nonTax=r.classification==='exempt'||r.classification==='out_of_scope';if(nonTax!==(input.pricing==='not_applicable'))throw new ApiError(400,'TAX_PRICING_CLASSIFICATION_MISMATCH');
- const amount=parseMoney(input.amount,r.unitScale),rate=parseMoney(r.ratePercent,4),tax=roundRatio(amount*rate,input.pricing==='tax_inclusive'?1000000n+rate:1000000n,'half_away');
- const net=input.pricing==='tax_inclusive'?amount-tax:amount,gross=input.pricing==='tax_inclusive'?amount:amount+tax;
+ const {net,tax,gross}=taxAmounts(parseMoney(input.amount,r.unitScale),parseMoney(r.ratePercent,4),input.pricing);
  return {status:200,body:{data:{taxCodeId:r.id,taxCodeVersion:r.version,currencyId:input.currencyId,currencyVersion:input.currencyVersion,currencyCode:r.currencyCode,unitScale:r.unitScale,on:input.on,classification:r.classification,ratePercent:r.ratePercent,pricing:input.pricing,rounding:'half_away',net:formatMoney(net,r.unitScale),tax:formatMoney(tax,r.unitScale),gross:formatMoney(gross,r.unitScale),previewOnly:true,posted:false,taxEligibilityDetermined:false}}};
 }
 export async function financeTaxes(ctx:ApiContext,registry:ApprovalRegistry=taxActions):Promise<Reply|null>{
@@ -106,3 +105,4 @@ export const taxesContract=[
  {path:'/api/v1/finance/tax-codes/{id}/history',method:'get',summary:'Editor-only immutable tax definitions and private review reasons',querySchema:historyQuery},
  {path:'/api/v1/finance/tax-codes/{id}/preview',method:'post',readOnly:true,summary:'Exact single-code inclusive/exclusive amount preview under current source versions; no posting, remittance or input-credit eligibility decision',schema:previewInput}
 ] as const;
+export { row as taxCodeRow };

@@ -106,10 +106,13 @@ function assertFeatureDelegation(ctx:ApiContext,cap:Capability,target:Scope) {
   const source=permissionScope(ctx,cap);
   // A selected-student registration grant follows that student's classes,
   // including future hubs; primary-hub authority alone cannot delegate it.
-  if(cap==='registrations.view'&&target.people?.length&&(!ctx.credential.all_hubs||
+  if(['registrations.view','tuition.view','tuition.edit'].includes(cap)&&target.people?.length&&(!ctx.credential.all_hubs||
     (!source.all&&target.people.some(p=>!source.people?.some(s=>s.id===p.id)))||
     source.excludedHubs?.some(h=>!target.excludedHubs?.includes(h))||
     source.excludedAreas?.some(a=>!target.excludedAreas?.some(t=>areaContains(t,a)))))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
+  if(['tuition.view','tuition.edit'].includes(cap)&&(
+    (target.people?.length&&source.excludedClasses?.some(c=>!target.excludedClasses?.some(t=>t.id===c.id)))||
+    (target.classes?.length&&source.excludedPeople?.some(p=>!target.excludedPeople?.some(t=>t.id===p.id)))))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
   if(!scopeContains(source,target))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
 }
 async function validateDelegatedAssignment(ctx:ApiContext,item:z.infer<typeof assignment>,permissions:Permission[],checkFeatureRights=true) {

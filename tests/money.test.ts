@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseMoney,formatMoney,roundRatio,roundingModes,allocateMoney,maximumMinorUnits,readMinorUnits } from '../src/core/money.ts';
+import { parseMoney,formatMoney,roundRatio,roundingModes,allocateMoney,maximumMinorUnits,readMinorUnits,taxAmounts } from '../src/core/money.ts';
+
+test('shared tax arithmetic conserves signed units, ties and posting bounds without guessing a legal classification',()=>{
+ assert.deepEqual(taxAmounts(11300n,130000n,'tax_inclusive'),{net:10000n,tax:1300n,gross:11300n});
+ assert.deepEqual(taxAmounts(-5n,1000000n,'tax_inclusive'),{net:-2n,tax:-3n,gross:-5n});
+ assert.deepEqual(taxAmounts(5n,130000n,'tax_exclusive'),{net:5n,tax:1n,gross:6n});
+ assert.deepEqual(taxAmounts(5n,0n,'not_applicable'),{net:5n,tax:0n,gross:5n});
+ for(const rate of [-1n,1000001n,1 as unknown as bigint])assert.throws(()=>taxAmounts(1n,rate,'tax_exclusive'),/INVALID_TAX_CALCULATION/);
+ assert.throws(()=>taxAmounts(1n,1n,'not_applicable'),/INVALID_TAX_CALCULATION/);assert.throws(()=>taxAmounts(1n,0n,'unknown' as 'tax_exclusive'),/INVALID_TAX_CALCULATION/);
+ assert.throws(()=>taxAmounts(maximumMinorUnits,1000000n,'tax_exclusive'),/INVALID_MONEY_AMOUNT/);
+});
 
 test('stored integer minor units retain exact value despite numeric scale without relaxing posting bounds or rounding fractions',()=>{
   for(const [value,expected] of [['100.00',100n],['-100.000',-100n],['-0.00',0n],['0001.000',1n],[(2n*maximumMinorUnits).toString()+'.00',2n*maximumMinorUnits]] as const)assert.equal(readMinorUnits(value),expected);

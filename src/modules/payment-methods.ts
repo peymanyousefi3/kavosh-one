@@ -30,6 +30,9 @@ export async function paymentMethodRow(ctx:ApiContext,id:string,edit=false,lock=
  if(!r)throw new ApiError(404,'NOT_FOUND');if(edit)requireScope(allowed(ctx,'payment-methods.edit'),r.hubId??undefined);
  if(lock){await ctx.db.query('SELECT id FROM public.finance_payment_methods WHERE id=$1 FOR UPDATE',[id]);return paymentMethodRow(ctx,id,edit);}return r;
 }
+export async function paymentMethodSelection(ctx:ApiContext,ids:string[]):Promise<Method[]>{
+ return (await ctx.db.query<Method>('SELECT '+columns+' FROM public.finance_payment_method_catalogue m WHERE '+selected+' AND m.id=ANY($5::uuid[])',[...scope(ctx),ids])).rows;
+}
 async function destination(ctx:ApiContext,hubId:string|null){
  requireScope(allowed(ctx,'payment-methods.view'),hubId??undefined);requireScope(allowed(ctx,'payment-methods.edit'),hubId??undefined);
  if(hubId&&!(await ctx.db.query('SELECT 1 FROM public.hubs WHERE id=$1 AND active',[hubId])).rows.length)throw new ApiError(409,'ACTIVE_HUB_REQUIRED');

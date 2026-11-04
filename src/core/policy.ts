@@ -1,13 +1,13 @@
 export const capabilities = ['hubs.view', 'hubs.edit', 'people.view', 'people.edit', 'audit.view', 'credentials.revoke'] as const;
-export type Capability = typeof capabilities[number] | 'roles.view' | 'roles.edit' | 'access.view' | 'access.edit' | 'approvals.view' | 'approvals.review' | 'locations.view' | 'locations.edit' | 'courses.view' | 'courses.edit' | 'classes.view' | 'classes.edit' | 'sessions.request' | 'staff.view' | 'staff.edit' | 'students.view' | 'students.edit' | 'guardians.view' | 'guardians.edit' | 'families.view' | 'families.edit' | 'registrations.view' | 'enrollments.view' | 'enrollments.edit' | 'rosters.view' | 'agreements.view' | 'agreements.edit' | 'signatures.view' | 'signatures.edit' | 'files.view' | 'files.edit' | 'files.upload' | 'storage.view' | 'storage.edit' | 'currencies.view' | 'currencies.edit' | 'accounts.view' | 'accounts.edit' | 'periods.view' | 'periods.edit' | 'journals.view' | 'journals.edit' | 'ledger.view' | 'financial-reports.view' | 'closing.view' | 'closing.edit' | 'tax-codes.view' | 'tax-codes.edit' | 'payment-methods.view' | 'payment-methods.edit';
+export type Capability = typeof capabilities[number] | 'roles.view' | 'roles.edit' | 'access.view' | 'access.edit' | 'approvals.view' | 'approvals.review' | 'locations.view' | 'locations.edit' | 'courses.view' | 'courses.edit' | 'classes.view' | 'classes.edit' | 'sessions.request' | 'staff.view' | 'staff.edit' | 'students.view' | 'students.edit' | 'guardians.view' | 'guardians.edit' | 'families.view' | 'families.edit' | 'registrations.view' | 'enrollments.view' | 'enrollments.edit' | 'rosters.view' | 'agreements.view' | 'agreements.edit' | 'signatures.view' | 'signatures.edit' | 'files.view' | 'files.edit' | 'files.upload' | 'storage.view' | 'storage.edit' | 'currencies.view' | 'currencies.edit' | 'accounts.view' | 'accounts.edit' | 'periods.view' | 'periods.edit' | 'journals.view' | 'journals.edit' | 'ledger.view' | 'financial-reports.view' | 'closing.view' | 'closing.edit' | 'tax-codes.view' | 'tax-codes.edit' | 'payment-methods.view' | 'payment-methods.edit' | 'tuition.view' | 'tuition.edit';
 export interface ResourceRef {id:string;hubId:string|null}
 export interface AreaRef {kind:'country'|'region'|'city';id:string;countryId:string;regionId:string|null;cityId:string|null}
 export interface Grant { capability: Capability; effect: 'allow' | 'deny'; allHubs: boolean; hubIds: string[];classRefs?:ResourceRef[];personRefs?:ResourceRef[];areaRefs?:AreaRef[];areaHubIds?:string[] }
 export interface Credential { token_id: string; academy_id: string; person_id: string; capabilities: Capability[]; all_hubs: boolean; hub_ids: string[]; allowed: boolean; kind?: 'human' | 'bot' }
-export interface Scope { all: boolean; hubs: string[]; excludedHubs?: string[];classes?:ResourceRef[];people?:ResourceRef[];excludedClasses?:ResourceRef[];excludedPeople?:ResourceRef[];areas?:AreaRef[];excludedAreas?:AreaRef[] }
+export interface Scope { all: boolean; hubs: string[]; excludedHubs?: string[];classes?:ResourceRef[];people?:ResourceRef[];excludedClasses?:ResourceRef[];excludedPeople?:ResourceRef[];areas?:AreaRef[];excludedAreas?:AreaRef[];recordContext?:{hubId:string;classId:string;studentId:string} }
 const academyCapabilities=new Set<Capability>(['roles.view','roles.edit','credentials.revoke','locations.edit','storage.view','storage.edit','currencies.view','currencies.edit','periods.view','periods.edit','closing.view','closing.edit']);
-const classCapabilities=new Set<Capability>(['classes.view','classes.edit','sessions.request','staff.view','staff.edit','enrollments.view','enrollments.edit','rosters.view','signatures.view','signatures.edit','files.view','files.edit','files.upload','approvals.view','approvals.review']);
-const personCapabilities=new Set<Capability>(['people.view','people.edit','students.view','students.edit','guardians.view','guardians.edit','families.view','families.edit','registrations.view','signatures.view','signatures.edit','files.view','files.edit','files.upload','approvals.view','approvals.review']);
+const classCapabilities=new Set<Capability>(['classes.view','classes.edit','sessions.request','staff.view','staff.edit','enrollments.view','enrollments.edit','rosters.view','signatures.view','signatures.edit','files.view','files.edit','files.upload','approvals.view','approvals.review','tuition.view','tuition.edit']);
+const personCapabilities=new Set<Capability>(['people.view','people.edit','students.view','students.edit','guardians.view','guardians.edit','families.view','families.edit','registrations.view','signatures.view','signatures.edit','files.view','files.edit','files.upload','approvals.view','approvals.review','tuition.view','tuition.edit']);
 export function featureScope(scope:Scope,capability:Capability):Scope {
   if(academyCapabilities.has(capability)&&!scope.all)return {all:false,hubs:[]};
   const {classes,people,excludedClasses,excludedPeople,...base}=scope;
@@ -24,6 +24,9 @@ export function scopeAllowsRef(source:Scope,ref:ResourceRef,kind:'classes'|'peop
     (source.all&&(ref.hubId!==null||!source.excludedHubs?.length)));
 }
 export function scopeContains(source:Scope,target:Scope) {
+  const context=target.recordContext;
+  if(source.recordContext&&(!context||Object.keys(source.recordContext).some(k=>source.recordContext![k as keyof typeof context]!==context[k as keyof typeof context])))return false;
+  if(context&&(source.excludedHubs?.includes(context.hubId)||source.excludedClasses?.some(c=>c.id===context.classId)||source.excludedPeople?.some(p=>p.id===context.studentId)))return false;
   if(target.areas?.some(a=>!source.all&&!source.areas?.some(s=>areaContains(s,a))))return false;
   if((target.all||target.areas?.length)&&source.excludedAreas?.some(e=>!target.excludedAreas?.some(t=>areaContains(t,e))))return false;
   if(target.areas?.length) {
@@ -72,7 +75,7 @@ export function scopeFor(credential: Credential, grants: Grant[], capability: Ca
   }
   // Selected students can have registrations outside their primary hub. Keep
   // record-hub denials even when the positive grant selects only that person.
-  if(capability==='registrations.view'&&denied.size)result.excludedHubs=[...denied].filter(h=>credential.all_hubs||credential.hub_ids.includes(h));
+  if(['registrations.view','tuition.view','tuition.edit'].includes(capability)&&denied.size)result.excludedHubs=[...denied].filter(h=>credential.all_hubs||credential.hub_ids.includes(h));
   if(academyCapabilities.has(capability)&&(!result.all||result.excludedHubs?.length||result.excludedAreas?.length))return {all:false,hubs:[]};
   return result;
 }

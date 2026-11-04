@@ -170,6 +170,7 @@ test('schema39 preserves actual prior attempts without fabricating historical fu
   assert.deepEqual((await f.pg.query('SELECT * FROM public.file_inspection_attempts')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.file_image_evidence')).rows.length,0);
   await f.pg.exec(await readFile(new URL('../db/migrations/040_finance_tax_codes.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/041_payment_methods.sql',import.meta.url),'utf8'));
+  await f.pg.exec(await readFile(new URL('../db/migrations/042_tuition_plans.sql',import.meta.url),'utf8'));
   assert.equal((await f.request('files/'+item.id+'/inspection')).body.data.attempts[0].imageValidation,null);
   const next=await f.prepare();await f.run(value);assert.equal((await f.request('files/'+next.id+'/inspection')).body.data.attempts[0].imageValidation.result.outcome,'decoded');
  }finally{await f.pg.close();}

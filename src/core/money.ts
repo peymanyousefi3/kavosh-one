@@ -43,6 +43,14 @@ export function roundRatio(numerator:bigint,denominator:bigint,mode:RoundingMode
   const twice=absolute(remainder)*2n;
   return twice>denominator||(twice===denominator&&(mode==='half_away'||quotient%2n!==0n))?quotient+sign:quotient;
 }
+export function taxAmounts(value:bigint,rateMillionths:bigint,pricing:'tax_inclusive'|'tax_exclusive'|'not_applicable') {
+  amount(value);
+  if(typeof rateMillionths!=='bigint'||rateMillionths<0n||rateMillionths>1000000n||!['tax_inclusive','tax_exclusive','not_applicable'].includes(pricing)
+    ||(pricing==='not_applicable'&&rateMillionths!==0n))throw new ApiError(400,'INVALID_TAX_CALCULATION');
+  const tax=roundRatio(value*rateMillionths,pricing==='tax_inclusive'?1000000n+rateMillionths:1000000n,'half_away');
+  const net=pricing==='tax_inclusive'?value-tax:value,gross=pricing==='tax_inclusive'?value:value+tax;
+  amount(net);amount(tax);amount(gross);return {net,tax,gross};
+}
 export function allocateMoney(total:bigint,weights:{key:string;weight:bigint}[]):{key:string;amount:bigint}[] {
   amount(total);
   if(!Array.isArray(weights)||weights.length<1||weights.length>1000||weights.some(w=>!w||typeof w.key!=='string'||w.key.length<1||w.key.length>100||!w.key.isWellFormed()||w.key.includes('\0')||typeof w.weight!=='bigint'||w.weight<0n||w.weight>maximumMinorUnits)||new Set(weights.map(w=>w.key)).size!==weights.length)throw new ApiError(400,'INVALID_MONEY_ALLOCATION');
