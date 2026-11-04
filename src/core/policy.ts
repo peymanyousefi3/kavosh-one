@@ -27,6 +27,15 @@ export function scopeContains(source:Scope,target:Scope) {
   const context=target.recordContext;
   if(source.recordContext&&(!context||Object.keys(source.recordContext).some(k=>source.recordContext![k as keyof typeof context]!==context[k as keyof typeof context])))return false;
   if(context&&(source.excludedHubs?.includes(context.hubId)||source.excludedClasses?.some(c=>c.id===context.classId)||source.excludedPeople?.some(p=>p.id===context.studentId)))return false;
+  // A canonical recordContext narrows this scope to ONE immutable financial
+  // tuple. Its original positive facet is not an extra grant requirement.
+  // Never apply this shortcut to a whole hub or a bundle of other records.
+  if(context&&!target.all&&!target.areas?.length&&!target.excludedAreas?.length&&!target.excludedHubs?.length&&!target.excludedClasses?.length&&!target.excludedPeople?.length
+    &&target.hubs.length<=1&&(target.classes?.length??0)<=1&&(target.people?.length??0)<=1
+    &&target.hubs.every(h=>h===context.hubId)&&(target.classes??[]).every(c=>c.id===context.classId&&c.hubId===context.hubId)&&(target.people??[]).every(p=>p.id===context.studentId&&p.hubId===context.hubId)
+    &&target.hubs.length+(target.classes?.length??0)+(target.people?.length??0)>0)
+    return source.all||source.hubs.includes(context.hubId)||Boolean(source.classes?.some(c=>c.id===context.classId))||Boolean(source.people?.some(p=>p.id===context.studentId));
+  if(source.recordContext)return false;
   if(target.areas?.some(a=>!source.all&&!source.areas?.some(s=>areaContains(s,a))))return false;
   if((target.all||target.areas?.length)&&source.excludedAreas?.some(e=>!target.excludedAreas?.some(t=>areaContains(t,e))))return false;
   if(target.areas?.length) {

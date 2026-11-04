@@ -19,6 +19,7 @@ export interface Proposal {
   action:string;target_id:string;target_version:number;payload:unknown;scope:Scope;status:string;version:number;
   reason?:string|null;decision_code?:string|null;reviewer_id?:string|null;created_at?:Date|string;decided_at?:Date|string|null;
   privacy_capability?:Capability|null;
+  privacy_bindings?:unknown;
 }
 
 export interface ApprovalAction {
@@ -60,6 +61,13 @@ export async function master(ctx:ApiContext) {
 }
 export function permissionScope(ctx:ApiContext,name:Capability){return scopeFor(ctx.credential,ctx.grants,name);}
 
+function privacyScopes(ctx:ApiContext,bindings?:unknown){
+ const required=bindings===undefined?null:new Set<string>();
+ if(required&&Array.isArray(bindings))for(const b of bindings){if(!b||typeof b!=='object')continue;if(typeof b.capability==='string')required.add(b.capability);if('fileId' in b)for(const cap of ['files.view','students.view','guardians.view','agreements.view','financial-files.view'])required.add(cap);}
+ const caps=[...new Set(ctx.grants.filter(g=>g.effect==='allow'&&ctx.credential.capabilities.includes(g.capability)&&(!required||required.has(g.capability))).map(g=>g.capability))];
+ return Object.fromEntries(caps.map(cap=>[cap,permissionScope(ctx,cap)]));
+}
+
 export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:string,targetId:string|null,targetVersion:number,input:unknown):Promise<Reply> {
   const definition=getAction(registry,action);
   if(!nonempty(permissionScope(ctx,definition.requestCapability)))throw new ApiError(403,'FORBIDDEN');
@@ -88,6 +96,8 @@ export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:st
 }
 async function visibleProposal(ctx:ApiContext,p:Proposal,review=false) {
   if(await master(ctx))return true;
+  const bindings=p.privacy_bindings??null;
+  if(!(await ctx.db.query<{allowed:boolean}>('SELECT public.approval_bindings_allow($1::jsonb,$2::jsonb) AS allowed',[JSON.stringify(bindings),JSON.stringify(privacyScopes(ctx,bindings))])).rows[0]?.allowed)return false;
   if(p.privacy_capability&&!scopeContains(permissionScope(ctx,p.privacy_capability),storedScope.parse(p.scope)))return false;
   if(!review&&p.requester_id===ctx.credential.person_id)return true;
   const scope=permissionScope(ctx,review?'approvals.review':'approvals.view');
@@ -156,11 +166,10 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
     const scope=permissionScope(ctx,'approvals.view');
     // Retired action handlers must not make authorized private history vanish.
     // Use existing grants, not only the currently mounted action definitions.
-    const privateCaps=[...new Set(ctx.grants.filter(g=>g.effect==='allow'&&c.capabilities.includes(g.capability)).map(g=>g.capability))];
-    const privateScopes=Object.fromEntries(privateCaps.map(cap=>[cap,permissionScope(ctx,cap)]));
+    const privateScopes=privacyScopes(ctx);
     const rows=(await db.query<Proposal>(`SELECT * FROM public.approval_requests WHERE ($1::uuid IS NULL OR id>$1)
       AND ($2::text IS NULL OR status=$2) AND ($4::boolean OR
-        ((privacy_capability IS NULL OR public.scope_contains(coalesce($8::jsonb->privacy_capability,'{"all":false,"hubs":[]}'::jsonb),scope))
+        ((privacy_capability IS NULL OR public.scope_contains(coalesce($8::jsonb->privacy_capability,'{"all":false,"hubs":[]}'::jsonb),scope)) AND public.approval_bindings_allow(privacy_bindings,$8::jsonb)
           AND (requester_id=$5 OR ($6::boolean AND public.scope_contains($7::jsonb,scope) AND public.is_supervisor($5,requester_id))))) ORDER BY id LIMIT $3`,
       [after??null,status??null,limit+1,await master(ctx),c.person_id,nonempty(scope),JSON.stringify(scope),JSON.stringify(privateScopes)])).rows;
     return {status:200,body:{data:rows.slice(0,limit).map(proposalView),nextCursor:rows.length>limit?rows[limit-1].id:null}};
@@ -197,8 +206,8 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
   throw new ApiError(405,'METHOD_NOT_ALLOWED');
 }
 export const approvalContract=[
-  {path:'/api/v1/approvals',method:'get',summary:'Own and authorized subordinate cases, filtered before pagination',paged:true},
-  {path:'/api/v1/approvals/{id}',method:'get',summary:'Read exact payload, reason, review history and stale decision code'},
+  {path:'/api/v1/approvals',method:'get',summary:'Own and authorized subordinate cases; current source privacy filtered before pagination',paged:true},
+  {path:'/api/v1/approvals/{id}',method:'get',summary:'Read exact payload, reason and history only within current source permissions'},
   {path:'/api/v1/approvals/{id}/decide',method:'post',summary:'Human upper reviewer accepts/rejects exact unchanged proposal',schema:decisionInput},
   {path:'/api/v1/approvals/{id}/withdraw',method:'post',summary:'Requester withdraws a still-pending proposal',schema:withdrawInput}
 ] as const;

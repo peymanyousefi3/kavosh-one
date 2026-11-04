@@ -39,6 +39,8 @@ Implement in reviewable stages. Every completion claim needs evidence from the r
 
 ## Backend development
 
+Schema 53 derives immutable source-permission bindings for approval history, including older records. Its offline migration operator must have PostgreSQL superuser or RLS-bypass authority so the backfill covers every school; the migration refuses to run without it. Never give those privileges or credentials to application or worker accounts. If upgrading a live installation, stop old API instances during the migration and cut over to the updated API before reopening access: older binaries do not enforce these new read bindings. Unresolvable legacy private boundaries remain master-only rather than guessing permissions.
+
 Use Node 22.13+ and pnpm 11.25.0. Install with `pnpm install --frozen-lockfile`. Run `pnpm typecheck`, `pnpm test`, `pnpm build` and then `pnpm test:http`. Tests use synthetic fixtures in an embedded PostgreSQL engine; setting `TEST_DATABASE_URL` to an isolated loopback PostgreSQL service runs the same suite over the real TCP driver in disposable, uniquely named databases. That integration account must be able to create databases. Never point tests at production.
 
 The GitHub workflow checks both engines, migration repeatability, compilation, actual HTTP security responses, container execution and production dependency advisories. Real PostgreSQL also runs a bounded HTTP load test with 5,000 synthetic identities and 100 simultaneous connections (100 password logins, 300 session reads and 300 scoped business reads). It reports measured latency/errors, not a production capacity guarantee. Check the workflow result for the commit before treating CI as passed.
