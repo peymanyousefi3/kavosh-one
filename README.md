@@ -20,6 +20,14 @@ The separate `kavosh-academy` repository contains the existing public-facing web
 
 Overview, Academy, People, Learning, Finance, Reports, Community and Administration. Files, approvals, audit history and notifications are shared capabilities. External management agents use a scoped, documented API, with configurable approvals and limits.
 
+### Manual treasury balances (backend)
+
+Finance supports reviewed manual closing-balance observations for cash, bank and card-liability accounts. Enter a date, signed balance and reference; an upper human approves it, except the school master self-approves. Separate view/edit permissions follow account/hub scope. The original account version, currency precision and normal-balance convention are pinned: positive card balances mean an amount owed; negative bank/cash balances represent an overdraft/shortfall. No bank credentials or API connection are needed.
+
+Corrections, voids and reinstatement append immutable linked entries. The account directory endpoint returns current heads by default, with dated filters and optional retained history. No entered balance overwrites posted accounts or silently creates an opening/adjusting journal. An additional ledger permission allows a same-snapshot comparison against posted accounting lines through the selected date. Equal amounts are **not** proof of bank verification or transaction reconciliation. References are private to authorized viewers; reasons remain in the private approval record, not general audit messages.
+
+Routes: `POST /api/v1/finance/balance-observations`, `GET /api/v1/finance/accounts/{id}/balance-observations`, and individual observation/detail/comparison endpoints. Manual entries and changes generate critical approval activity. CSV statement import, transaction matching, read-only bank connectors, adjustments, full reconciliation and the remaining accounting/reporting suite are still required. No external bank request or money movement occurs.
+
 ### Recorded teacher-work reporting (backend)
 
 `GET /api/v1/reports/payroll/recorded-time` combines saved teacher time and effective-dated work terms in one database snapshot. Work-pay, financial-report and class-time permissions intersect before aggregation. Date/time-zone, hub, class, worker and currency filters are supported. Actual time and five-minute configured rounding stay separate; simultaneous teaching counts once at the highest hourly rate per worker/currency. Rounding reductions are flagged. Cancelled sessions retain delivered work, and source revision links identify the exact recorded inputs. No private reasons or legal worker names are copied into this report.

@@ -14,14 +14,14 @@ const ledgerQuery=z.object({...dates,limit:z.coerce.number().int().min(1).max(10
   .refine(v=>!v.from||v.from<=v.through).refine(v=>[v.afterPostedOn,v.afterJournalId,v.afterLine].filter(v=>v!==undefined).length%3===0,'Provide all three cursor fields together.');
 type Totals={openingDebits:string;openingCredits:string;debits:string;credits:string;lineCount:number;journalCount:number};
 type Line={postedOn:string;journalId:string;lineNumber:number;accountVersion:number;side:'debit'|'credit';amountMinor:string};
-const totals=`SELECT coalesce(sum(l.amount_minor) FILTER(WHERE l.side='debit' AND j.posted_on<$2::date),0)::text AS "openingDebits",
+export const accountTotalsSQL=`SELECT coalesce(sum(l.amount_minor) FILTER(WHERE l.side='debit' AND j.posted_on<$2::date),0)::text AS "openingDebits",
  coalesce(sum(l.amount_minor) FILTER(WHERE l.side='credit' AND j.posted_on<$2::date),0)::text AS "openingCredits",
  coalesce(sum(l.amount_minor) FILTER(WHERE l.side='debit' AND ($2::date IS NULL OR j.posted_on>=$2)),0)::text AS debits,
  coalesce(sum(l.amount_minor) FILTER(WHERE l.side='credit' AND ($2::date IS NULL OR j.posted_on>=$2)),0)::text AS credits,
  count(*) FILTER(WHERE $2::date IS NULL OR j.posted_on>=$2)::integer AS "lineCount",count(DISTINCT j.id) FILTER(WHERE $2::date IS NULL OR j.posted_on>=$2)::integer AS "journalCount"
  FROM public.finance_journal_lines l ${journalPointLookupSQL}
  WHERE l.account_id=$1 AND j.posted_on<=$3::date`;
-function balances(row:Totals,unitScale:number){
+export function accountBalances(row:Totals,unitScale:number){
   const opening=readMinorUnits(row.openingDebits)-readMinorUnits(row.openingCredits),debits=readMinorUnits(row.debits),credits=readMinorUnits(row.credits),movement=debits-credits;
   const exact=(minor:bigint)=>({minor:minor.toString(),amount:formatMoneyTotal(minor,unitScale)});
   return {basis:'posted_account_lines' as const,netConvention:'debits_minus_credits' as const,opening:exact(opening),debits:exact(debits),credits:exact(credits),movement:exact(movement),closing:exact(opening+movement),lineCount:row.lineCount,journalCount:row.journalCount};
@@ -33,13 +33,13 @@ export async function financeLedger(ctx:ApiContext):Promise<Reply|null>{
   const q=(match[2]==='balance'?balanceQuery:ledgerQuery).parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
   const basis={accountId:id,currencyId:account.currencyId,currencyVersion:account.currencyVersion,unitScale:account.unitScale,from:q.from??null,through:q.through};
   if(match[2]==='balance'){
-    const row=(await ctx.db.query<Totals>(totals,[id,q.from??null,q.through])).rows[0];return {status:200,body:{data:{...basis,...balances(row,account.unitScale)}}};
+    const row=(await ctx.db.query<Totals>(accountTotalsSQL,[id,q.from??null,q.through])).rows[0];return {status:200,body:{data:{...basis,...accountBalances(row,account.unitScale)}}};
   }
   const paging=ledgerQuery.parse(q);
   // One SQL snapshot binds summary and page despite concurrent insertions.
   // This permission grants this account's amounts, not a mixed-hub journal's
   // description, counterparties, notes or private approval payload.
-  const result=(await ctx.db.query<Totals&{entries:Line[]}>(`WITH totals AS (${totals}),page AS (
+  const result=(await ctx.db.query<Totals&{entries:Line[]}>(`WITH totals AS (${accountTotalsSQL}),page AS (
    SELECT j.posted_on::text AS "postedOn",j.id AS "journalId",l.line_number AS "lineNumber",l.account_version AS "accountVersion",l.side,l.amount_minor::text AS "amountMinor"
    FROM public.finance_journal_lines l ${journalPointLookupSQL}
    WHERE l.account_id=$1 AND ($2::date IS NULL OR j.posted_on>=$2) AND j.posted_on<=$3::date
@@ -47,7 +47,7 @@ export async function financeLedger(ctx:ApiContext):Promise<Reply|null>{
    ORDER BY j.posted_on,j.id,l.line_number LIMIT $7)
    SELECT totals.*,coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY "postedOn","journalId","lineNumber") FROM page),'[]'::jsonb) AS entries FROM totals`,[id,q.from??null,q.through,paging.afterPostedOn??null,paging.afterJournalId??null,paging.afterLine??null,paging.limit+1])).rows[0];
   const rows=result.entries,next=rows.length>paging.limit?rows[paging.limit-1]:null;
-  return {status:200,body:{data:{...basis,...balances(result,account.unitScale),entries:rows.slice(0,paging.limit).map(l=>{const minor=readMinorUnits(l.amountMinor);return {...l,amountMinor:minor.toString(),amount:formatMoneyTotal(minor,account.unitScale)};})},nextCursor:next?{afterPostedOn:next.postedOn,afterJournalId:next.journalId,afterLine:next.lineNumber}:null}};
+  return {status:200,body:{data:{...basis,...accountBalances(result,account.unitScale),entries:rows.slice(0,paging.limit).map(l=>{const minor=readMinorUnits(l.amountMinor);return {...l,amountMinor:minor.toString(),amount:formatMoneyTotal(minor,account.unitScale)};})},nextCursor:next?{afterPostedOn:next.postedOn,afterJournalId:next.journalId,afterLine:next.lineNumber}:null}};
 }
 export const ledgerContract=[
   {path:'/api/v1/finance/accounts/{id}/balance',method:'get',summary:'Exact opening/movement/closing balance at an explicit date from every authorized account posting, not a bank balance or FX conversion',querySchema:balanceQuery},
