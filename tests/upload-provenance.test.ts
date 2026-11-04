@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID,createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile,readdir } from 'node:fs/promises';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { operationsFixture } from './operations-fixture.ts';
@@ -80,6 +80,9 @@ test('migration preserves a real schema-25 grant as unknown and subsequently iss
     assert.equal('format_policy_version' in old,false);const before=(await f.pg.query('SELECT * FROM public.file_upload_grants')).rows[0];
     await f.pg.exec(await readFile(new URL('../db/migrations/026_upload_policy_provenance.sql',import.meta.url),'utf8'));
     const after=(await f.pg.query('SELECT * FROM public.file_upload_grants')).rows[0];assert.deepEqual(after,{...before,format_policy_version:null,format_policy_snapshot:null});
+    // The preservation assertion above tests schema26 exactly. Bring the
+    // fixture current before exercising today's API readiness boundary.
+    for(const name of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&Number.parseInt(n,10)>26).sort())await f.pg.exec(await readFile(new URL('../db/migrations/'+name,import.meta.url),'utf8'));
     const issued=await f.request('files/'+file+'/upload-link',{expectedMetadataVersion:1});assert.equal(issued.response.status,201,JSON.stringify(issued.body));assert.equal(issued.body.data.formatPolicyVersion,1);
     const history=await f.request('files/'+file+'/upload-grants');assert.equal(history.body.data.length,2);assert.equal(history.body.data.find((r:{id:unknown})=>r.id===old.id).formatPolicyRecorded,false);assert.deepEqual(history.body.data.find((r:{id:unknown})=>r.id===issued.body.data.id).formatPolicy,{snapshotVersion:1,allowedMimeTypes:['text/plain']});
   }finally{await f.pg.close();}

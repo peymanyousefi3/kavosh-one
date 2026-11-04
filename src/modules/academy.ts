@@ -45,7 +45,7 @@ const coursesQuery=z.object({...listBase,hubId:uuid.optional(),includeShared:z.e
 type GeoKind='countries'|'regions'|'cities';
 type Fields=Record<string,unknown>;
 
-function mergeLabels(previous:unknown,patch:unknown) {
+export function mergeLabels(previous:unknown,patch:unknown) {
   const result={...(previous as Record<string,string>??{})};
   for(const [key,value] of Object.entries(patch as Record<string,string|null>??{})){if(value===null)delete result[key];else result[key]=value;}
   return result;
