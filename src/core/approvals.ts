@@ -18,11 +18,16 @@ export interface Proposal {
   dependency_hash:string;review_context:Record<string,unknown>;
   action:string;target_id:string;target_version:number;payload:unknown;scope:Scope;status:string;version:number;
   reason?:string|null;decision_code?:string|null;reviewer_id?:string|null;created_at?:Date|string;decided_at?:Date|string|null;
+  privacy_capability?:Capability|null;
 }
 
 export interface ApprovalAction {
   requestCapability:Capability;
   policyChange?:boolean;
+  privacyCapability?:Capability;
+  // Authorization only: no writes/row locks. Runs before the policy lock and
+  // again under that lock before a decision, including rejection, is applied.
+  authorizeReviewer?(ctx:ApiContext,proposal:Proposal):Promise<void>;
   createdStatus?:200|201;
   validate(ctx:ApiContext,targetId:string,input:unknown,purpose:'request'|'review'):Promise<Scope>;
   dependencies(ctx:ApiContext,targetId:string,input:unknown):Promise<Record<string,unknown>>;
@@ -67,9 +72,9 @@ export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:st
     const p:Proposal={id:randomUUID(),requester_id:ctx.credential.person_id,requester_kind:ctx.credential.kind??'bot',
       credential_snapshot:ctx.credential,grants_hash:grantsHash(ctx.grants),dependency_hash:stateHash(reviewContext),review_context:reviewContext,
       action,target_id:actualTarget,target_version:targetVersion,
-      payload:input,scope,status:'pending',version:1};
-    await ctx.db.query(`INSERT INTO public.approval_requests(academy_id,id,requester_id,requester_kind,credential_snapshot,grants_hash,action,target_id,target_version,payload,scope,dependency_hash,review_context)
-      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13::jsonb)`,[ctx.credential.academy_id,p.id,p.requester_id,p.requester_kind,JSON.stringify(p.credential_snapshot),p.grants_hash,action,p.target_id,targetVersion,JSON.stringify(input),JSON.stringify(scope),p.dependency_hash,JSON.stringify(reviewContext)]);
+      payload:input,scope,status:'pending',version:1,privacy_capability:definition.privacyCapability??null};
+    await ctx.db.query(`INSERT INTO public.approval_requests(academy_id,id,requester_id,requester_kind,credential_snapshot,grants_hash,action,target_id,target_version,payload,scope,dependency_hash,review_context,privacy_capability)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13::jsonb,$14)`,[ctx.credential.academy_id,p.id,p.requester_id,p.requester_kind,JSON.stringify(p.credential_snapshot),p.grants_hash,action,p.target_id,targetVersion,JSON.stringify(input),JSON.stringify(scope),p.dependency_hash,JSON.stringify(reviewContext),p.privacy_capability]);
     if(await master(ctx)) {
       const result=await definition.apply(ctx,p);
       await ctx.db.query("UPDATE public.approval_requests SET status='applied',version=version+1,reviewer_id=$2,reason='Master self-approved',decided_at=now() WHERE id=$1",[p.id,ctx.credential.person_id]);
@@ -82,6 +87,7 @@ export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:st
 }
 async function visibleProposal(ctx:ApiContext,p:Proposal,review=false) {
   if(await master(ctx))return true;
+  if(p.privacy_capability&&!scopeContains(permissionScope(ctx,p.privacy_capability),storedScope.parse(p.scope)))return false;
   if(!review&&p.requester_id===ctx.credential.person_id)return true;
   const scope=permissionScope(ctx,review?'approvals.review':'approvals.view');
   if(!nonempty(scope)||!scopeContains(scope,storedScope.parse(p.scope)))return false;
@@ -91,6 +97,9 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
   if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
   if(p.requester_id===ctx.credential.person_id&&!await master(ctx))throw new ApiError(403,'SELF_APPROVAL_FORBIDDEN');
   if(!await visibleProposal(ctx,p,true))throw new ApiError(403,'SUPERVISOR_REQUIRED');
+  // Caller-specific conflicts must reject the attempt, not invalidate a valid
+  // case that a different upper reviewer can still approve.
+  if(Object.hasOwn(registry,p.action))await registry[p.action].authorizeReviewer?.(ctx,p);
   return mutation(ctx,input,async()=>{
     const current=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1 FOR UPDATE',[p.id])).rows[0];
     if(current.status!=='pending'||current.version!==input.expectedVersion)throw new ApiError(409,'APPROVAL_CHANGED');
@@ -134,7 +143,7 @@ function proposalView(p:Proposal) {
   return {id:p.id,action:p.action,targetId:p.target_id,targetVersion:p.target_version,requesterId:p.requester_id,
     payload:p.payload,scope:p.scope,status:p.status,version:p.version,reason:p.reason??null,decisionCode:p.decision_code??null,
     reviewContext:p.review_context,
-    reviewerId:p.reviewer_id??null,createdAt:p.created_at,decidedAt:p.decided_at??null};
+    reviewerId:p.reviewer_id??null,createdAt:p.created_at,decidedAt:p.decided_at??null,...p.privacy_capability?{privacyCapability:p.privacy_capability}:{}};
 }
 
 
@@ -144,10 +153,15 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
   if(path==='approvals'&&request.method==='GET') {
     const {limit,after,status}=paging.parse(Object.fromEntries(new URL(request.url).searchParams));
     const scope=permissionScope(ctx,'approvals.view');
+    // Retired action handlers must not make authorized private history vanish.
+    // Use existing grants, not only the currently mounted action definitions.
+    const privateCaps=[...new Set(ctx.grants.filter(g=>g.effect==='allow'&&c.capabilities.includes(g.capability)).map(g=>g.capability))];
+    const privateScopes=Object.fromEntries(privateCaps.map(cap=>[cap,permissionScope(ctx,cap)]));
     const rows=(await db.query<Proposal>(`SELECT * FROM public.approval_requests WHERE ($1::uuid IS NULL OR id>$1)
-      AND ($2::text IS NULL OR status=$2) AND ($4::boolean OR requester_id=$5 OR
-        ($6::boolean AND public.scope_contains($7::jsonb,scope) AND public.is_supervisor($5,requester_id))) ORDER BY id LIMIT $3`,
-      [after??null,status??null,limit+1,await master(ctx),c.person_id,nonempty(scope),JSON.stringify(scope)])).rows;
+      AND ($2::text IS NULL OR status=$2) AND ($4::boolean OR
+        ((privacy_capability IS NULL OR public.scope_contains(coalesce($8::jsonb->privacy_capability,'{"all":false,"hubs":[]}'::jsonb),scope))
+          AND (requester_id=$5 OR ($6::boolean AND public.scope_contains($7::jsonb,scope) AND public.is_supervisor($5,requester_id))))) ORDER BY id LIMIT $3`,
+      [after??null,status??null,limit+1,await master(ctx),c.person_id,nonempty(scope),JSON.stringify(scope),JSON.stringify(privateScopes)])).rows;
     return {status:200,body:{data:rows.slice(0,limit).map(proposalView),nextCursor:rows.length>limit?rows[limit-1].id:null}};
   }
   const approvalPath=/^approvals\/([^/]+)(?:\/(decide|withdraw))?$/.exec(path);
@@ -160,6 +174,7 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
       if(c.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
       if(p.requester_id===c.person_id&&!await master(ctx))throw new ApiError(403,'SELF_APPROVAL_FORBIDDEN');
       if(!await visibleProposal(ctx,p,true))throw new ApiError(403,'SUPERVISOR_REQUIRED');
+      if(Object.hasOwn(registry,p.action))await registry[p.action].authorizeReviewer?.(ctx,p);
     }
     if(request.method==='POST'&&approvalPath[2]==='withdraw'&&p.requester_id!==c.person_id)throw new ApiError(403,'REQUESTER_REQUIRED');
     if(request.method!=='GET')await lockApprovalWrites(ctx,Object.hasOwn(registry,p.action)?registry[p.action].policyChange??false:true);
