@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseMoney,formatMoney,roundRatio,roundingModes,allocateMoney,maximumMinorUnits } from '../src/core/money.ts';
+import { parseMoney,formatMoney,roundRatio,roundingModes,allocateMoney,maximumMinorUnits,readMinorUnits } from '../src/core/money.ts';
+
+test('stored integer minor units retain exact value despite numeric scale without relaxing posting bounds or rounding fractions',()=>{
+  for(const [value,expected] of [['100.00',100n],['-100.000',-100n],['-0.00',0n],['0001.000',1n],[(2n*maximumMinorUnits).toString()+'.00',2n*maximumMinorUnits]] as const)assert.equal(readMinorUnits(value),expected);
+  for(const value of ['1.001','1e2','Infinity','NaN','','.0','+1','1.','1\n',1 as unknown as string])assert.throws(()=>readMinorUnits(value),/INVALID_STORED_MINOR_UNITS/);
+  assert.throws(()=>parseMoney((2n*maximumMinorUnits).toString(),0),/INVALID_MONEY_AMOUNT/);
+});
 
 test('money parses exact decimals beyond floating-point safety with explicit currency precision and no silent rounding',()=>{
   assert.equal(parseMoney('9007199254740993.01',2),900719925474099301n);assert.equal(formatMoney(900719925474099301n,2),'9007199254740993.01');

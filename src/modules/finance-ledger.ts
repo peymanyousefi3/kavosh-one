@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { permissionScope } from '../core/approvals.ts';
 import { ApiError,requireScope } from '../core/policy.ts';
-import { formatMoneyTotal } from '../core/money.ts';
+import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { accountRow } from './finance.ts';
 
@@ -21,9 +21,9 @@ const totals=`SELECT coalesce(sum(l.amount_minor) FILTER(WHERE l.side='debit' AN
  FROM public.finance_journal_lines l JOIN public.finance_journals j ON j.academy_id=l.academy_id AND j.id=l.journal_id
  WHERE l.account_id=$1 AND j.posted_on<=$3::date`;
 function balances(row:Totals,unitScale:number){
-  const opening=BigInt(row.openingDebits)-BigInt(row.openingCredits),movement=BigInt(row.debits)-BigInt(row.credits);
+  const opening=readMinorUnits(row.openingDebits)-readMinorUnits(row.openingCredits),debits=readMinorUnits(row.debits),credits=readMinorUnits(row.credits),movement=debits-credits;
   const exact=(minor:bigint)=>({minor:minor.toString(),amount:formatMoneyTotal(minor,unitScale)});
-  return {basis:'posted_account_lines' as const,netConvention:'debits_minus_credits' as const,opening:exact(opening),debits:exact(BigInt(row.debits)),credits:exact(BigInt(row.credits)),movement:exact(movement),closing:exact(opening+movement),lineCount:row.lineCount,journalCount:row.journalCount};
+  return {basis:'posted_account_lines' as const,netConvention:'debits_minus_credits' as const,opening:exact(opening),debits:exact(debits),credits:exact(credits),movement:exact(movement),closing:exact(opening+movement),lineCount:row.lineCount,journalCount:row.journalCount};
 }
 export async function financeLedger(ctx:ApiContext):Promise<Reply|null>{
   const match=/^finance\/accounts\/([^/]+)\/(balance|ledger)$/.exec(ctx.path);if(!match)return null;
@@ -46,7 +46,7 @@ export async function financeLedger(ctx:ApiContext):Promise<Reply|null>{
    ORDER BY j.posted_on,j.id,l.line_number LIMIT $7)
    SELECT totals.*,coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY "postedOn","journalId","lineNumber") FROM page),'[]'::jsonb) AS entries FROM totals`,[id,q.from??null,q.through,paging.afterPostedOn??null,paging.afterJournalId??null,paging.afterLine??null,paging.limit+1])).rows[0];
   const rows=result.entries,next=rows.length>paging.limit?rows[paging.limit-1]:null;
-  return {status:200,body:{data:{...basis,...balances(result,account.unitScale),entries:rows.slice(0,paging.limit).map(l=>({...l,amount:formatMoneyTotal(BigInt(l.amountMinor),account.unitScale)}))},nextCursor:next?{afterPostedOn:next.postedOn,afterJournalId:next.journalId,afterLine:next.lineNumber}:null}};
+  return {status:200,body:{data:{...basis,...balances(result,account.unitScale),entries:rows.slice(0,paging.limit).map(l=>{const minor=readMinorUnits(l.amountMinor);return {...l,amountMinor:minor.toString(),amount:formatMoneyTotal(minor,account.unitScale)};})},nextCursor:next?{afterPostedOn:next.postedOn,afterJournalId:next.journalId,afterLine:next.lineNumber}:null}};
 }
 export const ledgerContract=[
   {path:'/api/v1/finance/accounts/{id}/balance',method:'get',summary:'Exact opening/movement/closing balance at an explicit date from every authorized account posting, not a bank balance or FX conversion',querySchema:balanceQuery},

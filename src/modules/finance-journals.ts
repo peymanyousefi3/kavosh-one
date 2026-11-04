@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,requireScope,scopeNonempty,type Capability } from '../core/policy.ts';
-import { parseMoney,formatMoney } from '../core/money.ts';
+import { parseMoney,formatMoney,readMinorUnits } from '../core/money.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { accountingDate } from './finance-periods.ts';
 
@@ -34,7 +34,7 @@ async function journal(ctx:ApiContext,id:string){
    JOIN public.finance_currencies c ON c.academy_id=a.academy_id AND c.id=a.currency_id
    JOIN public.finance_currency_revisions u ON u.academy_id=a.academy_id AND u.currency_id=a.currency_id AND u.version=a.currency_version
    WHERE l.journal_id=$1 ORDER BY l.line_number`,[id])).rows;
-  return {...found,lines:lines.map(l=>({...l,amount:formatMoney(BigInt(l.amountMinor),l.unitScale)}))};
+  return {...found,lines:lines.map(l=>{const minor=readMinorUnits(l.amountMinor);return {...l,amountMinor:minor.toString(),amount:formatMoney(minor,l.unitScale)};})};
 }
 async function period(ctx:ApiContext,input:z.infer<typeof reverse>,lock:boolean){
   if(lock)await ctx.db.query('SELECT id FROM public.finance_periods WHERE id=$1 FOR SHARE',[input.periodId]);
@@ -59,7 +59,7 @@ async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean
   for(const l of rawLines){
     const a=byId.get(l.accountId)!;
     if(!reversing){if(!a.active)throw new ApiError(409,'ACTIVE_ACCOUNT_REQUIRED');if(a.version!==l.accountVersion)throw new ApiError(409,'ACCOUNT_CHANGED');}
-    const minor=source?BigInt((l as typeof source.lines[number]).amountMinor):parseMoney((l as z.infer<typeof line>).amount,a.unitScale);if(minor<=0n)throw new ApiError(400,'POSITIVE_POSTING_AMOUNT_REQUIRED');
+    const minor=source?readMinorUnits((l as typeof source.lines[number]).amountMinor):parseMoney((l as z.infer<typeof line>).amount,a.unitScale);if(minor<=0n)throw new ApiError(400,'POSITIVE_POSTING_AMOUNT_REQUIRED');
     const key=a.currencyId,normalized=minor*10n**BigInt(18-a.unitScale);totals.set(key,(totals.get(key)??0n)+(l.side==='debit'?normalized:-normalized));lines.push({accountId:l.accountId,accountVersion:l.accountVersion,side:l.side,amountMinor:minor.toString(),note:l.note});
   }
   if([...totals.values()].some(total=>total!==0n))throw new ApiError(400,'JOURNAL_UNBALANCED');

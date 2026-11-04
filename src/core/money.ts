@@ -6,6 +6,14 @@ export const maximumMinorUnits=10n**38n-1n;
 const absolute=(value:bigint)=>value<0n?-value:value;
 function precision(scale:number){if(!Number.isInteger(scale)||scale<0||scale>18)throw new ApiError(400,'INVALID_CURRENCY_PRECISION');}
 function amount(value:bigint){if(typeof value!=='bigint'||absolute(value)>maximumMinorUnits)throw new ApiError(400,'INVALID_MONEY_AMOUNT');}
+// PostgreSQL numeric retains scale: the valid integral value 100.00 must not
+// make BigInt conversion fail. Never round fractional minor units or accept
+// Numbers, exponent notation or corrupt stored values. Aggregate sums may
+// exceed the separate per-posting bound enforced by parseMoney/database CHECK.
+export function readMinorUnits(value:string):bigint {
+  if(typeof value!=='string'||!/^-?\d+(?:\.0+)?$/.test(value))throw new Error('INVALID_STORED_MINOR_UNITS');
+  return BigInt(value.replace(/\.0+$/,''));
+}
 export function parseMoney(value:string,scale:number):bigint {
   precision(scale);if(typeof value!=='string'||value.length>80||!/^[-]?\d+(?:\.\d+)?$/.test(value))throw new ApiError(400,'INVALID_MONEY_AMOUNT');
   const negative=value.startsWith('-'),[whole,fraction='']=(negative?value.slice(1):value).split('.'),exact=fraction.replace(/0+$/,'');
