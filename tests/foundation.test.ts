@@ -109,9 +109,17 @@ check('refuses a privileged database connection even with a valid bearer', async
   assert.doesNotMatch(await response.text(),/UNSAFE_DATABASE_ROLE|token_hash|postgres/);
 });
 check('refuses runtime credentials that inherit table ownership', async f => {
-  await f.pg.exec('CREATE ROLE synthetic_owner NOLOGIN; ALTER TABLE public.people OWNER TO synthetic_owner; GRANT synthetic_owner TO kavosh_runtime');
-  assert.equal((await f.request('hubs')).status,503);
-  await f.pg.exec('REVOKE synthetic_owner FROM kavosh_runtime');
+  // Roles are cluster-wide even though each fixture database is disposable.
+  // Use an exact generated name and clean up on assertion failure as well.
+  const owner='synthetic_owner_'+randomUUID().replaceAll('-','');
+  await f.pg.exec(`CREATE ROLE ${owner} NOLOGIN`);
+  try{
+    await f.pg.exec(`ALTER TABLE public.people OWNER TO ${owner}; GRANT ${owner} TO kavosh_runtime`);
+    assert.equal((await f.request('hubs')).status,503);
+  }finally{
+    await f.pg.exec(`RESET ROLE; REVOKE ${owner} FROM kavosh_runtime; ALTER TABLE public.people OWNER TO CURRENT_USER; DROP ROLE ${owner}`);
+  }
+  assert.equal((await f.pg.query('SELECT 1 FROM pg_roles WHERE rolname=$1',[owner])).rows.length,0);
 });
 check('refuses a runtime identity that owns the public schema', async f => {
   await f.pg.exec('ALTER SCHEMA public OWNER TO kavosh_runtime');

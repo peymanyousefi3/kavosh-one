@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID,createHash } from 'node:crypto';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { operationsFixture } from './operations-fixture.ts';
 import { maximumMinorUnits,formatMoney,formatMoneyTotal } from '../src/core/money.ts';
 import { financialStatementSQL } from '../src/modules/financial-statements.ts';
@@ -39,7 +40,104 @@ check('as-posted kinds survive later chart reclassification and one account page
 });
 check('balance sheet does not duplicate a result that recorded entries already moved into equity',async f=>{
   await f.post(f.cash,f.income,'500.00');await f.post(f.expense,f.cash,'200.00');await f.post(f.income,f.equity,'500.00');await f.post(f.equity,f.expense,'200.00');
-  const s=await f.sheet();assert.equal(s.response.status,200);assert.equal(s.body.data.currencies[0].assets.amount,'300.00');assert.equal(s.body.data.currencies[0].equity.amount,'300.00');assert.equal(s.body.data.currencies[0].unclosedPostedResult.amount,'0.00');assert.equal(s.body.data.currencies[0].balanced,true);assert.equal(s.body.data.journalPurposeTreatment,'all_entries_included_not_yet_classified');
+  const s=await f.sheet();assert.equal(s.response.status,200);assert.equal(s.body.data.currencies[0].assets.amount,'300.00');assert.equal(s.body.data.currencies[0].equity.amount,'300.00');assert.equal(s.body.data.currencies[0].unclosedPostedResult.amount,'0.00');assert.equal(s.body.data.currencies[0].balanced,true);assert.equal(s.body.data.journalPurposeTreatment,'all_posted_purposes');
+});
+check('explicit closing transfers leave operating profit intact while balance-sheet and ledger totals include their real entries',async f=>{
+  await f.post(f.cash,f.income,'500.00');await f.post(f.expense,f.cash,'200.00');
+  for(const [debit,credit,amount] of [[f.income,f.equity,'500.00'],[f.equity,f.expense,'200.00']] as const){const r=await f.post(debit,credit,amount,{purpose:'closing',postedOn:'2026-12-31'});assert.equal(r.response.status,201,JSON.stringify(r.body));assert.equal(r.body.data.purpose,'closing');}
+  const p=(await f.profit()).body.data;assert.equal(p.currencies[0].income.amount,'500.00');assert.equal(p.currencies[0].expenses.amount,'200.00');assert.equal(p.currencies[0].netResult.amount,'300.00');assert.equal(p.journalPurposeTreatment,'activity_and_legacy_excluding_opening_closing');assert.equal(p.unclassifiedLineCount,'0');assert.equal(p.requiresPurposeReview,false);
+  const s=(await f.sheet()).body.data.currencies[0];assert.equal(s.assets.amount,'300.00');assert.equal(s.equity.amount,'300.00');assert.equal(s.unclosedPostedResult.amount,'0.00');assert.equal(s.balanced,true);
+  const ledger=await f.request('finance/accounts/'+f.income.id+'/balance?through=2026-12-31');assert.equal(ledger.body.data.closing.minor,'0');
+  const close=(await f.request('finance/journals')).body.data.find((j:{purpose:string})=>j.purpose==='closing');
+  const reversed=await f.request('finance/journals/'+close.id+'/reverse',{...f.base,postedOn:'2026-12-31'});assert.equal(reversed.response.status,201,JSON.stringify(reversed.body));assert.equal(reversed.body.data.purpose,'closing');assert.equal((await f.profit()).body.data.currencies[0].netResult.amount,'300.00');assert.equal((await f.sheet()).body.data.currencies[0].balanced,true);
+});
+check('purpose boundary dates, permitted account kinds and reserved legacy values cannot be bypassed through journal input',async f=>{
+  assert.equal((await f.post(f.cash,f.equity,'100.00',{purpose:'opening',postedOn:'2026-01-01'})).response.status,201);
+  assert.equal((await f.post(f.cash,f.equity,'100.00',{purpose:'opening'})).body.error.code,'PURPOSE_DATE_INVALID');
+  assert.equal((await f.post(f.income,f.equity,'100.00',{purpose:'closing'})).body.error.code,'PURPOSE_DATE_INVALID');
+  assert.equal((await f.post(f.cash,f.income,'100.00',{purpose:'opening',postedOn:'2026-01-01'})).body.error.code,'PURPOSE_ACCOUNT_INVALID');
+  assert.equal((await f.post(f.cash,f.equity,'100.00',{purpose:'closing',postedOn:'2026-12-31'})).body.error.code,'PURPOSE_ACCOUNT_INVALID');
+  for(const purpose of ['legacy_unclassified','arbitrary',null])assert.equal((await f.post(f.cash,f.equity,'100.00',{purpose})).response.status,400);
+  const opening=(await f.request('finance/journals')).body.data[0],reversed=await f.request('finance/journals/'+opening.id+'/reverse',{...f.base,postedOn:'2026-06-15'});assert.equal(reversed.response.status,201);assert.equal(reversed.body.data.purpose,'opening');assert.equal((await f.sheet()).body.data.currencies.length,0);
+});
+check('native journal purpose constraints reject forged classifications, dates, account kinds and changes independently of the API',async f=>{
+  const closing=await f.post(f.income,f.equity,'100.00',{purpose:'closing',postedOn:'2026-12-31'});assert.equal(closing.response.status,201);
+  await f.pg.exec('SET ROLE kavosh_runtime');try{
+    await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
+    await assert.rejects(f.pg.exec("UPDATE public.finance_journals SET purpose='activity'"),/permission denied/i);
+    const invalid=async(purpose:string,date:string,debit:string,credit:string,pattern:RegExp,reverses:string|null=null)=>{
+      const id=randomUUID();await f.pg.exec('BEGIN');try{
+        await assert.rejects((async()=>{
+          await f.pg.query("INSERT INTO public.finance_journals(academy_id,id,period_id,period_version,posted_on,description,line_count,posted_by,approval_id,purpose,reverses_id) VALUES($1,$2,$3,1,$4,'Synthetic invalid purpose',2,$5,$6,$7,$8)",[f.a,id,f.period.id,date,f.actors.master.person,closing.body.approval.id,purpose,reverses]);
+          await f.pg.query("INSERT INTO public.finance_journal_lines(academy_id,journal_id,line_number,account_id,account_version,side,amount_minor) VALUES($1,$2,1,$3,1,'debit',10000),($1,$2,2,$4,1,'credit',10000)",[f.a,id,debit,credit]);
+          await f.pg.exec('COMMIT');
+        })(),pattern);
+      }finally{await f.pg.exec('ROLLBACK');}
+    };
+    await invalid('opening','2026-06-01',f.cash.id,f.equity.id,/FINANCE_PURPOSE_DATE_INVALID/);
+    await invalid('closing','2026-06-01',f.income.id,f.equity.id,/FINANCE_PURPOSE_DATE_INVALID/);
+    await invalid('opening','2026-01-01',f.cash.id,f.income.id,/FINANCE_PURPOSE_ACCOUNT_INVALID/);
+    await invalid('closing','2026-12-31',f.cash.id,f.equity.id,/FINANCE_PURPOSE_ACCOUNT_INVALID/);
+    await invalid('legacy_unclassified','2026-06-01',f.cash.id,f.equity.id,/FINANCE_LEGACY_PURPOSE_RESERVED/);
+    await invalid('activity','2026-12-31',f.equity.id,f.income.id,/FINANCE_REVERSAL_PURPOSE_INVALID/,closing.body.data.id);
+    assert.equal((await f.pg.query('SELECT count(*)::integer AS count FROM public.finance_journals')).rows[0].count,1);
+  }finally{await f.pg.exec('RESET ROLE');}
+});
+check('closing purpose is bound to the reviewed payload and critical audit, with upper approval and stale-account protection',async f=>{
+  for(const capability of ['journals.view','journals.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.managerRole,capability]);
+  const input={...f.base,purpose:'closing',postedOn:'2026-12-31',lines:[{accountId:f.income.id,accountVersion:1,side:'debit',amount:'100.00'},{accountId:f.equity.id,accountVersion:1,side:'credit',amount:'100.00'}]},key=randomUUID();
+  const pending=await f.request('finance/journals',input,'manager',{key});assert.equal(pending.response.status,202);assert.equal((await f.request('finance/journals')).body.data.length,0);assert.deepEqual((await f.request('finance/journals',input,'manager',{key})).body,pending.body);
+  assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,403);
+  const applied=await f.approve(pending.body.approval.id);assert.equal(applied.response.status,200);assert.equal(applied.body.data.purpose,'closing');assert.equal((await f.request('finance/journals/'+applied.body.data.id)).body.data.purpose,'closing');
+  const event=(await f.request('audit-events')).body.data.find((e:{entity_id:string;action:string})=>e.entity_id===applied.body.data.id&&e.action==='finance.journal.posted');assert.ok(event);assert.equal(event.changes.purpose,'closing');assert.equal(event.changes.severity,'critical');
+  const next=await f.request('finance/journals',input,'manager');assert.equal(next.response.status,202);
+  await f.request('finance/accounts/'+f.income.id+'/change',{expectedVersion:1,kind:'asset',reason:'Synthetic prospective chart change invalidates pending close'});
+  const stale=await f.approve(next.body.approval.id);assert.equal(stale.response.status,409);assert.equal(stale.body.approval.decisionCode,'DEPENDENCIES_CHANGED');assert.equal((await f.request('finance/journals')).body.data.length,1);
+});
+test('actual schema31 journals remain unclassified on migration and warnings survive zero balances, filters and exact reversals',async()=>{
+  const f=await operationsFixture({throughSchema:31}),approval=randomUUID(),currency=randomUUID(),period=randomUUID(),cash=randomUUID(),income=randomUUID(),first=randomUUID(),second=randomUUID();
+  try{
+    // Seed actual old-schema rows as the test owner, without installing or
+    // backdating a purpose. The new API correctly refuses this old schema.
+    assert.equal((await f.request('finance/journals')).response.status,503);
+    await f.pg.exec('BEGIN');try{
+      await f.pg.query("INSERT INTO public.approval_requests(academy_id,id,requester_id,requester_kind,credential_snapshot,grants_hash,dependency_hash,review_context,action,target_id,target_version,payload,scope,status,reviewer_id,decided_at) VALUES($1,$2,$3,'human','{}',repeat('0',64),repeat('0',64),'{}','synthetic.seed',$2,0,'{}','{}','applied',$3,now())",[f.a,approval,f.actors.master.person]);
+      await f.pg.query("INSERT INTO public.finance_currencies(academy_id,id,code,created_by) VALUES($1,$2,'CAD',$3)",[f.a,currency,f.actors.master.person]);
+      await f.pg.query("INSERT INTO public.finance_currency_revisions(academy_id,currency_id,version,name,symbol,unit_scale,active,changed_by,approval_id,reason) VALUES($1,$2,1,'Synthetic legacy CAD','$',2,true,$3,$4,'Synthetic old evidence')",[f.a,currency,f.actors.master.person,approval]);
+      await f.pg.query("INSERT INTO public.finance_periods(academy_id,id,starts_on,ends_on,created_by) VALUES($1,$2,'2026-01-01','2026-12-31',$3)",[f.a,period,f.actors.master.person]);
+      await f.pg.query("INSERT INTO public.finance_period_revisions(academy_id,period_id,version,name,state,changed_by,approval_id,reason) VALUES($1,$2,1,'Synthetic old year','open',$3,$4,'Synthetic old evidence')",[f.a,period,f.actors.master.person,approval]);
+      for(const [id,code,kind,side] of [[cash,'1000','asset','debit'],[income,'4000','income','credit']]){
+        await f.pg.query('INSERT INTO public.finance_accounts(academy_id,id,hub_id,currency_id,currency_version,code,created_by) VALUES($1,$2,$3,$4,1,$5,$6)',[f.a,id,f.hub,currency,code,f.actors.master.person]);
+        await f.pg.query("INSERT INTO public.finance_account_revisions(academy_id,account_id,version,code,name,description,kind,normal_balance,active,changed_by,approval_id,reason) VALUES($1,$2,1,$3,'Synthetic old account','',$4,$5,true,$6,$7,'Synthetic old evidence')",[f.a,id,code,kind,side,f.actors.master.person,approval]);
+      }
+      for(const [id,debit,credit] of [[first,cash,income],[second,income,cash]]){
+        await f.pg.query("INSERT INTO public.finance_journals(academy_id,id,period_id,period_version,posted_on,description,line_count,posted_by,approval_id) VALUES($1,$2,$3,1,'2026-06-01','Synthetic old journal',2,$4,$5)",[f.a,id,period,f.actors.master.person,approval]);
+        await f.pg.query("INSERT INTO public.finance_journal_lines(academy_id,journal_id,line_number,account_id,account_version,side,amount_minor) VALUES($1,$2,1,$3,1,'debit',10000),($1,$2,2,$4,1,'credit',10000)",[f.a,id,debit,credit]);
+      }
+      await f.pg.exec('COMMIT');
+    }catch(error){await f.pg.exec('ROLLBACK');throw error;}
+    const before=(await f.pg.query('SELECT to_jsonb(j) AS original FROM public.finance_journals j ORDER BY id')).rows;
+    await f.pg.exec(await readFile(new URL('../db/migrations/032_journal_purposes.sql',import.meta.url),'utf8'));
+    assert.deepEqual((await f.pg.query("SELECT to_jsonb(j)-'purpose' AS original FROM public.finance_journals j ORDER BY id")).rows,before);
+    assert.deepEqual((await f.pg.query('SELECT DISTINCT purpose FROM public.finance_journals')).rows,[{purpose:'legacy_unclassified'}]);
+    const profit=await f.request('reports/finance/profit-loss?from=2026-01-01&through=2026-12-31&limit=1');assert.equal(profit.response.status,200,JSON.stringify(profit.body));assert.equal(profit.body.data.currencies.length,0);assert.equal(profit.body.data.requiresPurposeReview,true);assert.equal(profit.body.data.unclassifiedLineCount,'2');
+    const sheet=await f.request('reports/finance/balance-sheet?through=2026-12-31');assert.equal(sheet.body.data.unclassifiedLineCount,'4');assert.equal(sheet.body.data.requiresPurposeReview,true);
+    const empty=await f.request('reports/finance/profit-loss?from=2026-01-01&through=2026-12-31&accountIds='+randomUUID());assert.equal(empty.body.data.unclassifiedLineCount,'0');assert.equal(empty.body.data.requiresPurposeReview,false);
+    const reversed=await f.request('finance/journals/'+first+'/reverse',{periodId:period,periodVersion:1,postedOn:'2026-07-01',description:'Synthetic legacy inverse',reason:'Preserve unknown purpose'});assert.equal(reversed.response.status,201,JSON.stringify(reversed.body));assert.equal(reversed.body.data.purpose,'legacy_unclassified');assert.equal((await f.request('reports/finance/profit-loss?from=2026-01-01&through=2026-12-31')).body.data.unclassifiedLineCount,'3');
+  }finally{await f.pg.close();}
+});
+check('pre-purpose pending journal payloads require fresh review instead of silently defaulting to activity after upgrade',async f=>{
+  for(const capability of ['journals.view','journals.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.managerRole,capability]);
+  const input={...f.base,lines:[{accountId:f.cash.id,accountVersion:1,side:'debit',amount:'100.00'},{accountId:f.income.id,accountVersion:1,side:'credit',amount:'100.00'}]},pending=await f.request('finance/journals',input,'manager');assert.equal(pending.response.status,202);
+  // Test owner reconstructs the exact former dependency shape/order, removing
+  // only fields that did not exist before the purpose upgrade. Live users
+  // cannot edit immutable pending payloads, contexts or their stored hashes.
+  const context=(await f.pg.query<{review_context:{period:{version:number;state:string;starts_on:string;ends_on:string};accounts:{id:string;version:number;active:boolean;currency_version:number}[]}}>('SELECT review_context FROM public.approval_requests WHERE id=$1',[pending.body.approval.id])).rows[0].review_context;
+  const oldContext={period:{version:context.period.version,state:context.period.state,starts_on:context.period.starts_on,ends_on:context.period.ends_on},accounts:context.accounts.map(a=>({id:a.id,version:a.version,active:a.active,currency_version:a.currency_version})),source:null};
+  const oldHash=createHash('sha256').update(JSON.stringify(oldContext)).digest('hex');
+  await f.pg.query("UPDATE public.approval_requests SET payload=payload-'purpose',review_context=$2::jsonb,dependency_hash=$3 WHERE id=$1",[pending.body.approval.id,JSON.stringify(oldContext),oldHash]);
+  const reviewed=await f.approve(pending.body.approval.id);assert.equal(reviewed.response.status,409,JSON.stringify(reviewed.body));assert.equal(reviewed.body.approval.decisionCode,'DEPENDENCIES_CHANGED');assert.equal((await f.request('finance/journals')).body.data.length,0);
+  const fresh=await f.request('finance/journals',{...input,purpose:'activity'},'manager');assert.equal(fresh.response.status,202);assert.equal((await f.approve(fresh.body.approval.id)).response.status,200);
 });
 check('narrow financial views do not invent counterparties or expose foreign-hub activity and require all three permissions',async f=>{
   const other=await f.account('4000','income',{hubId:f.otherHub});await f.post(f.cash,other,'100.00');const profit=await f.profit('from=2026-01-01&through=2026-12-31','staff'),sheet=await f.sheet('through=2026-12-31','staff');assert.equal(profit.response.status,200);assert.equal(profit.body.data.currencies.length,0);assert.equal(profit.body.data.scopeMayOmitCounterparties,true);assert.equal(sheet.body.data.currencies[0].assets.amount,'100.00');assert.equal(sheet.body.data.currencies[0].balanced,false);assert.equal(sheet.body.data.currencies[0].difference.amount,'100.00');assert.ok(!JSON.stringify(sheet.body).includes(other.id));
