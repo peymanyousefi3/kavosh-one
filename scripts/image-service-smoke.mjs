@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import sharp from 'sharp';
 import { assertIsolatedImageRuntime,imageServiceSocket } from '../src/files/image-runtime.js';
 import { validateImageViaService } from '../src/files/image-service.js';
 
 // Runs INSIDE the actual resource-limited decoder image, not the web image.
 await assertIsolatedImageRuntime();
+// Native libvips sets VIPSHOME during import. Check the clean production
+// runtime BEFORE loading the smoke client's trusted fixture generator, just
+// as the actual service checks its environment before forking native codecs.
+const {default:sharp}=await import('sharp');
 const validate=bytes=>validateImageViaService(bytes,'image/png',{socketPath:imageServiceSocket});
 const png=await sharp({create:{width:8,height:4,channels:3,background:'red'}}).png().toBuffer();
 let ready=false;for(let i=0;i<100;i++){try{const r=await validate(png);assert.equal(r.outcome,'decoded');ready=true;break;}catch{await delay(100);}}
