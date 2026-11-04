@@ -5,14 +5,9 @@ import { createHash } from 'node:crypto';
 import { Readable,Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ApiError } from '../core/policy.ts';
+import { r2Connection as connection,type R2Connection } from './r2-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
-const connection=z.object({accountId:z.string().regex(/^[a-fA-F0-9]{32}$/).transform(v=>v.toLowerCase()),
-  jurisdiction:z.enum(['default','eu']),bucket:z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/).refine(v=>!v.includes('..')),
-  accessKeyId:z.string().min(1).max(200).regex(/^[\x21-\x7e]+$/),secretAccessKey:z.string().min(16).max(4096).regex(/^[\x21-\x7e]+$/),
-  maximumUploadBytes:z.number().int().min(1).max(4_294_967_296)
-}).strict();
-export type R2Connection=z.input<typeof connection>;
 const uploadMetadata=z.object({contentType:z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/),bytes:z.number().int().positive().safe()}).strict();
 const inspectionClaims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional()}).strict();
 
@@ -35,11 +30,18 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     const id=uuid.safeParse(fileId);if(!id.success)throw new ApiError(400,'INVALID_FILE_ID');
     return `academies/${academy.data}/${stage}/${id.data}`;
   }
-  function expiry(value:number,maximum:number) {
+  function expiry(value:number,maximum:number,issuedAt?:string) {
     if(!Number.isInteger(value)||value<1||value>maximum)throw new ApiError(400,'INVALID_FILE_LINK_EXPIRY');
-    const signingDate=new Date(Math.floor(Date.now()/1000)*1000);return {expiresIn:value,signingDate,expiresAt:new Date(signingDate.getTime()+value*1000).toISOString()};
+    const parsed=issuedAt===undefined?null:z.iso.datetime().safeParse(issuedAt);
+    if(parsed&&!parsed.success)throw new ApiError(400,'INVALID_FILE_LINK_EXPIRY');
+    const signingDate=new Date(parsed?.success?parsed.data:Math.floor(Date.now()/1000)*1000),end=signingDate.getTime()+value*1000;
+    if(signingDate.getTime()%1000!==0||signingDate.getTime()>Date.now()+5000)throw new ApiError(400,'INVALID_FILE_LINK_EXPIRY');
+    if(end<=Date.now())throw new ApiError(410,'FILE_LINK_EXPIRED');
+    return {expiresIn:value,signingDate,expiresAt:new Date(end).toISOString()};
   }
   return {
+    storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),
+    maximumUploadBytes:c.maximumUploadBytes,
     async inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000) {
       const objectKey=key('quarantine',fileId),input=inspectionClaims.safeParse(claims);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
@@ -70,8 +72,8 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
         throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');
       }finally{clearTimeout(deadline);controller.abort();body?.destroy();meter?.destroy();}
     },
-    async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300) {
-      const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300);
+    async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300,issuedAt?:string) {
+      const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300,issuedAt);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_UPLOAD_METADATA');
       // Signed If-None-Match prevents a still-valid grant overwriting the same
       // object after scan. Never delete quarantine before its grant expires.

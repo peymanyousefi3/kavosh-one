@@ -7,8 +7,9 @@ import { business } from '../src/modules/business.ts';
 import type { Capability } from '../src/core/policy.ts';
 import { mintToken,hashToken } from '../src/core/tokens.ts';
 import type { Database } from '../src/core/database.ts';
+import type { R2UploadConnections } from '../src/integrations/r2-config.ts';
 
-export async function operationsFixture() {
+export async function operationsFixture(options:{connections?:R2UploadConnections}={}) {
   const pg=await testDatabase();
   try {
     for(const file of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort())
@@ -56,7 +57,7 @@ export async function operationsFixture() {
     const api=createApi(database,async request=>{
       const actor=actors[request.headers.get('x-test-actor')??''];
       return actor?{userId:actor.user,sessionId:actor.session,academyId:request.headers.get('x-academy-id')??a}:null;
-    },business);
+    },ctx=>business(ctx,options.connections));
     async function request(path:string,body?:unknown,as='master',options:{key?:string;academy?:string;method?:string}={}) {
       try {
         const response=await api(new Request('https://academy.example/api/v1/'+path,{method:options.method??(body===undefined?'GET':'POST'),headers:{

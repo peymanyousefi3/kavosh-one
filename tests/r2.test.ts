@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash,createHmac } from 'node:crypto';
 import { test } from 'node:test';
-import { privateR2,type R2Connection } from '../src/integrations/r2.ts';
+import { privateR2 } from '../src/integrations/r2.ts';
+import type { R2Connection } from '../src/integrations/r2-config.ts';
 
 const academy='8fbe4060-32ec-46a9-a97d-78ea54fe50e6',other='aa3135f8-3dfe-4e79-9b67-ab4098319728',file='73e6a708-ad23-484b-9b12-91db85854593';
 const config:R2Connection={accountId:'a'.repeat(32),jurisdiction:'default',bucket:'synthetic-private-files',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1000000};
@@ -78,4 +79,14 @@ test('R2 tenant bindings stay separate and closed service handles cannot issue m
     assert.notEqual((await a.store.cleanDownload(file)).url,(await b.store.cleanDownload(file)).url);a.store.close();a.store.close();assert.equal(a.destroyed(),1);
     await assert.rejects(a.store.cleanDownload(file),{code:'R2_CONNECTION_CLOSED',status:503});await assert.rejects(a.store.quarantineUpload(file,{contentType:'image/png',bytes:1}),{code:'R2_CONNECTION_CLOSED',status:503});
   }finally{a.store.close();b.store.close();}
+});
+test('R2 upload grants can be reconstructed at an original whole-second issue time but cannot renew expired or future-dated intent',async()=>{
+  const f=fixture();try {
+    const now=Math.floor(Date.now()/1000)*1000,issuedAt=new Date(now-1000).toISOString(),metadata={contentType:'text/plain',bytes:10};
+    const a=await f.store.quarantineUpload(file,metadata,300,issuedAt),b=await f.store.quarantineUpload(file,metadata,300,issuedAt);assert.deepEqual(a,b);assert.equal(a.expiresAt,new Date(now+299000).toISOString());
+    assert.equal(signature(a.url,'PUT',a.headers),new URL(a.url).searchParams.get('X-Amz-Signature'));
+    await assert.rejects(f.store.quarantineUpload(file,metadata,300,new Date(now-301000).toISOString()),{code:'FILE_LINK_EXPIRED',status:410});
+    for(const value of ['invalid',new Date(now+60000).toISOString(),new Date(now+1).toISOString()])await assert.rejects(f.store.quarantineUpload(file,metadata,300,value),{code:'INVALID_FILE_LINK_EXPIRY',status:400});
+    assert.equal(f.requests(),0);
+  }finally{f.store.close();}
 });

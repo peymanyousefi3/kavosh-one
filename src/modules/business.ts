@@ -11,11 +11,12 @@ import { enrollments,enrollmentActions,enrollmentsContract } from './enrollments
 import { agreements,agreementActions,agreementsContract } from './agreements.ts';
 import { files,filesContract } from './files.ts';
 import { storage,storageActions,storageContract } from './storage.ts';
+import type { R2UploadConnections } from '../integrations/r2-config.ts';
 
 // All modules use the same authentication, scopes, transaction, audit and
 // approval registry. No endpoint gets a parallel, weaker authorization path.
 const approvalActions={...administrationActions,...sessionActions,...familyActions,...enrollmentActions,...agreementActions,...storageActions};
-export async function business(ctx:ApiContext):Promise<Reply|null> {
-  return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions)??await enrollments(ctx,approvalActions)??await agreements(ctx,approvalActions)??await files(ctx)??await storage(ctx,approvalActions);
+export async function business(ctx:ApiContext,connections?:R2UploadConnections):Promise<Reply|null> {
+  return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions)??await enrollments(ctx,approvalActions)??await agreements(ctx,approvalActions)??await files(ctx)??await storage(ctx,approvalActions,connections);
 }
 export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract,...enrollmentsContract,...agreementsContract,...filesContract,...storageContract];

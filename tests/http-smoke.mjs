@@ -8,6 +8,7 @@ const env={...process.env};
 // This check deliberately runs with no live credentials or database.
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
 delete env.IDENTITY_DATABASE_URL;delete env.AUTH_SECRET;delete env.EDGE_AUTH_SECRET;
+delete env.R2_UPLOAD_CONNECTIONS;delete env.R2_UPLOAD_LINKS_ENABLED;
 const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
 let output='';
 child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
@@ -28,7 +29,9 @@ try {
     assert.match(response.headers.get('content-security-policy')??'',/frame-ancestors 'none'/);
     assert.doesNotMatch(await response.text(),/DATABASE_URL|password|stack|postgresql:\/\//);
   }
-  const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');
+  const upload=await fetch(base+'/api/v1/files/73e6a708-ad23-484b-9b12-91db85854593/upload-link',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({expectedMetadataVersion:1})});
+  assert.equal(upload.status,401);assert.equal(upload.headers.get('cache-control'),'no-store');assert.doesNotMatch(await upload.text(),/X-Amz|secretAccessKey|storageTargetId|stack/);
+  const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
   console.log('Production HTTP smoke checks passed: liveness, fail-closed readiness, authorization, cache/security headers and API contract.');
 } catch(error) {
   // Only generic startup diagnostics are allowed; this server has no secrets.
