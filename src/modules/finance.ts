@@ -34,7 +34,7 @@ async function currencyRow(ctx:ApiContext,id:string,edit=false,lock=false):Promi
 function accountScope(ctx:ApiContext){const s=allowed(ctx,'accounts.view');return [s.all,s.hubs,s.excludedHubs??[],!s.excludedAreas?.length];}
 const selected=`((a.hub_id IS NULL AND $1::boolean AND cardinality($3::uuid[])=0 AND $4::boolean)
  OR(a.hub_id IS NOT NULL AND ($1::boolean OR a.hub_id=ANY($2::uuid[])) AND NOT a.hub_id=ANY($3::uuid[])))`;
-async function accountRow(ctx:ApiContext,id:string,edit=false,lock=false):Promise<Account> {
+export async function accountRow(ctx:ApiContext,id:string,edit=false,lock=false):Promise<Account> {
   const params=[...accountScope(ctx),id];const row=(await ctx.db.query<Account>('SELECT '+accountFieldsSQL+' FROM public.finance_account_catalogue a WHERE '+selected+' AND a.id=$5',params)).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');if(edit)requireScope(allowed(ctx,'accounts.edit'),row.hubId??undefined);
   if(lock){await ctx.db.query('SELECT id FROM public.finance_accounts WHERE id=$1 FOR UPDATE',[id]);return accountRow(ctx,id,edit);}

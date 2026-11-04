@@ -13,7 +13,13 @@ export function parseMoney(value:string,scale:number):bigint {
   const result=BigInt(whole+exact.padEnd(scale,'0'))*(negative?-1n:1n);amount(result);return result;
 }
 export function formatMoney(value:bigint,scale:number):string {
-  precision(scale);amount(value);const digits=absolute(value).toString().padStart(scale+1,'0'),sign=value<0n?'-':'';
+  amount(value);return formatMoneyTotal(value,scale);
+}
+// A sum of valid posted lines can exceed the per-line 38-digit bound. Keep
+// aggregates exact as well; this does not relax parseMoney's posting limit.
+export function formatMoneyTotal(value:bigint,scale:number):string {
+  precision(scale);if(typeof value!=='bigint')throw new ApiError(400,'INVALID_MONEY_AMOUNT');
+  const digits=absolute(value).toString().padStart(scale+1,'0'),sign=value<0n?'-':'';
   return sign+(scale?digits.slice(0,-scale)+'.'+digits.slice(-scale):digits);
 }
 export const roundingModes=['toward_zero','away_from_zero','floor','ceil','half_away','half_even'] as const;
