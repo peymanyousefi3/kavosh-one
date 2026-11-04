@@ -7,11 +7,12 @@ import { staff,staffContract } from './staff.ts';
 import { students,studentsContract } from './students.ts';
 import { guardians,guardiansContract } from './guardians.ts';
 import { families,familyActions,familiesContract } from './families.ts';
+import { enrollments,enrollmentActions,enrollmentsContract } from './enrollments.ts';
 
 // All modules use the same authentication, scopes, transaction, audit and
 // approval registry. No endpoint gets a parallel, weaker authorization path.
-const approvalActions={...administrationActions,...sessionActions,...familyActions};
+const approvalActions={...administrationActions,...sessionActions,...familyActions,...enrollmentActions};
 export async function business(ctx:ApiContext):Promise<Reply|null> {
-  return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions);
+  return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions)??await enrollments(ctx,approvalActions);
 }
-export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract];
+export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract,...enrollmentsContract];

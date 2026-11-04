@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
-import { ApiError,requireScope,type Capability,type Scope,type ResourceRef,type AreaRef,type Grant,scopeFor,scopeContains,scopeAllowsRef,featureScope,scopeNonempty as nonempty } from '../core/policy.ts';
+import { ApiError,requireScope,type Capability,type Scope,type ResourceRef,type AreaRef,type Grant,scopeFor,scopeContains,scopeAllowsRef,featureScope,areaContains,scopeNonempty as nonempty } from '../core/policy.ts';
 import { selectedAreas,hubsForAreas,areaDependencies } from '../core/geography.ts';
 import { propose,approvalRoutes,approvalContract,master,permissionScope,lockApprovalWrites,type Proposal,type ApprovalRegistry,type ApprovalAction } from '../core/approvals.ts';
 
@@ -102,11 +102,21 @@ async function selectedScope(ctx:ApiContext,item:z.infer<typeof assignment>):Pro
   const areas=await selectedAreas(ctx.db,item),geoHubs=await hubsForAreas(ctx.db,areas);
   return {all:item.allHubs,hubs:[...new Set([...item.hubIds,...geoHubs])],...classes.length?{classes}:{},...people.length?{people}:{},...areas.length?{areas}:{}};
 }
+function assertFeatureDelegation(ctx:ApiContext,cap:Capability,target:Scope) {
+  const source=permissionScope(ctx,cap);
+  // A selected-student registration grant follows that student's classes,
+  // including future hubs; primary-hub authority alone cannot delegate it.
+  if(cap==='registrations.view'&&target.people?.length&&(!ctx.credential.all_hubs||
+    (!source.all&&target.people.some(p=>!source.people?.some(s=>s.id===p.id)))||
+    source.excludedHubs?.some(h=>!target.excludedHubs?.includes(h))||
+    source.excludedAreas?.some(a=>!target.excludedAreas?.some(t=>areaContains(t,a)))))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
+  if(!scopeContains(source,target))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
+}
 async function validateDelegatedAssignment(ctx:ApiContext,item:z.infer<typeof assignment>,permissions:Permission[],checkFeatureRights=true) {
   const targetScope=await selectedScope(ctx,item);
   if(!scopeContains(permissionScope(ctx,'access.edit'),targetScope))throw new ApiError(403,'DELEGATION_EXCEEDS_SCOPE');
   if(permissions.length&&!permissions.some(p=>nonempty(featureScope(targetScope,p.capability as Capability))))throw new ApiError(400,'INVALID_SCOPE_FOR_ROLE');
-  if(checkFeatureRights)for(const p of permissions)if(!scopeContains(permissionScope(ctx,p.capability as Capability),featureScope(targetScope,p.capability as Capability)))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
+  if(checkFeatureRights)for(const p of permissions)assertFeatureDelegation(ctx,p.capability as Capability,featureScope(targetScope,p.capability as Capability));
   return targetScope;
 }
 function actionCapability(action:Action):Capability{return action.startsWith('role.')?'roles.edit':'access.edit';}
@@ -148,7 +158,7 @@ async function validateAction(ctx:ApiContext,action:Action,targetId:string,input
     // Evaluate the complete replacement, so an allow + explicit-deny bundle can
     // safely match the delegator's own limits without ever delegating away a deny.
     const caps=[...new Set(nextGrants.map(g=>g.capability))],ceiling={...ctx.credential,capabilities:caps,all_hubs:true,hub_ids:[]};
-    for(const cap of caps)if(!scopeContains(permissionScope(ctx,cap),scopeFor(ceiling,nextGrants,cap)))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
+    for(const cap of caps)assertFeatureDelegation(ctx,cap,scopeFor(ceiling,nextGrants,cap));
     // Replacing access must also cover what would be removed, not just new grants.
     const previous=await assignments(ctx,targetId);
     for(const item of previous) {

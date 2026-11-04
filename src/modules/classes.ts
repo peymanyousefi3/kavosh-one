@@ -36,7 +36,7 @@ export async function classRow(ctx:ApiContext,id:string,capability:Capability='c
   const s=scope(ctx,capability),row=(await ctx.db.query<ClassRow>('SELECT * FROM public.classes WHERE '+permittedClass('id')+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(s),id,...classIds(s)])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');return row;
 }
-async function sessionRow(ctx:ApiContext,id:string,capability:Capability='classes.view',lock=false) {
+export async function sessionRow(ctx:ApiContext,id:string,capability:Capability='classes.view',lock=false) {
   const s=scope(ctx,capability),row=(await ctx.db.query<SessionRow>('SELECT * FROM public.class_sessions WHERE '+permittedClass('class_id')+' AND id=$4'+(lock?' FOR UPDATE':''),[...scopeParams(s),id,...classIds(s)])).rows[0];
   if(!row)throw new ApiError(404,'NOT_FOUND');return row;
 }
