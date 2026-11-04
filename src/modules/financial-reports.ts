@@ -6,7 +6,7 @@ import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),kinds=['asset','liability','equity','income','expense'] as const;
-const ids=z.string().max(8000).transform(v=>v.split(',')).pipe(z.array(uuid).min(1).max(200)).refine(v=>new Set(v).size===v.length,'Select each record once.');
+const ids=z.string().max(8000).transform(v=>v.split(',')).pipe(z.array(uuid).min(1).max(200)).refine(v=>new Set(v).size===v.length,'Select each record once.').describe('Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.');
 const query=z.object({through:accountingDate,hubIds:ids.optional(),currencyIds:ids.optional(),accountIds:ids.optional(),includeZero:z.enum(['true','false']).default('false').transform(v=>v==='true'),
   limit:z.coerce.number().int().min(1).max(100).default(50),afterKind:z.enum(kinds).optional(),afterCode:z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/).optional(),afterId:uuid.optional()}).strict()
   .refine(v=>[v.afterKind,v.afterCode,v.afterId].filter(v=>v!==undefined).length%3===0,'Provide all three cursor fields together.');
@@ -20,12 +20,11 @@ function authority(ctx:ApiContext){
   const global=all&&!excluded.length&&!scopes.some(s=>s.excludedAreas?.length);
   return {all,hubs,excluded,global};
 }
-const reportSQL=`WITH selected AS MATERIALIZED (
- SELECT a.id,a.version,a.hub_id,a.code,a.name,a.translations,a.kind,a.normal_balance,a.currency_id,a.currency_version,a.currency_code,a.unit_scale
+export const financialAccountSelectionSQL=`SELECT a.id,a.version,a.hub_id,a.code,a.name,a.translations,a.kind,a.normal_balance,a.currency_id,a.currency_version,a.currency_code,a.unit_scale
  FROM public.finance_account_catalogue a
  WHERE ((a.hub_id IS NULL AND $4::boolean) OR(a.hub_id IS NOT NULL AND ($1::boolean OR a.hub_id=ANY($2::uuid[])) AND NOT a.hub_id=ANY($3::uuid[])))
-  AND ($6::uuid[] IS NULL OR a.hub_id=ANY($6)) AND ($7::uuid[] IS NULL OR a.currency_id=ANY($7)) AND ($8::uuid[] IS NULL OR a.id=ANY($8))
-),line_balances AS (
+  AND ($6::uuid[] IS NULL OR a.hub_id=ANY($6)) AND ($7::uuid[] IS NULL OR a.currency_id=ANY($7)) AND ($8::uuid[] IS NULL OR a.id=ANY($8))`;
+const reportSQL=`WITH selected AS MATERIALIZED (${financialAccountSelectionSQL}),line_balances AS (
  SELECT l.account_id,sum(CASE WHEN l.side='debit' THEN l.amount_minor ELSE -l.amount_minor END) AS closing_minor
  FROM public.finance_journal_lines l JOIN selected s ON s.id=l.account_id
  JOIN public.finance_journals j ON j.academy_id=l.academy_id AND j.id=l.journal_id WHERE j.posted_on<=$5::date GROUP BY l.account_id
@@ -64,3 +63,4 @@ export async function financialReports(ctx:ApiContext):Promise<Reply|null>{
     nextCursor:next?{afterKind:next.kind,afterCode:next.code,afterId:next.accountId}:null}};
 }
 export const financialReportsContract=[{path:'/api/v1/reports/finance/trial-balance',method:'get',summary:'Same-snapshot posted trial balance with intersected account/ledger/report rights, exact per-currency totals and explicit scoped coverage; not financial certification or FX conversion',querySchema:query}] as const;
+export { authority as financialReportAccess,ids as financialIds,kinds as financialKinds };

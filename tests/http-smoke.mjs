@@ -21,6 +21,7 @@ try {
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
   const trial=await fetch(base+'/api/v1/reports/finance/trial-balance?through=2026-12-31');assert.equal(trial.status,401);assert.equal(trial.headers.get('cache-control'),'no-store');assert.doesNotMatch(await trial.text(),/accountCount|currencies|snapshotAt|stack/);
+  for(const name of ['profit-loss','balance-sheet']){const response=await fetch(base+'/api/v1/reports/finance/'+name+'?from=2026-01-01&through=2026-12-31');assert.equal(response.status,401);assert.equal(response.headers.get('cache-control'),'no-store');assert.doesNotMatch(await response.text(),/netResult|assets|snapshotAt|stack/);}
   for(const section of ['balance','ledger']){const response=await fetch(base+'/api/v1/finance/accounts/00000000-0000-4000-8000-000000000001/'+section+'?through=2026-12-31');assert.equal(response.status,401);assert.equal(response.headers.get('cache-control'),'no-store');}
   for (const [path,status] of [['/api/health',200],['/api/ready',503],['/api/v1/hubs',401],['/api/v1/people',401],['/api/v1/audit-events',401],['/api/v1/finance/currencies',401],['/api/v1/finance/accounts',401],['/api/v1/finance/periods',401],['/api/v1/finance/journals',401],['/api/auth/get-session',503]]) {
     const response=await fetch(base+path);assert.equal(response.status,status,path);
