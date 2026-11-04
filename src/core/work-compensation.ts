@@ -18,6 +18,14 @@ export const compensationRule=z.discriminatedUnion('kind',[
  z.object({...common,kind:z.literal('project'),amount:money,projectCode:code}).strict()
 ]).refine(v=>v.through===null||v.through>=v.from);
 export type CompensationRule=z.infer<typeof compensationRule>;
+export type HourlyRule=Extract<CompensationRule,{kind:'hourly'|'headcount_hourly'}>;
+export function hourlyCompensationRate(rule:HourlyRule,scale:number,headcount?:number){
+ const base=parseMoney(rule.amount,scale);
+ if(rule.kind==='hourly'){if(headcount!==undefined)throw new ApiError(400,'UNUSED_SCENARIO_INPUT');return base;}
+ if(headcount===undefined)throw new ApiError(400,'HEADCOUNT_REQUIRED');
+ if(!Number.isSafeInteger(headcount)||headcount<0||headcount>1000000)throw new ApiError(400,'INVALID_HEADCOUNT');
+ return headcount<rule.minimumStudents?0n:base+BigInt(Math.max(0,headcount-rule.includedStudents))*parseMoney(rule.increment,scale);
+}
 export function validateCompensationRules(raw:unknown,scale:number){
  const rules=z.array(compensationRule).min(1).max(50).parse(raw);if(new Set(rules.map(r=>r.code)).size!==rules.length)throw new ApiError(400,'DUPLICATE_COMPENSATION_CODE');
  for(const r of rules){if(r.kind==='tuition_percentage'){if(parseMoney(r.percent,4)>1000000n)throw new ApiError(400,'INVALID_COMPENSATION_PERCENT');}else{parseMoney(r.amount,scale);if(r.kind==='headcount_hourly')parseMoney(r.increment,scale);}}
@@ -47,7 +55,7 @@ export function configuredCompensationPreview(rules:CompensationRule[],raw:unkno
   if(r.kind==='hourly'||r.kind==='headcount_hourly'){
    if(!s.startsAt||!s.endsAt||s.units!==1||s.tuitionAmount!==undefined)throw new ApiError(400,'HOURLY_INTERVAL_REQUIRED');
    const start=Date.parse(s.startsAt),end=Date.parse(s.endsAt),duration=end-start;if(duration<=0||duration>86400000)throw new ApiError(400,'INVALID_HOURLY_INTERVALS');
-   let rate=parseMoney(r.amount,scale);if(r.kind==='headcount_hourly'){if(s.headcount===undefined)throw new ApiError(400,'HEADCOUNT_REQUIRED');rate=s.headcount<r.minimumStudents?0n:rate+BigInt(Math.max(0,s.headcount-r.includedStudents))*parseMoney(r.increment,scale);}else if(s.headcount!==undefined)throw new ApiError(400,'UNUSED_SCENARIO_INPUT');
+   const rate=hourlyCompensationRate(r,scale,s.headcount);
    const rounded=r.rounding==='nearest_5'?roundRatio(BigInt(duration),300000n,'half_away')*300000n:BigInt(duration);
    actual.push({key:s.key,start,end,rateMinor:rate});configured.push({key:s.key,start,end:start+Number(rounded),rateMinor:rate});
    details.push({key:s.key,componentCode:r.code,kind:r.kind,actualMilliseconds:String(duration),configuredMilliseconds:rounded.toString(),roundingDeltaMilliseconds:(rounded-BigInt(duration)).toString(),rateMinor:rate.toString(),headcountBasis:r.kind==='headcount_hourly'?r.headcountBasis:null,

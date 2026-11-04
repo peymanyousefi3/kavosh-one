@@ -5,7 +5,7 @@ import type { ApiContext,Reply } from '../core/api.ts';
 import { permissionScope } from '../core/approvals.ts';
 import { ApiError,scopeNonempty } from '../core/policy.ts';
 import { parseMoney,formatMoneyTotal,allocateMoney } from '../core/money.ts';
-import { highestHourlySegments,type CompensationRule,type HourlyInterval } from '../core/work-compensation.ts';
+import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type HourlyInterval } from '../core/work-compensation.ts';
 import { payCalendarRange,payCalendarDays,payOccurrencesOn,type PayCycle } from '../core/pay-calendar.ts';
 import { salaryAllocation } from '../core/salary-allocation.ts';
 
@@ -105,7 +105,7 @@ export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
     if(!s.active||classOn<s.starts_on||(s.ends_on!==null&&classOn>s.ends_on))continue;
     if(r.kind!=='hourly'&&r.kind!=='headcount_hourly')continue;
     if(r.kind==='headcount_hourly'&&(r.headcountBasis!=='enrolled'||s.enrolled===null)){issue(t,r,r.headcountBasis==='enrolled'?'ROSTER_SOURCE_NOT_AVAILABLE':'FUTURE_ATTENDANCE_NOT_KNOWN',s.id);continue;}
-    let rate=parseMoney(r.amount,t.unit_scale);if(r.kind==='headcount_hourly'){const n=s.enrolled!;rate=n<r.minimumStudents?0n:rate+BigInt(Math.max(0,n-r.includedStudents))*parseMoney(r.increment,t.unit_scale);}
+    let rate=hourlyCompensationRate(r,t.unit_scale,r.kind==='headcount_hourly'?s.enrolled!:undefined);
     rate*=10n**BigInt(scales.get(t.currency_id)!-t.unit_scale);
     intervals.push({personId:t.person_id,currencyId:t.currency_id,interval:{key:key(t.engagement_id,t.version,r.code,s.id),start:instant.epochMilliseconds,end:Temporal.Instant.from(s.ends_at).epochMilliseconds,rateMinor:rate},source:{engagementId:t.engagement_id,termsVersion:t.version,componentCode:r.code,sessionId:s.id,sessionVersion:s.version,assignmentId:s.assignment_id,assignmentVersion:s.assignment_version,enrolled:r.kind==='headcount_hourly'?s.enrolled:null}});
     if(intervals.length>200)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');

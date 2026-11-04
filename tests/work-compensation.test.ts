@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { validateCompensationRules,configuredCompensationPreview,highestHourlySegments } from '../src/core/work-compensation.ts';
+import { validateCompensationRules,configuredCompensationPreview,highestHourlySegments,hourlyCompensationRate } from '../src/core/work-compensation.ts';
 
 const base={from:'2026-01-01'},rules=validateCompensationRules([
  {...base,code:'SALARY',kind:'salary',amount:'3000',frequency:'month'},
@@ -27,4 +27,10 @@ test('hourly overlap selection is stable on equal rates and rounds the aggregate
 test('compensation definitions and scenarios reject ambiguous amounts, duplicate keys, unknown components and unused inputs',()=>{
  for(const invalid of [[{...base,code:'BAD',kind:'hourly',amount:'0.001'}],[{...base,code:'BAD',kind:'tuition_percentage',percent:'100.0001',basis:'session_net'}],[{...base,code:'BAD',kind:'hourly',amount:'1'},{...base,code:'BAD',kind:'hourly',amount:'2'}]])assert.throws(()=>validateCompensationRules(invalid,2));
  for(const s of [[{key:'a',componentCode:'UNKNOWN'}],[{key:'a',componentCode:'PERCENT'}],[{key:'a',componentCode:'SALARY',tuitionAmount:'1'}],[{key:'a',componentCode:'HIGH',startsAt:'2026-01-02T10:00:00Z',endsAt:'2026-01-02T10:00:00Z'}]])assert.throws(()=>configuredCompensationPreview(rules,s,2));
+});
+test('shared hourly rate calculation validates counts and preserves exact threshold/zero/maximum increments',()=>{
+ const head=rules.find(r=>r.kind==='headcount_hourly')!,hourly=rules.find(r=>r.kind==='hourly')!;
+ assert.equal(hourlyCompensationRate(head,2,2),0n);assert.equal(hourlyCompensationRate(head,2,3),2500n);assert.equal(hourlyCompensationRate(head,2,5),2500n);assert.equal(hourlyCompensationRate(head,2,7),3000n);assert.equal(hourlyCompensationRate(head,2,1000000),250001250n);
+ for(const n of [-1,1.5,1000001,NaN,Infinity])assert.throws(()=>hourlyCompensationRate(head,2,n),/INVALID_HEADCOUNT/);
+ assert.throws(()=>hourlyCompensationRate(head,2),/HEADCOUNT_REQUIRED/);assert.throws(()=>hourlyCompensationRate(hourly,2,0),/UNUSED_SCENARIO_INPUT/);
 });

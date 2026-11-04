@@ -50,6 +50,9 @@ check('recorded hourly overlap across classes pays the highest visible rate once
  assert.equal((await f.create({code:'SECOND',components:[{...f.hourly,assignment:{id:a.id,version:1},amount:'30'}]})).response.status,201);
  const saved=await f.request('sessions/'+s.id+'/my-time',{...f.input,assignmentId:a.id,sessionVersion:1,startsAt:'2026-01-05T15:30:00Z',endsAt:'2026-01-05T16:30:00Z'},'staff');assert.equal(saved.response.status,201);
  const result=await f.report();assert.equal(result.response.status,200,JSON.stringify(result.body));const ccy=result.body.data.currencies[0];assert.equal(ccy.actualHourlyTotal.amount,'40.00');assert.equal(ccy.workers[0].actualMilliseconds,'5400000');assert.equal(ccy.workers[0].actualSegments.length,2);
+ assert.equal((await f.save({expectedVersion:1,endsAt:'2026-01-05T16:10:00Z'})).response.status,200);
+ assert.equal((await f.request('sessions/'+s.id+'/my-time',{...f.input,expectedVersion:1,assignmentId:a.id,sessionVersion:1,startsAt:'2026-01-05T15:00:00Z',endsAt:'2026-01-05T16:30:00Z'},'staff')).response.status,200);
+ const shadowed=(await f.report()).body.data.currencies[0];assert.equal(shadowed.actualHourlyTotal.amount,'45.00');assert.equal(shadowed.workers[0].actualSegments.length,1);assert.equal(shadowed.workers[0].actualSegments[0].source.entryId,saved.body.data.id);assert.equal(shadowed.sourceAssessments.length,2);assert.ok(shadowed.sourceAssessments.some((s:{entryId:string;durationExceedsScheduleTolerance:boolean})=>s.entryId!==saved.body.data.id&&s.durationExceedsScheduleTolerance),'a lower-rate fully shadowed entry must retain its excess-time flag');
 });
 check('cancelled or later-rescheduled sessions retain recorded work and effective rate selection does not use the largest revision number',async f=>{
  const e=(await f.create({components:[f.hourly]})).body.data;assert.equal((await f.save()).response.status,201);
@@ -62,11 +65,49 @@ check('cancelled or later-rescheduled sessions retain recorded work and effectiv
 });
 check('missing terms, attendance-based components and incompatible assignment versions are explicit unpriced cases, not zero payroll',async f=>{
  assert.equal((await f.save()).response.status,201);let result=await f.report();assert.equal(result.response.status,200);assert.equal(result.body.data.unpricedComponents[0].reason,'NO_VISIBLE_APPLICABLE_COMPENSATION');assert.equal(result.body.data.currencies.length,0);
- const head=f.components.find(c=>c.code==='HEAD')!,e=(await f.create({components:[f.hourly,head]})).body.data;
+ const head={...f.components.find(c=>c.code==='HEAD')!,headcountBasis:'present'},e=(await f.create({components:[f.hourly,head]})).body.data;
  result=await f.report();assert.equal(result.body.data.currencies[0].knownActualHourlySubtotal.amount,'20.67');assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal(result.body.data.unpricedComponents[0].reason,'SESSION_HEADCOUNT_EVIDENCE_REQUIRED');
  assert.equal((await f.request('class-staff/'+f.assignment.id+'/update',{expectedVersion:1,role:'ta',reason:'New staffing revision'})).response.status,200);
  assert.equal((await f.amend(e.id,{components:[{...f.hourly,assignment:{id:f.assignment.id,version:2}}]})).response.status,200);
  result=await f.report();assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal(result.body.data.unpricedComponents[0].reason,'RECORDED_ASSIGNMENT_VERSION_MISMATCH');
+});
+check('recorded enrollment-based hourly rates use inclusive captured class-local dates and exact threshold increments, never present or signed counts',async f=>{
+ const head={...f.components.find(c=>c.code==='HEAD')!,minimumStudents:1,includedStudents:0};
+ assert.equal((await f.create({components:[head]})).response.status,201);assert.equal((await f.save()).response.status,201);
+ let result=await f.report();assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'0.00');
+ const period=(expectedVersion:number,patch:Record<string,unknown>)=>f.request('enrollments/'+f.e.id+'/change',{expectedVersion,reason:'Synthetic historical membership correction',...patch});
+ assert.equal((await period(1,{joinsOn:'2026-01-06'})).response.status,200);assert.equal((await f.report()).body.data.currencies[0].actualHourlyTotal.amount,'0.00');
+ assert.equal((await period(2,{joinsOn:'2026-01-05',leavesOn:'2026-01-05'})).response.status,200);
+ result=await f.report();const c=result.body.data.currencies[0],source=c.workers[0].actualSegments[0].source;assert.equal(c.actualHourlyTotal.amount,'28.42');assert.equal(c.configuredHourlyTotal.amount,'27.50');assert.equal(source.enrolledCount,1);assert.equal(source.enrollmentOn,'2026-01-05');assert.equal(source.headcountBasis,'enrolled');assert.equal(source.durationExceedsScheduleTolerance,false);
+ assert.equal((await f.request('sessions/'+f.session.id+'/change',{expectedVersion:2,reason:'Calendar correction must not redate previously recorded headcount',change:{kind:'reschedule',start:'2026-01-06T10:00',end:'2026-01-06T11:00'}})).response.status,200);
+ result=await f.report();assert.equal(result.body.data.entries[0].scheduleChanged,true);assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'28.42');assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.enrollmentOn,'2026-01-05');
+ assert.equal((await period(3,{joinsOn:'2026-01-01',leavesOn:'2026-01-04'})).response.status,200);assert.equal((await f.report()).body.data.currencies[0].actualHourlyTotal.amount,'0.00');
+ assert.equal((await period(4,{leavesOn:'2026-01-05',enabled:false})).response.status,200);assert.equal((await f.report()).body.data.currencies[0].actualHourlyTotal.amount,'0.00');
+ assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
+});
+check('headcounts remain private without current roster rights while ordinary saved-hour pricing remains available',async f=>{
+ const head={...f.components.find(c=>c.code==='HEAD')!,minimumStudents:0,includedStudents:0};
+ const e=(await f.create({components:[head]})).body.data;assert.equal((await f.save()).response.status,201);
+ let result=await f.report(undefined,'staff');assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal(result.body.data.unpricedComponents[0].reason,'ROSTER_SOURCE_NOT_AVAILABLE');assert.doesNotMatch(JSON.stringify(result.body),/enrolledCount|enrollmentOn/);
+ await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'rosters.view','allow')",[f.a,f.staffRole]);result=await f.report(undefined,'staff');assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'25.83');assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.enrolledCount,0);
+ const deny=await f.made('roles',{name:'Deny class roster headcount',permissions:[{capability:'rosters.view',effect:'deny'}]}),prior=(await f.request('people/'+f.actors.staff.person+'/access')).body.data;
+ assert.equal((await f.request('people/'+f.actors.staff.person+'/access',{expectedVersion:prior.version,assignments:[{roleId:f.staffRole,allHubs:false,hubIds:[f.hub]},{roleId:deny.id,allHubs:false,classIds:[f.c.id]}]})).response.status,200);
+ result=await f.report(undefined,'staff');assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal(result.body.data.unpricedComponents[0].reason,'ROSTER_SOURCE_NOT_AVAILABLE');assert.doesNotMatch(JSON.stringify(result.body),/enrolledCount|enrollmentOn/);
+ assert.equal((await f.amend(e.id,{components:[f.hourly]})).response.status,200);result=await f.report(undefined,'staff');assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'20.67');assert.doesNotMatch(JSON.stringify(result.body),/enrolledCount|enrollmentOn/);
+});
+check('recorded headcounts use the captured class civil day across UTC midnight rather than the actual or report UTC date',async f=>{
+ const head={...f.components.find(c=>c.code==='HEAD')!,minimumStudents:1,includedStudents:0};assert.equal((await f.create({components:[head]})).response.status,201);
+ assert.equal((await f.request('enrollments/'+f.e.id+'/change',{expectedVersion:1,joinsOn:'2026-01-05',leavesOn:'2026-01-05',reason:'One class-local day only'})).response.status,200);
+ assert.equal((await f.request('sessions/'+f.session.id+'/change',{expectedVersion:2,reason:'Synthetic overnight civil time',change:{kind:'reschedule',start:'2026-01-05T23:30',end:'2026-01-06T00:30'}})).response.status,200);
+ assert.equal((await f.save({sessionVersion:3,startsAt:'2026-01-06T04:30:00Z',endsAt:'2026-01-06T05:32:00Z'})).response.status,201);
+ const result=await f.report('from=2026-01-06&through=2026-01-06&timeZone=UTC');assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'28.42');assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.enrollmentOn,'2026-01-05');assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.enrolledCount,1);
+ assert.equal((await f.report('from=2026-01-05&through=2026-01-05&timeZone=UTC')).body.data.entries.length,0);
+});
+check('per-source overtime tolerance is strict beyond the configured minutes and never hides shorter or shifted recorded hours',async f=>{
+ assert.equal((await f.create({components:[f.hourly]})).response.status,201);assert.equal((await f.save({endsAt:'2026-01-05T16:05:00Z'})).response.status,201);
+ let result=await f.report();assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.durationExceedsScheduleTolerance,false);
+ assert.equal((await f.save({expectedVersion:1,endsAt:'2026-01-05T16:05:00.001Z'})).response.status,200);result=await f.report();assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.durationExceedsScheduleTolerance,true);
+ assert.equal((await f.save({expectedVersion:2,startsAt:'2026-01-05T14:45:00Z',endsAt:'2026-01-05T15:30:00Z'})).response.status,200);result=await f.report();assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.durationExceedsScheduleTolerance,false);assert.equal(result.body.data.entries[0].outsideScheduleMilliseconds,'900000');assert.equal(result.body.data.entries[0].recordedMilliseconds,'2700000');
 });
 check('report intersects pay, time and financial scopes, honors filters and bot ceilings, and never exposes another school',async f=>{
  assert.equal((await f.create({components:[f.hourly]})).response.status,201);assert.equal((await f.save()).response.status,201);
