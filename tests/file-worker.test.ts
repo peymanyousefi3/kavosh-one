@@ -171,3 +171,18 @@ if(process.env.TEST_DATABASE_URL)check('a locked pending job is skipped so anoth
   try {await f.pg.query('SELECT inspection_id FROM public.file_inspection_jobs WHERE inspection_id=$1 FOR UPDATE',[a.inspectionId]);const job=await f.claim();assert.equal(job.inspection_id,b.inspectionId);await f.pg.exec('COMMIT');open=false;assert.equal(await f.finish(job),true);const next=await f.claim();assert.equal(next.inspection_id,a.inspectionId);}
   finally{if(open)await f.pg.exec('ROLLBACK');}
 });
+if(process.env.TEST_DATABASE_URL)check('one hundred concurrent native worker cycles keep one immutable attempt per job through a four-connection pool',async f=>{
+  const first=await f.prepare();assert.equal((await f.request('storage-policy',{expectedVersion:1,uploadsEnabled:true,maximumFileBytes:100,maximumReservedBytes:10000,maximumFiles:200,reason:'Synthetic concurrent worker budget'})).response.status,200);
+  const files=new Set([first.fileId]);for(let i=1;i<100;i++)files.add((await f.prepare()).fileId);
+  const seen=new Set<string>(),durations:number[]=[];let queries=0;
+  const measured:Database={async connect(){const c=await f.database.connect();return {async query<Row>(sql:string,params?:unknown[]){queries++;return c.query<Row>(sql,params);},release(destroy?:boolean){c.release(destroy);}};}};
+  const results=await Promise.all(Array.from({length:100},async()=>{
+    const start=performance.now();const result=await processOneInspection(measured,[f.a],randomUUID(),async task=>{
+      assert.ok(files.has(task.fileId));assert.equal(seen.has(task.inspectionId),false);seen.add(task.inspectionId);return success;
+    });durations.push(performance.now()-start);return result;
+  }));
+  assert.ok(results.every(r=>r.claimed&&r.recorded));assert.equal(seen.size,100);assert.equal(f.held(),0);assert.equal(queries,600);
+  const attempts=(await f.pg.query<{total:number;distinct_jobs:number}>('SELECT count(*)::integer AS total,count(DISTINCT inspection_id)::integer AS distinct_jobs FROM public.file_inspection_attempts')).rows[0];assert.deepEqual(attempts,{total:100,distinct_jobs:100});
+  assert.equal((await f.pg.query("SELECT inspection_id FROM public.file_inspection_jobs WHERE state<>'evidence_recorded'")).rows.length,0);
+  console.log(JSON.stringify({measurement:'native-file-worker-cycles',jobs:100,concurrentCalls:100,poolMaximum:4,queries,p99Ms:Math.ceil(durations.sort((a,b)=>a-b)[98]),physicalObjectReads:0,actualEngineScans:0}));
+});
