@@ -67,7 +67,7 @@ export async function operationsFixture(options:{connections?:R2UploadConnection
         const response=await api(new Request('https://academy.example/api/v1/'+path,{method:options.method??(body===undefined?'GET':'POST'),headers:{
           'content-type':'application/json','idempotency-key':options.key??randomUUID(),'x-test-actor':as,'x-academy-id':options.academy??a,
           ...(as==='bot'?{authorization:'Bearer '+token}:{cookie:'synthetic-only-resolver-cookie'})},...(body===undefined?{}:{body:JSON.stringify(body)})}),path.split('?')[0]);
-        return {response,body:await response.json()};
+        return {response,body:response.headers.get('content-type')?.startsWith('text/csv')?Buffer.from(await response.arrayBuffer()).toString('utf8'):await response.json()};
       // Native requests use their own role-resetting pool, not the fixture's
       // admin client. Only the single-engine embedded path shares its role.
       }finally{if(!pg.runtime)await pg.exec('RESET ROLE');}

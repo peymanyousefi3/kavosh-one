@@ -1,0 +1,37 @@
+import { z } from 'zod';
+import type { ApiContext,Reply } from '../core/api.ts';
+import { ApiError } from '../core/policy.ts';
+import { accountingDate } from './finance-periods.ts';
+import { reconciliationReportData,reconciliationExportRowLimit } from './bank-reconciliation-report.ts';
+
+const uuid=z.string().uuid().transform(v=>v.toLowerCase());
+const query=z.object({accountId:uuid,from:accountingDate,through:accountingDate,snapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),openingObservationId:uuid.optional(),closingObservationId:uuid.optional()}).strict().refine(v=>v.from<=v.through);
+// A visible literal prefix, rather than a spreadsheet-specific invisible escape,
+// keeps dangerous free text distinguishable from the original source. Quoting
+// alone does not stop formula interpretation. Never apply this to exact,
+// code-generated signed numeric amounts. CSV is not a round-trip source format.
+export function reconciliationCsvText(value:string){return /^(?:[\t\r\n]|[\s\p{Cc}\p{Cf}]*[=+\-@＝＋－＠])/u.test(value)?'text: '+value:value;}
+export async function bankReconciliationExport(ctx:ApiContext):Promise<Reply|null>{
+ if(ctx.path!=='reports/finance/bank-reconciliation/export')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+ const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+ // ponytail: bounded in-memory export, 1,000 rows per side and 4 MiB UTF-8;
+ // larger reports need the approved queued/frozen export worker, never paging
+ // across live SQL snapshots or silently returning the first thousand records.
+ const d=await reconciliationReportData(ctx,{...q,status:'all',periodOnly:false,limit:reconciliationExportRowLimit});
+ if(d.nextStatementCursor||d.nextLedgerCursor)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');
+ const rows:(string|number|boolean|null)[][]=[['section','field','value','posted_on','source_id','line','status','debit_net_minor','debit_net_amount','before_period','match_id','possible_duplicate','description','reference','purpose','account_version','reversed_by_id']];
+ const meta=(field:string,value:string|number|boolean|null)=>rows.push(['metadata',field,value]);
+ meta('numeric_precision_policy','Amounts and minor units are exact CSV text. Import as text to preserve long values; spreadsheet automatic numeric conversion can lose precision.');
+ meta('report',d.report);meta('account_id',d.accountId);meta('currency_id',d.currencyId);meta('unit_scale',d.unitScale);meta('currency_conversion',d.currencyConversion);meta('from',d.from);meta('through',d.through);meta('snapshot_at',d.snapshotAt);meta('snapshot',d.snapshot);meta('snapshot_basis',d.snapshotBasis);meta('coverage',d.coverage);meta('balance_convention',d.balanceConvention);meta('matching_basis',d.matchingBasis);meta('book_unresolved_basis',d.bookUnresolvedBasis);meta('text_policy','Formula-like free text has a visible text: prefix; original source is unchanged. Treat CSV as data, not trusted formulas.');meta('unknown_policy','Missing comparisons and observations are explicitly marked unknown, never zero.');
+ for(const [field,value] of Object.entries(d.review))meta(field,value);
+ for(const [field,value] of Object.entries(d.ledger))if(typeof value==='object'){meta('ledger_'+field+'_minor',value.minor);meta('ledger_'+field+'_amount',value.amount);}else meta('ledger_'+field,value);
+ for(const [section,summary] of [['statement',d.statement],['book',d.bookTransactions]] as const)for(const [field,value] of Object.entries(summary))if(typeof value==='object'){meta(section+'_'+field+'_minor',value.minor);meta(section+'_'+field+'_amount',value.amount);}else meta(section+'_'+field,value);
+ for(const [field,value] of Object.entries(d.comparison)){meta(field+'_known',value!==null);if(value){meta(field+'_minor',value.minor);meta(field+'_amount',value.amount);}}
+ for(const [name,o] of [['opening',d.openingObservation],['closing',d.closingObservation]] as const){meta(name+'_observation_selected',o!==null);if(o){meta(name+'_observation_id',o.id);meta(name+'_observation_as_of',o.asOf);meta(name+'_observation_input_normal_balance',o.inputNormalBalance);meta(name+'_observation_usable',o.usable);meta(name+'_observation_problem',o.problem);meta(name+'_observation_superseded_by',o.supersededBy);if(o.debitNet){meta(name+'_observation_debit_net_minor',o.debitNet.minor);meta(name+'_observation_debit_net_amount',o.debitNet.amount);}}}
+ for(const r of d.statementItems)rows.push(['statement','','',r.postedOn,r.importId,r.line,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId,r.possibleDuplicate,reconciliationCsvText(r.description),reconciliationCsvText(r.reference)]);
+ for(const r of d.ledgerItems)rows.push(['ledger','','',r.postedOn,r.journalId,r.lineNumber,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId,null,'','',r.purpose,r.accountVersion,r.reversedById]);
+ const csv='\uFEFF'+rows.map(row=>Array.from({length:17},(_,i)=>'"'+String(row[i]??'').replaceAll('"','""')+'"').join(',')).join('\r\n')+'\r\n';
+ if(Buffer.byteLength(csv,'utf8')>4_194_304)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');
+ return {status:200,body:csv,csv:{filename:`bank-reconciliation-${d.accountId}-${d.from}-${d.through}.csv`}};
+}
+export const bankReconciliationExportContract=[{path:'/api/v1/reports/finance/bank-reconciliation/export',method:'get',summary:'Download a complete current reconciliation review as UTF-8 CSV, all statuses and prior outstanding, same source snapshot and rights; 1,000 rows per side/4 MiB maximum, larger reports fail explicitly, not finalized or externally verified',querySchema:query,responseContentType:'text/csv' as const}] as const;

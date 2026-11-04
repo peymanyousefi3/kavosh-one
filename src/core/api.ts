@@ -10,7 +10,7 @@ const name = z.string().trim().min(1).max(200);
 const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
-export type Reply = { status: number; body: unknown };
+export type Reply = { status: number; body: unknown; csv?:{filename:string} };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive';financeBookLocked?:boolean;financeBookExclusive?:boolean;collectorFundLocks?:Set<string>;notificationJobId?:string }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'}] as const;
@@ -203,7 +203,11 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
       const grants=await loadGrants(db,c);
       const reply = await extension?.({db,credential:c,grants,request,path,requestId}) ?? await operation(db,c,grants,request,path,requestId);
+      // Attachments are code-owned GET results only. Do not let a formatter
+      // choose arbitrary headers, MIME types, filenames or cache policies.
+      if(reply.csv&&(request.method!=='GET'||reply.status!==200||typeof reply.body!=='string'||typeof reply.csv.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename)||Buffer.byteLength(reply.body,'utf8')>4_194_304))throw new Error('INVALID_CSV_REPLY');
       await db.query('COMMIT'); transaction = false;
+      if(reply.csv)return new Response(reply.body as string,{status:200,headers:{...headers,'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="${reply.csv.filename}"`,'Content-Security-Policy':"sandbox; default-src 'none'"}});
       return Response.json(reply.body, { status: reply.status, headers });
     } catch (error) {
       if (db && transaction) { try { await db.query('ROLLBACK'); } catch { destroyConnection = true; } }

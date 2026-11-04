@@ -1,0 +1,54 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { parse } from 'csv-parse/sync';
+import { invoiceFixture } from './invoice-fixture.ts';
+import { reconciliationCsvText } from '../src/modules/bank-reconciliation-export.ts';
+
+async function fixture(){const f=await invoiceFixture();try{
+ const upload=(csv:string)=>f.made('finance/statement-imports',{accountId:f.cash.id,accountVersion:1,sourceName:'Synthetic export basis',reason:'Synthetic CSV fixture',csv,mapping:{dateColumn:'Date',dateFormat:'YYYY-MM-DD',amount:{kind:'signed',column:'Amount',positiveSide:'debit'},descriptionColumn:'Memo',referenceColumn:'Ref'}});
+ const bank=await upload('Date,Amount,Memo,Ref\n2026-01-10,100,"=SUM(1,2)\n""quoted""",@reference\n2026-01-12,-5,费用 — frais,普通\n2026-01-05,30,Prior receipt,ABC\n');
+ await f.made('finance/journals',{periodId:f.period.id,periodVersion:1,postedOn:'2026-01-10',description:'Private journal header',reason:'Synthetic export source',lines:[{accountId:f.cash.id,accountVersion:1,side:'debit',amount:'100',note:'Private accounting note'},{accountId:f.income.id,accountVersion:1,side:'credit',amount:'100'}]});
+ const opening=await f.made('finance/balance-observations',{accountId:f.cash.id,accountVersion:1,asOf:'2026-01-09',balance:'30',reason:'Synthetic balance'}),closing=await f.made('finance/balance-observations',{accountId:f.cash.id,accountVersion:1,asOf:'2026-01-31',balance:'125',reason:'Synthetic balance'}),balances={openingObservationId:opening.id,closingObservationId:closing.id};
+ const request=(patch:Record<string,string>={},as='master',options:Record<string,unknown>={})=>f.request('reports/finance/bank-reconciliation/export?'+new URLSearchParams({accountId:f.cash.id,from:'2026-01-10',through:'2026-01-31',...patch}),undefined,as,options);
+ return {...f,upload,bank,opening,closing,balances,download:request};
+ }catch(error){await f.pg.close();throw error;}}
+type Fixture=Awaited<ReturnType<typeof fixture>>;
+function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+function decoded(body:string):Record<string,string>[] {return parse(body,{columns:true,bom:true,relax_column_count:false,skip_empty_lines:false});}
+
+test('CSV text presentation distinguishes dangerous prefixes while retaining Unicode, multiline and quoted source text',()=>{
+ for(const s of ['=1+1','+SUM(A1)','-1+2','@name','\tformula','\rname','\nname','\uFEFF=cmd',' \u200B@name','＝1','＋1','－1','＠name'])assert.equal(reconciliationCsvText(s),'text: '+s);
+ for(const s of ['普通','Robotics — été','quoted "text", and\nmore','ordinary - name','',"'=literal"])assert.equal(reconciliationCsvText(s),s);
+});
+check('actual authorized CSV attachment contains complete prior and current rows, exact summary amounts and explicit unverified state',async f=>{
+ const before=(await f.pg.query('SELECT count(*)::integer AS n FROM public.finance_journals')).rows[0].n,result=await f.download(f.balances);assert.equal(result.response.status,200,JSON.stringify(result.body));assert.match(result.response.headers.get('content-type')??'',/^text\/csv; charset=utf-8$/);assert.match(result.response.headers.get('content-disposition')??'',/^attachment; filename="bank-reconciliation-[a-f0-9-]+-2026-01-10-2026-01-31.csv"$/);assert.equal(result.response.headers.get('cache-control'),'no-store');assert.equal(result.response.headers.get('x-content-type-options'),'nosniff');assert.match(result.response.headers.get('content-security-policy')??'',/sandbox/);
+ assert.deepEqual([...Buffer.from(result.body,'utf8').subarray(0,3)],[0xef,0xbb,0xbf]);const rows=decoded(result.body),meta=Object.fromEntries(rows.filter(r=>r.section==='metadata').map(r=>[r.field,r.value])),bank=rows.filter(r=>r.section==='statement'),book=rows.filter(r=>r.section==='ledger');assert.equal(bank.length,3);assert.equal(book.length,1);assert.equal(bank.filter(r=>r.before_period==='true').length,1);assert.ok(bank.some(r=>r.debit_net_amount==='-5.00'));assert.equal(meta.ledger_closing_amount,'100.00');assert.equal(meta.statement_periodNet_amount,'95.00');assert.equal(meta.closingDifference_amount,'25.00');assert.equal(meta.reconciled,'false');assert.equal(meta.finalized,'false');assert.equal(meta.externallyVerified,'false');assert.match(meta.snapshot,/^[a-f0-9]{64}$/);
+ assert.equal(bank.find(r=>r.line==='1')?.description,'text: =SUM(1,2)\n"quoted"');assert.equal(bank.find(r=>r.line==='1')?.reference,'text: @reference');assert.equal(bank.find(r=>r.line==='2')?.description,'费用 — frais');assert.doesNotMatch(result.body,/Private journal header|Private accounting note/);
+ const source=await f.request('finance/statement-imports/'+f.bank.id+'/rows');assert.equal(source.body.data[0].description,'=SUM(1,2)\n"quoted"');assert.equal((await f.pg.query('SELECT count(*)::integer AS n FROM public.finance_journals')).rows[0].n,before);
+ const duplicate=await f.upload('Date,Amount,Memo,Ref\n2026-01-10,100,"=SUM(1,2)\n""quoted""",@reference\n');assert.equal(decoded((await f.download()).body).filter(r=>r.section==='statement'&&r.possible_duplicate==='true').length,2);
+ assert.equal((await f.request('finance/statement-imports/'+duplicate.id+'/void',{reason:'Retain source but exclude from current review'})).response.status,201);assert.equal(decoded((await f.download()).body).filter(r=>r.section==='statement'&&r.possible_duplicate==='true').length,0);
+ await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.download()).response.status,200);
+});
+check('unknown balances stay unknown in exports and stale selected observations reject the download',async f=>{
+ let result=await f.download();let meta=Object.fromEntries(decoded(result.body).filter(r=>r.section==='metadata').map(r=>[r.field,r.value]));assert.equal(meta.closing_observation_selected,'false');assert.equal(meta.closingDifference_known,'false');assert.equal(meta.provisionalResidual_known,'false');assert.equal(meta.closingDifference_amount,undefined);
+ assert.match(meta.numeric_precision_policy,/Import as text/);await f.upload('Date,Amount,Memo,Ref\n2026-01-20,-123456789012345678901234567890.12,Exact large source,large\n');const large=decoded((await f.download()).body).find(r=>r.section==='statement'&&r.reference==='large');assert.equal(large?.debit_net_amount,'-123456789012345678901234567890.12');assert.equal(large?.debit_net_minor,'-12345678901234567890123456789012');
+ const report=await f.request('reports/finance/bank-reconciliation?'+new URLSearchParams({accountId:f.cash.id,from:'2026-01-10',through:'2026-01-31',...f.balances})),snapshot=report.body.data.snapshot;assert.equal((await f.download({...f.balances,snapshot})).response.status,200);
+ await f.made('finance/balance-observations',{accountId:f.cash.id,accountVersion:1,asOf:'2026-01-31',balance:'0',supersedesId:f.closing.id,reason:'Synthetic zero correction'});result=await f.download({...f.balances,snapshot});assert.equal(result.response.status,409);assert.equal(result.body.error.code,'RECONCILIATION_SOURCE_CHANGED');assert.equal(result.response.headers.get('content-disposition'),null);
+});
+check('CSV downloads reauthorize source rights and reject foreign tenants, unknown options and partial-page requests',async f=>{
+ const role=await f.made('roles',{name:'Export source reader',permissions:['financial-reports.view','accounts.view','ledger.view','bank-statements.view','bank-matches.view'].map(capability=>({capability,effect:'allow'}))}),path='people/'+f.actors.staff.person+'/access',old=(await f.request(path)).body.data;assert.equal((await f.request(path,{expectedVersion:old.version,assignments:[{roleId:role.id,allHubs:false,hubIds:[f.hub]}]})).response.status,200);
+ assert.equal((await f.download({},'staff')).response.status,200);assert.equal((await f.download(f.balances,'staff')).response.status,403);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='ledger.view'",[role.id]);assert.equal((await f.download({},'staff')).response.status,403);assert.equal((await f.download({},'foreignMaster',{academy:f.b})).response.status,404);
+ const invalid:Record<string,string>[]=[{limit:'1'},{status:'matched'},{periodOnly:'true'},{statementAfterImportId:randomUUID()},{from:'2026-02-01'},{snapshot:'bad'}];for(const p of invalid)assert.equal((await f.download(p)).response.status,400,JSON.stringify(p));assert.equal((await f.download({},'master',{method:'POST'})).response.status,405);
+});
+check('normal export row ceiling includes every thousandth source and rejects the next row instead of truncating',async f=>{
+ for(const [start,size] of [[0,500],[500,497]])await f.upload('Date,Amount,Memo,Ref\n'+Array.from({length:size},(_,i)=>`2026-01-10,1,Row ${start+i},${start+i}`).join('\n')+'\n');
+ let result=await f.download();assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(decoded(result.body).filter(r=>r.section==='statement').length,1000);
+ await f.upload('Date,Amount,Memo,Ref\n2026-01-10,1,One beyond bound,1001\n');result=await f.download();assert.equal(result.response.status,409);assert.equal(result.body.error.code,'REPORT_REQUIRES_BACKGROUND_JOB');assert.equal(result.response.headers.get('content-disposition'),null);
+});
+test('native export byte ceiling uses actual UTF-8 bytes rather than JavaScript text length',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{
+  for(let batch=0;batch<20;batch++)await f.upload('Date,Amount,Memo,Ref\n'+Array.from({length:49},(_,i)=>`2026-01-10,1,${'🤖'.repeat(990)}${batch}-${i},${'界'.repeat(199)}`).join('\n')+'\n');
+  const started=performance.now(),queries=f.metrics.businessQueries,result=await f.download();assert.equal(result.response.status,409,JSON.stringify(result.body));assert.equal(result.body.error.code,'REPORT_REQUIRES_BACKGROUND_JOB');assert.equal(result.response.headers.get('content-disposition'),null);assert.equal(f.metrics.queryFailures.length,0);console.log(JSON.stringify({measurement:'normal-limit-multibyte-export-rejection',sourceRows:983,elapsedMs:Math.ceil(performance.now()-started),queries:f.metrics.businessQueries-queries}));
+ }finally{await f.pg.close();}
+});

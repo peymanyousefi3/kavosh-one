@@ -57,9 +57,20 @@ async function fixture() {
   } catch(error) { await pg.close(); throw error; }
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
+test('unauthenticated CSV formatter never runs',async()=>{
+ let called=false;const api=createApi({async connect(){throw new Error('Must not connect');}},undefined,async()=>{called=true;return {status:200,body:'csv',csv:{filename:'test.csv'}};});
+ const r=await api(new Request('https://academy.example/api/v1/export'),'export');assert.equal(r.status,401);assert.equal(called,false);assert.equal(r.headers.get('content-disposition'),null);assert.equal(r.headers.get('cache-control'),'no-store');
+});
 function check(name: string, run: (f: Fixture) => Promise<void>) {
   test(name, async () => { const f = await fixture(); try { await run(f); } finally { await f.pg.close(); } });
 }
+
+check('CSV response boundary permits fixed private attachments only and fails closed for malformed internal replies',async f=>{
+ async function run(reply:import('../src/core/api.ts').Reply,method='GET'){try{return await createApi(f.database,undefined,async()=>reply)(new Request('https://academy.example/api/v1/export',{method,headers:{authorization:'Bearer '+f.token}}),'export');}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
+ const valid=await run({status:200,body:'"value"\r\n"-1.00"\r\n',csv:{filename:'test.csv'}});assert.equal(valid.status,200);assert.equal(await valid.text(),'"value"\r\n"-1.00"\r\n');assert.equal(valid.headers.get('cache-control'),'no-store');assert.equal(valid.headers.get('content-disposition'),'attachment; filename="test.csv"');assert.equal(valid.headers.get('content-type'),'text/csv; charset=utf-8');
+ for(const reply of [{status:200,body:'csv',csv:{filename:'x.csv\r\nInjected: yes'}},{status:200,body:'csv',csv:{filename:'../private.csv'}},{status:201,body:'csv',csv:{filename:'test.csv'}},{status:200,body:{not:'text'},csv:{filename:'test.csv'}},{status:200,body:'x'.repeat(4_194_305),csv:{filename:'test.csv'}}]){const r=await run(reply);assert.equal(r.status,503);assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/INVALID_CSV_REPLY|Injected|private\.csv|not.*text/);}
+ assert.equal((await run({status:200,body:'csv',csv:{filename:'test.csv'}},'POST')).status,503);
+});
 
 test('credential permissions intersect roles and explicit denial wins', () => {
   const c: Credential = { token_id:'x',academy_id:'a',person_id:'p',capabilities:['people.view'],all_hubs:false,hub_ids:['one'],allowed:true };
