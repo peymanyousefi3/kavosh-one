@@ -20,6 +20,7 @@ function parameters(ctx:ApiContext){const s=allowed(ctx,'automations.view');retu
 const selected=`((r.hub_id IS NULL AND $1::boolean AND cardinality($3::uuid[])=0 AND $4::boolean) OR(r.hub_id IS NOT NULL AND($1::boolean OR r.hub_id=ANY($2::uuid[])) AND NOT r.hub_id=ANY($3::uuid[])))`;
 async function header(ctx:ApiContext,id:string,edit=false){const r=(await ctx.db.query<Header>('SELECT r.* FROM public.automation_rules r WHERE '+selected+' AND r.id=$5',[...parameters(ctx),id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');if(edit)requireScope(allowed(ctx,'automations.edit'),r.hub_id??undefined);return r;}
 async function revision(ctx:ApiContext,r:Header,v=r.version){const row=(await ctx.db.query<{version:number;definition:AutomationDefinition}>('SELECT version,definition FROM public.automation_rule_revisions WHERE rule_id=$1 AND version=$2',[r.id,v])).rows[0];if(!row)throw new ApiError(404,'NOT_FOUND');return row;}
+export {header as automationRuleHeader,revision as automationRuleRevision};
 async function detail(ctx:ApiContext,r:Header,v?:number){return {id:r.id,hubId:r.hub_id,code:r.code,latestVersion:r.version,...await revision(ctx,r,v),runtimeActive:false,configurationOnly:true};}
 async function basis(ctx:ApiContext,creating:boolean,id:string,raw:unknown){const i=creating?create.parse(raw):change.parse(raw),before=creating?null:await header(ctx,id,true),hubId=before?before.hub_id:'hubId' in i?i.hubId:null;
  requireScope(allowed(ctx,'automations.view'),hubId??undefined);requireScope(allowed(ctx,'automations.edit'),hubId??undefined);

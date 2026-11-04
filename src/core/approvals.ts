@@ -72,7 +72,8 @@ function privacyScopes(ctx:ApiContext,bindings?:unknown){
 export const approvalReadSelectionSQL=`($1::boolean OR
  ((p.privacy_capability IS NULL OR public.scope_contains(coalesce($5::jsonb->p.privacy_capability,'{"all":false,"hubs":[]}'::jsonb),p.scope)) AND public.approval_bindings_allow(p.privacy_bindings,$5::jsonb)
  AND(p.requester_id=$2 OR($3::boolean AND public.scope_contains($4::jsonb,p.scope) AND public.is_supervisor($2,p.requester_id)))))`;
-export async function approvalReadParameters(ctx:ApiContext){const s=permissionScope(ctx,'approvals.view');return [await master(ctx),ctx.credential.person_id,nonempty(s),JSON.stringify(s),JSON.stringify(privacyScopes(ctx))];}
+export function approvalReadPolicyParameters(ctx:ApiContext,isMaster:boolean){const s=permissionScope(ctx,'approvals.view');return [isMaster,ctx.credential.person_id,nonempty(s),JSON.stringify(s),JSON.stringify(privacyScopes(ctx))];}
+export async function approvalReadParameters(ctx:ApiContext){return approvalReadPolicyParameters(ctx,await master(ctx));}
 
 export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:string,targetId:string|null,targetVersion:number,input:unknown):Promise<Reply> {
   const definition=getAction(registry,action);

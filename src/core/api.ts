@@ -37,8 +37,14 @@ export async function loadGrants(db: Connection, c:Credential): Promise<Grant[]>
   if(c.kind==='human' && (await db.query('SELECT 1 FROM public.academies WHERE master_person_id=$1',[c.person_id])).rows.length) {
     return (await db.query<{name:Capability}>('SELECT name FROM public.capability_catalog')).rows.map(row=>({capability:row.name,effect:'allow',allHubs:true,hubIds:[]}));
   }
-  const result = await db.query<{ permissions:{capability:Capability;effect:'allow'|'deny'}[]; all_hubs: boolean; hub_ids: string[];class_refs:ResourceRef[];person_refs:ResourceRef[];area_refs:AreaRef[];geo_hubs:string[];geo_deny_hubs:string[] }>(`
-    SELECT jsonb_agg(jsonb_build_object('capability',p.capability,'effect',p.effect) ORDER BY p.capability) AS permissions,a.all_hubs,
+  return (await assignmentGrantsForPeople(db,[c.person_id])).get(c.person_id)??[];
+}
+// Same assignment expansion for a single actor and a bounded recipient batch.
+// Master grants are intentionally supplied separately by loadGrants/the caller.
+export async function assignmentGrantsForPeople(db:Connection,personIds:string[]):Promise<Map<string,Grant[]>> {
+  if(personIds.length>1000)throw new ApiError(422,'PERSON_BATCH_TOO_LARGE');
+  const result = await db.query<{ person_id:string;permissions:{capability:Capability;effect:'allow'|'deny'}[]; all_hubs: boolean; hub_ids: string[];class_refs:ResourceRef[];person_refs:ResourceRef[];area_refs:AreaRef[];geo_hubs:string[];geo_deny_hubs:string[] }>(`
+    SELECT a.person_id,jsonb_agg(jsonb_build_object('capability',p.capability,'effect',p.effect) ORDER BY p.capability) AS permissions,a.all_hubs,
       ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id) AS hub_ids,
       coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'hubId',c.hub_id) ORDER BY c.id) FROM public.assignment_classes x
         JOIN public.classes c ON c.academy_id=x.academy_id AND c.id=x.class_id WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id),'[]'::jsonb) AS class_refs,
@@ -48,11 +54,11 @@ export async function loadGrants(db: Connection, c:Credential): Promise<Grant[]>
       ARRAY(SELECT g.id FROM public.assignment_geographic_hubs g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id AND g.strict_match ORDER BY g.id) AS geo_hubs,
       ARRAY(SELECT g.id FROM public.assignment_geographic_hubs g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id ORDER BY g.id) AS geo_deny_hubs
     FROM public.role_assignments a JOIN public.role_permissions p
-      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=$1 GROUP BY a.academy_id,a.id`, [c.person_id]);
+      ON p.academy_id=a.academy_id AND p.role_id=a.role_id WHERE a.person_id=ANY($1::uuid[]) GROUP BY a.academy_id,a.id`, [personIds]);
   // Read each assignment's selectors once, not once per feature permission.
-  return result.rows.flatMap(r=>r.permissions.map(p=>({ capability:p.capability,effect:p.effect,allHubs:r.all_hubs,hubIds:r.hub_ids,
+  const grants=new Map<string,Grant[]>();for(const r of result.rows){const own=grants.get(r.person_id)??[];own.push(...r.permissions.map(p=>({ capability:p.capability,effect:p.effect,allHubs:r.all_hubs,hubIds:r.hub_ids,
     ...(r.class_refs.length?{classRefs:r.class_refs}:{}),...(r.person_refs.length?{personRefs:r.person_refs}:{}),
-    ...(r.area_refs.length?{areaRefs:r.area_refs,areaHubIds:p.effect==='deny'?r.geo_deny_hubs:r.geo_hubs}:{}) })));
+    ...(r.area_refs.length?{areaRefs:r.area_refs,areaHubIds:p.effect==='deny'?r.geo_deny_hubs:r.geo_hubs}:{}) })));grants.set(r.person_id,own);}return grants;
 }
 
 export async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
