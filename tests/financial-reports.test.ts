@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { formatMoney,formatMoneyTotal,maximumMinorUnits } from '../src/core/money.ts';
+import { trialBalanceSQL } from '../src/modules/financial-reports.ts';
 
 const capabilities=['financial-reports.view','ledger.view','accounts.view'] as const;
 async function fixture(){
@@ -97,6 +98,16 @@ if(process.env.TEST_DATABASE_URL)check('five thousand accounts and journals reco
      SELECT $1,j.id,l.n,CASE WHEN l.n=2 THEN $2::uuid ELSE coalesce(a.id,$3::uuid) END,1,CASE WHEN l.n=1 THEN 'debit' ELSE 'credit' END,10000
      FROM synthetic_report_journals j LEFT JOIN synthetic_report_accounts a ON a.n=j.n CROSS JOIN generate_series(1,2) l(n)`,[f.a,f.equity.id,f.cash.id]);await f.pg.exec('COMMIT');
   }catch(error){await f.pg.exec('ROLLBACK');throw error;}
-  const before=f.metrics.businessQueries,durations:number[]=[];await Promise.all(Array.from({length:100},async()=>{const start=performance.now(),r=await f.report('through=2026-12-31&limit=100','staff');durations.push(performance.now()-start);assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(r.body.data.accountCount,5000);assert.equal(r.body.data.entries.length,100);assert.equal(r.body.data.currencies[0].debit.minor,'50000000');assert.equal(r.body.data.currencies[0].credit.minor,'50000000');assert.equal(r.body.data.currencies[0].balanced,true);assert.equal(r.body.data.coverage,'scoped_selected_accounts');assert.ok(r.body.nextCursor);}));
+  const before=f.metrics.businessQueries,durations:number[]=[];await Promise.all(Array.from({length:100},async()=>{const start=performance.now(),r=await f.report('through=2026-12-31&limit=100','staff');durations.push(performance.now()-start);assert.equal(r.response.status,200,JSON.stringify({response:r.body,queryFailures:f.metrics.queryFailures}));assert.equal(r.body.data.accountCount,5000);assert.equal(r.body.data.entries.length,100);assert.equal(r.body.data.currencies[0].debit.minor,'50000000');assert.equal(r.body.data.currencies[0].credit.minor,'50000000');assert.equal(r.body.data.currencies[0].balanced,true);assert.equal(r.body.data.coverage,'scoped_selected_accounts');assert.ok(r.body.nextCursor);}));
   const queries=f.metrics.businessQueries-before;assert.equal(queries,1200);console.log(JSON.stringify({measurement:'synthetic-posted-trial-balance',accounts:5000,journals:5000,postedLines:10000,concurrentRequests:100,principals:1,poolMaximum:4,validatedResponses:100,rowsPerResponse:100,p99Ms:Math.ceil(durations.sort((a,b)=>a-b)[98]),clientQueries:queries,bankRequests:0}));
+  // Profile after the measured workload, not as a warm-up. The failed query
+  // discarded12.5 million join pairs; keep a generous non-quadratic budget
+  // without depending on a particular planner operator or exact timing.
+  type Plan={'Rows Removed by Join Filter'?:number;'Actual Loops'?:number;Plans?:Plan[]};
+  await f.pg.exec('SET ROLE kavosh_runtime');try{
+    await f.pg.query("SELECT set_config('app.academy_id',$1,false),set_config('statement_timeout','5000',false)",[f.a]);
+    const plan=(await f.pg.query<{'QUERY PLAN':{Plan:Plan;'Execution Time':number}[]}>('EXPLAIN(ANALYZE,BUFFERS,TIMING OFF,FORMAT JSON) '+trialBalanceSQL,[false,[f.hub],[],false,'2026-12-31',null,null,null,false,null,null,null,101])).rows[0]['QUERY PLAN'][0];
+    const rejected=(n:Plan):number=>(n['Rows Removed by Join Filter']??0)*(n['Actual Loops']??1)+(n.Plans??[]).reduce((total,p)=>total+rejected(p),0),pairs=rejected(plan.Plan);assert.ok(pairs<500000,'must not rescan a whole grouped account set for each account');
+    console.log(JSON.stringify({measurement:'trial-balance-plan-after-load',accounts:5000,rejectedJoinPairs:pairs,executionMs:Math.ceil(plan['Execution Time']),productionStatementLimitMs:5000}));
+  }finally{await f.pg.exec('RESET ROLE');await f.pg.exec('RESET statement_timeout');await f.pg.exec('RESET app.academy_id');}
 });

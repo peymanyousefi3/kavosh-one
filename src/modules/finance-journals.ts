@@ -16,6 +16,17 @@ const reversal=reverse.extend({reversesId:uuid});
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),periodId:uuid.optional(),accountId:uuid.optional(),from:accountingDate.optional(),through:accountingDate.optional()}).strict().refine(v=>!v.from||!v.through||v.from<=v.through);
 type Line={accountId:string;accountVersion:number;side:'debit'|'credit';amountMinor:string;note:string};
 type Account={id:string;hubId:string|null;version:number;active:boolean;currencyId:string;currencyVersion:number;unitScale:number};
+// Keep range predicates outside this correlated point lookup. On fresh native
+// statistics, flattening the join selected a whole date-range index scan for
+// each line (25 million rejected pairs). OFFSET0 is an intentional planner
+// fence; native load/plan checks must be repeated on database major upgrades.
+// Both aliases are code-owned, never request-selected identifiers.
+// ponytail: indexed per-account history scans; use measured date-keyed lines
+// or rollups if larger histories outgrow the interactive query budget.
+export const journalPointLookupSQL=`JOIN LATERAL (
+ SELECT h.id,h.posted_on FROM public.finance_journals h
+ WHERE h.academy_id=l.academy_id AND h.id=l.journal_id OFFSET 0
+) j ON true`;
 const header=`j.id,j.period_id AS "periodId",j.period_version AS "periodVersion",j.posted_on::text AS "postedOn",j.description,j.reference,j.line_count AS "lineCount",j.reverses_id AS "reversesId",j.posted_by AS "postedBy",j.approval_id AS "approvalId",j.created_at AS "createdAt",
  (SELECT r.id FROM public.finance_journals r WHERE r.reverses_id=j.id) AS "reversedById"`;
 function scope(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}

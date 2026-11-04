@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { maximumMinorUnits,formatMoney,formatMoneyTotal } from '../src/core/money.ts';
+import { financialStatementSQL } from '../src/modules/financial-statements.ts';
 
 async function fixture(){
   const f=await operationsFixture();for(const role of [f.managerRole,f.staffRole])for(const capability of ['financial-reports.view','ledger.view','accounts.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,capability]);
@@ -70,6 +71,15 @@ if(process.env.TEST_DATABASE_URL)check('five thousand posted journals reconcile 
     await f.pg.query(`INSERT INTO public.finance_journals(academy_id,id,period_id,period_version,posted_on,description,line_count,posted_by,approval_id) SELECT $1,s.id,$2,1,'2026-06-01','Synthetic statement load',2,$3,$4 FROM synthetic_statement_journals s`,[f.a,f.period.id,f.actors.master.person,initial.body.approval.id]);
     await f.pg.query(`INSERT INTO public.finance_journal_lines(academy_id,journal_id,line_number,account_id,account_version,side,amount_minor) SELECT $1,s.id,l.n,CASE WHEN l.n=1 THEN $2::uuid ELSE $3::uuid END,1,CASE WHEN l.n=1 THEN 'debit' ELSE 'credit' END,10000 FROM synthetic_statement_journals s CROSS JOIN generate_series(1,2) l(n)`,[f.a,f.cash.id,f.income.id]);await f.pg.exec('COMMIT');
   }catch(error){await f.pg.exec('ROLLBACK');throw error;}
-  const before=f.metrics.businessQueries,durations:number[]=[];await Promise.all(Array.from({length:100},async(_,i)=>{const start=performance.now(),isSheet=i%2===0,r=await (isSheet?f.sheet('through=2026-12-31','staff'):f.profit('from=2026-01-01&through=2026-12-31','staff'));durations.push(performance.now()-start);assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(r.body.data.entries.length,isSheet?2:1);const c=r.body.data.currencies[0];if(isSheet){assert.equal(c.assets.minor,'50000000');assert.equal(c.balanced,true);}else assert.equal(c.netResult.minor,'50000000');assert.equal(r.body.data.coverage,'scoped_selected_accounts');}));
+  const before=f.metrics.businessQueries,durations:number[]=[];await Promise.all(Array.from({length:100},async(_,i)=>{const start=performance.now(),isSheet=i%2===0,r=await (isSheet?f.sheet('through=2026-12-31','staff'):f.profit('from=2026-01-01&through=2026-12-31','staff'));durations.push(performance.now()-start);assert.equal(r.response.status,200,JSON.stringify({response:r.body,queryFailures:f.metrics.queryFailures}));assert.equal(r.body.data.entries.length,isSheet?2:1);const c=r.body.data.currencies[0];if(isSheet){assert.equal(c.assets.minor,'50000000');assert.equal(c.balanced,true);}else assert.equal(c.netResult.minor,'50000000');assert.equal(r.body.data.coverage,'scoped_selected_accounts');}));
   const queries=f.metrics.businessQueries-before;assert.equal(queries,1200);console.log(JSON.stringify({measurement:'synthetic-posted-statements',journals:5000,postedLines:10000,concurrentRequests:100,profitLossRequests:50,balanceSheetRequests:50,principals:1,poolMaximum:4,validatedResponses:100,rowsPerResponse:{profitLoss:1,balanceSheet:2},p99Ms:Math.ceil(durations.sort((a,b)=>a-b)[98]),clientQueries:queries,bankRequests:0}));
+  type Plan={'Rows Removed by Join Filter'?:number;'Actual Loops'?:number;Plans?:Plan[]};
+  await f.pg.exec('SET ROLE kavosh_runtime');try{
+    await f.pg.query("SELECT set_config('app.academy_id',$1,false),set_config('statement_timeout','5000',false)",[f.a]);
+    for(const sheet of [false,true]){
+      const plan=(await f.pg.query<{'QUERY PLAN':{Plan:Plan;'Execution Time':number}[]}>('EXPLAIN(ANALYZE,BUFFERS,TIMING OFF,FORMAT JSON) '+financialStatementSQL,[false,[f.hub],[],false,'2026-12-31',null,null,null,sheet?null:'2026-01-01',sheet,null,null,null,101])).rows[0]['QUERY PLAN'][0];
+      const rejected=(n:Plan):number=>(n['Rows Removed by Join Filter']??0)*(n['Actual Loops']??1)+(n.Plans??[]).reduce((total,p)=>total+rejected(p),0),pairs=rejected(plan.Plan);assert.ok(pairs<500000,'must not rescan a whole date range for each posted line');
+      console.log(JSON.stringify({measurement:'statement-plan-after-load',report:sheet?'balance-sheet':'profit-loss',journals:5000,rejectedJoinPairs:pairs,executionMs:Math.ceil(plan['Execution Time']),productionStatementLimitMs:5000}));
+    }
+  }finally{await f.pg.exec('RESET ROLE');await f.pg.exec('RESET statement_timeout');await f.pg.exec('RESET app.academy_id');}
 });

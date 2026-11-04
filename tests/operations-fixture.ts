@@ -47,9 +47,13 @@ export async function operationsFixture(options:{connections?:R2UploadConnection
     await pg.exec('COMMIT');
     const baseDatabase:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
       async query<Row>(sql:string,params?:unknown[]){const result=await pg.query<Row>(sql,params);return {rows:result.rows,rowCount:result.affectedRows};},release(){}};}};
-    const metrics={businessQueries:0,exclusivePolicyLocks:0,sharedPolicyLocks:0};
+    const metrics={businessQueries:0,exclusivePolicyLocks:0,sharedPolicyLocks:0,queryFailures:[] as {sqlState:string;phase:string;elapsedMs:number}[]};
     const database:Database={async connect(){const connection=await baseDatabase.connect();return {
-      async query<Row>(sql:string,params?:unknown[]){metrics.businessQueries++;if(sql.includes('pg_advisory_xact_lock(hashtextextended($1,8))'))metrics.exclusivePolicyLocks++;if(sql.includes('pg_advisory_xact_lock_shared(hashtextextended($1,8))'))metrics.sharedPolicyLocks++;return connection.query<Row>(sql,params);},
+      async query<Row>(sql:string,params?:unknown[]){metrics.businessQueries++;if(sql.includes('pg_advisory_xact_lock(hashtextextended($1,8))'))metrics.exclusivePolicyLocks++;if(sql.includes('pg_advisory_xact_lock_shared(hashtextextended($1,8))'))metrics.sharedPolicyLocks++;
+        const started=performance.now();try{return await connection.query<Row>(sql,params);}catch(error){
+          const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
+          if(metrics.queryFailures.length<200)metrics.queryFailures.push({sqlState:/^[0-9A-Z]{5}$/.test(code)?code:'UNKNOWN',phase:sql.startsWith('WITH selected AS MATERIALIZED')?'financial_report':'operation',elapsedMs:Math.ceil(performance.now()-started)});throw error;
+        }},
       release(destroy?:boolean){connection.release(destroy);}
     };}};
     // The injected resolver is test-only. Real session cryptography is exercised

@@ -5,6 +5,7 @@ import { ApiError,requireScope } from '../core/policy.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { accountRow } from './finance.ts';
+import { journalPointLookupSQL } from './finance-journals.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const dates={from:accountingDate.optional(),through:accountingDate};
@@ -18,7 +19,7 @@ const totals=`SELECT coalesce(sum(l.amount_minor) FILTER(WHERE l.side='debit' AN
  coalesce(sum(l.amount_minor) FILTER(WHERE l.side='debit' AND ($2::date IS NULL OR j.posted_on>=$2)),0)::text AS debits,
  coalesce(sum(l.amount_minor) FILTER(WHERE l.side='credit' AND ($2::date IS NULL OR j.posted_on>=$2)),0)::text AS credits,
  count(*) FILTER(WHERE $2::date IS NULL OR j.posted_on>=$2)::integer AS "lineCount",count(DISTINCT j.id) FILTER(WHERE $2::date IS NULL OR j.posted_on>=$2)::integer AS "journalCount"
- FROM public.finance_journal_lines l JOIN public.finance_journals j ON j.academy_id=l.academy_id AND j.id=l.journal_id
+ FROM public.finance_journal_lines l ${journalPointLookupSQL}
  WHERE l.account_id=$1 AND j.posted_on<=$3::date`;
 function balances(row:Totals,unitScale:number){
   const opening=readMinorUnits(row.openingDebits)-readMinorUnits(row.openingCredits),debits=readMinorUnits(row.debits),credits=readMinorUnits(row.credits),movement=debits-credits;
@@ -40,7 +41,7 @@ export async function financeLedger(ctx:ApiContext):Promise<Reply|null>{
   // description, counterparties, notes or private approval payload.
   const result=(await ctx.db.query<Totals&{entries:Line[]}>(`WITH totals AS (${totals}),page AS (
    SELECT j.posted_on::text AS "postedOn",j.id AS "journalId",l.line_number AS "lineNumber",l.account_version AS "accountVersion",l.side,l.amount_minor::text AS "amountMinor"
-   FROM public.finance_journal_lines l JOIN public.finance_journals j ON j.academy_id=l.academy_id AND j.id=l.journal_id
+   FROM public.finance_journal_lines l ${journalPointLookupSQL}
    WHERE l.account_id=$1 AND ($2::date IS NULL OR j.posted_on>=$2) AND j.posted_on<=$3::date
     AND ($4::date IS NULL OR (j.posted_on,j.id,l.line_number)>($4::date,$5::uuid,$6::smallint))
    ORDER BY j.posted_on,j.id,l.line_number LIMIT $7)

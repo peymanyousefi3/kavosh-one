@@ -4,6 +4,7 @@ import { ApiError } from '../core/policy.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { financialReportAccess,financialIds,financialKinds,financialAccountSelectionSQL } from './financial-reports.ts';
+import { journalPointLookupSQL } from './finance-journals.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const fields={through:accountingDate,hubIds:financialIds.optional(),currencyIds:financialIds.optional(),accountIds:financialIds.optional(),limit:z.coerce.number().int().min(1).max(100).default(50),
@@ -14,19 +15,20 @@ const sheetQuery=z.object(fields).strict().refine(paired,'Provide all three curs
 type Kind=typeof financialKinds[number];
 type Entry={accountId:string;chartVersion:number;hubId:string|null;code:string;name:string;translations:Record<string,string>;kind:Kind;currentKind:Kind;currencyId:string;currencyVersion:number;currencyCode:string;unitScale:number;debitNetMinor:string;sort:number};
 type Total={currencyId:string;currencyCode:string;unitScale:number;assetMinor:string;liabilityMinor:string;equityMinor:string;incomeMinor:string;expenseMinor:string};
-const sql=`WITH selected AS MATERIALIZED (${financialAccountSelectionSQL}),movements AS (
- SELECT l.account_id,r.kind AS posted_kind,sum(CASE WHEN l.side='debit' THEN l.amount_minor ELSE -l.amount_minor END) AS debit_net_minor
- FROM public.finance_journal_lines l JOIN selected s ON s.id=l.account_id
- JOIN public.finance_journals j ON j.academy_id=l.academy_id AND j.id=l.journal_id
- JOIN public.finance_account_revisions r ON r.academy_id=l.academy_id AND r.account_id=l.account_id AND r.version=l.account_version
- WHERE j.posted_on<=$5::date AND ($9::date IS NULL OR j.posted_on>=$9) AND ($10::boolean OR r.kind IN ('income','expense')) GROUP BY l.account_id,r.kind
+export const financialStatementSQL=`WITH selected AS MATERIALIZED (${financialAccountSelectionSQL}),movements AS (
+ SELECT s.*,m.posted_kind,m.debit_net_minor FROM selected s CROSS JOIN LATERAL (
+  SELECT r.kind AS posted_kind,sum(CASE WHEN l.side='debit' THEN l.amount_minor ELSE -l.amount_minor END) AS debit_net_minor
+  FROM public.finance_journal_lines l ${journalPointLookupSQL}
+  JOIN public.finance_account_revisions r ON r.academy_id=l.academy_id AND r.account_id=l.account_id AND r.version=l.account_version
+  WHERE l.account_id=s.id AND j.posted_on<=$5::date AND ($9::date IS NULL OR j.posted_on>=$9) AND ($10::boolean OR r.kind IN ('income','expense')) GROUP BY r.kind
+ ) m
 ),shown AS (
- SELECT s.*,m.posted_kind,m.debit_net_minor,CASE m.posted_kind WHEN 'asset' THEN 0 WHEN 'liability' THEN 1 WHEN 'equity' THEN 2 WHEN 'income' THEN 3 ELSE 4 END AS sort
- FROM selected s JOIN movements m ON m.account_id=s.id WHERE m.debit_net_minor<>0
-),scales AS (
- SELECT currency_id,currency_code,max(unit_scale) AS scale FROM shown GROUP BY currency_id,currency_code
+ SELECT m.*,CASE posted_kind WHEN 'asset' THEN 0 WHEN 'liability' THEN 1 WHEN 'equity' THEN 2 WHEN 'income' THEN 3 ELSE 4 END AS sort
+ FROM movements m WHERE debit_net_minor<>0
 ),normalized AS (
- SELECT b.*,s.scale,b.debit_net_minor*('1'||repeat('0',s.scale-b.unit_scale))::numeric AS normalized_minor FROM shown b JOIN scales s ON s.currency_id=b.currency_id
+ SELECT b.*,max(unit_scale) OVER(PARTITION BY currency_id) AS scale FROM shown b
+),weighted AS (
+ SELECT n.*,debit_net_minor*('1'||repeat('0',scale-unit_scale))::numeric AS normalized_minor FROM normalized n
 ),totals AS (
  SELECT currency_id AS "currencyId",currency_code AS "currencyCode",scale AS "unitScale",
   coalesce(sum(normalized_minor) FILTER(WHERE posted_kind='asset'),0)::text AS "assetMinor",
@@ -34,7 +36,7 @@ const sql=`WITH selected AS MATERIALIZED (${financialAccountSelectionSQL}),movem
   coalesce(sum(-normalized_minor) FILTER(WHERE posted_kind='equity'),0)::text AS "equityMinor",
   coalesce(sum(-normalized_minor) FILTER(WHERE posted_kind='income'),0)::text AS "incomeMinor",
   coalesce(sum(normalized_minor) FILTER(WHERE posted_kind='expense'),0)::text AS "expenseMinor"
- FROM normalized GROUP BY currency_id,currency_code,scale
+ FROM weighted GROUP BY currency_id,currency_code,scale
 ),page AS (
  SELECT id AS "accountId",version AS "chartVersion",hub_id AS "hubId",code,name,translations,posted_kind AS kind,kind AS "currentKind",
   currency_id AS "currencyId",currency_version AS "currencyVersion",currency_code AS "currencyCode",unit_scale AS "unitScale",debit_net_minor::text AS "debitNetMinor",sort
@@ -49,7 +51,7 @@ export async function financialStatements(ctx:ApiContext):Promise<Reply|null>{
   const sheet=match[1]==='balance-sheet',access=financialReportAccess(ctx),q=(sheet?sheetQuery:profitQuery).parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),from='from' in q?q.from:null;
   // Classify using each line's immutable account revision, not today's chart
   // kind. One account can legitimately have multiple as-posted kind groups.
-  const result=(await ctx.db.query<{snapshotAt:string;accountCount:number;rowCount:number;currencies:Total[];entries:Entry[]}>(sql,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,from,sheet,q.afterKind===undefined?null:financialKinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
+  const result=(await ctx.db.query<{snapshotAt:string;accountCount:number;rowCount:number;currencies:Total[];entries:Entry[]}>(financialStatementSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,from,sheet,q.afterKind===undefined?null:financialKinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
   const currencies=result.currencies.map(c=>{
     const income=readMinorUnits(c.incomeMinor),expenses=readMinorUnits(c.expenseMinor),net=income-expenses,base={currencyId:c.currencyId,currencyCode:c.currencyCode,unitScale:c.unitScale};
     if(!sheet)return {...base,income:exact(income,c.unitScale),expenses:exact(expenses,c.unitScale),netResult:exact(net,c.unitScale)};
