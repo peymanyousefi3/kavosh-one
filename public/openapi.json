@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.55.0",
+    "version": "0.56.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -18168,7 +18168,7 @@
     },
     "/api/v1/notifications": {
       "get": {
-        "summary": "Own human inbox, newest first, with current underlying source permission filtering before pagination; no bot or master impersonation",
+        "summary": "One human inbox for automatic critical-floor and custom-rule messages; current source permissions and optional origin/unread filters apply before pagination; mandatory labels support English,French,Simplified Chinese",
         "parameters": [
           {
             "name": "limit",
@@ -18212,6 +18212,32 @@
                 "false"
               ]
             }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "automation",
+                "mandatory"
+              ]
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "type": "string",
+              "enum": [
+                "en",
+                "fr",
+                "zh-CN"
+              ]
+            }
           }
         ],
         "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
@@ -18233,7 +18259,7 @@
     },
     "/api/v1/notifications/{id}": {
       "get": {
-        "summary": "Read own portal notification only while its underlying source remains authorized",
+        "summary": "Read own portal notification and linked approval ID only while its underlying source remains authorized",
         "parameters": [
           {
             "name": "id",
@@ -18242,6 +18268,19 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "en",
+                "fr",
+                "zh-CN"
+              ]
             }
           }
         ],
@@ -18264,7 +18303,7 @@
     },
     "/api/v1/notifications/{id}/read": {
       "post": {
-        "summary": "Idempotently mark an owned, current-authorized notification read; never an approval or case dismissal",
+        "summary": "Idempotently mark an owned, current-authorized notification read; optional locale localizes mandatory labels, never approves or resolves a case",
         "parameters": [
           {
             "name": "id",
@@ -18287,7 +18326,16 @@
               "schema": {
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
-                "properties": {},
+                "properties": {
+                  "locale": {
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "fr",
+                      "zh-CN"
+                    ]
+                  }
+                },
                 "additionalProperties": false
               }
             }

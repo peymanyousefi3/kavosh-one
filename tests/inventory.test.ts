@@ -25,6 +25,7 @@ check('disposal removes usable value but never original expense; recovery is bou
 });
 check('source purchase budgets reject duplicate cost, void purchases and hidden financial approval payloads after view revocation',async f=>{
  const pending=await f.receive({},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.stock()).body.data.length,0);
+ const event=(await f.pg.query<{event_id:string;projection:{severity:string}}>('SELECT event_id,projection FROM public.automation_event_sources WHERE approval_id=$1',[pending.body.approval.id])).rows[0];assert.equal(event.projection.severity,'critical');assert.equal((await f.pg.query("SELECT * FROM public.portal_notifications WHERE event_id=$1 AND origin='mandatory'",[event.event_id])).rows.length,2);
  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='expenses.view'",[f.staffRole]);assert.equal((await f.request('approvals/'+pending.body.approval.id,undefined,'staff')).response.status,404);assert.ok(!(await f.request('approvals',undefined,'staff')).body.data.some((p:{id:string})=>p.id===pending.body.approval.id));
  assert.equal((await f.approve(pending.body.approval.id)).response.status,409);
  const posted=await f.receive();assert.equal(posted.response.status,201);assert.equal((await f.receive({costMinor:'1'})).body.error.code,'INVENTORY_PURCHASE_COST_EXCEEDED');

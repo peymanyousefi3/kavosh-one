@@ -57,6 +57,7 @@ check('own-time permission does not expose coworkers, unassigned humans cannot r
 check('time correction needs upper human approval, preserves original evidence and refuses beneficiary review',async f=>{
  const e=(await f.save()).body.data,correction={expectedVersion:1,sessionVersion:1,startsAt:'2026-01-02T15:00:00Z',endsAt:'2026-01-02T16:00:00Z',reason:'Private admin correction'};
  const proposal=await f.request('session-time-entries/'+e.id+'/change',correction,'manager');assert.equal(proposal.response.status,202,JSON.stringify(proposal.body));
+ const event=(await f.pg.query<{event_id:string;projection:{severity:string}}>('SELECT event_id,projection FROM public.automation_event_sources WHERE approval_id=$1',[proposal.body.approval.id])).rows[0];assert.equal(event.projection.severity,'critical');assert.equal((await f.pg.query("SELECT * FROM public.portal_notifications WHERE event_id=$1 AND origin='mandatory'",[event.event_id])).rows.length,1);
  assert.equal((await f.request(f.path,undefined,'staff')).body.data.version,1);assert.equal((await f.approve(proposal.body.approval.id,'manager')).response.status,403);
  const applied=await f.approve(proposal.body.approval.id);assert.equal(applied.response.status,200,JSON.stringify(applied.body));assert.equal(applied.body.data.outsideScheduleMilliseconds,0);assert.equal(applied.body.data.payrollApproved,false);
  const history=await f.request('session-time-entries/'+e.id+'/history',undefined,'staff');assert.equal(history.body.data.length,2);assert.equal(history.body.data[0].definition.reason,f.input.reason);

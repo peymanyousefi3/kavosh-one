@@ -9,17 +9,20 @@ import { lockAcademyTopology } from './academy.ts';
 import { automationRuleHeader,automationRuleRevision } from './automation-rules.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
+const locale=z.enum(['en','fr','zh-CN']);
 const dispatch=z.object({eventId:uuid,expectedVersion:z.number().int().positive().max(2147483647),locale:z.enum(['en','fr','zh-CN']).default('en')}).strict();
-const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterCreatedAt:z.iso.datetime({offset:true}).optional(),afterId:uuid.optional(),unread:z.enum(['true','false']).transform(v=>v==='true').optional()}).strict().refine(v=>(v.afterCreatedAt===undefined)===(v.afterId===undefined));
+const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterCreatedAt:z.iso.datetime({offset:true}).optional(),afterId:uuid.optional(),unread:z.enum(['true','false']).transform(v=>v==='true').optional(),origin:z.enum(['automation','mandatory']).optional(),locale:locale.default('en')}).strict().refine(v=>(v.afterCreatedAt===undefined)===(v.afterId===undefined));
+const readInput=z.object({locale:locale.optional()}).strict();
 const runPaging=z.object({limit:paging.shape.limit,afterCreatedAt:paging.shape.afterCreatedAt,afterId:paging.shape.afterId,eventId:uuid.optional()}).strict().refine(v=>(v.afterCreatedAt===undefined)===(v.afterId===undefined));
 const empty=z.object({}).strict();
-type Notification={id:string;title:string;body:string;severity:string;locale:string;event_id:string;created_at:string;read_at:string|null};
+type Notification={id:string;title:string;body:string;severity:string;locale:string;origin:'automation'|'mandatory';source_id:string;event_id:string;created_at:string;read_at:string|null};
 // Match the actual source case, not the producer's permission snapshot. The
 // recipient does not need permission to edit or inspect automation definitions.
 const inboxFrom=`FROM public.portal_notifications n JOIN public.automation_event_sources e ON e.academy_id=n.academy_id AND e.event_id=n.event_id JOIN public.approval_requests p ON p.academy_id=e.academy_id AND p.id=e.approval_id LEFT JOIN public.portal_notification_reads rd ON rd.academy_id=n.academy_id AND rd.notification_id=n.id WHERE n.person_id=$2 AND ${approvalReadSelectionSQL}`;
-const fields=`n.id,n.title,n.body,n.severity,n.locale,n.event_id,to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,rd.read_at`;
+const fields=`n.id,n.title,n.body,n.severity,n.locale,n.origin,e.approval_id AS source_id,n.event_id,to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,rd.read_at`;
 function human(ctx:ApiContext){if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_ACCOUNT_REQUIRED');}
-function view(n:Notification){return {id:n.id,title:n.title,body:n.body,severity:n.severity,locale:n.locale,eventId:n.event_id,createdAt:n.created_at,readAt:n.read_at,contentType:'text/plain',deliveryChannel:'portal'};}
+const mandatoryLabels={en:{title:'Critical activity recorded',body:'Open the linked approval record to review this activity. Reading this notification does not approve or resolve it.'},fr:{title:'Activité critique enregistrée',body:'Ouvrez le dossier d’approbation associé pour examiner cette activité. Lire cette notification ne vaut ni approbation ni résolution.'},'zh-CN':{title:'已记录重要操作',body:'请打开关联的审批记录查看此操作。阅读本通知不会批准或解决该事项。'}};
+function view(n:Notification,language:'en'|'fr'|'zh-CN'='en'){return {id:n.id,...(n.origin==='mandatory'?mandatoryLabels[language]:{title:n.title,body:n.body}),severity:n.severity,locale:n.origin==='mandatory'?language:n.locale,origin:n.origin,source:{kind:'approval',id:n.source_id},eventId:n.event_id,createdAt:n.created_at,readAt:n.read_at,contentType:'text/plain',deliveryChannel:'portal'};}
 async function own(ctx:ApiContext,id:string){human(ctx);const n=(await ctx.db.query<Notification>('SELECT '+fields+' '+inboxFrom+' AND n.id=$6',[...await approvalReadParameters(ctx),id])).rows[0];if(!n)throw new ApiError(404,'NOT_FOUND');return n;}
 // Substitute only our five constant parameter names, never user SQL. This is
 // the identical shared case predicate, evaluated for all recipient policies.
@@ -50,10 +53,7 @@ export async function notifications(ctx:ApiContext):Promise<Reply|null>{
    if(!simulation.eligibleByConfiguration)outcome='not_matched';else if(definition.execution.mode==='dry_run')outcome='dry_run';else if(definition.execution.mode==='approval_required')outcome='approval_required';
    if(outcome==='processed'){
     const master=(await ctx.db.query<{master_person_id:string}>('SELECT master_person_id FROM public.academies')).rows[0].master_person_id;
-    const supervisors=event.projection.actorId?(await ctx.db.query<{id:string}>(`WITH RECURSIVE managers(id,next_id,seen,depth) AS(
-     SELECT p.id,coalesce(p.supervisor_person_id,a.master_person_id),ARRAY[p.id],0 FROM public.people p JOIN public.academies a ON a.id=p.academy_id WHERE p.id=$1
-     UNION ALL SELECT p.id,coalesce(p.supervisor_person_id,a.master_person_id),m.seen||p.id,m.depth+1 FROM managers m JOIN public.people p ON p.id=m.next_id JOIN public.academies a ON a.id=p.academy_id WHERE NOT p.id=ANY(m.seen) AND m.depth<64
-    ) SELECT id FROM managers WHERE depth>0`,[event.projection.actorId])).rows.map(p=>p.id):[];
+    const supervisors=event.projection.actorId&&simulation.actions.some(a=>a.audience.kind==='actor_supervisors')?(await ctx.db.query<{id:string}>('SELECT person_id AS id FROM public.supervisor_chain($1)',[event.projection.actorId])).rows.map(p=>p.id):[];
     const audiences=simulation.actions.map(a=>a.audience.kind==='school_master'?[master]:a.audience.kind==='people'?a.audience.personIds:supervisors),ids=[...new Set(audiences.flat())];
     if(ids.length>1000)throw new ApiError(422,'AUTOMATION_RECIPIENT_SCAN_LIMIT');
     const capabilities=(await ctx.db.query<{name:Capability}>('SELECT name FROM public.capability_catalog')).rows.map(c=>c.name);
@@ -85,19 +85,19 @@ export async function notifications(ctx:ApiContext):Promise<Reply|null>{
  }
  const match=/^notifications(?:\/([^/]+)(?:\/(read))?)?$/.exec(ctx.path);if(!match)return null;human(ctx);const id=match[1]?uuid.parse(match[1]):null;
  if(ctx.request.method==='POST'&&id&&match[2]==='read'){
-  empty.parse(await jsonBody(ctx.request));await lockAcademyTopology(ctx);await own(ctx,id);
-  return mutation(ctx,{},async()=>{await ctx.db.query('INSERT INTO public.portal_notification_reads(academy_id,notification_id,person_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[ctx.credential.academy_id,id,ctx.credential.person_id]);return {status:200,body:{data:view(await own(ctx,id))}};});
+  const input=readInput.parse(await jsonBody(ctx.request));await lockAcademyTopology(ctx);await own(ctx,id);
+  return mutation(ctx,input,async()=>{await ctx.db.query('INSERT INTO public.portal_notification_reads(academy_id,notification_id,person_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',[ctx.credential.academy_id,id,ctx.credential.person_id]);return {status:200,body:{data:view(await own(ctx,id),input.locale)}};});
  }
  if(ctx.request.method!=='GET'||match[2])throw new ApiError(405,'METHOD_NOT_ALLOWED');
- if(id){empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:view(await own(ctx,id))}};}
+ if(id){const q=readInput.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:view(await own(ctx,id),q.locale)}};}
  const q=paging.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
- const rows=(await ctx.db.query<Notification>('SELECT '+fields+' '+inboxFrom+' AND($6::timestamptz IS NULL OR(n.created_at,n.id)<($6::timestamptz,$7::uuid)) AND($8::boolean IS NULL OR(rd.notification_id IS NULL)=$8) ORDER BY n.created_at DESC,n.id DESC LIMIT $9',[...await approvalReadParameters(ctx),q.afterCreatedAt??null,q.afterId??null,q.unread??null,q.limit+1])).rows,tail=rows[q.limit-1];
- return {status:200,body:{data:rows.slice(0,q.limit).map(view),nextCursor:rows.length>q.limit?{afterCreatedAt:tail.created_at,afterId:tail.id}:null,workerLiveness:'not_observed',backgroundProcessingSupported:true,externalDeliveryEnabled:false}};
+ const rows=(await ctx.db.query<Notification>('SELECT '+fields+' '+inboxFrom+' AND($6::timestamptz IS NULL OR(n.created_at,n.id)<($6::timestamptz,$7::uuid)) AND($8::boolean IS NULL OR(rd.notification_id IS NULL)=$8) AND($9::text IS NULL OR n.origin=$9) ORDER BY n.created_at DESC,n.id DESC LIMIT $10',[...await approvalReadParameters(ctx),q.afterCreatedAt??null,q.afterId??null,q.unread??null,q.origin??null,q.limit+1])).rows,tail=rows[q.limit-1];
+ return {status:200,body:{data:rows.slice(0,q.limit).map(n=>view(n,q.locale)),nextCursor:rows.length>q.limit?{afterCreatedAt:tail.created_at,afterId:tail.id}:null,workerLiveness:'not_observed',backgroundProcessingSupported:true,mandatoryApprovalAlertsSupported:true,externalDeliveryEnabled:false}};
 }
 export const notificationsContract=[
  {path:'/api/v1/automations/rules/{id}/runs',method:'get',summary:'Immutable decision history, newest first, filtered by current rule and underlying case permissions before pagination; summaries never include recipient identities or message content',querySchema:runPaging},
  {path:'/api/v1/automations/rules/{id}/dispatch',method:'post',summary:'Process one actual source through the current approved rule with execute rights, durable deduplication, current recipient case permissions, UTC budgets and cooldowns; this immediate portal request starts no daemon and makes no external sends',schema:dispatch},
- {path:'/api/v1/notifications',method:'get',summary:'Own human inbox, newest first, with current underlying source permission filtering before pagination; no bot or master impersonation',querySchema:paging},
- {path:'/api/v1/notifications/{id}',method:'get',summary:'Read own portal notification only while its underlying source remains authorized'},
- {path:'/api/v1/notifications/{id}/read',method:'post',summary:'Idempotently mark an owned, current-authorized notification read; never an approval or case dismissal',schema:empty}
+ {path:'/api/v1/notifications',method:'get',summary:'One human inbox for automatic critical-floor and custom-rule messages; current source permissions and optional origin/unread filters apply before pagination; mandatory labels support English,French,Simplified Chinese',querySchema:paging},
+ {path:'/api/v1/notifications/{id}',method:'get',summary:'Read own portal notification and linked approval ID only while its underlying source remains authorized',querySchema:readInput},
+ {path:'/api/v1/notifications/{id}/read',method:'post',summary:'Idempotently mark an owned, current-authorized notification read; optional locale localizes mandatory labels, never approves or resolves a case',schema:readInput}
 ] as const;
