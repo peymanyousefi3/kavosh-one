@@ -41,7 +41,7 @@ type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 
 check('actual worker pipeline composes streamed storage, scanner protocol, native Unix decoding and exact persisted receipts without re-reading objects',async f=>{
- const directory=await mkdtemp('/private/tmp/kavosh-image-pipeline-'),socketPath=directory+'/service.sock',server=createImageValidationServer();let imageRequests=0;
+ const directory=await mkdtemp('/tmp/kavosh-image-pipeline-'),socketPath=directory+'/service.sock',server=createImageValidationServer();let imageRequests=0;
  server.on('request',req=>{imageRequests++;assert.equal(req.headers.cookie,undefined);assert.equal(req.headers.authorization,undefined);assert.equal(req.headers['x-academy-id'],undefined);});
  await new Promise<void>(resolve=>server.listen(socketPath,resolve));
  try {

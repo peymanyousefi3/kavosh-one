@@ -13,7 +13,8 @@ import { assertPrivateImageSocket } from '../src/files/image-runtime.ts';
 const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 const png=()=>sharp({create:{width:8,height:4,channels:3,background:'red'}}).png().toBuffer();
 async function fixture(server:Server=createImageValidationServer()) {
- const directory=await mkdtemp('/private/tmp/kavosh-image-socket-'),socketPath=directory+'/service.sock';
+ // Keep Unix socket paths short on both macOS and Linux runners.
+ const directory=await mkdtemp('/tmp/kavosh-image-socket-'),socketPath=directory+'/service.sock';
  await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(socketPath,()=>{server.removeListener('error',reject);resolve();});});
  async function close(){await new Promise<void>((resolve,reject)=>{server.close(error=>error?reject(error):resolve());server.closeAllConnections();});await rmdir(directory);}
  const validate=(b:Buffer,type='image/png',signal?:AbortSignal)=>validateImageViaService(b,type,{socketPath,signal});
