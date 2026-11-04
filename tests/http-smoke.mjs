@@ -20,7 +20,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
-  for (const [path,status] of [['/api/health',200],['/api/ready',503],['/api/v1/hubs',401],['/api/v1/people',401],['/api/v1/audit-events',401],['/api/v1/finance/currencies',401],['/api/v1/finance/accounts',401],['/api/auth/get-session',503]]) {
+  for (const [path,status] of [['/api/health',200],['/api/ready',503],['/api/v1/hubs',401],['/api/v1/people',401],['/api/v1/audit-events',401],['/api/v1/finance/currencies',401],['/api/v1/finance/accounts',401],['/api/v1/finance/periods',401],['/api/v1/finance/journals',401],['/api/auth/get-session',503]]) {
     const response=await fetch(base+path);assert.equal(response.status,status,path);
     assert.equal(response.headers.get('cache-control'),'no-store');
     assert.equal(response.headers.get('x-content-type-options'),'nosniff');
