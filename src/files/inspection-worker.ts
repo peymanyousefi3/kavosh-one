@@ -5,11 +5,14 @@ import type { R2UploadConnections } from '../integrations/r2-config.ts';
 import { scanWithClamd,type ClamdConfiguration } from '../integrations/clamav.ts';
 import { ApiError } from '../core/policy.ts';
 import type { S3ClientConfig } from '@aws-sdk/client-s3';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { detectContentSignature,maximumSignatureSampleBytes,signatureSchema } from './content-signature.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const taskSchema=z.object({academyId:uuid,inspectionId:uuid,fileId:uuid,storageTargetId:digest,leaseToken:uuid,attemptNo:z.number().int().min(1).max(5),expectedBytes:z.number().int().min(1).max(4_294_967_296),expectedSha256:digest.nullable(),claimedMimeType:z.string().min(1).max(201)}).strict();
 export type InspectionTask=z.infer<typeof taskSchema>;
-const measured={bytes:z.number().int().min(1).max(4_294_967_296),sha256:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),providerContentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/)};
+const measured={bytes:z.number().int().min(1).max(4_294_967_296),sha256:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),providerContentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/),signature:signatureSchema.optional()};
 const problem=z.enum(['STORAGE_UNAVAILABLE','SCANNER_UNAVAILABLE','INSPECTION_TIMEOUT','INSPECTOR_INVALID_RESULT','WORKER_STOPPED','TARGET_UNAVAILABLE']);
 const resultSchema=z.discriminatedUnion('outcome',[
   z.object({outcome:z.literal('no_detection'),...measured}).strict(),z.object({outcome:z.literal('detected'),...measured}).strict(),
@@ -42,14 +45,19 @@ export async function inspectStoredFile(task:InspectionTask,connections:R2Upload
     service=privateR2(connection,task.academyId,handler);if(service.storageTargetId!==task.storageTargetId)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
     const claims={bytes:task.expectedBytes,...(task.expectedSha256?{sha256:task.expectedSha256}:{})};
     const result=await service.inspectQuarantine(task.fileId,claims,async(source,storageSignal)=>{
-      try{return await scanWithClamd(scanner,source,claims,AbortSignal.any([signal,storageSignal]));}
-      catch(error){scannerFailed=true;throw error;}
+      const combined=AbortSignal.any([signal,storageSignal]),prefix=Buffer.alloc(Math.min(task.expectedBytes,maximumSignatureSampleBytes));let used=0;
+      const sampled=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){used+=chunk.copy(prefix,used,0,prefix.length-used);callback(null,chunk);}});
+      try {
+        const [,scan]=await Promise.all([pipeline(source,sampled),scanWithClamd(scanner,sampled,claims,combined).catch(error=>{scannerFailed=true;throw error;})]);
+        const signature=await detectContentSignature(prefix.subarray(0,used),{signal:combined});return {...scan,signature};
+      }finally{sampled.destroy();}
     },timeoutMs,signal);
     if(result.sha256!==result.inspection.sha256||result.bytes!==result.inspection.bytes)return {outcome:'content_mismatch'};
-    return {outcome:result.inspection.verdict,bytes:result.bytes,sha256:result.sha256,etag:result.provider.etag,providerContentType:result.provider.contentType};
+    return {outcome:result.inspection.verdict,bytes:result.bytes,sha256:result.sha256,etag:result.provider.etag,providerContentType:result.provider.contentType,signature:result.inspection.signature};
   }catch(error){
     if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH'].includes(error.code))return {outcome:'content_mismatch'};
     if(error instanceof ApiError&&error.code==='R2_INSPECTION_TIMEOUT')return {outcome:'unavailable',reason:'INSPECTION_TIMEOUT'};
+    if(error instanceof ApiError&&error.code.startsWith('CONTENT_SIGNATURE_'))return {outcome:'unavailable',reason:error.code==='CONTENT_SIGNATURE_TIMEOUT'?'INSPECTION_TIMEOUT':'INSPECTOR_INVALID_RESULT'};
     return {outcome:'unavailable',reason:scannerFailed?'SCANNER_UNAVAILABLE':'STORAGE_UNAVAILABLE'};
   }finally{service?.close();}
 }
@@ -80,7 +88,7 @@ export async function processOneInspection(database:Database,academies:string[],
   // token and DB clock reject late workers; stale success never overwrites work.
   const finish=await database.connect();try {
     await assertFileWorkerRole(finish);await assertSchemaReady(finish);
-    const response=await finish.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9) AS recorded',[task.academyId,task.inspectionId,task.leaseToken,result.outcome,reason,measuredResult?.bytes??null,measuredResult?.sha256??null,measuredResult?.etag??null,measuredResult?.providerContentType??null]);
+    const response=await finish.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) AS recorded',[task.academyId,task.inspectionId,task.leaseToken,result.outcome,reason,measuredResult?.bytes??null,measuredResult?.sha256??null,measuredResult?.etag??null,measuredResult?.providerContentType??null,measuredResult?.signature?JSON.stringify(measuredResult.signature):null]);
     return {claimed:true,recorded:response.rows[0]?.recorded===true};
   }finally{finish.release();}
 }

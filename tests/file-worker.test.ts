@@ -34,7 +34,7 @@ async function fixture() {
     finally{await f.pg.exec('RESET ROLE');assert.equal(held,0);}
   }
   async function claim(academies=[f.a]) {const c=await database.connect();try{await assertFileWorkerRole(c);return (await c.query('SELECT * FROM public.claim_file_inspection($1,$2,30)',[academies,worker])).rows[0];}finally{c.release();await f.pg.exec('RESET ROLE');}}
-  async function finish(job:Record<string,unknown>,outcome='no_detection') {const c=await database.connect();try{return (await c.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9) AS recorded',[job.academy_id,job.inspection_id,job.lease_token,outcome,outcome==='detected'?'MEASURED_DETECTION':'MEASURED_NO_DETECTION',bytes.length,sha256,'"synthetic-etag"','application/octet-stream'])).rows[0].recorded;}finally{c.release();await f.pg.exec('RESET ROLE');}}
+  async function finish(job:Record<string,unknown>,outcome='no_detection') {const c=await database.connect();try{return (await c.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL) AS recorded',[job.academy_id,job.inspection_id,job.lease_token,outcome,outcome==='detected'?'MEASURED_DETECTION':'MEASURED_NO_DETECTION',bytes.length,sha256,'"synthetic-etag"','application/octet-stream'])).rows[0].recorded;}finally{c.release();await f.pg.exec('RESET ROLE');}}
   return {...f,prepare,run,claim,finish,database,worker,held:()=>held};
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
@@ -100,7 +100,7 @@ check('an actual worker cycle composes native persistence, simulated S3 transpor
       }}));
       assert.deepEqual(result,{claimed:true,recorded:true});assert.equal(requests,1);assert.equal(peer.connections(),1);assert.deepEqual(Buffer.concat(peer.received),bytes);assert.equal(body.destroyed,true);
       const view=(await f.request('files/'+item.fileId+'/inspection')).body.data;assert.equal(view.processing.state,mode==='error'?'queued':'evidence_recorded');assert.equal(view.processing.lastOutcome,mode==='error'?'unavailable':mode==='detected'?'detected':'no_detection');assert.equal(view.safeToServe,false);
-      if(mode!=='error')assert.equal(view.attempts[0].sha256,sha256);
+      if(mode!=='error'){assert.equal(view.attempts[0].sha256,sha256);assert.deepEqual(view.attempts[0].contentSignature,{detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:null,extension:null});}
     }finally{await peer.close();body.destroy();}
   }
 });
@@ -153,9 +153,38 @@ check('combined service memberships are rejected by both worker and existing web
 check('native evidence completion rejects forged sizes, hashes, classification and missing proof without partially recording',async f=>{
   await f.prepare();const job=await f.claim(),c=await f.database.connect();try {
     for(const [outcome,reason,size,hash,etag] of [['no_detection','MEASURED_NO_DETECTION',bytes.length+1,sha256,'"e"'],['no_detection','MEASURED_NO_DETECTION',bytes.length,'0'.repeat(64),'"e"'],['clean','MEASURED_NO_DETECTION',bytes.length,sha256,'"e"'],['no_detection','MEASURED_NO_DETECTION',bytes.length,sha256,null]])
-      await assert.rejects(c.query('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9)',[job.academy_id,job.inspection_id,job.lease_token,outcome,reason,size,hash,etag,'application/octet-stream']),/INVALID_INSPECTION_RESULT/);
+      await assert.rejects(c.query('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)',[job.academy_id,job.inspection_id,job.lease_token,outcome,reason,size,hash,etag,'application/octet-stream']),/INVALID_INSPECTION_RESULT/);
   }finally{c.release();await f.pg.exec('RESET ROLE');}
   assert.equal((await f.pg.query('SELECT * FROM public.file_inspection_attempts')).rows.length,0);assert.equal(await f.finish(job),true);
+});
+check('invalid content signature evidence rolls back measurement, job status and event together; native rows are immutable',async f=>{
+  const item=await f.prepare(),job=await f.claim(),signature={detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:null,extension:null};
+  const c=await f.database.connect();try {
+    for(const value of [{...signature,sampleBytes:0},{...signature,sampleBytes:bytes.length+1},{...signature,sampleBytes:'1'},{...signature,sampleSha256:'0'.repeat(64)},{...signature,mime:'image/png'},{...signature,extension:'../png'},{...signature,safe:true},{...signature,detector:'unverified'}]) {
+      await assert.rejects(c.query('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)',[f.a,item.inspectionId,job.lease_token,'no_detection','MEASURED_NO_DETECTION',bytes.length,sha256,'"etag"','text/plain',JSON.stringify(value)]),/INVALID_CONTENT_SIGNATURE/);
+    }
+    await assert.rejects(c.query('SELECT public.finish_file_inspection_measurements($1,$2,$3,$4,$5,$6,$7,$8,$9)',[f.a,item.inspectionId,job.lease_token,'no_detection','MEASURED_NO_DETECTION',bytes.length,sha256,'"etag"','text/plain']),/permission denied/i);
+  }finally{c.release();await f.pg.exec('RESET ROLE');}
+  assert.equal((await f.pg.query('SELECT * FROM public.file_inspection_attempts')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.file_content_signatures')).rows.length,0);
+  assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.inspection.evidence.recorded'")).rows.length,0);assert.equal((await f.pg.query<{state:string}>('SELECT state FROM public.file_inspection_jobs')).rows[0].state,'running');
+  assert.equal(await f.finish(job),true);
+  await f.pg.exec('SET ROLE kavosh_file_worker');try{await assert.rejects(f.pg.query('SELECT * FROM public.file_content_signatures'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.exec('SET ROLE kavosh_runtime');try{await assert.rejects(f.pg.query('UPDATE public.file_content_signatures SET mime=NULL'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+});
+check('signature persistence failure cannot leave a completed measurement or successful outbox event',async f=>{
+  await f.prepare();await f.pg.exec('REVOKE INSERT ON public.file_content_signatures FROM kavosh_file_policy');
+  try{await assert.rejects(f.run(async()=>({...success,signature:{detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:null,extension:null}})),/permission denied/i);}
+  finally{await f.pg.exec('GRANT INSERT ON public.file_content_signatures TO kavosh_file_policy');}
+  assert.equal((await f.pg.query('SELECT * FROM public.file_inspection_attempts')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.file_content_signatures')).rows.length,0);assert.equal((await f.pg.query<{state:string}>('SELECT state FROM public.file_inspection_jobs')).rows[0].state,'running');
+  assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.inspection.evidence.recorded'")).rows.length,0);
+});
+test('streamed content signature samples only a bounded prefix and stays distinct from claimed/provider types and whole-object hash',async()=>{
+  const data=Buffer.concat([Buffer.from('%PDF-1.7\nSignature hint only, not document validation.\n'),Buffer.alloc(50000,65)]),academyId=randomUUID(),fileId=randomUUID(),peer=await clamdPeer('success');
+  const task:InspectionTask={academyId,fileId,inspectionId:randomUUID(),leaseToken:randomUUID(),attemptNo:1,storageTargetId:createHash('sha256').update(JSON.stringify([connection.accountId,connection.jurisdiction,connection.bucket])).digest('hex'),expectedBytes:data.length,expectedSha256:createHash('sha256').update(data).digest('hex'),claimedMimeType:'image/jpeg'};
+  try {
+    const result=await inspectStoredFile(task,()=>({...connection,maximumUploadBytes:100000}),peer.config,new AbortController().signal,5000,{async handle(){return {response:{statusCode:200,headers:{'content-length':String(data.length),'content-type':'text/plain',etag:'"synthetic-etag"'},body:Readable.from([data.subarray(0,100),data.subarray(100)])}};}});
+    assert.equal(result.outcome,'no_detection');assert.ok('signature' in result);assert.equal(result.signature?.sampleBytes,16384);assert.equal(result.signature?.sampleSha256,createHash('sha256').update(data.subarray(0,16384)).digest('hex'));assert.equal(result.signature?.mime,'application/pdf');assert.equal(result.providerContentType,'text/plain');assert.equal(result.sha256,task.expectedSha256);assert.equal('safeToServe' in result,false);
+  }finally{await peer.close();}
 });
 test('file worker command refuses disabled or shared-credential environments without exposing configuration',()=>{
   for(const extra of [{FILE_INSPECTION_WORKER_ENABLED:'false'},{FILE_INSPECTION_WORKER_ENABLED:'true',AUTH_SECRET:'synthetic-private-auth-secret'}]) {
@@ -165,6 +194,12 @@ test('file worker command refuses disabled or shared-credential environments wit
 if(process.env.TEST_DATABASE_URL)check('parallel worker claims take different jobs and cannot complete the same lease twice',async f=>{
   await f.prepare();await f.prepare();const claims=await Promise.all([f.claim(),f.claim()]);assert.ok(claims[0]);assert.ok(claims[1]);assert.notEqual(claims[0].inspection_id,claims[1].inspection_id);assert.notEqual(claims[0].lease_token,claims[1].lease_token);
   const twice=await Promise.all([f.finish(claims[0]),f.finish(claims[0])]);assert.deepEqual(twice.sort(),[false,true]);assert.equal(await f.finish(claims[1]),true);assert.equal((await f.pg.query('SELECT * FROM public.file_inspection_attempts')).rows.length,2);
+});
+if(process.env.TEST_DATABASE_URL)check('concurrent measured signature completion is fenced to one attempt and one bound signature row',async f=>{
+  await f.prepare();const job=await f.claim(),signature={detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:null,extension:null};
+  const finish=async(academy=f.a)=>{const c=await f.database.connect();try{return (await c.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) AS recorded',[academy,job.inspection_id,job.lease_token,'no_detection','MEASURED_NO_DETECTION',bytes.length,sha256,'"etag"','text/plain',JSON.stringify(signature)])).rows[0].recorded;}finally{c.release();}};
+  assert.equal(await finish(f.b),false);assert.deepEqual((await Promise.all([finish(),finish()])).sort(),[false,true]);assert.equal(f.held(),0);
+  assert.equal((await f.pg.query('SELECT * FROM public.file_inspection_attempts')).rows.length,1);assert.equal((await f.pg.query('SELECT * FROM public.file_content_signatures')).rows.length,1);
 });
 if(process.env.TEST_DATABASE_URL)check('a locked pending job is skipped so another job can be leased without waiting for its owner',async f=>{
   const a=await f.prepare(),b=await f.prepare();await f.pg.exec('BEGIN');let open=true;
