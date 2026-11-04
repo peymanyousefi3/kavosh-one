@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
 import { permissionScope,propose,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
@@ -26,6 +27,16 @@ const sessionQuery=z.object({limit:z.coerce.number().int().min(1).max(100).defau
 const scheduleQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterVersion:z.coerce.number().int().min(0).default(0)}).strict();
 interface ClassRow {id:string;hub_id:string;course_id:string;course_version:number;name:string;code:string;time_zone:string;mode:'online'|'in_person';online_url:string|null;active:boolean;version:number}
 interface SessionRow {id:string;class_id:string;hub_id:string;starts_at:Date|string;ends_at:Date|string;time_info:Record<string,unknown>;mode:'online'|'in_person';online_url:string|null;status:'scheduled'|'cancelled';version:number}
+
+export function sessionLocalDate(s:SessionRow,timeZone:string){
+  const local=localDateTime.safeParse(s.time_info.localStart);
+  try {
+    const actual=s.starts_at instanceof Date?s.starts_at.getTime():Date.parse(s.starts_at);
+    if(!local.success||s.time_info.timeZone!==timeZone||typeof s.time_info.startOffset!=='string'||typeof s.time_info.start!=='string'
+      ||Temporal.Instant.from(local.data+s.time_info.startOffset).epochMilliseconds!==actual||Temporal.Instant.from(s.time_info.start).epochMilliseconds!==actual)throw new Error('invalid time evidence');
+  }catch{throw new ApiError(409,'SESSION_TIME_EVIDENCE_INVALID');}
+  return local.data!.slice(0,10);
+}
 
 function scope(ctx:ApiContext,capability:Capability){const result=permissionScope(ctx,capability);if(!scopeNonempty(result))throw new ApiError(403,'FORBIDDEN');return result;}
 function scopeParams(value:Scope){return [value.all,value.hubs,value.excludedHubs??[]];}

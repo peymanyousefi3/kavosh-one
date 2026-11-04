@@ -52,6 +52,8 @@ try {
   assert.equal(inspection.status,401);assert.equal(inspection.headers.get('cache-control'),'no-store');assert.doesNotMatch(await inspection.text(),/X-Amz|secretAccessKey|storageTargetId|stack/);
   const grantHistory=await fetch(base+'/api/v1/files/73e6a708-ad23-484b-9b12-91db85854593/upload-grants?limit=1');assert.equal(grantHistory.status,401);assert.equal(grantHistory.headers.get('cache-control'),'no-store');assert.doesNotMatch(await grantHistory.text(),/formatPolicy|X-Amz|storageTargetId|stack/);
   const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
+  for(const path of ['sessions/00000000-0000-4000-8000-000000000001/my-time','sessions/00000000-0000-4000-8000-000000000001/time-entries','session-time-entries/00000000-0000-4000-8000-000000000001/history']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/starts_at|assignment_id|reason|stack/);}
+  assert.ok(spec.paths['/api/v1/sessions/{id}/my-time']?.post);
   assert.deepEqual(spec.paths['/api/webhooks/boldsign/{connectionId}']?.post?.security,[]);
   assert.match(spec.paths['/api/v1/files/{id}/inspection']?.post?.responses?.['202']?.description??'',/not verified/);
   console.log('Production HTTP smoke checks passed: liveness, fail-closed readiness, authorization, cache/security headers and API contract.');

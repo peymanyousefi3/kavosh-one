@@ -3,8 +3,7 @@ import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,master,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,scopeNonempty } from '../core/policy.ts';
-import { classRow,sessionRow } from './classes.ts';
-import { localDateTime } from './calendar.ts';
+import { classRow,sessionRow,sessionLocalDate } from './classes.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { permittedPerson } from './students.ts';
 
@@ -120,13 +119,7 @@ export async function enrollments(ctx:ApiContext,registry:ApprovalRegistry=enrol
     if(method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const id=uuid.parse(rosterPath[2]);
     if(rosterPath[1]==='classes') {const c=await classRow(ctx,id,'rosters.view'),q=rosterQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return roster(ctx,c,q.on??Temporal.Now.plainDateISO(c.time_zone).toString(),q);}
     const s=await sessionRow(ctx,id,'rosters.view'),c=await classRow(ctx,s.class_id,'rosters.view'),q=sessionRosterQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
-    const local=localDateTime.safeParse(s.time_info.localStart);
-    try {
-      const actual=s.starts_at instanceof Date?s.starts_at.getTime():Date.parse(s.starts_at);
-      if(!local.success||s.time_info.timeZone!==c.time_zone||typeof s.time_info.startOffset!=='string'||typeof s.time_info.start!=='string'
-        ||Temporal.Instant.from(local.data+s.time_info.startOffset).epochMilliseconds!==actual||Temporal.Instant.from(s.time_info.start).epochMilliseconds!==actual)throw new Error('invalid time evidence');
-    }catch{throw new ApiError(409,'SESSION_TIME_EVIDENCE_INVALID');}
-    return roster(ctx,c,local.data!.slice(0,10),q,s);
+    return roster(ctx,c,sessionLocalDate(s,c.time_zone),q,s);
   }
   if(!list&&!item)return null;const id=uuid.parse((list??item)![1]);
   if(list) {

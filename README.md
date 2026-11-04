@@ -20,6 +20,12 @@ The separate `kavosh-academy` repository contains the existing public-facing web
 
 Overview, Academy, People, Learning, Finance, Reports, Community and Administration. Files, approvals, audit history and notifications are shared capabilities. External management agents use a scoped, documented API, with configurable approvals and limits.
 
+### Staff session time (backend)
+
+Teachers, TAs and volunteers can read their own dated assignment and record actual session start/end times without access to coworker timesheets. Exact milliseconds are retained; outside-schedule duration and later calendar changes are separately identified. Own revisions remain private and append-only. Administrative corrections use exact upper-human approval, master self-approval and beneficiary restrictions; bots can propose but cannot certify worked time themselves. Private viewing and correction permissions are independently class/hub/geography scoped. Historical calendar cancellation never deletes delivered time.
+
+These are manually reported, unrounded records—not approved payroll, a pay rate, attendance, waiver clearance or automatic payment. Shared report/media/attendance review, payroll evidence dependencies, compensation rules and statutory payroll processing remain unfinished. No visual interface is implemented here.
+
 ## Approved technical direction
 
 - React/TypeScript with a supported standard Next.js/Node deployment.
