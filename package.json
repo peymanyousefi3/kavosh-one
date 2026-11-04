@@ -19,6 +19,7 @@
     "auth:invite": "node --import tsx scripts/invite.ts",
     "auth:deliver": "node --import tsx scripts/deliver-auth.ts",
     "files:inspect": "node --import tsx scripts/inspect-files.ts",
+    "signatures:register": "node --import tsx scripts/register-signature-webhook.ts",
     "api:generate": "node --import tsx scripts/generate-api.ts"
   },
   "dependencies": {

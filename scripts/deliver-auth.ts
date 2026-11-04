@@ -23,6 +23,7 @@ try {
     AND NOT pg_has_role(current_user,'kavosh_runtime','member')
     AND NOT pg_has_role(current_user,'kavosh_file_worker','member')
     AND NOT pg_has_role(current_user,'kavosh_file_policy','member')
+    AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname IN ('kavosh_signature_ingest','kavosh_signature_policy') AND pg_has_role(current_user,b.oid,'member'))
     AND NOT EXISTS(SELECT 1 FROM pg_database d WHERE d.datname=current_database() AND pg_has_role(current_user,d.datdba,'member'))
     AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname IN ('public','identity','auth_private') AND pg_has_role(current_user,n.nspowner,'member'))
     AND NOT EXISTS(SELECT 1 FROM pg_roles e WHERE (e.rolsuper OR e.rolbypassrls) AND pg_has_role(current_user,e.oid,'member'))

@@ -9,6 +9,7 @@ const env={...process.env};
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
 delete env.IDENTITY_DATABASE_URL;delete env.AUTH_SECRET;delete env.EDGE_AUTH_SECRET;
 delete env.R2_UPLOAD_CONNECTIONS;delete env.R2_UPLOAD_LINKS_ENABLED;
+delete env.BOLDSIGN_WEBHOOK_CONNECTIONS;delete env.BOLDSIGN_WEBHOOK_ENABLED;delete env.SIGNATURE_INGEST_DATABASE_URL;
 const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
 let output='';
 child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
@@ -20,6 +21,9 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  const providerPath=base+'/api/webhooks/boldsign/00000000-0000-4000-8000-000000000001';
+  const provider=await fetch(providerPath,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(provider.status,503);assert.equal(provider.headers.get('cache-control'),'no-store');assert.equal(provider.headers.get('x-content-type-options'),'nosniff');assert.doesNotMatch(await provider.text(),/secrets|connectionId|academyId|DATABASE|postgres|stack/);
+  const providerGet=await fetch(providerPath);assert.equal(providerGet.status,405);assert.equal(providerGet.headers.get('cache-control'),'no-store');
   const trial=await fetch(base+'/api/v1/reports/finance/trial-balance?through=2026-12-31');assert.equal(trial.status,401);assert.equal(trial.headers.get('cache-control'),'no-store');assert.doesNotMatch(await trial.text(),/accountCount|currencies|snapshotAt|stack/);
   const closing=await fetch(base+'/api/v1/finance/periods/00000000-0000-4000-8000-000000000001/closing-preview');assert.equal(closing.status,401);assert.equal(closing.headers.get('cache-control'),'no-store');assert.doesNotMatch(await closing.text(),/sourceStamp|snapshot|temporaryGroupCount|stack/);
   for(const path of ['finance/periods/00000000-0000-4000-8000-000000000001/closing-runs','finance/closing-runs/00000000-0000-4000-8000-000000000001','finance/closing-runs/00000000-0000-4000-8000-000000000001/journals']){
@@ -42,6 +46,7 @@ try {
   assert.equal(inspection.status,401);assert.equal(inspection.headers.get('cache-control'),'no-store');assert.doesNotMatch(await inspection.text(),/X-Amz|secretAccessKey|storageTargetId|stack/);
   const grantHistory=await fetch(base+'/api/v1/files/73e6a708-ad23-484b-9b12-91db85854593/upload-grants?limit=1');assert.equal(grantHistory.status,401);assert.equal(grantHistory.headers.get('cache-control'),'no-store');assert.doesNotMatch(await grantHistory.text(),/formatPolicy|X-Amz|storageTargetId|stack/);
   const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
+  assert.deepEqual(spec.paths['/api/webhooks/boldsign/{connectionId}']?.post?.security,[]);
   assert.match(spec.paths['/api/v1/files/{id}/inspection']?.post?.responses?.['202']?.description??'',/not verified/);
   console.log('Production HTTP smoke checks passed: liveness, fail-closed readiness, authorization, cache/security headers and API contract.');
 } catch(error) {

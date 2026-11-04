@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.28.0",
+    "version": "0.29.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -10904,6 +10904,218 @@
           },
           "default": {
             "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/webhooks/boldsign/{connectionId}": {
+      "post": {
+        "security": [],
+        "summary": "Receive a configured, raw-byte-authenticated BoldSign event into the isolated durable inbox; never admission clearance",
+        "description": "Provider-only authentication, not a human session or bot token. Off until operator configuration, registered school/region/environment/client identity and isolated ingest database role are verified. HMAC-SHA256 over timestamp + dot + original bytes; current/previous endpoint-specific secret and fixed 300-second freshness window. A strict Verification probe may be unsigned but performs no database call. Repeated identical event IDs deduplicate; differing authenticated bytes retain the original and record one critical conflict per digest. Private signer content is not retained. No live provider verification or enrolment eligibility is implied.",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-BoldSign-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "description": "Required for every data event. Provider HMAC header; only the strict no-data Verification probe is exempt."
+          },
+          {
+            "name": "X-BoldSign-Event",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "description": "When present must match the signed eventType; Verification enables only the strict unsigned probe."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "event": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "created": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740691
+                          },
+                          "eventType": {
+                            "type": "string",
+                            "const": "Verification"
+                          },
+                          "clientId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "environment": {
+                            "type": "string",
+                            "enum": [
+                              "Test",
+                              "Live"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "created",
+                          "eventType",
+                          "environment"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "event"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "event": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "created": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740691
+                          },
+                          "eventType": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,99}$"
+                          },
+                          "clientId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "environment": {
+                            "type": "string",
+                            "enum": [
+                              "Test",
+                              "Live"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "created",
+                          "eventType",
+                          "environment"
+                        ]
+                      },
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "object": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z][A-Za-z0-9_]{0,79}$"
+                          },
+                          "documentId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "templateId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "status": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80,
+                            "pattern": "^[\\x20-\\x7e]+$"
+                          }
+                        },
+                        "required": [
+                          "object"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "event",
+                      "data"
+                    ]
+                  }
+                ],
+                "description": "Original UTF-8 JSON bytes, at most 1 MiB. Data events require a valid X-BoldSign-Signature and configured environment/client identity. Only an X-BoldSign-Event: Verification probe with no data is unsigned and side-effect free. Document objects require documentId. Unknown provider fields are discarded, not retained."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Received, duplicate, conflict recorded, or side-effect-free verification probe. No source details or admission status returned."
+          },
+          "400": {
+            "description": "Invalid body or stream identity"
+          },
+          "401": {
+            "description": "Missing, stale or invalid provider signature"
+          },
+          "408": {
+            "description": "Body read cancelled or deadline exceeded"
+          },
+          "413": {
+            "description": "Actual request bytes exceed limit"
+          },
+          "415": {
+            "description": "Only uncompressed UTF-8 JSON accepted"
+          },
+          "429": {
+            "description": "Shared database per-connection rate budget exhausted"
+          },
+          "503": {
+            "description": "Disabled/unconfigured, changed registry, unsafe database role or unavailable persistence; no accepted partial record"
           }
         }
       }
