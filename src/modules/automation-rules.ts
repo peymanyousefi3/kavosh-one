@@ -6,12 +6,14 @@ import { ApiError,requireScope,scopeNonempty,type Capability } from '../core/pol
 import { automationDefinition,automationLanguage,ruleSample,simulateRule,type AutomationDefinition } from '../core/automation-rules.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { permittedPeople } from './students.ts';
+import { boundAutomationEvent,boundEventView } from './automation-events.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const code=z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,63}$/),create=z.object({hubId:uuid.nullable().default(null),code,definition:automationDefinition,reason}).strict(),change=z.object({expectedVersion:version,definition:automationDefinition,reason}).strict();
 const duplicate=z.object({sourceVersion:version,hubId:uuid.nullable(),code,name:z.string().trim().min(1).max(200),reason}).strict();
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),hubId:uuid.optional(),enabled:z.enum(['true','false']).transform(v=>v==='true').optional()}).strict(),read=z.object({version:z.coerce.number().int().positive().max(2147483647).optional()}).strict(),history=z.object({limit:query.shape.limit,afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
 const preview=z.object({version:version.optional(),sample:ruleSample,locale:z.enum(['en','fr','zh-CN']).default('en')}).strict();
+const eventPreview=z.object({version:version.optional(),eventId:uuid,locale:z.enum(['en','fr','zh-CN']).default('en')}).strict();
 type Header={id:string;hub_id:string|null;code:string;version:number};
 function allowed(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
 function parameters(ctx:ApiContext){const s=allowed(ctx,'automations.view');return [s.all,s.hubs,s.excludedHubs??[],!s.excludedAreas?.length];}
@@ -39,14 +41,15 @@ function action(creating:boolean):ApprovalRegistry[string]{return {requestCapabi
 export const automationActions:ApprovalRegistry={'automation.rule.create':action(true),'automation.rule.change':action(false)};
 export async function automationRules(ctx:ApiContext,registry:ApprovalRegistry=automationActions):Promise<Reply|null>{
  if(ctx.path==='automations/language'){if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');allowed(ctx,'automations.view');z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:automationLanguage}};}
- const m=/^automations\/rules(?:\/([^/]+)(?:\/(change|history|duplicate|preview))?)?$/.exec(ctx.path);if(!m)return null;const id=m[1]?uuid.parse(m[1]):null,section=m[2];
+ const m=/^automations\/rules(?:\/([^/]+)(?:\/(change|history|duplicate|preview|event-preview))?)?$/.exec(ctx.path);if(!m)return null;const id=m[1]?uuid.parse(m[1]):null,section=m[2];
  if(ctx.request.method==='POST'){
   z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
   if(id&&section==='preview'){const input=preview.parse(await jsonBody(ctx.request,64*1024)),r=await header(ctx,id),v=await revision(ctx,r,input.version);return {status:200,body:{data:{ruleId:r.id,version:v.version,...simulateRule(v.definition,r.hub_id,input.sample,input.locale)}}};}
+  if(id&&section==='event-preview'){const input=eventPreview.parse(await jsonBody(ctx.request)),r=await header(ctx,id),v=await revision(ctx,r,input.version),event=await boundAutomationEvent(ctx,input.eventId);return {status:200,body:{data:{ruleId:r.id,version:v.version,...simulateRule(v.definition,r.hub_id,ruleSample.parse(event.projection),input.locale),sampleSource:'server_bound_approval_event',event:boundEventView(event),sourceVerification:'database_bound_approval_event'}}};}
   if(id&&section==='duplicate'){const input=duplicate.parse(await jsonBody(ctx.request));await lockApprovalWrites(ctx);await lockAcademyTopology(ctx);const source=await header(ctx,id),v=await revision(ctx,source,input.sourceVersion);return propose(ctx,registry,'automation.rule.create',null,0,create.parse({hubId:input.hubId,code:input.code,definition:{...v.definition,name:input.name,enabled:false},reason:input.reason}));}
   if(id&&section!=='change')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input=(id?change:create).parse(await jsonBody(ctx.request,128*1024));return propose(ctx,registry,id?'automation.rule.change':'automation.rule.create',id,'expectedVersion' in input?input.expectedVersion:0,input);
  }
- if(ctx.request.method!=='GET'||['change','duplicate','preview'].includes(section??''))throw new ApiError(405,'METHOD_NOT_ALLOWED');
+ if(ctx.request.method!=='GET'||['change','duplicate','preview','event-preview'].includes(section??''))throw new ApiError(405,'METHOD_NOT_ALLOWED');
  if(id){const r=await header(ctx,id,section==='history');if(section==='history'){const q=history.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),rows=(await ctx.db.query<{version:number}>('SELECT version,definition,changed_by,approval_id,reason,created_at FROM public.automation_rule_revisions WHERE rule_id=$1 AND version>$2 ORDER BY version LIMIT $3',[id,q.afterVersion,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextVersion:rows.length>q.limit?rows[q.limit-1].version:null}};}const q=read.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await detail(ctx,r,q.version)}};}
  const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),rows=(await ctx.db.query<Header>(`SELECT r.id,r.hub_id,r.code,r.version,v.definition->>'name' AS name,(v.definition->>'enabled')::boolean AS enabled FROM public.automation_rules r JOIN public.automation_rule_revisions v ON v.academy_id=r.academy_id AND v.rule_id=r.id AND v.version=r.version WHERE ${selected} AND($5::uuid IS NULL OR r.id>$5) AND($6::uuid IS NULL OR r.hub_id=$6) AND($7::boolean IS NULL OR(v.definition->>'enabled')::boolean=$7) ORDER BY r.id LIMIT $8`,[...parameters(ctx),q.after??null,q.hubId??null,q.enabled??null,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null,runtimeActive:false}};
 }
@@ -58,5 +61,6 @@ export const automationRulesContract=[
  {path:'/api/v1/automations/rules/{id}/change',method:'post',summary:'Replace a rule configuration with upper-human approval and source/version checks',schema:change},
  {path:'/api/v1/automations/rules/{id}/duplicate',method:'post',summary:'Copy an authorized rule to a new reviewed, disabled configuration with destination permission checks',schema:duplicate},
  {path:'/api/v1/automations/rules/{id}/history',method:'get',summary:'Editor-only private rule definition and review history',querySchema:history},
- {path:'/api/v1/automations/rules/{id}/preview',method:'post',summary:'Read-only deterministic simulation against an explicitly unverified caller sample; no recipient expansion, queue, budget use, message or external request',schema:preview,readOnly:true}
+ {path:'/api/v1/automations/rules/{id}/preview',method:'post',summary:'Read-only deterministic simulation against an explicitly unverified caller sample; no recipient expansion, queue, budget use, message or external request',schema:preview,readOnly:true},
+ {path:'/api/v1/automations/rules/{id}/event-preview',method:'post',summary:'Read-only evaluation of a current-authorized server-bound approval event, never a caller-substituted payload; source-state drift is explicit, dispatch is not performed',schema:eventPreview,readOnly:true}
 ] as const;

@@ -4,6 +4,7 @@ import { operationsFixture } from './operations-fixture.ts';
 
 export async function invoiceFixture(options:{throughSchema?:number}={}){
  const f=await operationsFixture(options),country=randomUUID(),region=randomUUID(),city=randomUUID();
+ try{
  await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);
  await f.pg.query("INSERT INTO public.regions(academy_id,id,country_id,code,name) VALUES($1,$2,$3,'ON','Ontario')",[f.a,region,country]);
  await f.pg.query("INSERT INTO public.cities(academy_id,id,region_id,name) VALUES($1,$2,$3,'Toronto')",[f.a,city,region]);
@@ -23,4 +24,5 @@ export async function invoiceFixture(options:{throughSchema?:number}={}){
  const issue=(patch:Record<string,unknown>={},as='master',key?:string)=>f.request('finance/tuition-plans/'+plan.id+'/invoice',{...base,...patch},as,{key});
  const credit=(id:string,patch:Record<string,unknown>={},as='master')=>f.request('finance/invoices/'+id+'/credit',{issuedAt:'2026-11-06T12:00:00Z',periodId:period.id,periodVersion:1,description:'Full cancellation credit',taxTimingReview:'Synthetic full reversal review',reason:'Private credit approval reason',...patch},as);
  return {...f,made,currency,student,e,c,plan,planInput,period,ar,deferred,income,taxPayable,cash,definition,issuer,base,issue,credit,method};
+ }catch(error){await f.pg.close();throw error;}
 }

@@ -67,6 +67,12 @@ function privacyScopes(ctx:ApiContext,bindings?:unknown){
  const caps=[...new Set(ctx.grants.filter(g=>g.effect==='allow'&&ctx.credential.capabilities.includes(g.capability)&&(!required||required.has(g.capability))).map(g=>g.capability))];
  return Object.fromEntries(caps.map(cap=>[cap,permissionScope(ctx,cap)]));
 }
+// Shared by approval lists and source-bound notification/event readers. An
+// automation-view grant must never replace the underlying case permissions.
+export const approvalReadSelectionSQL=`($1::boolean OR
+ ((p.privacy_capability IS NULL OR public.scope_contains(coalesce($5::jsonb->p.privacy_capability,'{"all":false,"hubs":[]}'::jsonb),p.scope)) AND public.approval_bindings_allow(p.privacy_bindings,$5::jsonb)
+ AND(p.requester_id=$2 OR($3::boolean AND public.scope_contains($4::jsonb,p.scope) AND public.is_supervisor($2,p.requester_id)))))`;
+export async function approvalReadParameters(ctx:ApiContext){const s=permissionScope(ctx,'approvals.view');return [await master(ctx),ctx.credential.person_id,nonempty(s),JSON.stringify(s),JSON.stringify(privacyScopes(ctx))];}
 
 export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:string,targetId:string|null,targetVersion:number,input:unknown):Promise<Reply> {
   const definition=getAction(registry,action);
@@ -163,15 +169,11 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
   if(path!=='approvals'&&!path.startsWith('approvals/'))return null;
   if(path==='approvals'&&request.method==='GET') {
     const {limit,after,status}=paging.parse(Object.fromEntries(new URL(request.url).searchParams));
-    const scope=permissionScope(ctx,'approvals.view');
     // Retired action handlers must not make authorized private history vanish.
     // Use existing grants, not only the currently mounted action definitions.
-    const privateScopes=privacyScopes(ctx);
-    const rows=(await db.query<Proposal>(`SELECT * FROM public.approval_requests WHERE ($1::uuid IS NULL OR id>$1)
-      AND ($2::text IS NULL OR status=$2) AND ($4::boolean OR
-        ((privacy_capability IS NULL OR public.scope_contains(coalesce($8::jsonb->privacy_capability,'{"all":false,"hubs":[]}'::jsonb),scope)) AND public.approval_bindings_allow(privacy_bindings,$8::jsonb)
-          AND (requester_id=$5 OR ($6::boolean AND public.scope_contains($7::jsonb,scope) AND public.is_supervisor($5,requester_id))))) ORDER BY id LIMIT $3`,
-      [after??null,status??null,limit+1,await master(ctx),c.person_id,nonempty(scope),JSON.stringify(scope),JSON.stringify(privateScopes)])).rows;
+    const rows=(await db.query<Proposal>(`SELECT p.* FROM public.approval_requests p WHERE ($6::uuid IS NULL OR p.id>$6)
+      AND ($7::text IS NULL OR p.status=$7) AND ${approvalReadSelectionSQL} ORDER BY p.id LIMIT $8`,
+      [...await approvalReadParameters(ctx),after??null,status??null,limit+1])).rows;
     return {status:200,body:{data:rows.slice(0,limit).map(proposalView),nextCursor:rows.length>limit?rows[limit-1].id:null}};
   }
   const approvalPath=/^approvals\/([^/]+)(?:\/(decide|withdraw))?$/.exec(path);
