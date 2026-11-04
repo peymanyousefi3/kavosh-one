@@ -74,8 +74,12 @@ async function inspection(ctx:ApiContext,id:string):Promise<Reply> {
     if(!row)throw new ApiError(404,'FILE_INSPECTION_NOT_REQUESTED');
     const processing=(await ctx.db.query('SELECT state,attempt_no AS "attemptCount",last_outcome AS "lastOutcome",last_reason AS "lastReason",CASE WHEN state=\'queued\' THEN available_at ELSE NULL END AS "nextAttemptAt" FROM public.file_inspection_jobs WHERE inspection_id=$1',[row.id])).rows[0]??null;
     const attempts=(await ctx.db.query(`SELECT a.attempt_no AS "attempt",a.worker_id AS "workerId",a.started_at AS "startedAt",a.finished_at AS "finishedAt",a.outcome,a.reason_code AS "reason",a.measured_bytes::float8 AS "measuredBytes",a.sha256,a.provider_content_type AS "providerContentType",
-      CASE WHEN s.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('detector',s.detector,'sampleBytes',s.sample_bytes,'sampleSha256',s.sample_sha256,'mime',s.mime,'extension',s.extension) END AS "contentSignature"
-      FROM public.file_inspection_attempts a LEFT JOIN public.file_content_signatures s ON s.academy_id=a.academy_id AND s.inspection_id=a.inspection_id AND s.attempt_no=a.attempt_no WHERE a.inspection_id=$1 ORDER BY a.attempt_no LIMIT 5`,[row.id])).rows;
+      CASE WHEN s.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('detector',s.detector,'sampleBytes',s.sample_bytes,'sampleSha256',s.sample_sha256,'mime',s.mime,'extension',s.extension) END AS "contentSignature",
+      CASE WHEN screen.inspection_id IS NULL THEN jsonb_build_object('state','unassessed','reason','ASSESSMENT_NOT_RECORDED','structurallyValidated',false)
+       ELSE jsonb_build_object('ruleVersion',screen.rule_version,'state',screen.state,'reason',screen.reason_code,'assessedAt',screen.assessed_at,'structurallyValidated',false) END AS "formatAssessment"
+      FROM public.file_inspection_attempts a LEFT JOIN public.file_content_signatures s ON s.academy_id=a.academy_id AND s.inspection_id=a.inspection_id AND s.attempt_no=a.attempt_no
+      LEFT JOIN public.file_format_assessments screen ON screen.academy_id=a.academy_id AND screen.inspection_id=a.inspection_id AND screen.attempt_no=a.attempt_no
+      WHERE a.inspection_id=$1 ORDER BY a.attempt_no LIMIT 5`,[row.id])).rows;
     return {status:200,body:{data:inspectionReply({...row,processing,attempts})}};
   }
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input=inspectionInput.parse(await jsonBody(ctx.request));
@@ -164,7 +168,7 @@ export const storageContract=[
   {path:'/api/v1/files/{id}/upload-reservation',method:'post',summary:'Atomically reserve capacity under current file/domain/upload permissions and school policy; does not transfer bytes',schema:reservationInput},
   {path:'/api/v1/files/{id}/upload-link',method:'post',summary:'Issue a five-minute conditional quarantine PUT with immutable format-policy provenance; replays retain original policy version/expiry but recheck current access/settings, legacy receipts stay explicitly unknown',schema:reservationInput},
   {path:'/api/v1/files/{id}/upload-grants',method:'get',summary:'Uploader/editor-scoped grant history with exact original allowed-format snapshots; no URLs, storage keys, school budgets or content-safety clearance',querySchema:grantHistoryQuery},
-  {path:'/api/v1/files/{id}/inspection',method:'get',summary:'Read authorized request, worker progress and immutable attempts including bounded content-signature hints; not format validity, uploaded or safe content clearance'},
+  {path:'/api/v1/files/{id}/inspection',method:'get',summary:'Read scoped immutable inspection/signature evidence and versioned original-policy format screening; matched is not structural validation, malware freshness or safe-download clearance'},
   {path:'/api/v1/files/{id}/inspection',method:'post',summary:'Request inspection for an existing upload grant and close new link issuance atomically; no browser claim establishes file safety',schema:inspectionInput,acceptedDescription:'Inspection request recorded; content is not verified or available'},
   {path:'/api/v1/files/{id}/upload-limits',method:'get',summary:'Uploader-safe enabled/per-file limits and declared-format choices for an authorized file, without school totals or other files'}
 ] as const;

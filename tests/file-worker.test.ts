@@ -234,6 +234,7 @@ if(process.env.TEST_DATABASE_URL)check('one hundred concurrent native worker cyc
   }));
   assert.ok(results.every(r=>r.claimed&&r.recorded));assert.equal(seen.size,100);assert.equal(f.held(),0);assert.equal(queries,600);
   const attempts=(await f.pg.query<{total:number;distinct_jobs:number}>('SELECT count(*)::integer AS total,count(DISTINCT inspection_id)::integer AS distinct_jobs FROM public.file_inspection_attempts')).rows[0];assert.deepEqual(attempts,{total:100,distinct_jobs:100});
+  const screens=(await f.pg.query<{total:number;unassessed:number}>("SELECT count(*)::int AS total,count(*) FILTER(WHERE state='unassessed' AND reason_code='SIGNATURE_MISSING')::int AS unassessed FROM public.file_format_assessments")).rows[0];assert.deepEqual(screens,{total:100,unassessed:100});
   assert.equal((await f.pg.query("SELECT inspection_id FROM public.file_inspection_jobs WHERE state<>'evidence_recorded'")).rows.length,0);
   console.log(JSON.stringify({measurement:'native-file-worker-cycles',jobs:100,concurrentCalls:100,poolMaximum:4,queries,p99Ms:Math.ceil(durations.sort((a,b)=>a-b)[98]),physicalObjectReads:0,actualEngineScans:0}));
 });
