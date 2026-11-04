@@ -1,2 +1,5 @@
+packages:
+  - workers/*
+injectWorkspacePackages: true
 allowBuilds:
   esbuild: true

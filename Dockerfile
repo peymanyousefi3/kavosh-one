@@ -3,6 +3,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm install --global pnpm@11.25.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY workers/image-service/package.json ./workers/image-service/package.json
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build

@@ -1,0 +1,28 @@
+# Distribution-packaged Node must pass the actual ELF PIE/runtime guards below;
+# the official Node container binary is not assumed hardened for native codecs.
+FROM alpine:3.24 AS build
+RUN apk add --no-cache nodejs npm
+WORKDIR /build
+RUN npm install --global pnpm@11.25.0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY workers/image-service/package.json ./workers/image-service/package.json
+RUN pnpm install --frozen-lockfile
+COPY src/core/policy.ts ./src/core/policy.ts
+COPY src/files/image-validation.ts src/files/image-service.ts src/files/image-runtime.ts src/files/image-decoder.mjs ./src/files/
+COPY scripts/image-validator-service.ts ./scripts/image-validator-service.ts
+RUN pnpm exec tsc --ignoreConfig --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir /compiled scripts/image-validator-service.ts
+RUN pnpm --filter @kavosh/image-service deploy --prod /runtime
+
+FROM alpine:3.24 AS runtime
+RUN apk add --no-cache nodejs && addgroup -g 10001 decoder && adduser -D -u 10002 -G decoder decoder
+WORKDIR /app
+ENV NODE_ENV=production TZ=UTC
+COPY --from=build /runtime/package.json ./package.json
+COPY --from=build /runtime/node_modules ./node_modules
+COPY --from=build /compiled/src ./src
+COPY --from=build /compiled/scripts ./scripts
+COPY --from=build /build/src/files/image-decoder.mjs ./src/files/image-decoder.mjs
+COPY scripts/image-service-smoke.mjs ./scripts/image-service-smoke.mjs
+RUN mkdir /run/kavosh-image && chown 10002:10001 /run/kavosh-image && chmod 0750 /run/kavosh-image
+USER 10002:10001
+CMD ["node", "scripts/image-validator-service.js"]

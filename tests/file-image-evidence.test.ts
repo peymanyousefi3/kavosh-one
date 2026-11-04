@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { randomUUID,createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile,mkdtemp,rmdir } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import sharp from 'sharp';
 import { operationsFixture } from './operations-fixture.ts';
-import { processOneInspection,type InspectionResult } from '../src/files/inspection-worker.ts';
+import { processOneInspection,inspectStoredFile,type InspectionResult,type InspectionTask } from '../src/files/inspection-worker.ts';
 import { validateImage } from '../src/files/image-validation.ts';
 import { detectContentSignature } from '../src/files/content-signature.ts';
 import type { Database } from '../src/core/database.ts';
+import { createImageValidationServer } from '../src/files/image-service.ts';
+import { clamdPeer } from './fixtures/clamd-peer.ts';
 
 const connection={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-image-evidence',accessKeyId:'synthetic-id',secretAccessKey:'synthetic-not-real-secret',maximumUploadBytes:100000};
 const sha=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
@@ -27,7 +30,7 @@ async function fixture(throughSchema?:number) {
   return {outcome:'no_detection',bytes:content.length,sha256:sha(content),etag:'"synthetic-image"',providerContentType:'application/octet-stream',
    signature:await detectContentSignature(content),imageValidation:await validateImage(content,'image/png')};
  }
- async function run(result:InspectionResult){try{return await processOneInspection(database,[f.a],randomUUID(),async()=>result);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
+ async function run(result:InspectionResult|((task:InspectionTask,signal:AbortSignal)=>Promise<InspectionResult>)){try{return await processOneInspection(database,[f.a],randomUUID(),typeof result==='function'?result:async()=>result);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
  const claim=async()=>(await workerQuery('SELECT * FROM public.claim_file_inspection($1,$2,30)',[[f.a],randomUUID()])).rows[0];
  async function finish(job:Record<string,unknown>,result:InspectionResult,image?:unknown){assert.equal(result.outcome,'no_detection');if(result.outcome!=='no_detection')throw new Error('TEST_RESULT_REQUIRED');return (await workerQuery<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) AS recorded',
   [job.academy_id,job.inspection_id,job.lease_token,result.outcome,'MEASURED_NO_DETECTION',result.bytes,result.sha256,result.etag,result.providerContentType,JSON.stringify(result.signature),image===undefined?JSON.stringify(result.imageValidation):JSON.stringify(image)])).rows[0].recorded;}
@@ -36,6 +39,41 @@ async function fixture(throughSchema?:number) {
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+
+check('actual worker pipeline composes streamed storage, scanner protocol, native Unix decoding and exact persisted receipts without re-reading objects',async f=>{
+ const directory=await mkdtemp('/private/tmp/kavosh-image-pipeline-'),socketPath=directory+'/service.sock',server=createImageValidationServer();let imageRequests=0;
+ server.on('request',req=>{imageRequests++;assert.equal(req.headers.cookie,undefined);assert.equal(req.headers.authorization,undefined);assert.equal(req.headers['x-academy-id'],undefined);});
+ await new Promise<void>(resolve=>server.listen(socketPath,resolve));
+ try {
+  for(const mode of ['success','detected','error']) {
+   const item=await f.prepare(),peer=await clamdPeer(mode);let reads=0;const body=Readable.from([f.bytes.subarray(0,40),f.bytes.subarray(40)]);
+   try {
+    assert.deepEqual(await f.run((task,signal)=>inspectStoredFile(task,()=>connection,peer.config,signal,5000,{async handle(){reads++;return {response:{statusCode:200,headers:{'content-length':String(f.bytes.length),'content-type':'application/octet-stream',etag:'"synthetic-image"'},body}};}},{socketPath})),{claimed:true,recorded:true});
+    assert.equal(reads,1);assert.equal(peer.connections(),1);assert.deepEqual(Buffer.concat(peer.received),f.bytes);assert.equal(body.destroyed,true);
+    const v=(await f.request('files/'+item.id+'/inspection')).body.data;assert.equal(v.safeToServe,false);
+    if(mode==='success'){assert.equal(v.attempts[0].imageValidation.result.outcome,'decoded');assert.equal(v.attempts[0].imageValidation.result.inputSha256,sha(f.bytes));}
+    else{assert.equal(v.attempts[0].imageValidation,null);assert.equal(v.processing.lastOutcome,mode==='detected'?'detected':'unavailable');}
+   }finally{body.destroy();await peer.close();}
+  }
+  assert.equal(imageRequests,1,'detected malware and failed scans must never reach native decoding');
+ }finally{await new Promise<void>(resolve=>{server.close(()=>resolve());server.closeAllConnections();});await rmdir(directory);}
+});
+check('an unavailable image service remains a retryable target failure without persisting a fabricated rejection or full-pixel proof',async f=>{
+ const item=await f.prepare(),peer=await clamdPeer('success');try {
+  await f.run((task,signal)=>inspectStoredFile(task,()=>connection,peer.config,signal,5000,{async handle(){return {response:{statusCode:200,headers:{'content-length':String(f.bytes.length),'content-type':'application/octet-stream',etag:'"synthetic-image"'},body:Readable.from([f.bytes])}};}},{socketPath:'/private/tmp/'+randomUUID()+'.sock'}));
+  const v=(await f.request('files/'+item.id+'/inspection')).body.data;assert.equal(v.processing.state,'queued');assert.equal(v.processing.lastReason,'TARGET_UNAVAILABLE');assert.equal(v.attempts[0].imageValidation,null);
+  assert.equal((await f.pg.query('SELECT * FROM public.file_image_evidence')).rows.length,0);
+ }finally{await peer.close();}
+});
+check('invalid image destinations and oversized native-image work fail before any object read or scanner connection',async f=>{
+ await f.prepare();const value=await f.evidence();let task!:InspectionTask;await f.run(async t=>{task=t;return value;});
+ const peer=await clamdPeer('success');let reads=0,lookups=0;try {
+  const connections=()=>{lookups++;return connection;},handler={async handle(){reads++;throw new Error('MUST_NOT_READ');}};
+  assert.deepEqual(await inspectStoredFile(task,connections,peer.config,new AbortController().signal,5000,handler,{socketPath:'https://localhost'}),{outcome:'unavailable',reason:'TARGET_UNAVAILABLE'});
+  assert.deepEqual(await inspectStoredFile({...task,expectedBytes:33_554_433},connections,peer.config,new AbortController().signal,5000,handler,{socketPath:'/private/tmp/not-contacted.sock'}),{outcome:'unavailable',reason:'TARGET_UNAVAILABLE'});
+  assert.equal(reads,0);assert.equal(lookups,0);assert.equal(peer.connections(),0);
+ }finally{await peer.close();}
+});
 
 check('actual full-pixel receipts persist with exact measured-attempt identity and remain evidence rather than download permission',async f=>{
  const item=await f.prepare(),value=await f.evidence(),job=await f.claim();assert.equal(await f.finish(job,value),true);assert.equal(await f.finish(job,value),false);

@@ -8,7 +8,8 @@ import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { detectContentSignature,maximumSignatureSampleBytes,signatureSchema } from './content-signature.ts';
-import { imageValidationSchema } from './image-validation.ts';
+import { imageValidationSchema,imageMimeSchema,maximumImageInputBytes } from './image-validation.ts';
+import { imageServiceConfiguration,validateImageViaService } from './image-service.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const taskSchema=z.object({academyId:uuid,inspectionId:uuid,fileId:uuid,storageTargetId:digest,leaseToken:uuid,attemptNo:z.number().int().min(1).max(5),expectedBytes:z.number().int().min(1).max(4_294_967_296),expectedSha256:digest.nullable(),claimedMimeType:z.string().min(1).max(201)}).strict();
@@ -38,28 +39,42 @@ export async function assertFileWorkerRole(db:Connection) {
 // Internal IO handler: no user-selected destination and no clean promotion.
 // A daemon response is recorded evidence, not MIME/configuration/freshness
 // attestation. Nothing in this worker may issue downloads or declare safe files.
-export async function inspectStoredFile(task:InspectionTask,connections:R2UploadConnections,scanner:ClamdConfiguration,signal:AbortSignal,timeoutMs=120000,handler?:S3ClientConfig['requestHandler']):Promise<InspectionResult> {
-  let service:ReturnType<typeof privateR2>|undefined,scannerFailed=false;
+export async function inspectStoredFile(task:InspectionTask,connections:R2UploadConnections,scanner:ClamdConfiguration,signal:AbortSignal,timeoutMs=120000,handler?:S3ClientConfig['requestHandler'],imageService?:z.infer<typeof imageServiceConfiguration>):Promise<InspectionResult> {
+  let service:ReturnType<typeof privateR2>|undefined,scannerFailed=false,inspectionFailure:z.infer<typeof problem>|undefined;
   try {
     if(signal.aborted)return {outcome:'unavailable',reason:'WORKER_STOPPED'};
+    if(imageService&&!imageServiceConfiguration.safeParse(imageService).success)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
+    const decodeImage=Boolean(imageService&&imageMimeSchema.safeParse(task.claimedMimeType).success);
+    if(decodeImage&&task.expectedBytes>maximumImageInputBytes)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
     if(task.expectedBytes>scanner.maximumBytes)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
     const connection=connections(task.academyId);if(!connection)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
     service=privateR2(connection,task.academyId,handler);if(service.storageTargetId!==task.storageTargetId)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
     const claims={bytes:task.expectedBytes,...(task.expectedSha256?{sha256:task.expectedSha256}:{})};
     const result=await service.inspectQuarantine(task.fileId,claims,async(source,storageSignal)=>{
-      const combined=AbortSignal.any([signal,storageSignal]),prefix=Buffer.alloc(Math.min(task.expectedBytes,maximumSignatureSampleBytes));let used=0;
-      const sampled=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){used+=chunk.copy(prefix,used,0,prefix.length-used);callback(null,chunk);}});
+      const combined=AbortSignal.any([signal,storageSignal]),prefix=Buffer.alloc(Math.min(task.expectedBytes,maximumSignatureSampleBytes)),imageBytes=decodeImage?Buffer.alloc(task.expectedBytes):null;let used=0,collected=0;
+      const sampled=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){
+        if(imageBytes){if(collected+chunk.length>imageBytes.length){callback(new ApiError(400,'FILE_SIZE_MISMATCH'));return;}collected+=chunk.copy(imageBytes,collected);}
+        used+=chunk.copy(prefix,used,0,prefix.length-used);callback(null,chunk);
+      }});
       try {
         const [,scan]=await Promise.all([pipeline(source,sampled),scanWithClamd(scanner,sampled,claims,combined).catch(error=>{scannerFailed=true;throw error;})]);
-        const signature=await detectContentSignature(prefix.subarray(0,used),{signal:combined});return {...scan,signature};
+        // R2 deliberately sanitizes callback exceptions. Preserve only the
+        // bounded stage classification here, never raw provider diagnostics.
+        const signature=await detectContentSignature(prefix.subarray(0,used),{signal:combined}).catch(error=>{inspectionFailure=error instanceof ApiError&&error.code==='CONTENT_SIGNATURE_TIMEOUT'?'INSPECTION_TIMEOUT':'INSPECTOR_INVALID_RESULT';throw error;});
+        // Decode only the complete bytes already streamed through the scanner;
+        // never perform a second mutable object read or decode detected malware.
+        const imageValidation=imageBytes&&scan.verdict==='no_detection'?await validateImageViaService(imageBytes,task.claimedMimeType,{...imageService!,signal:combined}).catch(error=>{inspectionFailure=error instanceof ApiError&&error.code==='IMAGE_SERVICE_TIMEOUT'?'INSPECTION_TIMEOUT':'TARGET_UNAVAILABLE';throw error;}):undefined;
+        return {...scan,signature,imageValidation};
       }finally{sampled.destroy();}
     },timeoutMs,signal);
     if(result.sha256!==result.inspection.sha256||result.bytes!==result.inspection.bytes)return {outcome:'content_mismatch'};
-    return {outcome:result.inspection.verdict,bytes:result.bytes,sha256:result.sha256,etag:result.provider.etag,providerContentType:result.provider.contentType,signature:result.inspection.signature};
+    const measured={bytes:result.bytes,sha256:result.sha256,etag:result.provider.etag,providerContentType:result.provider.contentType,signature:result.inspection.signature};
+    return result.inspection.verdict==='no_detection'?{outcome:'no_detection',...measured,...(result.inspection.imageValidation?{imageValidation:result.inspection.imageValidation}:{})}:{outcome:'detected',...measured};
   }catch(error){
+    if(signal.aborted)return {outcome:'unavailable',reason:'WORKER_STOPPED'};
     if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH'].includes(error.code))return {outcome:'content_mismatch'};
     if(error instanceof ApiError&&error.code==='R2_INSPECTION_TIMEOUT')return {outcome:'unavailable',reason:'INSPECTION_TIMEOUT'};
-    if(error instanceof ApiError&&error.code.startsWith('CONTENT_SIGNATURE_'))return {outcome:'unavailable',reason:error.code==='CONTENT_SIGNATURE_TIMEOUT'?'INSPECTION_TIMEOUT':'INSPECTOR_INVALID_RESULT'};
+    if(inspectionFailure)return {outcome:'unavailable',reason:inspectionFailure};
     return {outcome:'unavailable',reason:scannerFailed?'SCANNER_UNAVAILABLE':'STORAGE_UNAVAILABLE'};
   }finally{service?.close();}
 }

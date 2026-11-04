@@ -62,6 +62,38 @@ jobs:
       - name: Remove disposable test container
         if: always()
         run: docker rm --force kavosh-one-ci || true
+  image-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build minimal distribution-Node image validator
+        run: docker build --file Dockerfile.image-service --tag kavosh-image:ci .
+      - name: Refuse a runtime missing required isolation controls
+        run: |
+          if docker run --rm --network none kavosh-image:ci; then
+            echo 'Unsafe image-service startup was accepted'
+            exit 1
+          fi
+      - name: Run actual isolated resource-limited native image service
+        run: >-
+          docker run --detach --name kavosh-image-ci --network none --read-only
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --memory 1g --memory-swap 1g --cpus 1 --pids-limit 64
+          --tmpfs /run/kavosh-image:rw,noexec,nosuid,nodev,size=1m,uid=10002,gid=10001,mode=0750
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10002,gid=10001,mode=0700
+          kavosh-image:ci
+      - name: Verify actual PIE/cgroup/security controls and full native socket decoding
+        run: docker exec kavosh-image-ci node scripts/image-service-smoke.mjs
+      - name: Verify graceful service shutdown
+        run: |
+          docker stop --time 10 kavosh-image-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' kavosh-image-ci)" = 0
+      - name: Remove disposable image-service container
+        if: always()
+        run: docker rm --force kavosh-image-ci || true
   scanner-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 5
