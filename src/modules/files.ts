@@ -24,7 +24,8 @@ const historyQuery=z.object({limit:query.shape.limit,afterVersion:z.coerce.numbe
 interface FileRecord {id:string;anchor_kind:'academy'|'hub'|'class'|'person';hub_id:string|null;class_id:string|null;person_id:string|null;domain:z.infer<typeof domain>;
   name:string;description:string;tags:string[];claimed_mime_type:string;expected_bytes:number;expected_sha256:string|null;archived:boolean;version:number;effective_hub_id:string|null}
 const fields=`f.id,f.anchor_kind,f.hub_id,f.class_id,f.person_id,f.domain,f.name,f.description,f.tags,f.claimed_mime_type,
-  f.expected_bytes::float8 AS expected_bytes,f.expected_sha256,f.archived,f.version,f.created_by,f.created_at,f.effective_hub_id,'awaiting_upload' AS upload_state`;
+  f.expected_bytes::float8 AS expected_bytes,f.expected_sha256,f.archived,f.version,f.created_by,f.created_at,f.effective_hub_id,
+  CASE WHEN EXISTS(SELECT 1 FROM public.file_inspection_requests inspection WHERE inspection.academy_id=f.academy_id AND inspection.file_id=f.id) THEN 'inspection_requested' ELSE 'awaiting_upload' END AS upload_state`;
 const domains=[['student_private','students'],['guardian_private','guardians'],['agreement_definition','agreements']] as const;
 function access(ctx:ApiContext,edit=false,operation?:'files.upload') {
   if(!scopeNonempty(permissionScope(ctx,'files.view'))||(edit&&!scopeNonempty(permissionScope(ctx,'files.edit')))||(operation&&!scopeNonempty(permissionScope(ctx,operation))))throw new ApiError(403,'FORBIDDEN');
