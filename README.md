@@ -8,7 +8,7 @@ The owner authorized continuous backend implementation on 3 November 2026: imple
 
 Implemented: PostgreSQL migrations, tenant row policies and composite references, immutable academy-master identity, multi-role permissions with deny precedence, expiring/scoped bot credentials, shared rate limits, hub/pending-person creation and listing, audit history, credential revocation, bounded JSON/pagination, and transactional audit/outbox/idempotency records.
 
-Human identity uses pinned Better Auth: invitation-only email/password signup, email verification, signed-in phone verification, master new-device MFA, optional MFA for others, trusted devices, encrypted single-use recovery codes, password recovery and session management. Unverified accounts cannot use academy APIs. The encrypted auth-message queue has a separate least-privilege delivery worker with SMTP/Twilio adapters; live providers are **not configured or delivery-verified**. The separate business-event outbox does not have an automation worker yet.
+Human identity uses pinned Better Auth: invitation-only email/password signup, email verification, signed-in phone verification, master new-device MFA, optional MFA for others, trusted devices, encrypted single-use recovery codes, password recovery and session management. Unverified accounts cannot use academy APIs. The encrypted auth-message queue has a separate least-privilege delivery worker with SMTP/Twilio adapters; live providers are **not configured or delivery-verified**. Explicitly authorized portal-notification jobs have an isolated worker; general business-event fanout and timed reminders remain unfinished.
 
 Role-template create/read/update/duplicate, scoped role assignments, effective-access inspection, supervisor hierarchy and exact-payload approval APIs are implemented. Masters self-approve; other actors require a permitted upper human reviewer. Expired/revoked bot credentials, changed authority and target versions invalidate pending proposals. Withdraw/reject history, reasons, audit and atomic rollback are preserved. Scoped denials exclude only affected hubs. Templates are academy-wide policy configuration; person-assignment views redact outside-scope segments. Editable geography/hubs, versioned courses, persistent classes/sessions and reviewed cancellation/rescheduling are also implemented; details and limitations are below.
 
@@ -19,6 +19,12 @@ The separate `kavosh-academy` repository contains the existing public-facing web
 ## Product workspaces
 
 Overview, Academy, People, Learning, Finance, Reports, Community and Administration. Files, approvals, audit history and notifications are shared capabilities. External management agents use a scoped, documented API, with configurable approvals and limits.
+
+### Recorded teacher-work reporting (backend)
+
+`GET /api/v1/reports/payroll/recorded-time` combines saved teacher time and effective-dated work terms in one database snapshot. Work-pay, financial-report and class-time permissions intersect before aggregation. Date/time-zone, hub, class, worker and currency filters are supported. Actual time and five-minute configured rounding stay separate; simultaneous teaching counts once at the highest hourly rate per worker/currency. Rounding reductions are flagged. Cancelled sessions retain delivered work, and source revision links identify the exact recorded inputs. No private reasons or legal worker names are copied into this report.
+
+Missing rates, headcount/attendance or other compensation bases remain explicit unpriced cases, not zero payroll. Cross-currency overlap requires an FX policy, even if the output filters hide a currency. This report covers visible recorded session hourly costs only: salary/project/tuition compensation, evidence approval, statutory payroll, paystubs, payment and the complete financial reporting suite remain required. It does not determine earned legal entitlement or approve pay. Synchronous limits are 200 entries, 1,000 terms revisions and 200 priced intervals; oversized reports fail explicitly pending background reporting jobs. Schema 64 adds a tenant/date index without rewriting time or historical revisions.
 
 ### Inventory (backend)
 
