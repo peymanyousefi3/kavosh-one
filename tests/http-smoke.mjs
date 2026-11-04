@@ -54,6 +54,8 @@ try {
   const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
   for(const path of ['sessions/00000000-0000-4000-8000-000000000001/my-time','sessions/00000000-0000-4000-8000-000000000001/time-entries','session-time-entries/00000000-0000-4000-8000-000000000001/history']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/starts_at|assignment_id|reason|stack/);}
   assert.ok(spec.paths['/api/v1/sessions/{id}/my-time']?.post);
+  for(const path of ['inventory/items','inventory/locations','inventory/movements','inventory/locations/00000000-0000-4000-8000-000000000001/stock']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/cost_minor|serial_number|purchased_by|stack/);}
+  assert.ok(spec.paths['/api/v1/inventory/movements']?.post);
   assert.deepEqual(spec.paths['/api/webhooks/boldsign/{connectionId}']?.post?.security,[]);
   assert.match(spec.paths['/api/v1/files/{id}/inspection']?.post?.responses?.['202']?.description??'',/not verified/);
   console.log('Production HTTP smoke checks passed: liveness, fail-closed readiness, authorization, cache/security headers and API contract.');
