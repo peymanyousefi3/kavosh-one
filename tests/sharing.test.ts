@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { test } from 'node:test';
+import { receiptFixture } from './receipt-fixture.ts';
+
+async function fixture(){
+ const f=await receiptFixture(),hubPayee=await f.made('finance/payees',{hubId:f.hub,kind:'hub',code:'HUB',name:'Synthetic receiving hub',reason:'Synthetic named participant'}),recruiter=await f.made('finance/payees',{hubId:f.hub,kind:'person',personId:f.actors.peer.person,code:'RECRUITER',name:'Synthetic recruiter',reason:'Synthetic named participant'});
+ const input={expectedVersion:0,tuitionVersion:1,basis:'net_tuition',creditHandling:'retain_collections',recipients:[{payeeId:hubPayee.id,payeeVersion:1,method:'percentage',value:'25',release:'proportional'},{payeeId:recruiter.id,payeeVersion:1,method:'flat',value:'10',release:'proportional'}],reason:'Private internal sharing review'};
+ const path='finance/tuition-plans/'+f.plan.id+'/sharing',save=(patch:Record<string,unknown>={},as='master',key?:string)=>f.request(path,{...input,...patch},as,{key}),preview=(patch:Record<string,unknown>={},as='master')=>f.request(path+'/preview',{receivedAmount:'56.50',invoiceIssued:true,...patch},as),actual=(suffix='',as='master')=>f.request('finance/invoices/'+f.invoice.id+'/sharing-preview'+suffix,undefined,as);
+ return {...f,hubPayee,recruiter,input,path,save,preview,actual};
+}
+type Fixture=Awaited<ReturnType<typeof fixture>>;
+function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+async function access(f:Fixture,as:string,caps=['share-rules.view','share-rules.edit','payees.view','students.view']){
+ const role=await f.made('roles',{name:'Sharing role '+as,permissions:caps.map(capability=>({capability,effect:'allow'}))}),person=as==='bot'?f.bot:f.actors[as].person,path='people/'+person+'/access',before=await f.request(path);
+ assert.equal((await f.request(path,{expectedVersion:before.body.data.version,assignments:[{roleId:role.id,allHubs:true},...as==='manager'?[{roleId:f.managerRole,allHubs:false,hubIds:[f.hub]}]:[]]})).response.status,200);return role;
+}
+check('approved sharing pins named recipients, tuition and recruiter sources without creating a payable or journal',async f=>{
+ const r=await f.save();assert.equal(r.response.status,200,JSON.stringify({body:r.body,failures:f.metrics.queryFailures}));assert.equal(r.body.data.fullFeeTotal,'35.00');assert.equal(r.body.data.academyFull,'65.00');assert.equal(r.body.data.sourceSnapshot.studentRecruiter.recruiter_kind,'academy');assert.equal(r.body.data.payableRecorded,false);assert.equal(r.body.data.ledgerPosted,false);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,1);
+ const native=(await f.pg.query<{payee_id:string;amount:string}>('SELECT payee_id,full_minor::text AS amount FROM public.revenue_share_full_amounts($1,$2,1)',[f.a,r.body.data.sharingPlanId])).rows;assert.equal(native.find(l=>l.payee_id===f.hubPayee.id)!.amount,'2500');assert.equal(native.find(l=>l.payee_id===f.recruiter.id)!.amount,'1000');
+});
+check('scenario and recorded-receipt previews use exact cumulative collections without paying or reposting HST',async f=>{
+ assert.equal((await f.save()).response.status,200);const forecast=await f.preview();assert.equal(forecast.response.status,200,JSON.stringify(forecast.body));assert.equal(forecast.body.data.calculatedReleasedTotal,'17.50');assert.equal(forecast.body.data.academyReleased,'32.50');assert.equal(forecast.body.data.paymentExecuted,false);assert.equal((await f.actual()).body.data.calculatedReleasedTotal,'0.00');
+ assert.equal((await f.pay({amount:'56.50'})).response.status,201);assert.equal((await f.actual()).body.data.calculatedReleasedTotal,'17.50');assert.equal((await f.pay({amount:'56.50'})).response.status,201);assert.equal((await f.actual()).body.data.calculatedReleasedTotal,'35.00');assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,3);assert.equal((await f.pg.query('SELECT * FROM public.finance_journal_lines WHERE account_id=$1',[f.taxPayable.id])).rows.length,1);
+});
+check('payee renames and sharing replacements preserve earlier names, rates and source versions',async f=>{
+ assert.equal((await f.save()).response.status,200);assert.equal((await f.request('finance/payees/'+f.hubPayee.id+'/change',{expectedVersion:1,name:'Renamed hub',active:true,reason:'Private payee rename'})).response.status,200);assert.equal((await f.request(f.path)).body.data.recipients.find((r:any)=>r.payeeId===f.hubPayee.id).name,'Synthetic receiving hub');
+ assert.equal((await f.save({expectedVersion:1})).response.status,409);const recipients=f.input.recipients.map(r=>r.payeeId===f.hubPayee.id?{...r,payeeVersion:2,value:'30'}:r),changed=await f.save({expectedVersion:1,recipients});assert.equal(changed.response.status,200,JSON.stringify(changed.body));assert.equal(changed.body.data.fullFeeTotal,'40.00');assert.equal((await f.request(f.path+'?version=1')).body.data.fullFeeTotal,'35.00');
+ const history=await f.request(f.path+'/history?limit=1');assert.equal(history.body.nextVersion,1);assert.equal((await f.request(f.path+'/history?afterVersion=1&limit=1')).body.data[0].version,2);
+});
+check('over-budget flat fees need an explicit justified override and percentage totals are never normalized above 100',async f=>{
+ const recipients=f.input.recipients.map(r=>r.method==='flat'?{...r,value:'100'}:r);assert.equal((await f.save({recipients})).response.status,400);assert.equal((await f.save({recipients,allowOverAllocation:true})).response.status,400);
+ const allowed=await f.save({recipients,allowOverAllocation:true,overAllocationReason:'Explicit synthetic promotion loss accepted'});assert.equal(allowed.response.status,200,JSON.stringify(allowed.body));assert.equal(allowed.body.data.overAllocated,true);assert.equal(allowed.body.data.academyFull,'-25.00');assert.ok(!JSON.stringify(allowed.body.data).includes('Explicit synthetic promotion loss accepted'));
+ assert.equal((await f.save({expectedVersion:1,recipients:f.input.recipients.map(r=>({...r,method:'percentage',value:'60'})),allowOverAllocation:true,overAllocationReason:'Not permission to normalize rates'})).response.status,400);
+});
+check('credit rules and payee retirement remain explicit rather than silently erasing calculated fees',async f=>{
+ assert.equal((await f.save()).response.status,200);assert.equal((await f.preview({invoiceCredited:true})).body.data.calculatedReleasedTotal,'17.50');assert.equal((await f.request('finance/payees/'+f.recruiter.id+'/change',{expectedVersion:1,name:'Retired recruiter',active:false,reason:'Retire without deleting history'})).response.status,200);
+ const old=await f.preview();assert.equal(old.body.data.recipients.find((r:any)=>r.payeeId===f.recruiter.id).payeeCurrentlyActive,false);assert.equal(old.body.data.calculatedReleasedTotal,'17.50');
+ const cancelled=await f.save({expectedVersion:1,active:false,creditHandling:'cancel_on_credit'});assert.equal(cancelled.response.status,200,JSON.stringify(cancelled.body));const p=await f.preview({invoiceCredited:true});assert.equal(p.body.data.cancelledByCredit,true);assert.equal(p.body.data.calculatedReleasedTotal,'0.00');
+});
+check('selected-student sharing viewers need no payee directory or ledger rights and denials apply before pagination',async f=>{
+ assert.equal((await f.save()).response.status,200);const role=await f.made('roles',{name:'One student sharing viewer',permissions:[{capability:'share-rules.view',effect:'allow'}]}),path='people/'+f.actors.staff.person+'/access',before=await f.request(path),selected={roleId:role.id,allHubs:false,personIds:[f.student.id]};assert.equal((await f.request(path,{expectedVersion:before.body.data.version,assignments:[selected]})).response.status,200);
+ assert.equal((await f.request(f.path,undefined,'staff')).response.status,200);assert.equal((await f.request('finance/sharing-plans?limit=1',undefined,'staff')).body.data.length,1);assert.equal((await f.request(f.path+'/history',undefined,'staff')).response.status,403);assert.equal((await f.request('finance/payees',undefined,'staff')).response.status,403);assert.equal((await f.actual('','staff')).response.status,403);
+ const denied=await f.made('roles',{name:'Denied sharing class',permissions:[{capability:'share-rules.view',effect:'deny'}]}),current=await f.request(path);await f.request(path,{expectedVersion:current.body.data.version,assignments:[selected,{roleId:denied.id,allHubs:false,classIds:[f.c.id]}]});assert.equal((await f.request(f.path,undefined,'staff')).response.status,404);assert.equal((await f.request('finance/sharing-plans?limit=1',undefined,'staff')).body.data.length,0);
+});
+check('upper human review and current sources are required while revoked editors lose pending private terms',async f=>{
+ const role=await access(f,'staff');await access(f,'manager');const pending=await f.save({},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.approve(pending.body.approval.id,'staff')).response.status,403);assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
+ const changed=await f.save({expectedVersion:1},'staff');assert.equal(changed.response.status,202);assert.equal((await f.request('students/'+f.student.id+'/update',{expectedVersion:1,legalName:'Corrected synthetic student name'})).response.status,200);assert.equal((await f.approve(changed.body.approval.id)).response.status,409);
+ const revoked=await f.save({expectedVersion:1},'staff');assert.equal(revoked.response.status,202);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='share-rules.edit'",[role.id]);assert.equal((await f.request('approvals/'+revoked.body.approval.id,undefined,'staff')).response.status,404);assert.equal((await f.approve(revoked.body.approval.id)).response.status,409);
+});
+check('recipient beneficiaries cannot review their own agreement and bots can propose but never approve',async f=>{
+ await access(f,'staff');await access(f,'manager');const own=await f.made('finance/payees',{hubId:f.hub,kind:'person',personId:f.actors.manager.person,code:'MANAGER',name:'Synthetic manager payee',reason:'Explicit synthetic beneficiary'}),recipients=[{...f.input.recipients[0],payeeId:own.id}];
+ const pending=await f.save({recipients},'staff');assert.equal(pending.response.status,202);assert.equal((await f.approve(pending.body.approval.id,'manager')).body.error.code,'BENEFICIARY_REVIEW_FORBIDDEN');assert.equal((await f.approve(pending.body.approval.id)).response.status,200);
+ await access(f,'bot');const bot=await f.save({expectedVersion:1},'bot');assert.equal(bot.response.status,202,JSON.stringify(bot.body));assert.equal((await f.approve(bot.body.approval.id,'bot')).response.status,403);assert.equal((await f.approve(bot.body.approval.id)).response.status,200);
+});
+check('retries and event failure cannot leave duplicate or partial sharing agreements',async f=>{
+ const key=randomUUID(),r=await f.save({},'master',key);assert.equal(r.response.status,200);assert.deepEqual((await f.save({},'master',key)).body,r.body);await f.pg.exec('REVOKE INSERT ON public.outbox_events FROM kavosh_runtime');try{assert.equal((await f.save({expectedVersion:1})).response.status,503);}finally{await f.pg.exec('GRANT INSERT ON public.outbox_events TO kavosh_runtime');}
+ assert.equal((await f.pg.query('SELECT * FROM public.revenue_share_revisions')).rows.length,1);assert.equal((await f.pg.query('SELECT * FROM public.revenue_share_lines')).rows.length,2);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,1);
+});
+check('changed tuition never silently rebases an earlier sharing contract or a different invoice version',async f=>{
+ assert.equal((await f.save()).response.status,200);assert.equal((await f.credit(f.invoice.id)).response.status,201);assert.equal((await f.request('finance/tuition-plans/'+f.plan.id+'/change',{...f.planInput,expectedVersion:1,agreedAmount:'50',installments:[{...f.planInput.installments[0],amount:'56.50'}]})).response.status,200);
+ assert.equal((await f.request(f.path)).body.data.sourceTuitionChanged,true);assert.equal((await f.save({expectedVersion:1})).response.status,409);const newer=await f.issue({planVersion:2,issuedAt:'2026-11-07T12:00:00Z'});assert.equal(newer.response.status,201);assert.equal((await f.request('finance/invoices/'+newer.body.data.id+'/sharing-preview')).response.status,409);
+ const newRules=await f.save({expectedVersion:1,tuitionVersion:2});assert.equal(newRules.response.status,200,JSON.stringify(newRules.body));assert.equal(newRules.body.data.fullFeeTotal,'22.50');assert.equal((await f.request(f.path+'?version=1')).body.data.fullFeeTotal,'35.00');
+});
+check('payee identity, legal-name history and scope are independent of bank accounts or employment classification',async f=>{
+ const org=await f.made('finance/payees',{hubId:f.hub,kind:'organization',code:'ORG',name:'Synthetic organization',legalName:'Synthetic Organization Ltd.',reason:'Explicit declared legal name'});assert.equal((await f.request('finance/payees/'+org.id+'/change',{expectedVersion:1,name:'New display label',active:true,legalName:null,reason:'Do not guess a legal name'})).response.status,200);assert.equal((await f.request('finance/payees/'+org.id+'/history?limit=1')).body.data[0].legalName,'Synthetic Organization Ltd.');
+ assert.equal((await f.request('finance/payees',{hubId:f.hub,kind:'person',personId:f.bot,code:'BOT',name:'Cannot be a human payee',reason:'Synthetic invalid identity'})).response.status,400);assert.equal((await f.request('finance/payees/'+org.id,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ assert.equal((await f.request('finance/payees',{hubId:f.hub,kind:'hub',code:'DUP',name:'Duplicate hub identity',reason:'Must reuse the named hub'})).response.status,409);
+});
+check('native sharing history is tenant-bound, immutable and cannot be extended by a late zero-value line',async f=>{
+ const r=await f.save();assert.equal(r.response.status,200);const other=await f.made('finance/payees',{hubId:f.hub,kind:'organization',code:'LATE',name:'Late synthetic payee',reason:'Synthetic append attempt'});await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.b]);assert.equal((await f.pg.query('SELECT * FROM public.revenue_share_revisions')).rows.length,0);await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);for(const sql of ['DELETE FROM public.revenue_share_plans','UPDATE public.revenue_share_revisions SET full_fee_total=0','DELETE FROM public.revenue_share_lines'])await assert.rejects(f.pg.exec(sql),/permission denied/i);
+  await assert.rejects(f.pg.query("INSERT INTO public.revenue_share_lines VALUES($1,$2,1,$3,1,'flat',0,'proportional')",[f.a,r.body.data.sharingPlanId,other.id]),/SHARING_LINES_INVALID/);
+ }finally{await f.pg.exec('RESET ROLE');}assert.equal((await f.request(f.path)).body.data.recipients.length,2);
+});
+check('read-only schools allow explicit financial scenarios but never sharing mutations',async f=>{
+ assert.equal((await f.save()).response.status,200);await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.preview()).response.status,200);assert.equal((await f.save({expectedVersion:1})).response.status,403);
+});
+if(process.env.TEST_DATABASE_URL)check('two native sharing updates serialize on the tuition source and retain one complete winner',async f=>{
+ const started=performance.now(),results=await Promise.all([f.save(),f.save()]);assert.equal(results.filter(r=>r.response.status===200).length,1,JSON.stringify(results.map(r=>r.body)));assert.equal(results.filter(r=>r.response.status===409).length,1);assert.equal((await f.pg.query('SELECT * FROM public.revenue_share_revisions')).rows.length,1);console.log(JSON.stringify({measurement:'brief-sharing-rule-race',requests:2,winners:1,elapsedMs:Math.ceil(performance.now()-started)}));
+});
