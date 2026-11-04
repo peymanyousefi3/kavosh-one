@@ -1,5 +1,6 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,permissionScope,master,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
@@ -15,11 +16,12 @@ import { permittedPerson } from './students.ts';
 import { permittedFile } from './files.ts';
 import { prepareJournal,journalDependencies,applyJournal } from './finance-journals.ts';
 import { accountingDate } from './finance-periods.ts';
+import { automaticAllocationBasis,allocateApprovedReceipt } from './allocations.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000);
 const ref=z.object({id:uuid,version}).strict();
 const recordPayment=z.object({amount:text.max(80),collector:ref,method:ref,holdingAccount:ref,receivedById:uuid.nullable().default(null),receivedAt:z.iso.datetime({offset:true}).max(100),period:ref,
- reference:text.trim().max(200).default(''),evidence:ref.nullable().default(null),missingEvidenceReason:text.trim().max(2000).default(''),taxTreatment:z.literal('settle_invoice'),reason}).strict()
+ reference:text.trim().max(200).default(''),evidence:ref.nullable().default(null),missingEvidenceReason:text.trim().max(2000).default(''),taxTreatment:z.literal('settle_invoice'),allocation:z.enum(['oldest_due','unallocated']).default('oldest_due'),reason}).strict()
  .refine(v=>v.evidence!==null||v.missingEvidenceReason.length>0,'Attach receipt evidence or state the missing-evidence exception for the reviewer.');
 // Parse the route-owned invoice separately: strict input must reject a caller
 // choosing a different invoice, but stored approval payloads include it.
@@ -57,7 +59,7 @@ async function basis(ctx:ApiContext,input:ReturnType<typeof paymentInput>,lock=f
  if(checkState){if(i.credit_id)throw new ApiError(409,'CREDITED_INVOICE_RECEIPT_FORBIDDEN');if(Temporal.Instant.compare(input.receivedAt,i.issued_at instanceof Date?i.issued_at.toISOString():i.issued_at)<0)throw new ApiError(409,'PRE_INVOICE_RECEIPT_WORKFLOW_REQUIRED');if(amount>b.balance)throw new ApiError(409,'RECEIPT_EXCEEDS_OUTSTANDING');}
  const journal={periodId:input.period.id,periodVersion:input.period.version,postedOn:on,description:'Recorded tuition payment',reference:input.reference,purpose:'activity' as const,reason:input.reason,lines:[{accountId:holding.id,accountVersion:holding.version,side:'debit' as const,amount:formatMoney(amount,plan.unit_scale)},{accountId:ar.id,accountVersion:ar.version,side:'credit' as const,amount:formatMoney(amount,plan.unit_scale)}]};
  await prepareJournal(ctx,false,journal,lock,checkState);
- return {auth,invoice:i,collector:c,method:m,holding:{id:holding.id,version:holding.version},receiver:receiver?{id:receiver.id}:null,evidence:evidence?{id:evidence.id,version:evidence.version}:null,amount:amount.toString(),on,balance:publicBalance(b),journal,tax:{classification:terms.classification,rateMillionths:terms.rateMillionths,taxTreatment:'settle_invoice',additionalTaxPosting:false}};
+ return {auth,invoice:i,collector:c,method:m,holding:{id:holding.id,version:holding.version},receiver:receiver?{id:receiver.id}:null,evidence:evidence?{id:evidence.id,version:evidence.version}:null,amount:amount.toString(),on,balance:publicBalance(b),journal,tax:{classification:terms.classification,rateMillionths:terms.rateMillionths,taxTreatment:'settle_invoice',additionalTaxPosting:false},allocation:input.allocation==='oldest_due'?await automaticAllocationBasis(ctx,i.id,amount.toString()):null};
 }
 async function reversalBasis(ctx:ApiContext,input:ReturnType<typeof reversalInput>,lock=false,checkState=true){
  const r=await receipt(ctx,input.receiptId,true);if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);await ctx.db.query('SELECT id FROM public.tuition_invoices WHERE id=$1 FOR UPDATE',[r.invoice_id]);await ctx.db.query('SELECT id FROM public.tuition_receipts WHERE id=$1 FOR UPDATE',[r.id]);}
@@ -72,21 +74,22 @@ async function detail(ctx:ApiContext,r:Receipt){
 }
 async function validate(ctx:ApiContext,reversing:boolean,raw:unknown){if(reversing){const b=await reversalBasis(ctx,reversalInput(raw),true,false);return financialRecordAuthority(ctx,b.receipt,'receipts.edit');}return(await basis(ctx,paymentInput(raw),true,false)).auth;}
 async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown,purpose:'request'|'review'){
- try{const b=reversing?await reversalBasis(ctx,reversalInput(raw)):await basis(ctx,paymentInput(raw));return JSON.parse(JSON.stringify({...b,posting:await journalDependencies(ctx,reversing,b.journal,'review')}));}
+ try{const b=reversing?await reversalBasis(ctx,reversalInput(raw)):await basis(ctx,paymentInput(raw));return await reviewState(ctx,reversing,b);}
  catch(error){if(purpose==='review'&&error instanceof ApiError&&[400,403,404,409].includes(error.status))return {unavailable:error.code};throw error;}
 }
+async function reviewState(ctx:ApiContext,reversing:boolean,b:Record<string,unknown>&{journal:unknown}){const {auth,...source}=b;return JSON.parse(JSON.stringify({...source,posting:await journalDependencies(ctx,reversing,b.journal,'review')}));}
 async function apply(ctx:ApiContext,p:Proposal){
  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');let result:Receipt;
- if(p.action==='finance.receipt.reverse'){const input=reversalInput(p.payload),b=await reversalBasis(ctx,input,true);await ctx.db.query('INSERT INTO public.tuition_receipt_reversals(academy_id,id,receipt_id,approval_id,reason) VALUES($1,$2,$3,$4,$5)',[ctx.credential.academy_id,p.target_id,b.receipt.id,p.id,input.reason]);await applyJournal(ctx,{...p,payload:b.journal},true);await ctx.db.query('UPDATE public.tuition_receipts SET reversal_id=$2 WHERE id=$1',[b.receipt.id,p.target_id]);result=await receipt(ctx,b.receipt.id);
- }else{const input=paymentInput(p.payload),b=await basis(ctx,input,true);try{await ctx.db.query(`INSERT INTO public.tuition_receipts(academy_id,id,invoice_id,student_id,class_id,hub_id,amount_minor,collector_id,collector_version,method_id,method_version,holding_account,holding_version,received_by,received_at,received_on,reference,evidence_file,evidence_version,missing_evidence_reason,tax_treatment,reason,approval_id,created_by)
+ if(p.action==='finance.receipt.reverse'){const input=reversalInput(p.payload),b=await reversalBasis(ctx,input,true);if(!isDeepStrictEqual(await reviewState(ctx,true,b),p.review_context))throw new ApiError(409,'RECEIPT_SOURCE_CHANGED');await ctx.db.query('INSERT INTO public.tuition_receipt_reversals(academy_id,id,receipt_id,approval_id,reason) VALUES($1,$2,$3,$4,$5)',[ctx.credential.academy_id,p.target_id,b.receipt.id,p.id,input.reason]);await applyJournal(ctx,{...p,payload:b.journal},true);await ctx.db.query('UPDATE public.tuition_receipts SET reversal_id=$2 WHERE id=$1',[b.receipt.id,p.target_id]);result=await receipt(ctx,b.receipt.id);
+ }else{const input=paymentInput(p.payload),b=await basis(ctx,input,true);if(!isDeepStrictEqual(await reviewState(ctx,false,b),p.review_context))throw new ApiError(409,'RECEIPT_SOURCE_CHANGED');try{await ctx.db.query(`INSERT INTO public.tuition_receipts(academy_id,id,invoice_id,student_id,class_id,hub_id,amount_minor,collector_id,collector_version,method_id,method_version,holding_account,holding_version,received_by,received_at,received_on,reference,evidence_file,evidence_version,missing_evidence_reason,tax_treatment,reason,approval_id,created_by)
   VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,[ctx.credential.academy_id,p.target_id,b.invoice.id,b.invoice.student_id,b.invoice.class_id,b.invoice.hub_id,b.amount,input.collector.id,input.collector.version,input.method.id,input.method.version,input.holdingAccount.id,input.holdingAccount.version,input.receivedById,input.receivedAt,b.on,input.reference,input.evidence?.id??null,input.evidence?.version??null,input.missingEvidenceReason,input.taxTreatment,input.reason,p.id,ctx.credential.person_id]);
   }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23505')throw new ApiError(409,'RECEIPT_REFERENCE_EXISTS');throw error;}
-  await applyJournal(ctx,{...p,payload:b.journal},false);result=await receipt(ctx,p.target_id);
+  await applyJournal(ctx,{...p,payload:b.journal},false);if(input.allocation==='oldest_due')await allocateApprovedReceipt(ctx,p);result=await receipt(ctx,p.target_id);
  }
  await record(ctx.db,ctx.credential,ctx.requestId,p.action==='finance.receipt.reverse'?'finance.receipt.reversed':'finance.receipt.recorded',result.id,result.hub_id,{approvalId:p.id,severity:'critical',missingEvidence:result.evidence_file===null,hasReason:true});return detail(ctx,result);
 }
 async function reviewer(ctx:ApiContext,p:Proposal){
- if(await master(ctx))return;const r=p.action==='finance.receipt.reverse'?await receipt(ctx,reversalInput(p.payload).receiptId):null,input=r?null:paymentInput(p.payload),i=await invoiceRow(ctx,r?r.invoice_id:input!.invoiceId),collectorId=r?r.collector_id:input!.collector.id;
+ if(await master(ctx))return;const r=p.action==='finance.receipt.record'?null:await receipt(ctx,z.object({receiptId:uuid}).passthrough().parse(p.payload).receiptId),input=r?null:paymentInput(p.payload),i=await invoiceRow(ctx,r?r.invoice_id:input!.invoiceId),collectorId=r?r.collector_id:input!.collector.id;
  const person=(await ctx.db.query<{person_id:string|null}>('SELECT person_id FROM public.finance_collectors WHERE id=$1',[collectorId])).rows[0]?.person_id;
  if(person===ctx.credential.person_id||ctx.credential.person_id===i.student_id||input?.receivedById===ctx.credential.person_id||r?.received_by===ctx.credential.person_id||(await ctx.db.query('SELECT 1 FROM public.family_relationships WHERE student_id=$1 AND guardian_id=$2 LIMIT 1',[i.student_id,ctx.credential.person_id])).rows.length)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');
 }
@@ -110,3 +113,4 @@ export const receiptsContract=[
  {path:'/api/v1/finance/receipts/{id}',method:'get',summary:'Read a permitted immutable receipt and pinned collector/method labels; evidence references require current file permissions'},
  {path:'/api/v1/finance/receipts/{id}/reverse',method:'post',summary:'Request a reviewed exact journal correction without deleting the original or performing a cash refund',schema:reverse}
 ] as const;
+export { receipt as receiptRow,reviewer as authorizeReceiptReviewer };

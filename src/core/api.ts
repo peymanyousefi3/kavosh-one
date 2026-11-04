@@ -182,7 +182,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
       // Freeze geography before identity row locks. This avoids reading records
       // using a hub list expanded before a concurrent move across area boundaries.
-      const readOnlyPreview=request.method==='POST'&&(path==='calendar/preview'||/^finance\/tax-codes\/[0-9a-f-]{36}\/preview$/i.test(path));
+      const readOnlyPreview=request.method==='POST'&&(path==='calendar/preview'||/^finance\/tax-codes\/[0-9a-f-]{36}\/preview$/i.test(path)||/^finance\/receipts\/[0-9a-f-]{36}\/allocations\/preview$/i.test(path));
       if(request.method==='GET'||readOnlyPreview)await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
       const lock = human
         ? await db.query<{ valid: boolean }>('SELECT public.lock_human($1,$2) AS valid',[human.sessionId,human.userId])

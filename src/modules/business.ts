@@ -19,6 +19,7 @@ import { tuition,tuitionActions,tuitionContract } from './tuition.ts';
 import { invoices,invoiceActions,invoicesContract } from './invoices.ts';
 import { collectors,collectorActions,collectorsContract } from './collectors.ts';
 import { receipts,receiptActions,receiptsContract } from './receipts.ts';
+import { allocations,allocationActions,allocationsContract } from './allocations.ts';
 import { financePeriods,periodActions,periodsContract } from './finance-periods.ts';
 import { financeJournals,journalActions,journalsContract } from './finance-journals.ts';
 import { financeLedger,ledgerContract } from './finance-ledger.ts';
@@ -30,7 +31,7 @@ import type { R2UploadConnections } from '../integrations/r2-config.ts';
 
 // All modules use the same authentication, scopes, transaction, audit and
 // approval registry. No endpoint gets a parallel, weaker authorization path.
-const approvalActions={...administrationActions,...sessionActions,...familyActions,...enrollmentActions,...agreementActions,...packageActions,...storageActions,...financeActions,...taxActions,...paymentMethodActions,...tuitionActions,...invoiceActions,...collectorActions,...receiptActions,...periodActions,...journalActions,...closingActions};
+const approvalActions={...administrationActions,...sessionActions,...familyActions,...enrollmentActions,...agreementActions,...packageActions,...storageActions,...financeActions,...taxActions,...paymentMethodActions,...tuitionActions,...invoiceActions,...collectorActions,...receiptActions,...allocationActions,...periodActions,...journalActions,...closingActions};
 export async function business(ctx:ApiContext,connections?:R2UploadConnections):Promise<Reply|null> {
   const signatureReply=await agreementPackages(ctx,approvalActions);if(signatureReply)return signatureReply;
   const methodReply=await paymentMethods(ctx,approvalActions);if(methodReply)return methodReply;
@@ -38,6 +39,7 @@ export async function business(ctx:ApiContext,connections?:R2UploadConnections):
   const invoiceReply=await invoices(ctx,approvalActions);if(invoiceReply)return invoiceReply;
   const collectorReply=await collectors(ctx,approvalActions);if(collectorReply)return collectorReply;
   const receiptReply=await receipts(ctx,approvalActions);if(receiptReply)return receiptReply;
+  const allocationReply=await allocations(ctx,approvalActions);if(allocationReply)return allocationReply;
   return await administration(ctx,approvalActions)??await academy(ctx)??await calendar(ctx)??await classes(ctx,approvalActions)??await staff(ctx)??await students(ctx)??await guardians(ctx)??await families(ctx,approvalActions)??await enrollments(ctx,approvalActions)??await agreements(ctx,approvalActions)??await files(ctx)??await storage(ctx,approvalActions,connections)??await financeTaxes(ctx,approvalActions)??await finance(ctx,approvalActions)??await financePeriods(ctx,approvalActions)??await financeJournals(ctx,approvalActions)??await financeLedger(ctx)??await financialReports(ctx)??await financialStatements(ctx)??await financeClosing(ctx)??await financeClosingRuns(ctx,approvalActions);
 }
-export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract,...enrollmentsContract,...agreementsContract,...packagesContract,...filesContract,...storageContract,...financeContract,...taxesContract,...paymentMethodsContract,...tuitionContract,...invoicesContract,...collectorsContract,...receiptsContract,...periodsContract,...journalsContract,...ledgerContract,...financialReportsContract,...financialStatementsContract,...closingContract,...closingRunsContract];
+export const businessContract=[...coreContract,...administrationContract,...academyContract,...calendarContract,...classesContract,...staffContract,...studentsContract,...guardiansContract,...familiesContract,...enrollmentsContract,...agreementsContract,...packagesContract,...filesContract,...storageContract,...financeContract,...taxesContract,...paymentMethodsContract,...tuitionContract,...invoicesContract,...collectorsContract,...receiptsContract,...allocationsContract,...periodsContract,...journalsContract,...ledgerContract,...financialReportsContract,...financialStatementsContract,...closingContract,...closingRunsContract];

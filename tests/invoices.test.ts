@@ -109,3 +109,8 @@ check('bots can propose an invoice but only a human reviewer can create its acco
  await financeAccess(f,'bot');const pending=await f.issue({},'bot');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.approve(pending.body.approval.id,'bot')).response.status,403);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
  const approved=await f.approve(pending.body.approval.id);assert.equal(approved.response.status,200,JSON.stringify(approved.body));assert.equal(approved.body.data.accountingPosted,true);
 });
+check('selected-student invoice editors can receive broader upper review without changing the reviewed financial source',async f=>{
+ const common=await financeAccess(f,'staff');await financeAccess(f,'manager');await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability IN ('invoices.view','invoices.edit')",[common.id]);
+ const selected=await f.made('roles',{name:'Only this student invoice editor',permissions:['invoices.view','invoices.edit'].map(capability=>({capability,effect:'allow'}))}),path='people/'+f.actors.staff.person+'/access',before=await f.request(path);assert.equal((await f.request(path,{expectedVersion:before.body.data.version,assignments:[{roleId:common.id,allHubs:true},{roleId:selected.id,allHubs:false,personIds:[f.student.id]}]})).response.status,200);
+ const pending=await f.issue({},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));const reviewed=await f.approve(pending.body.approval.id,'manager');assert.equal(reviewed.response.status,200,JSON.stringify(reviewed.body));assert.equal(reviewed.body.data.gross,'113.00');
+});

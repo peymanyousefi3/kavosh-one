@@ -1,17 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { invoiceFixture } from './invoice-fixture.ts';
-
-async function fixture(){
- const f=await invoiceFixture(),issued=await f.issue();assert.equal(issued.response.status,201,JSON.stringify(issued.body));const invoice=issued.body.data;
- const collector=await f.made('finance/collectors',{hubId:f.hub,code:'CASH',kind:'hub',custody:'academy_funds',name:'Synthetic academy-controlled cash',accounts:[{id:f.cash.id,version:1}],reason:'Synthetic collector'});
- const base={amount:'50',collector:{id:collector.id,version:1},method:{id:f.method.id,version:1},holdingAccount:{id:f.cash.id,version:1},receivedAt:'2026-11-06T12:00:00Z',period:{id:f.period.id,version:1},reference:'',missingEvidenceReason:'Synthetic missing paper receipt approved as exception',taxTreatment:'settle_invoice',reason:'Private receipt review evidence'};
- const pay=(patch:Record<string,unknown>={},as='master',key?:string)=>f.request('finance/invoices/'+invoice.id+'/receipts',{...base,...patch},as,{key});
- const reverse=(id:string,patch:Record<string,unknown>={},as='master',key?:string)=>f.request('finance/receipts/'+id+'/reverse',{period:base.period,postedOn:'2026-11-07',reason:'Private correction approval',...patch},as,{key});
- const status=async()=>{const r=await f.request('finance/invoices/'+invoice.id+'/payment-status');assert.equal(r.response.status,200,JSON.stringify(r.body));return r.body.data;};
- return {...f,invoice,collector,payment:base,pay,reverse,status};
-}
+import { receiptFixture as fixture } from './receipt-fixture.ts';
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 async function access(f:Fixture,as:string,caps=['receipts.view','receipts.edit','invoices.view','tuition.view','collectors.view','payment-methods.view','accounts.view','journals.view','journals.edit','periods.view','people.view']){
@@ -72,6 +62,10 @@ check('staff receipt proposals need upper approval and changed balances or permi
 check('bots may propose receipts but only human approval can record money, and closed schools and periods reject writes',async f=>{
  await access(f,'bot');const pending=await f.pay({},'bot');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.approve(pending.body.approval.id,'bot')).response.status,403);assert.equal((await f.approve(pending.body.approval.id)).response.status,200);
  await f.request('finance/periods/'+f.period.id+'/change',{expectedVersion:1,state:'closed',reason:'Close synthetic accounting period'});assert.equal((await f.pay({period:{id:f.period.id,version:2}})).response.status,409);await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.pay()).response.status,403);
+});
+check('selected-student receipt editors receive broader upper review without false source conflicts',async f=>{
+ const common=await access(f,'staff');await access(f,'manager');await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability IN ('receipts.view','receipts.edit')",[common.id]);const selected=await f.made('roles',{name:'One student receipt editor',permissions:['receipts.view','receipts.edit'].map(capability=>({capability,effect:'allow'}))}),path='people/'+f.actors.staff.person+'/access',before=await f.request(path);assert.equal((await f.request(path,{expectedVersion:before.body.data.version,assignments:[{roleId:common.id,allHubs:true},{roleId:selected.id,allHubs:false,personIds:[f.student.id]}]})).response.status,200);
+ const pending=await f.pay({},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));const accepted=await f.approve(pending.body.approval.id,'manager');assert.equal(accepted.response.status,200,JSON.stringify(accepted.body));assert.equal(accepted.body.data.amount,'50.00');
 });
 if(process.env.TEST_DATABASE_URL)check('eight competing native receipts never overcollect the invoice and retain balanced atomic winners',async f=>{
  const started=performance.now(),responses=await Promise.all(Array.from({length:8},()=>f.pay({amount:'30'})));assert.equal(responses.filter(r=>r.response.status===201).length,3,JSON.stringify(responses.map(r=>r.body)));assert.equal(responses.filter(r=>r.response.status===409).length,5);assert.equal((await f.status()).received,'90.00');assert.equal((await f.pg.query('SELECT * FROM public.tuition_receipts')).rows.length,3);console.log(JSON.stringify({measurement:'brief-receipt-race',requests:8,recorded:3,rejected:5,elapsedMs:Math.ceil(performance.now()-started)}));

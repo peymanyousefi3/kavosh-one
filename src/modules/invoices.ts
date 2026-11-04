@@ -116,7 +116,7 @@ async function detail(ctx:ApiContext,i:Invoice){
 }
 async function validateInvoice(ctx:ApiContext,crediting:boolean,raw:unknown){return crediting?financialRecordAuthority(ctx,(await creditBasis(ctx,creditPayload.parse(raw),true)).invoice,'invoices.edit'):(await issueBasis(ctx,issuePayload.parse(raw),true)).auth;}
 async function invoiceDependencies(ctx:ApiContext,crediting:boolean,raw:unknown,purpose:'request'|'review'){
- try{const b=crediting?await creditBasis(ctx,creditPayload.parse(raw)):await issueBasis(ctx,issuePayload.parse(raw));if(!crediting&&purpose==='request'&&'existing' in b&&b.existing)throw new ApiError(409,'TUITION_ALREADY_INVOICED');return JSON.parse(JSON.stringify(b));}
+ try{const b=crediting?await creditBasis(ctx,creditPayload.parse(raw)):await issueBasis(ctx,issuePayload.parse(raw));if(!crediting&&purpose==='request'&&'existing' in b&&b.existing)throw new ApiError(409,'TUITION_ALREADY_INVOICED');const {auth,...source}=b as typeof b&{auth?:unknown};return JSON.parse(JSON.stringify(source));}
  catch(error){if(purpose==='review'&&error instanceof ApiError&&[400,403,404,409].includes(error.status))return {unavailable:error.code};throw error;}
 }
 async function applyInvoice(ctx:ApiContext,p:Proposal){
