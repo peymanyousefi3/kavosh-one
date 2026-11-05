@@ -32,12 +32,18 @@ export function validateCompensationRules(raw:unknown,scale:number){
  return rules;
 }
 export type HourlyInterval={key:string;start:number;end:number;rateMinor:bigint};
-export function highestHourlySegments(intervals:HourlyInterval[]){
+export type HourlyWindow={start:number;end:number};
+export function highestHourlySegments(intervals:HourlyInterval[],options:{window?:HourlyWindow;excluded?:HourlyWindow[]}={}){
  if(!Array.isArray(intervals)||intervals.length>200||new Set(intervals.map(i=>i.key)).size!==intervals.length||intervals.some(i=>typeof i.key!=='string'||!i.key.length||i.key.length>100||!Number.isSafeInteger(i.start)||!Number.isSafeInteger(i.end)||i.end<i.start||i.end-i.start>86400000||typeof i.rateMinor!=='bigint'||i.rateMinor<0n))throw new ApiError(400,'INVALID_HOURLY_INTERVALS');
- const points=[...new Set(intervals.flatMap(i=>[i.start,i.end]))].sort((a,b)=>a-b),segments:{start:number;end:number;key:string;rateMinor:bigint}[]=[];
- // ponytail: at most 200 intervals; this bounded scan avoids a custom heap.
+ const validWindow=(w:HourlyWindow)=>w&&Number.isSafeInteger(w.start)&&Number.isSafeInteger(w.end)&&w.end>w.start&&Number.isSafeInteger(w.end-w.start)&&w.end-w.start<=366*86400000;
+ const excluded=options.excluded??[];
+ if(options.window&&!validWindow(options.window)||!Array.isArray(excluded)||excluded.length>200||excluded.some(w=>!validWindow(w)))throw new ApiError(400,'INVALID_HOURLY_WINDOW');
+ const points=[...new Set([...intervals.flatMap(i=>[i.start,i.end]),...excluded.flatMap(i=>[i.start,i.end]),...options.window?[options.window.start,options.window.end]:[]])].sort((a,b)=>a-b),segments:{start:number;end:number;key:string;rateMinor:bigint}[]=[];
+ // ponytail: at most 200 inputs and 200 retained claims; the bounded scan
+ // avoids fragmenting inputs into an unbounded intermediate interval list.
  // Larger payroll periods need the planned background/chunked calculation.
  for(let p=0;p<points.length-1;p++){const start=points[p],end=points[p+1];let winner:HourlyInterval|undefined;
+  if(options.window&&(start<options.window.start||end>options.window.end)||excluded.some(i=>i.start<=start&&i.end>=end))continue;
   for(const i of intervals)if(i.start<=start&&i.end>=end&&(!winner||i.rateMinor>winner.rateMinor||(i.rateMinor===winner.rateMinor&&i.key<winner.key)))winner=i;
   if(winner&&end>start){const previous=segments.at(-1);if(previous&&previous.end===start&&previous.key===winner.key)previous.end=end;else segments.push({start,end,key:winner.key,rateMinor:winner.rateMinor});}
  }
