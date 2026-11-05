@@ -7,7 +7,8 @@ import { agreementRouting } from './boldsign.ts';
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const label=text.min(1).max(200).refine(v=>v.trim().length>0&&!/[\r\n]/.test(v));
-const draft=z.object({packageId:uuid,attachmentId:uuid,bindingId:uuid,title:label,message:text.max(2000),locale:z.enum(['en','fr','zh-CN']),expiryDays:z.number().int().min(1).max(180),
+export const boldSignRequestOptions=z.object({title:label,message:text.max(2000),expiryDays:z.number().int().min(1).max(180)}).strict();
+const draft=boldSignRequestOptions.extend({packageId:uuid,attachmentId:uuid,bindingId:uuid,locale:z.enum(['en','fr','zh-CN']),
  document:z.object({sha256:hash,sizeBytes:z.number().int().min(9).max(10_485_760)}).strict(),routing:agreementRouting,
  signer:z.object({personId:uuid,legalName:label,email:z.string().email().max(254),phoneE164:z.string().regex(/^\+[1-9]\d{7,14}$/),
   emailVerified:z.literal(true),phoneVerified:z.literal(true),contactFingerprint:hash}).strict()}).strict();

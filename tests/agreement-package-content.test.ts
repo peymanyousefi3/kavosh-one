@@ -123,6 +123,7 @@ test('schema70 preserves a real schema69 prepared package without inventing a co
  const f=await agreementFixture(69);try{
   const prepared=await f.prepare();assert.equal(prepared.response.status,201);const id=prepared.body.data.id,old=(await f.pg.query('SELECT * FROM public.agreement_packages WHERE id=$1',[id])).rows[0];
   await f.pg.exec(await readFile(new URL('../db/migrations/070_agreement_package_contents.sql',import.meta.url),'utf8'));
+  await f.pg.exec(await readFile(new URL('../db/migrations/071_signature_send_requests.sql',import.meta.url),'utf8'));
   assert.deepEqual((await f.pg.query('SELECT * FROM public.agreement_packages WHERE id=$1',[id])).rows[0],old);assert.equal((await f.pg.query('SELECT * FROM public.agreement_package_contents')).rows.length,0);
   const unbound=await f.request('agreement-packages/'+id);assert.equal(unbound.response.status,200);assert.equal(unbound.body.data.contentAttached,false);assert.equal(unbound.body.data.readyToSend,false);
   const binding=await reviewedAgreementContent(f);assert.equal((await f.request('agreement-packages/'+id+'/content',{bindingId:binding.id,reason:'Explicitly review historical preparation content'})).response.status,201);
