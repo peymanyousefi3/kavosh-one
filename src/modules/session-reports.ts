@@ -15,6 +15,7 @@ const document=z.object({title:text.pipe(z.string().trim().min(1).max(200)),loca
  .refine(v=>new Set(v.map(b=>b.id)).size===v.length,'Duplicate block ID')
  .refine(v=>{const media=v.filter(b=>b.kind==='media');return media.length<=20&&new Set(media.map(b=>b.fileId)).size===media.length;},'At most twenty unique media files')}).strict();
 const correction=z.object({expectedVersion:z.number().int().min(0).max(2147483647),sessionVersion:version,document,reason:text.pipe(z.string().trim().min(1).max(2000))}).strict();
+export { document as sessionReportDocument };
 const ownInput=correction.extend({assignmentId:uuid,assignmentVersion:version});
 const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict(),empty=z.object({}).strict();
 type Document=z.infer<typeof document>;type Input=z.infer<typeof correction>;
