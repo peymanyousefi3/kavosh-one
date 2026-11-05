@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.82.0",
+    "version": "0.83.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -26297,6 +26297,180 @@
         }
       }
     },
+    "/api/v1/poll-responses/{id}/moderation": {
+      "post": {
+        "summary": "Upper-human reviewed inclusion/exclusion of one exact submitted response revision; cannot alter answers or restore respondent-withdrawn votes",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "responseVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "excluded": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "responseVersion",
+                  "expectedVersion",
+                  "excluded",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Private exact-response-version moderation decision with current source-scoped authority",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "responseVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/poll-responses/{id}/moderation/history": {
+      "get": {
+        "summary": "Private immutable moderation revision history; no separate copy of respondent answers",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "responseVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/polls": {
       "post": {
         "summary": "Propose school/hub/class poll with explicit dated student-family audience and separately versioned questions; upper human review",
@@ -28612,7 +28786,7 @@
     },
     "/api/v1/reports/learning/polls/{id}": {
       "get": {
-        "summary": "Exact-form chart-ready poll counts filtered by both result and poll source rights before aggregation; combined hub/class/student filters; no free-text bodies or global totals; 10000-head synchronous cap",
+        "summary": "Exact-form source-scoped poll charts count current submitted nonexcluded heads; separately report included/excluded/withdrawn and student/actor counts; combined hub/class/student filters; no free-text or global totals; 10000-head synchronous cap",
         "parameters": [
           {
             "name": "id",
