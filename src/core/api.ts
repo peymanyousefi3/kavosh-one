@@ -219,6 +219,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23503') { status = 400; code = 'INVALID_REFERENCE'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23505') { status = 409; code = 'CONFLICT'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23P01') { status = 409; code = 'SESSION_OVERLAP'; }
+      else if (error && typeof error === 'object' && 'code' in error && error.code === '23514' && 'message' in error && error.message === 'PAYRUN_CANCEL_BEFORE_SOURCE_CORRECTION') { status=409;code='PAYRUN_CANCEL_BEFORE_SOURCE_CORRECTION'; }
       else if (error && typeof error === 'object' && 'code' in error && error.code === '23514') { status = 400; code = 'INVALID_INPUT'; }
       return Response.json({ error: { code, requestId } }, { status, headers: { ...headers, ...(status === 429 ? { 'Retry-After': '60' } : {}) } });
     } finally { db?.release(destroyConnection); }
