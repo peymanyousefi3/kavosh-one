@@ -122,6 +122,7 @@ async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
   if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payroll_hourly_accruals WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'HOURLY_CORRECTION_WORKFLOW_REQUIRED');
   if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payroll_salary_accruals WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'SALARY_CORRECTION_WORKFLOW_REQUIRED');
   if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payroll_project_accruals WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'PROJECT_CORRECTION_WORKFLOW_REQUIRED');
+  if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payroll_tuition_course_accruals WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'TUITION_COURSE_CORRECTION_WORKFLOW_REQUIRED');
  return prepared;
 }
 export const journalActions:ApprovalRegistry={
