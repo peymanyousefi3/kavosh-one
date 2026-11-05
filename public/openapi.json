@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.100.0",
+    "version": "0.101.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -27592,7 +27592,7 @@
         }
       },
       "post": {
-        "summary": "Request upper-human-reviewed exact hourly gross expense/payable accrual plus atomic worker-wide half-open time claims across classes; source-bound current terms, explicit actual/configured basis and mandatory earning/tax/rounding reviews; not net pay, source-entitlement certification or payment",
+        "summary": "Request upper-human-reviewed exact hourly gross expense/payable accrual plus atomic worker-wide half-open time claims across classes; source-bound current terms and a reviewed minimum replacement booking date from relevant retained reversals, explicit actual/configured basis and mandatory earning/tax/rounding reviews; not net pay, source-entitlement certification or payment",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -27773,7 +27773,7 @@
     },
     "/api/v1/payroll/hourly-accruals/{id}": {
       "get": {
-        "summary": "Read a permitted immutable hourly gross accounting record and operational/time review flags without granting HR or journal access",
+        "summary": "Read a permitted immutable hourly gross accounting record, operational/time review flags and enforced-at-posting versus legacy-review-required correction-date policy without granting HR or journal access",
         "parameters": [
           {
             "name": "id",
