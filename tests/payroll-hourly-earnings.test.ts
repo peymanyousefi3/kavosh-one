@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { Temporal } from '@js-temporal/polyfill';
-import { payrollHourlyEarnings,type PayrollHourlySource } from '../src/core/payroll-hourly-earnings.ts';
+import { payrollHourlyEarnings,payrollHourlyCurrencyConflicts,type PayrollHourlySource } from '../src/core/payroll-hourly-earnings.ts';
 
 const hour=3600000,window={start:0,end:24*hour};
 const source=(key:string,start:number,end:number,rateMinor=3000n,rounding:'none'|'nearest_5'='none'):PayrollHourlySource=>({key,start,end,rateMinor,rounding});
@@ -16,6 +16,24 @@ test('retained worker-time claims exclude every overlapping source, not merely i
  const r=calculate([source('original',0,2*hour),source('other-class',hour,3*hour,2000n)],[{start:0,end:2*hour}]);
  assert.equal(r.actual.gross.amount,'20.00');assert.deepEqual(r.actual.timeClaims,[{start:2*hour,end:3*hour}]);assert.equal(r.actual.sources[0].key,'other-class');
  const retry=calculate([source('original',0,2*hour),source('other-class',hour,3*hour,2000n)],[{start:0,end:2*hour},...r.actual.timeClaims]);assert.equal(retry.actual.gross.minor,'0');assert.deepEqual(retry.actual.timeClaims,[]);
+});
+test('cross-currency coverage includes rounded-down actual work intersecting a different rounded-up currency',()=>{
+ const a={...source('cad',300000,420000,100n,'nearest_5'),personId:'worker',currencyId:'CAD'},b={...source('usd',120000,270000,100n,'nearest_5'),personId:'worker',currencyId:'USD'};
+ const result=payrollHourlyCurrencyConflicts([a,b]);assert.deepEqual([...result].sort(),['cad','usd']);
+ assert.deepEqual([...payrollHourlyCurrencyConflicts([b,a])].sort(),['cad','usd']);
+ assert.equal(payrollHourlyCurrencyConflicts([a,{...b,personId:'other-worker'}]).size,0);assert.equal(payrollHourlyCurrencyConflicts([a,{...b,currencyId:'CAD'}]).size,0);
+ assert.equal(payrollHourlyCurrencyConflicts([a,b],{start:0,end:300000}).size,0);assert.equal(payrollHourlyCurrencyConflicts([a,b],{start:420000,end:600000}).size,0);
+ const adjacent={...b,start:420000,end:570000};assert.equal(payrollHourlyCurrencyConflicts([a,adjacent]).size,0);
+ for(const patch of [{rounding:'guess'},{personId:''},{currencyId:''},{end:a.start},{start:NaN},{rateMinor:-1n}])assert.throws(()=>payrollHourlyCurrencyConflicts([{...a,...patch}] as typeof a[]));
+});
+test('currency conflict union matches a small independent time oracle and never depends on source order',()=>{
+ for(let seed=0;seed<20;seed++){
+  const rows=Array.from({length:8},(_,i)=>({...source(`key-${i}`,((i*7+seed*3)%25)*60000,((i*7+seed*3)%25)*60000+(i%4+1)*30000,0n,'nearest_5'),personId:`worker-${i%2}`,currencyId:i%3?'CAD':'USD'}));
+  const expected=new Set<string>(),range={start:120000,end:1500000};
+  const end=(s:typeof rows[number])=>Math.max(s.end,s.start+Math.floor((s.end-s.start+150000)/300000)*300000);
+  for(let minuteHalf=range.start;minuteHalf<range.end;minuteHalf+=30000)for(const a of rows)for(const b of rows)if(a.personId===b.personId&&a.currencyId!==b.currencyId&&a.start<=minuteHalf&&minuteHalf<end(a)&&b.start<=minuteHalf&&minuteHalf<end(b)){expected.add(a.key);expected.add(b.key);}
+  assert.deepEqual([...payrollHourlyCurrencyConflicts(rows,range)].sort(),[...expected].sort());assert.deepEqual([...payrollHourlyCurrencyConflicts([...rows].reverse(),range)].sort(),[...expected].sort());
+ }
 });
 test('half-open payroll boundaries clip crossing entries and keep adjacent periods from claiming the same time',()=>{
  const inputs=[source('crossing',hour/2,2*hour)],first=calculate(inputs,[],{start:0,end:hour}),second=calculate(inputs,first.actual.timeClaims,{start:hour,end:3*hour});

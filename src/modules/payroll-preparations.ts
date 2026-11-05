@@ -5,8 +5,8 @@ import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api
 import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { payCalendarRange,payCalendarDays } from '../core/pay-calendar.ts';
-import { payrollHourlyEarnings } from '../core/payroll-hourly-earnings.ts';
-import { roundRatio } from '../core/money.ts';
+import { payrollHourlyCurrencyConflicts } from '../core/payroll-hourly-earnings.ts';
+import { payrollHourlyPlan } from './payroll-hourly-plan.ts';
 import { priceRecordedHourlySources,type Entry,type Terms } from './recorded-work-report.ts';
 import { sessionEvidenceCapabilities } from './session-evidence-report.ts';
 import { lockFinanceBook } from '../core/finance-lock.ts';
@@ -35,14 +35,9 @@ function calculation(s:Source){
  // Use the exact saved database window, not a second timezone-data version
  // when revisiting an old preparation. Dates remain the operator's input.
  const {priced,issues,scales}=pricing,first=Number(s.windowStartMilliseconds),last=Number(s.windowEndMilliseconds);
- const ambiguous=new Set<string>();
- for(let i=0;i<priced.length;i++)for(let j=i+1;j<priced.length;j++){
-  const a=priced[i],b=priced[j];if(a.terms.currency_id===b.terms.currency_id)continue;
-  const end=(p:typeof a)=>p.rule.rounding==='none'?p.end:p.start+Number(roundRatio(BigInt(p.end-p.start),300000n,'half_away')*300000n);
-  if(Math.max(a.start,b.start,first)<Math.min(a.end,b.end,last)||Math.max(a.start,b.start,first)<Math.min(end(a),end(b),last)){ambiguous.add(a.terms.currency_id);ambiguous.add(b.terms.currency_id);}
- }
- return {engine:'hourly-gross-v1',basis:'retained_sources_recomputed_by_current_engine',currencies:[...scales].map(([currencyId,c])=>({currencyId,currencyCode:c.code,unitScale:c.scale,requiresFXPolicy:ambiguous.has(currencyId),
-  hourly:ambiguous.has(currencyId)?null:payrollHourlyEarnings(priced.filter(p=>p.terms.currency_id===currencyId).map(p=>({key:p.key,start:p.start,end:p.end,rateMinor:p.rate*10n**BigInt(c.scale-p.terms.unit_scale),rounding:p.rule.rounding})),{start:first,end:last},[],c.scale),
+ const conflicts=payrollHourlyCurrencyConflicts(priced.map(p=>({key:p.key,personId:p.entry.person_id,currencyId:p.terms.currency_id,start:p.start,end:p.end,rateMinor:p.rate,rounding:p.rule.rounding})),{start:first,end:last}),ambiguous=new Set(priced.filter(p=>conflicts.has(p.key)).map(p=>p.terms.currency_id));
+ return {engine:'hourly-gross-v2',basis:'retained_sources_recomputed_by_current_engine',currencies:[...scales].map(([currencyId,c])=>({currencyId,currencyCode:c.code,unitScale:c.scale,requiresFXPolicy:ambiguous.has(currencyId),
+  hourly:ambiguous.has(currencyId)?null:payrollHourlyPlan(priced.filter(p=>p.terms.currency_id===currencyId),{start:first,end:last},c.scale),
   sourceRefs:priced.filter(p=>p.terms.currency_id===currencyId).map(p=>({key:p.key,entryId:p.entry.id,entryVersion:p.entry.version,engagementId:p.terms.engagement_id,termsVersion:p.terms.version,componentCode:p.rule.code}))})),
   unpricedComponents:issues,nonHourlySources:s.terms.flatMap(t=>t.components.filter(r=>r.kind!=='hourly'&&r.kind!=='headcount_hourly').map(r=>({engagementId:t.engagement_id,termsVersion:t.version,componentCode:r.code,kind:r.kind,reason:'EXPLICIT_NON_HOURLY_EARNING_BASIS_REQUIRED'}))),
   sessionEvidence:s.entries.map(e=>({entryId:e.id,entryVersion:e.version,sessionId:e.session_id,reviewVersion:e.evidence_version,decision:e.evidence_decision,reviewedSourceCurrent:e.evidence_current,operationalReviewAccepted:e.evidence_decision==='accepted'&&e.evidence_current===true})),
@@ -71,5 +66,5 @@ export async function payrollPreparations(ctx:ApiContext):Promise<Reply|null>{
 export const payrollPreparationsContract=[
  {path:'/api/v1/payroll/preparations',method:'get',summary:'Source-scoped immutable payroll preparation directory; complete worker work/time authority including retained/current contexts before paging, not approved or paid payroll',querySchema:query},
  {path:'/api/v1/payroll/preparations',method:'post',summary:'Retain an exact bounded payroll source draft with crossing-window hours, all effective work terms, period pins and evidence-review freshness; actual/configured hourly calculation and explicit unresolved non-hourly bases. No source consumption, wage accrual, payroll approval or payment.',schema:create},
- {path:'/api/v1/payroll/preparations/{id}',method:'get',summary:'Read immutable source-based payroll draft, current-source change flag, exact hourly alternatives/source attribution and evidence blockers; never a paystub or earned-entitlement determination'}
+ {path:'/api/v1/payroll/preparations/{id}',method:'get',summary:'Read immutable source-based payroll draft with current-source change flag, exact source/work-agreement earning allocations, complete shadowed-source evidence and schedule review flags and conservative cross-currency actual/rounded coverage; no durable claims, paystub or earned-entitlement determination'}
 ] as const;

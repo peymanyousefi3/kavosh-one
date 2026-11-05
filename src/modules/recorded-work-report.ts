@@ -7,6 +7,7 @@ import { ApiError,scopeNonempty } from '../core/policy.ts';
 import { payCalendarDays,payCalendarRange } from '../core/pay-calendar.ts';
 import { formatMoneyTotal,roundRatio } from '../core/money.ts';
 import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type HourlyRule,type HourlyInterval } from '../core/work-compensation.ts';
+import { payrollHourlyCurrencyConflicts } from '../core/payroll-hourly-earnings.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const zone=z.string().min(1).max(100).refine(v=>{if(/^[+-]/.test(v))return false;try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}});
@@ -87,14 +88,9 @@ export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
  const {priced,issues,scales,issue}=priceRecordedHourlySources(data.entries,data.terms);
  const source=(p:typeof priced[number])=>({entryId:p.entry.id,entryVersion:p.entry.version,engagementId:p.terms.engagement_id,termsVersion:p.terms.version,componentCode:p.rule.code,rounding:p.rule.rounding,excessToleranceMinutes:p.rule.excessToleranceMinutes,durationExceedsScheduleTolerance:p.end-p.start>ms(p.entry.scheduled_end)-ms(p.entry.scheduled_start)+p.rule.excessToleranceMinutes*60000,
   ...p.rule.kind==='headcount_hourly'?{headcountBasis:p.rule.headcountBasis,enrolledCount:p.entry.enrolled,enrollmentOn:p.entry.enrollment_on}:{}});
- const ambiguous=new Set<string>();
- // ponytail: <=200 priced source intervals; larger reports use background jobs.
- // Check before currency filtering; hiding a currency must not choose a winner.
- for(let i=0;i<priced.length;i++)for(let j=i+1;j<priced.length;j++){
-  const a=priced[i],b=priced[j];if(a.entry.person_id!==b.entry.person_id||a.terms.currency_id===b.terms.currency_id)continue;
-  const roundedEnd=(v:typeof a)=>v.rule.rounding==='none'?v.end:v.start+Number(roundRatio(BigInt(v.end-v.start),300000n,'half_away')*300000n);
-  if((a.start<b.end&&b.start<a.end)||(a.start<roundedEnd(b)&&b.start<roundedEnd(a)))ambiguous.add(a.entry.person_id);
- }
+ // Check complete worker coverage before currency filtering. Configured
+ // claims reserve actual work even when that work rounds down to zero.
+ const conflicts=payrollHourlyCurrencyConflicts(priced.map(p=>({key:p.key,personId:p.entry.person_id,currencyId:p.terms.currency_id,start:p.start,end:p.end,rateMinor:p.rate,rounding:p.rule.rounding}))),ambiguous=new Set(priced.filter(p=>conflicts.has(p.key)).map(p=>p.entry.person_id));
  for(const p of priced)if(ambiguous.has(p.entry.person_id))issue(p.entry,'OVERLAPPING_CURRENCIES_REQUIRE_FX_POLICY',p.terms,p.rule);
  const currencies=[...scales].filter(([id])=>!q.currencyId||id===q.currencyId).map(([currencyId,{scale,code}])=>{
   let actualTotal=0n,configuredTotal=0n;const workers:Record<string,unknown>[]=[];
