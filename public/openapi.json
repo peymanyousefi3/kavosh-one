@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.94.0",
+    "version": "0.95.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -30888,7 +30888,7 @@
     },
     "/api/v1/reports/finance/outlook": {
       "get": {
-        "summary": "Single-source-snapshot financial outlook: posted cash, dated current receivable/payable obligations, explicitly unmatched future cost occurrences and separate scheduled payroll estimates; exact per-currency chart scenario with unresolved timing/access/terms visible, not a complete cash/accrual forecast or bank verification",
+        "summary": "Single-source-snapshot financial outlook: baseline cash/AR/AP plus retained future cash journals, horizon-reserved tuition/bills and horizon-active unmatched cost occurrences and separate scheduled payroll estimates; exact per-currency chart scenario with reopened/pre-issue timing gaps, source access and changed terms explicit, not a complete cash/accrual forecast or bank verification",
         "parameters": [
           {
             "name": "on",
