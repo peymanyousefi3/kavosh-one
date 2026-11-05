@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertAuditEnvelope } from './redaction-assertions.ts';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { invoiceFixture } from './invoice-fixture.ts';
@@ -16,7 +17,7 @@ check('CSV preview is read-only and approved import retains exact private rows w
  const added=await f.upload();assert.equal(added.response.status,201,JSON.stringify({body:added.body,failures:f.metrics.queryFailures}));const id=added.body.data.id;assert.equal(added.body.data.rowCount,2);assert.equal(added.body.data.reconciled,false);assert.equal(added.body.data.ledgerAdjusted,false);assert.equal(added.body.data.sourceVerified,false);assert.equal(added.body.data.csv,undefined);
  const rows=await f.rows(id,'?limit=1');assert.equal(rows.body.data[0].debitNetMinor,'10025');assert.equal(rows.body.nextLine,1);assert.equal((await f.rows(id,'?afterLine=1')).body.data[0].debitNetMinor,'-501');assert.equal((await f.rows(id,'?from=2026-01-02')).body.data.length,1);
  assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.finance_balance_observations')).rows.length,0);
- const audit=(await f.pg.query("SELECT changes FROM public.audit_events WHERE action='finance.statement.imported'")).rows;assert.doesNotMatch(JSON.stringify(audit),/Private payer|Private fee|10025|REF|Private statement/);
+ const audit=(await f.pg.query<{changes:unknown}>("SELECT changes FROM public.audit_events WHERE action='finance.statement.imported'")).rows;assert.equal(audit.length,1);assertAuditEnvelope(audit[0].changes,{rowCount:2,severity:'critical',hasReason:true,ledgerAdjusted:false});
 });
 check('durable retries, duplicate detection and retained voids preserve all rows and permit intentional reimport after void',async f=>{
  const key=randomUUID(),one=await f.upload({},'master',key);assert.equal(one.response.status,201);assert.deepEqual((await f.upload({},'master',key)).body,one.body);assert.equal((await f.upload()).response.status,409);const id=one.body.data.id;

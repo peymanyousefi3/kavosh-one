@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertAuditEnvelope } from './redaction-assertions.ts';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { workFixture as fixture } from './work-fixture.ts';
@@ -11,7 +12,7 @@ check('employee and contractor work terms persist with configured cycles, source
  const key=randomUUID(),created=await f.create({},'master',key);assert.equal(created.response.status,201,JSON.stringify(created.body));const e=created.body.data;assert.equal(e.definition.payCycle.day,31);assert.equal(e.components.length,5);assert.equal(e.components[1].rounding,'nearest_5');assert.equal(e.components[1].excessToleranceMinutes,5);assert.equal(e.payrollReady,false);assert.equal(e.classificationCertified,false);assert.equal(e.earningsOrPaymentsPosted,false);assert.equal((await f.create({},'master',key)).body.data.id,e.id);
  const changed=await f.amend(e.id,{effectiveOn:'2026-07-01',definition:{...f.definition,classification:'contractor',workPattern:'fixed_term_services',reportingForm:'T4A',payCycle:{kind:'biweekly',anchorOn:'2026-07-03'}}});assert.equal(changed.response.status,200,JSON.stringify(changed.body));assert.equal(changed.body.data.definition.classification,'contractor');assert.equal(changed.body.data.version,2);
  assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.work_engagement_revisions')).rows.length,2);
- const audit=JSON.stringify((await f.pg.query("SELECT changes FROM public.audit_events WHERE action LIKE 'work.%'")).rows);assert.doesNotMatch(audit,/Private legal|3000|taxReview/);
+ const audit=(await f.pg.query<{changes:unknown}>("SELECT changes FROM public.audit_events WHERE action LIKE 'work.%' ORDER BY(changes->>'version')::integer")).rows;assert.equal(audit.length,2);for(let i=0;i<audit.length;i++)assertAuditEnvelope(audit[i].changes,{version:i+1,severity:'critical',hasReason:true,effectiveOn:['2026-01-01','2026-07-01'][i],classificationCertified:false});
 });
 check('work changes require an upper human and the worker cannot approve their own rate, while master self-approval remains allowed',async f=>{
  const pending=await f.create({},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.pg.query('SELECT * FROM public.work_engagements')).rows.length,0);assert.equal((await f.approve(pending.body.approval.id,'staff')).response.status,403);assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);

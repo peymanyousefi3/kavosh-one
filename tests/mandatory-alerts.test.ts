@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertGenericCriticalNotice } from './redaction-assertions.ts';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
@@ -23,7 +24,7 @@ check('critical decisions notify the original requester and their upper chain ev
  const first=await f.source();assert.equal((await f.approve(first.approvalId)).response.status,200);const terminal=(await f.pg.query<{event_id:string}>("SELECT event_id FROM public.automation_event_sources WHERE approval_id=$1 AND event_type='approval.applied'",[first.approvalId])).rows[0];assert.ok(terminal);const people=(await f.pg.query<{person_id:string}>("SELECT person_id FROM public.portal_notifications WHERE event_id=$1 AND origin='mandatory'",[terminal.event_id])).rows.map(p=>p.person_id).sort();assert.deepEqual(people,[f.actors.staff.person,f.actors.manager.person,f.actors.master.person].sort());const staff=await f.request('notifications?origin=mandatory',undefined,'staff');assert.equal(staff.body.data.length,1);assert.equal(staff.body.data[0].eventId,terminal.event_id);assert.equal((await f.request('approvals/'+staff.body.data[0].source.id,undefined,'staff')).body.data.status,'applied');
 });
 test('private payroll alerts need current pay rights but do not require automation configuration access',async()=>{
- const f=await workFixture();try{const q=await f.create({components:[f.components[0]]},'staff');assert.equal(q.response.status,202,JSON.stringify(q.body));const list=await f.request('notifications?origin=mandatory',undefined,'manager');assert.equal(list.response.status,200,JSON.stringify(list.body));assert.equal(list.body.data.length,1);const n=list.body.data[0];assert.equal(n.source.id,q.body.approval.id);assert.doesNotMatch(JSON.stringify(n),/Private legal worker|3000|T4|taxReview|classification|EMPLOYEE/);assert.equal((await f.request('automations/rules',undefined,'manager')).response.status,403);
+ const f=await workFixture();try{const q=await f.create({components:[f.components[0]]},'staff');assert.equal(q.response.status,202,JSON.stringify(q.body));const list=await f.request('notifications?origin=mandatory',undefined,'manager');assert.equal(list.response.status,200,JSON.stringify(list.body));assert.equal(list.body.data.length,1);const n=list.body.data[0];assert.equal(n.source.id,q.body.approval.id);assertGenericCriticalNotice(n);assert.equal((await f.request('automations/rules',undefined,'manager')).response.status,403);
  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='work-pay.view'",[f.managerRole]);assert.equal((await f.request('notifications?origin=mandatory&limit=1',undefined,'manager')).body.data.length,0);assert.equal((await f.request('notifications/'+n.id,undefined,'manager')).response.status,404);assert.equal((await f.request('notifications/'+n.id+'/read',{},'manager')).response.status,404);
  }finally{await f.pg.close();}
 });
