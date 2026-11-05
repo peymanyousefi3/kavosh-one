@@ -1,4 +1,4 @@
-import { createHmac,timingSafeEqual } from 'node:crypto';
+import { createHash,createHmac,timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 
@@ -46,11 +46,14 @@ const templateProperties=z.object({templateId:uuid,title:z.string().max(1000),ro
 // Shared bounded read-only transport. The fixed resource union cannot become
 // an arbitrary URL or mutation method. The absolute deadline also covers a
 // transport/stream implementation that fails to honor its AbortSignal.
-async function readBoldSignJson(config:BoldSignConnection,id:string,resource:'document'|'template',send:typeof fetch,externalSignal?:AbortSignal) {
- const configured=connection.safeParse(config),upper=resource.toUpperCase();
+type PdfResource='template-pdf'|'document-pdf'|'audit-pdf';
+const pdfError={ 'template-pdf':'BOLDSIGN_TEMPLATE_PDF_UNAVAILABLE','document-pdf':'BOLDSIGN_DOCUMENT_PDF_UNAVAILABLE','audit-pdf':'BOLDSIGN_AUDIT_PDF_UNAVAILABLE' } as const;
+async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource,send:typeof fetch,externalSignal?:AbortSignal) {
+ const pdf=resource!=='document'&&resource!=='template',kind=resource==='template'||resource==='template-pdf'?'template':'document';
+ const configured=connection.safeParse(config),upper=kind.toUpperCase(),mime=pdf?'application/pdf':'application/json',limit=pdf?10_485_760:1_048_576;
  if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
  const selected=uuid.safeParse(id);if(!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_'+upper+'_ID');
- const unavailable=()=>new ApiError(502,'BOLDSIGN_'+(resource==='document'?'STATUS':'TEMPLATE')+'_UNAVAILABLE');
+ const unavailable=()=>new ApiError(502,pdf?pdfError[resource]:'BOLDSIGN_'+(resource==='document'?'STATUS':'TEMPLATE')+'_UNAVAILABLE');
  const abort=new AbortController(),cancel=()=>abort.abort(),timer=setTimeout(cancel,10000);
  let rejectAbort:(error:Error)=>void=()=>{};
  const interrupted=new Promise<never>((_,reject)=>{rejectAbort=reject;});
@@ -61,29 +64,68 @@ async function readBoldSignJson(config:BoldSignConnection,id:string,resource:'do
  const discard=(body:ReadableStream<Uint8Array>|null|undefined)=>{try{void body?.cancel().catch(()=>{});}catch{/* Never expose upstream cancellation errors. */}};
  try {
   if(externalSignal?.aborted)throw unavailable();
-  const request=send(endpoints[configured.data.region]+'/v1/'+resource+'/properties?'+new URLSearchParams({[resource+'Id']:selected.data}),{
-   method:'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:'application/json'},redirect:'error',cache:'no-store',credentials:'omit',signal:abort.signal
+  const query=new URLSearchParams({[kind+'Id']:selected.data});
+  if(resource==='template-pdf')query.set('includeFormFieldValues','true');
+  if(resource==='document-pdf')query.set('format','Combined');
+  const operation=resource==='audit-pdf'?'downloadAuditLog':pdf?'download':'properties';
+  const request=send(endpoints[configured.data.region]+'/v1/'+kind+'/'+operation+'?'+query,{
+   method:'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:mime},redirect:'error',cache:'no-store',credentials:'omit',signal:abort.signal
   });
   // A non-cooperative transport may settle after cancellation. Dispose of its
   // late response without waiting or retaining the body in the worker.
   void request.then(value=>{if(abort.signal.aborted)discard(value.body);},()=>{});
   response=await Promise.race([request,interrupted]);
   if(abort.signal.aborted)throw unavailable();
-  if(!response.ok||response.redirected||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
+  if(response.status!==200||response.redirected||(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase()!==mime)throw unavailable();
   reader=response.body?.getReader();if(!reader)throw unavailable();
   const chunks:Uint8Array[]=[];let size=0;
   while(true) {
    if(abort.signal.aborted)throw unavailable();
    const part=await Promise.race([reader.read(),interrupted]);if(part.done)break;
-   size+=part.value.byteLength;if(size>1_048_576)throw unavailable();chunks.push(part.value);
+   size+=part.value.byteLength;if(size>limit)throw unavailable();chunks.push(part.value);
   }
-  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))) as unknown;
+  return Buffer.concat(chunks,size);
  }catch {
   abort.abort();if(reader){try{void reader.cancel().catch(()=>{});}catch{/* Cancellation must not hold the deadline open. */}}else discard(response?.body);
   throw unavailable();
  }finally {
   clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);reader?.releaseLock();
  }
+}
+
+async function readBoldSignJson(config:BoldSignConnection,id:string,resource:'document'|'template',send:typeof fetch,signal?:AbortSignal) {
+ const bytes=await readBoldSignBytes(config,id,resource,send,signal);
+ try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)) as unknown;}
+ catch{throw new ApiError(502,'BOLDSIGN_'+(resource==='document'?'STATUS':'TEMPLATE')+'_UNAVAILABLE');}
+}
+
+// https://developers.boldsign.com/template/download-template/
+// Includes rendered field values so prefilled legal terms enter the exact-byte
+// fingerprint. This is untrusted PDF evidence, NOT malware clearance, a provider
+// revision, a routing snapshot, or proof that a later template send uses it.
+export async function getBoldSignTemplatePdf(config:BoldSignConnection,templateId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
+ const evidence=await readBoldSignPdf(config,templateId,'template-pdf',send,signal);
+ return {templateId:templateId.toLowerCase(),...evidence};
+}
+async function readBoldSignPdf(config:BoldSignConnection,id:string,resource:PdfResource,send:typeof fetch,signal?:AbortSignal) {
+ const bytes=await readBoldSignBytes(config,id,resource,send,signal);
+ if(!/^%PDF-(?:1\.[0-7]|2\.0)[\r\n]/.test(bytes.subarray(0,9).toString('latin1')))
+  throw new ApiError(502,pdfError[resource]);
+ return {bytes,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length};
+}
+
+// https://developers.boldsign.com/documents/download-document/
+// https://developers.boldsign.com/documents/download-audit-trail/
+// Explicit artifact kinds prevent confusing an audit PDF with the agreement.
+// The caller must independently bind owned document/signer/status and protect
+// retained bytes. A provider download alone establishes none of these facts.
+export async function getBoldSignDocumentPdf(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
+ const evidence=await readBoldSignPdf(config,documentId,'document-pdf',send,signal);
+ return {documentId:documentId.toLowerCase(),artifactKind:'document' as const,...evidence};
+}
+export async function getBoldSignAuditPdf(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
+ const evidence=await readBoldSignPdf(config,documentId,'audit-pdf',send,signal);
+ return {documentId:documentId.toLowerCase(),artifactKind:'audit' as const,...evidence};
 }
 
 // Region is explicit, never inferred from the academy address. These are the

@@ -42,6 +42,8 @@ jobs:
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - name: Focused signing transport and original-byte verification
+        run: node --import tsx --test --test-concurrency=1 tests/boldsign.test.ts tests/boldsign-template.test.ts tests/boldsign-template-pdf.test.ts
       - name: Compile the isolated notification daemon without a TypeScript runtime
         run: pnpm notifications:build
       - name: API contract matches the implemented schemas
