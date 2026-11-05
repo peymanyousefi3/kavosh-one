@@ -9,6 +9,7 @@ import { classRow } from './classes.ts';
 import { enrollment } from './enrollments.ts';
 import { template } from './agreements.ts';
 import { permittedPerson } from './students.ts';
+import { permittedFile } from './files.ts';
 import { signatureConnectionTarget } from '../integrations/boldsign-webhook-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
@@ -23,6 +24,24 @@ export function agreementRequiresGuardian(birth:string,on:string) {
  const b=Temporal.PlainDate.from(birth),d=Temporal.PlainDate.from(on);
  if(Temporal.PlainDate.compare(d,b)<0)throw new ApiError(409,'AGREEMENT_DATE_BEFORE_BIRTH');
  return d.year-b.year-(on.slice(5)<birth.slice(5)?1:0)<18;
+}
+export interface AgreementPackageRow extends Record<string,unknown> {id:string;enrollment_id:string;template_id:string;template_version:number;template_hash:string;locale:string;signer_id:string;student_id:string;hub_id:string;class_id:string;approval_id:string;created_by:string}
+export async function permittedAgreementPackage(ctx:ApiContext,id:string,editing=false) {
+ const row=(await ctx.db.query<AgreementPackageRow>('SELECT * FROM public.agreement_packages WHERE id=$1',[id])).rows[0];if(!row)throw new ApiError(404,'NOT_FOUND');
+ await sources(ctx,{enrollmentId:row.enrollment_id,templateId:row.template_id,signerId:row.signer_id},editing);
+ const link=(await ctx.db.query<{id:string;file_id:string}>(`SELECT l.id,b.file_id FROM public.agreement_package_contents l JOIN public.agreement_content_bindings b ON b.academy_id=l.academy_id AND b.id=l.binding_id WHERE l.package_id=$1`,[id])).rows[0];
+ if(link)await permittedFile(ctx,link.file_id);
+ return {...row,contentAttachmentId:link?.id??null,contentAttached:Boolean(link),readyToSend:false};
+}
+export async function currentAgreementPackage(ctx:ApiContext,id:string) {
+ const row=await permittedAgreementPackage(ctx,id,true),prepared=(await ctx.db.query<{payload:unknown;review_context:Record<string,unknown>;status:string;action:string;target_id:string;reviewer_id:string}>('SELECT payload,review_context,status,action,target_id,reviewer_id FROM public.approval_requests WHERE id=$1',[row.approval_id])).rows[0];
+ if(!prepared||prepared.status!=='applied'||prepared.action!=='agreement.prepare'||prepared.target_id!==row.id||prepared.reviewer_id!==row.created_by)throw new ApiError(409,'PACKAGE_PREPARATION_REQUIRED');
+ const {preparedOn:currentDay,...current}=await basis(ctx,payloadSchema.parse(prepared.payload));
+ const {preparedOn:originalDay,...original}=prepared.review_context;
+ // Do not expire a valid preparation merely at midnight. basis still checks
+ // current civil age/guardian authority, parties, contacts and all revisions.
+ if(!isDeepStrictEqual(JSON.parse(JSON.stringify(current)),JSON.parse(JSON.stringify(original))))throw new ApiError(409,'PACKAGE_SOURCES_CHANGED');
+ return {row,basis:current};
 }
 async function sources(ctx:ApiContext,input:Pick<Input,'enrollmentId'|'templateId'|'signerId'>,editing=false) {
  const {row:e,c}=await enrollment(ctx,input.enrollmentId);
@@ -93,14 +112,17 @@ async function apply(ctx:ApiContext,p:Proposal) {
  await record(ctx.db,ctx.credential,ctx.requestId,'agreement.package.prepared',p.target_id,b.hubId,{enrollmentId:b.enrollmentId,severity:'critical',hasReason:true});
  return {...row,state:'prepared',admissionCleared:false};
 }
+export async function authorizeAgreementPackageReviewer(ctx:ApiContext,input:Pick<Input,'enrollmentId'|'templateId'|'signerId'>) {
+ if(await master(ctx))return;const {e}=await sources(ctx,input);
+ if(ctx.credential.person_id===e.student_id||ctx.credential.person_id===input.signerId||(await ctx.db.query('SELECT 1 FROM public.family_relationships WHERE student_id=$1 AND guardian_id=$2 LIMIT 1',[e.student_id,ctx.credential.person_id])).rows.length)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');
+}
 export const packageActions:ApprovalRegistry={'agreement.prepare':{requestCapability:'signatures.edit',privacyCapability:'signatures.view',policyChange:true,createdStatus:201,
  validate,async dependencies(ctx,_id,raw,purpose) {
   try{return await basis(ctx,payloadSchema.parse(raw));}
   catch(error){if(purpose==='review'&&error instanceof ApiError&&[403,404,409].includes(error.status))return {unavailable:error.code};throw error;}
  },
  async authorizeReviewer(ctx,p) {
-  if(await master(ctx))return;const input=payloadSchema.parse(p.payload),{e}=await sources(ctx,input);
-  if(ctx.credential.person_id===e.student_id||ctx.credential.person_id===input.signerId||(await ctx.db.query('SELECT 1 FROM public.family_relationships WHERE student_id=$1 AND guardian_id=$2 LIMIT 1',[e.student_id,ctx.credential.person_id])).rows.length)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');
+  await authorizeAgreementPackageReviewer(ctx,payloadSchema.parse(p.payload));
  },apply}};
 export async function agreementPackages(ctx:ApiContext,registry:ApprovalRegistry=packageActions):Promise<Reply|null> {
  const create=/^enrollments\/([^/]+)\/agreement-packages$/.exec(ctx.path),item=/^agreement-packages\/([^/]+)$/.exec(ctx.path);
@@ -111,11 +133,9 @@ export async function agreementPackages(ctx:ApiContext,registry:ApprovalRegistry
   await sources(ctx,input,true);return propose(ctx,registry,'agreement.prepare',null,0,input);
  }
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
- const id=uuid.parse(item![1]),row=(await ctx.db.query<{enrollment_id:string;template_id:string;signer_id:string}&Record<string,unknown>>('SELECT * FROM public.agreement_packages WHERE id=$1',[id])).rows[0];
- if(!row)throw new ApiError(404,'NOT_FOUND');
+ const row=await permittedAgreementPackage(ctx,uuid.parse(item![1]));
  // Current permissions, not old preparation authority, protect history. Do not
  // require historical sources to still be enabled to inspect an old receipt.
- await sources(ctx,{enrollmentId:row.enrollment_id,templateId:row.template_id,signerId:row.signer_id});
  return {status:200,body:{data:{...row,state:'prepared',admissionCleared:false}}};
 }
 export const packagesContract=[

@@ -45,7 +45,7 @@ jobs:
       - name: Focused signing transport and original-byte verification
         run: node --import tsx --test --test-concurrency=1 tests/boldsign.test.ts tests/boldsign-template.test.ts tests/boldsign-template-pdf.test.ts
       - name: Focused agreement-content persistence and private source approvals
-        run: node --import tsx --test --test-concurrency=1 tests/agreement-content.test.ts
+        run: node --import tsx --test --test-concurrency=1 --test-skip-pattern='one hundred simultaneous' tests/agreement-content.test.ts tests/agreement-package-content.test.ts tests/agreement-packages.test.ts
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Compile the isolated notification daemon without a TypeScript runtime

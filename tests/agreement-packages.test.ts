@@ -1,31 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { operationsFixture } from './operations-fixture.ts';
+import { agreementFixture as fixture } from './agreement-fixture.ts';
 import { agreementRequiresGuardian } from '../src/modules/agreement-packages.ts';
 
-async function fixture() {
- const f=await operationsFixture(),country=randomUUID(),region=randomUUID(),city=randomUUID(),connection=randomUUID();
- for(const role of [f.staffRole,f.managerRole])for(const cap of ['signatures.view','signatures.edit','enrollments.view','students.view','guardians.view','families.view','agreements.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
- await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);
- await f.pg.query("INSERT INTO public.regions(academy_id,id,country_id,code,name) VALUES($1,$2,$3,'ON','Ontario')",[f.a,region,country]);
- await f.pg.query("INSERT INTO public.cities(academy_id,id,region_id,name) VALUES($1,$2,$3,'Toronto')",[f.a,city,region]);
- await f.pg.query("UPDATE public.hubs SET city_id=$1,time_zone='America/Toronto',currency='CAD' WHERE academy_id=$2",[city,f.a]);
- await f.pg.query('UPDATE public.people SET hub_id=$1 WHERE id=$2',[f.hub,f.actors.peer.person]);
- const student=f.actors.peer.person,signer=f.actors.staff.person;
- assert.equal((await f.request('students',{personId:student,legalName:'PRIVATE Student',dateOfBirth:'2014-03-20',recruiter:{kind:'academy'}})).response.status,201);
- for(const name of ['staff','manager'])assert.equal((await f.request('guardians',{personId:f.actors[name].person,legalName:'PRIVATE Guardian '+name})).response.status,201);
- const relationship=await f.request('students/'+student+'/guardians',{guardianId:signer,relationship:'legal_guardian',reason:'PRIVATE family evidence'});assert.equal(relationship.response.status,201,JSON.stringify(relationship.body));
- const course=await f.request('courses',{code:'SIGN',name:'Signature test course'});assert.equal(course.response.status,201);
- const c=await f.request('classes',{hubId:f.hub,courseId:course.body.data.id,courseVersion:1,name:'Signature test class',mode:'in_person',schedule:{oneOff:[{start:'2027-01-01T10:00',end:'2027-01-01T11:00'}]}});assert.equal(c.response.status,201,JSON.stringify(c.body));
- const e=await f.request('classes/'+c.body.data.id+'/enrollments',{studentId:student,studentProfileVersion:1,joinsOn:'2027-01-01',reason:'PRIVATE membership'});assert.equal(e.response.status,201,JSON.stringify(e.body));
- const template=await f.request('agreements',{hubId:f.hub,name:'Unified package test',legalEntityName:'Kavosh Al and Robotics Academy Inc.',countryCode:'CA',jurisdiction:'Ontario',languages:[{locale:'en',title:'Unified contract',body:'PRIVATE contract, waiver and consent'}],provider:{region:'CA',templateId:randomUUID()},available:true,reason:'PRIVATE template evidence'});assert.equal(template.response.status,201);
- await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled) VALUES($1,$2,'CA','Test',true)",[connection,f.a]);
- const input={enrollmentVersion:1,templateId:template.body.data.id,templateVersion:1,signerId:signer,relationshipId:relationship.body.data.id,connectionId:connection,locale:'en',reason:'PRIVATE preparation reason'};
- const path='enrollments/'+e.body.data.id+'/agreement-packages';
- const prepare=(body:unknown=input,as='master',key?:string)=>f.request(path,body,as,key?{key}:{});
- return {...f,student,signer,connection,c:c.body.data,e:e.body.data,t:template.body.data,relationship:relationship.body.data,input,path,prepare};
-}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 

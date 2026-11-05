@@ -30,6 +30,10 @@ async function basis(ctx:ApiContext,i:Input) {
  if(!source)throw new ApiError(409,'AGREEMENT_CONTENT_NOT_READY');return {source};
 }
 const flags={state:'reviewed_binding',readyToSend:false,admissionCleared:false,safeToServe:false,providerContentVerified:false} as const;
+export async function permittedAgreementContent(ctx:ApiContext,id:string) {
+ const row=(await ctx.db.query<{id:string;template_id:string;template_version:number;locale:string;file_id:string;source:Record<string,unknown>;routing:unknown;approval_id:string;recordedSourceCurrent:boolean}&Record<string,unknown>>(`SELECT b.*,public.agreement_content_source(b.template_id,b.template_version,b.file_id,b.file_version,b.inspection_id,b.attempt_no,b.locale) IS NOT DISTINCT FROM b.source AS "recordedSourceCurrent" FROM public.agreement_content_bindings b WHERE b.id=$1`,[id])).rows[0];
+ if(!row)throw new ApiError(404,'NOT_FOUND');await sources(ctx,{templateId:row.template_id,fileId:row.file_id});return row;
+}
 async function apply(ctx:ApiContext,p:Proposal) {
  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
  const i=payload.parse(p.payload),b=await basis(ctx,i);
@@ -59,8 +63,7 @@ export async function agreementContent(ctx:ApiContext,registry:ApprovalRegistry=
   return {status:200,body:{data:rows.slice(0,q.limit).map(r=>({...r,...flags})),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
  }
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(params);
- const row=(await ctx.db.query<{template_id:string;file_id:string}&Record<string,unknown>>(`SELECT b.*,public.agreement_content_source(b.template_id,b.template_version,b.file_id,b.file_version,b.inspection_id,b.attempt_no,b.locale) IS NOT DISTINCT FROM b.source AS "recordedSourceCurrent" FROM public.agreement_content_bindings b WHERE b.id=$1`,[uuid.parse(item![1])])).rows[0];
- if(!row)throw new ApiError(404,'NOT_FOUND');await sources(ctx,{templateId:row.template_id,fileId:row.file_id});
+ const row=await permittedAgreementContent(ctx,uuid.parse(item![1]));
  return {status:200,body:{data:{...row,...flags}}};
 }
 export const agreementContentContract=[
