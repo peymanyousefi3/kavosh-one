@@ -66,3 +66,4 @@ export const salaryAccrualContract=[
  {path:'/api/v1/payroll/salary-accruals/{id}',method:'get',summary:'View a permitted immutable salary gross posting without HR/account/review-note access'},
  {path:'/api/v1/payroll/salary-accruals/{id}/void',method:'post',summary:'Request the exact retained salary ledger inverse and release its service/component ownership; no deletion, refund or legal wage-erasure claim',schema:cancel}
 ] as const;
+export {accounts as payrollAccountAuthority};
