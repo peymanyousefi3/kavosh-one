@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { performance } from 'node:perf_hooks';
+import { Temporal } from '@js-temporal/polyfill';
 import { payrollHourlyEarnings,type PayrollHourlySource } from '../src/core/payroll-hourly-earnings.ts';
 
 const hour=3600000,window={start:0,end:24*hour};
@@ -41,10 +42,14 @@ test('fractional-cent source attribution uses stable exact remainders rather tha
 test('invalid source, clipping, precision and retained-claim inputs fail closed',()=>{
  const good=source('valid',0,hour);
  for(const inputs of [[good,good],[{...good,rateMinor:-1n}],[{...good,end:0}],[{...good,end:86400001}],[{...good,start:NaN}],[{...good,rounding:'guess'}]])assert.throws(()=>calculate(inputs as PayrollHourlySource[]));
- for(const range of [{start:0,end:0},{start:0,end:Infinity},{start:0,end:367*86400000}])assert.throws(()=>calculate([good],[],range));
+ for(const range of [{start:0,end:0},{start:0,end:Infinity},{start:0,end:369*86400000}])assert.throws(()=>calculate([good],[],range));
  for(const prior of [[{start:hour,end:0}],[{start:0,end:NaN}],Array.from({length:201},()=>({start:0,end:hour}))])assert.throws(()=>calculate([good],prior));
  assert.throws(()=>payrollHourlyEarnings([good],window,[],19));
  assert.throws(()=>payrollHourlyEarnings([good],undefined as never,[],2));assert.throws(()=>payrollHourlyEarnings([good],window,undefined as never,2));
+});
+test('a supported 366-civil-day payroll window remains valid when its elapsed duration includes an extra DST hour',()=>{
+ const start=Temporal.PlainDate.from('2026-03-09').toZonedDateTime('America/Toronto').epochMilliseconds,end=Temporal.PlainDate.from('2027-03-10').toZonedDateTime('America/Toronto').epochMilliseconds;
+ assert.equal(end-start,366*86400000+hour);assert.equal(calculate([source('dst-window',start,start+hour)],[],{start,end}).actual.gross.amount,'30.00');
 });
 test('small independent millisecond oracle proves overlap, clipping, prior claims and exact attribution together',()=>{
  for(let seed=0;seed<24;seed++){

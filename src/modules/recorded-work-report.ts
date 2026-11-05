@@ -11,8 +11,8 @@ import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const zone=z.string().min(1).max(100).refine(v=>{if(/^[+-]/.test(v))return false;try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}});
 const query=payCalendarRange.safeExtend({timeZone:zone,hubId:uuid.optional(),classId:uuid.optional(),personId:uuid.optional(),currencyId:uuid.optional()});
-type Entry={id:string;version:number;person_id:string;hub_id:string;class_id:string;session_id:string;assignment_id:string;assignment_version:number;session_version:number;current_session_version:number;session_status:string;scheduled_start:string;scheduled_end:string;starts_at:string;ends_at:string;enrollment_on:string;enrolled:number|null};
-type Terms={engagement_id:string;person_id:string;version:number;effective_on:string;currency_id:string;currency_code:string;unit_scale:number;active:boolean;starts_on:string;ends_on:string|null;time_zone:string;components:CompensationRule[]};
+export type Entry={id:string;version:number;person_id:string;hub_id:string;class_id:string;session_id:string;assignment_id:string;assignment_version:number;session_version:number;current_session_version:number;session_status:string;scheduled_start:string;scheduled_end:string;starts_at:string;ends_at:string;enrollment_on:string;enrolled:number|null};
+export type Terms={engagement_id:string;person_id:string;version:number;effective_on:string;currency_id:string;currency_code:string;unit_scale:number;active:boolean;starts_on:string;ends_on:string|null;time_zone:string;components:CompensationRule[]};
 const target=`jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',t.class_id,'hubId',t.hub_id)))`;
 // One statement snapshot; all privacy predicates precede limits/aggregation.
 // Historical cancellation or inactive staffing never deletes delivered time.
@@ -47,21 +47,15 @@ SELECT statement_timestamp()::text AS snapshot_at,
 const ms=(v:string)=>Temporal.Instant.from(v).epochMilliseconds;
 const exact=(n:bigint,scale:number)=>({minor:n.toString(),amount:formatMoneyTotal(n,scale)});
 
-export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
- if(ctx.path!=='reports/payroll/recorded-time')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
- const work=permissionScope(ctx,'work-pay.view'),reports=permissionScope(ctx,'financial-reports.view'),time=permissionScope(ctx,'session-time.view');
- if(![work,reports,time].every(scopeNonempty))throw new ApiError(403,'FORBIDDEN');
- const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),days=payCalendarDays({from:q.from,through:q.through}),first=days[0].toZonedDateTime(q.timeZone).toInstant(),last=days.at(-1)!.add({days:1}).toZonedDateTime(q.timeZone).toInstant();
- const sqlDate=(v:string)=>v.replace(/^\+0(?=\d{5}-)/,'');
- const data=(await ctx.db.query<{snapshot_at:string;entries:Entry[];terms:Terms[]}>(sources,[JSON.stringify(work),JSON.stringify(reports),JSON.stringify(time),ctx.credential.all_hubs,ctx.credential.hub_ids,sqlDate(first.toString()),sqlDate(last.toString()),q.hubId??null,q.classId??null,q.personId??null,JSON.stringify(permissionScope(ctx,'rosters.view'))])).rows[0];
+export function priceRecordedHourlySources(entries:Entry[],terms:Terms[]){
  const oversized=()=>new ApiError(422,'RECORDED_WORK_REPORT_REQUIRES_BACKGROUND_JOB');
- if(data.entries.length>200||data.terms.length>1000)throw oversized();
- const groups=new Map<string,Terms[]>();for(const t of data.terms){const group=groups.get(t.engagement_id)??[];group.push(t);groups.set(t.engagement_id,group);}
+ if(entries.length>200||terms.length>1000)throw oversized();
+ const groups=new Map<string,Terms[]>();for(const t of terms){const group=groups.get(t.engagement_id)??[];group.push(t);groups.set(t.engagement_id,group);}
  const issues:{entryId:string;engagementId?:string;termsVersion?:number;componentCode?:string;currencyId?:string;reason:string}[]=[];
  const issue=(e:Entry,reason:string,t?:Terms,r?:CompensationRule)=>{if(issues.length>=2000)throw oversized();issues.push({entryId:e.id,...t?{engagementId:t.engagement_id,termsVersion:t.version,currencyId:t.currency_id}:{},...r?{componentCode:r.code}:{},reason});};
  const scales=new Map<string,{scale:number;code:string}>();
  const priced:{entry:Entry;terms:Terms;rule:HourlyRule;rate:bigint;start:number;end:number;key:string}[]=[];
- for(const e of data.entries){let matched=false;
+ for(const e of entries){let matched=false;
   for(const revisions of groups.values()){
    if(revisions[0].person_id!==e.person_id)continue;
    let selected:Terms|undefined;
@@ -80,6 +74,17 @@ export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
   }
   if(!matched)issue(e,'NO_VISIBLE_APPLICABLE_COMPENSATION');
  }
+ return {priced,issues,scales,issue};
+}
+
+export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
+ if(ctx.path!=='reports/payroll/recorded-time')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+ const work=permissionScope(ctx,'work-pay.view'),reports=permissionScope(ctx,'financial-reports.view'),time=permissionScope(ctx,'session-time.view');
+ if(![work,reports,time].every(scopeNonempty))throw new ApiError(403,'FORBIDDEN');
+ const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),days=payCalendarDays({from:q.from,through:q.through}),first=days[0].toZonedDateTime(q.timeZone).toInstant(),last=days.at(-1)!.add({days:1}).toZonedDateTime(q.timeZone).toInstant();
+ const sqlDate=(v:string)=>v.replace(/^\+0(?=\d{5}-)/,'');
+ const data=(await ctx.db.query<{snapshot_at:string;entries:Entry[];terms:Terms[]}>(sources,[JSON.stringify(work),JSON.stringify(reports),JSON.stringify(time),ctx.credential.all_hubs,ctx.credential.hub_ids,sqlDate(first.toString()),sqlDate(last.toString()),q.hubId??null,q.classId??null,q.personId??null,JSON.stringify(permissionScope(ctx,'rosters.view'))])).rows[0];
+ const {priced,issues,scales,issue}=priceRecordedHourlySources(data.entries,data.terms);
  const source=(p:typeof priced[number])=>({entryId:p.entry.id,entryVersion:p.entry.version,engagementId:p.terms.engagement_id,termsVersion:p.terms.version,componentCode:p.rule.code,rounding:p.rule.rounding,excessToleranceMinutes:p.rule.excessToleranceMinutes,durationExceedsScheduleTolerance:p.end-p.start>ms(p.entry.scheduled_end)-ms(p.entry.scheduled_start)+p.rule.excessToleranceMinutes*60000,
   ...p.rule.kind==='headcount_hourly'?{headcountBasis:p.rule.headcountBasis,enrolledCount:p.entry.enrolled,enrollmentOn:p.entry.enrollment_on}:{}});
  const ambiguous=new Set<string>();

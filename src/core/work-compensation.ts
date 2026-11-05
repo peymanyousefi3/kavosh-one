@@ -35,7 +35,9 @@ export type HourlyInterval={key:string;start:number;end:number;rateMinor:bigint}
 export type HourlyWindow={start:number;end:number};
 export function highestHourlySegments(intervals:HourlyInterval[],options:{window?:HourlyWindow;excluded?:HourlyWindow[]}={}){
  if(!Array.isArray(intervals)||intervals.length>200||new Set(intervals.map(i=>i.key)).size!==intervals.length||intervals.some(i=>typeof i.key!=='string'||!i.key.length||i.key.length>100||!Number.isSafeInteger(i.start)||!Number.isSafeInteger(i.end)||i.end<i.start||i.end-i.start>86400000||typeof i.rateMinor!=='bigint'||i.rateMinor<0n))throw new ApiError(400,'INVALID_HOURLY_INTERVALS');
- const validWindow=(w:HourlyWindow)=>w&&Number.isSafeInteger(w.start)&&Number.isSafeInteger(w.end)&&w.end>w.start&&Number.isSafeInteger(w.end-w.start)&&w.end-w.start<=366*86400000;
+ // The API bounds service dates to 366 civil days. Leave a UTC-offset margin
+ // here so a supported civil range does not fail across daylight-saving time.
+ const validWindow=(w:HourlyWindow)=>w&&Number.isSafeInteger(w.start)&&Number.isSafeInteger(w.end)&&w.end>w.start&&Number.isSafeInteger(w.end-w.start)&&w.end-w.start<=368*86400000;
  const excluded=options.excluded??[];
  if(options.window&&!validWindow(options.window)||!Array.isArray(excluded)||excluded.length>200||excluded.some(w=>!validWindow(w)))throw new ApiError(400,'INVALID_HOURLY_WINDOW');
  const points=[...new Set([...intervals.flatMap(i=>[i.start,i.end]),...excluded.flatMap(i=>[i.start,i.end]),...options.window?[options.window.start,options.window.end]:[]])].sort((a,b)=>a-b),segments:{start:number;end:number;key:string;rateMinor:bigint}[]=[];
