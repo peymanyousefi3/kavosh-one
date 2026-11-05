@@ -30,6 +30,9 @@ importers:
       kysely:
         specifier: 0.29.8
         version: 0.29.8
+      libphonenumber-js:
+        specifier: 1.13.15
+        version: 1.13.15
       next:
         specifier: 16.4.4
         version: 16.4.4(@types/node@22.20.5)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -1099,6 +1102,9 @@ packages:
   kysely@0.29.8:
     resolution: {integrity: sha512-ixHU1H4R+LeC5Y0nAhYgiGRFpFRHm2DXKEmJSs/vbes9sKXyssyzxzE/NYiOJX5fY0BL28biCre3GqlCqUwyXQ==}
     engines: {node: '>=22.0.0'}
+
+  libphonenumber-js@1.13.15:
+    resolution: {integrity: sha512-AHdhEQeDFEJ4GKDAQ9AwxChy+v2kUILUB3TGQRpkXMkWePjXTU/WQEzWVQoIx/Gz8fE73Wr5SEuZCy2vk8jrMQ==}
 
   lodash.chunk@4.2.0:
     resolution: {integrity: sha512-ZzydJKfUHJwHa+hF5X66zLFCBrWn5GeF28OHEr4WVWtNDXlQ/IjWKPBiikqKo2ne0+v6JgCgJ0GzJp8k8bHC7w==}
@@ -2216,6 +2222,8 @@ snapshots:
   jsbi@4.3.2: {}
 
   kysely@0.29.8: {}
+
+  libphonenumber-js@1.13.15: {}
 
   lodash.chunk@4.2.0: {}
 

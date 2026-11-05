@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { agreementFixture,reviewedAgreementContent } from './agreement-fixture.ts';
+import { buildBoldSignSendRequest } from '../src/integrations/boldsign-send-request.ts';
 
 async function fixture() {
  const f=await agreementFixture(),binding=await reviewedAgreementContent(f),prepared=await f.prepare();assert.equal(prepared.response.status,201,JSON.stringify(prepared.body));
@@ -21,6 +22,15 @@ check('a prepared package gains one immutable exact reviewed content link withou
  assert.equal(detail.body.data.recordedSourceCurrent,true);assert.equal(detail.body.data.recordedPackageSourcesCurrent,true);assert.equal(detail.body.data.readyToSend,false);assert.equal(detail.body.data.admissionCleared,false);
  const parent=await f.request('agreement-packages/'+f.packageId);assert.equal(parent.body.data.contentAttached,true);assert.equal(parent.body.data.contentAttachmentId,made.body.data.id);assert.equal(parent.body.data.readyToSend,false);
  assert.equal((await f.pg.query('SELECT * FROM public.signature_webhook_inbox')).rows.length,0);const audit=(await f.pg.query("SELECT changes FROM public.audit_events WHERE action='agreement.content.attach'")).rows;assert.equal(audit.length,1);assert.ok(!JSON.stringify(audit).includes('PRIVATE'));
+});
+check('offline provider request uses the actual persisted approved link and exact fixture bytes without claiming a production identity resolver',async f=>{
+ const made=await f.attach();assert.equal(made.response.status,201);const link=(await f.request(f.attachmentPath)).body.data,p=(await f.request('agreement-packages/'+f.packageId)).body.data;
+ // Fixture-owner identity access is NOT a production worker permission grant.
+ const signer=(await f.pg.query('SELECT u.email,u."phoneNumber" AS phone,u."emailVerified" AS email_verified,u."phoneNumberVerified" AS phone_verified,g.legal_name FROM identity."user" u JOIN public.people person ON person.auth_user_id=u.id JOIN public.guardian_profiles g ON g.academy_id=person.academy_id AND g.person_id=person.id WHERE person.id=$1',[f.signer])).rows[0];
+ const request=buildBoldSignSendRequest({packageId:p.id,attachmentId:link.id,bindingId:link.binding_id,title:'PRIVATE Unified agreement',message:'PRIVATE Review all terms',locale:p.locale,expiryDays:30,document:{sha256:link.source.sha256,sizeBytes:link.source.sizeBytes},routing:link.routing,
+  signer:{personId:p.signer_id,legalName:signer.legal_name,email:signer.email,phoneE164:signer.phone,emailVerified:signer.email_verified,phoneVerified:signer.phone_verified,contactFingerprint:p.contact_fingerprint}},f.binding.bytes);
+ const body=JSON.parse(request.body);assert.deepEqual(Buffer.from(body.Files[0].split(',')[1],'base64'),f.binding.bytes);assert.equal(request.receipt.attachmentId,link.id);assert.equal(request.receipt.documentSha256,link.source.sha256);assert.equal(body.Signers[0].EmailAddress,signer.email);
+ assert.equal((await f.pg.query('SELECT * FROM public.signature_webhook_inbox')).rows.length,0);assert.equal((await f.request(f.attachmentPath)).body.data.readyToSend,false);
 });
 check('content attachment requires upper human review, excludes beneficiaries and permits only bot proposals',async f=>{
  const pending=await f.attach(f.attachmentInput,'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.pg.query('SELECT * FROM public.agreement_package_contents')).rows.length,0);

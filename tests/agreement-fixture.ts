@@ -41,5 +41,5 @@ export async function reviewedAgreementContent(f:Awaited<ReturnType<typeof agree
  await f.pg.query("UPDATE public.file_upload_grants SET issued_at=date_trunc('second',clock_timestamp())-interval '10 minutes',expires_at=date_trunc('second',clock_timestamp())-interval '5 minutes' WHERE file_id=$1",[fileId]);
  const routing={version:1,role:'legal_signer',fields:[{id:'Signature1',fieldType:'Signature',isRequired:true,pageNumber:1,bounds:{x:20,y:40,width:180,height:35}}]};
  const binding=await f.request('agreements/'+templateId+'/content-bindings',{templateVersion:1,fileId,fileVersion:1,inspectionId:scan.body.data.id,attemptNo:1,locale:'en',routing,contentReviewed:true,routingReviewed:true,contentAttestation:'PRIVATE reviewed exact PDF and field layout',reason:'PRIVATE reviewed content'});assert.equal(binding.response.status,201,JSON.stringify(binding.body));
- return {id:binding.body.data.id,fileId,inspectionId:scan.body.data.id,sha256,routing};
+ return {id:binding.body.data.id,fileId,inspectionId:scan.body.data.id,sha256,routing,bytes};
 }

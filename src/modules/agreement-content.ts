@@ -5,15 +5,10 @@ import { ApiError } from '../core/policy.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { template } from './agreements.ts';
 import { permittedFile } from './files.ts';
+import { agreementRouting as routing } from '../integrations/boldsign.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),note=text.trim().min(1).max(2000);
-const field=z.object({id:text.min(1).max(200),fieldType:text.min(1).max(80),isRequired:z.literal(true),pageNumber:z.number().int().min(1).max(1000),
- bounds:z.object({x:z.number().min(0).max(20000),y:z.number().min(0).max(20000),width:z.number().positive().max(20000),height:z.number().positive().max(20000)}).strict()}).strict();
-// Captures reviewed geometry, not an executable provider payload. Unknown field
-// types must later be rejected by the sender, never silently dropped/converted.
-const routing=z.object({version:z.literal(1),role:z.literal('legal_signer'),fields:z.array(field).min(1).max(100)
- .refine(v=>new Set(v.map(f=>f.id)).size===v.length&&v.some(f=>f.fieldType.toLowerCase()==='signature'),'Use unique field IDs and a required signature.')}).strict();
 const input=z.object({templateVersion:version,fileId:uuid,fileVersion:version,inspectionId:uuid,attemptNo:z.number().int().min(1).max(5),locale:z.enum(['en','fr','zh-CN']),
  routing,contentReviewed:z.literal(true),routingReviewed:z.literal(true),contentAttestation:note,reason:note}).strict();
 const payload=input.extend({templateId:uuid});

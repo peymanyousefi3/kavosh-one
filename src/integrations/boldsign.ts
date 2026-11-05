@@ -43,6 +43,14 @@ const templateProperties=z.object({templateId:uuid,title:z.string().max(1000),ro
   formFields:z.array(z.object({id:z.string().min(1).max(200),fieldType:z.string().min(1).max(80),isRequired:z.boolean(),isReadOnly:z.boolean().optional()})).max(1000)
 })).max(100)});
 
+const routingText=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0'));
+const agreementField=z.object({id:routingText.min(1).max(200),fieldType:routingText.min(1).max(80),isRequired:z.literal(true),pageNumber:z.number().int().min(1).max(1000),
+ bounds:z.object({x:z.number().min(0).max(20000),y:z.number().min(0).max(20000),width:z.number().positive().max(20000),height:z.number().positive().max(20000)}).strict()}).strict();
+// Recorded geometry is not automatically executable. A sender must explicitly
+// support every recorded field; unknown types must never be silently dropped.
+export const agreementRouting=z.object({version:z.literal(1),role:z.literal('legal_signer'),fields:z.array(agreementField).min(1).max(100)
+ .refine(v=>new Set(v.map(f=>f.id)).size===v.length&&v.some(f=>f.fieldType.toLowerCase()==='signature'),'Use unique field IDs and a required signature.')}).strict();
+
 // Shared bounded read-only transport. The fixed resource union cannot become
 // an arbitrary URL or mutation method. The absolute deadline also covers a
 // transport/stream implementation that fails to honor its AbortSignal.
