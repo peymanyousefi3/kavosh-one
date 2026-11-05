@@ -4,7 +4,7 @@ import { lockApprovalWrites,permissionScope } from '../core/approvals.ts';
 import { ApiError,scopeNonempty } from '../core/policy.ts';
 import { formatMoney,roundRatio } from '../core/money.ts';
 import type { PollDefinition } from './poll-definition.ts';
-import { pollOwnerSQL } from './polls.ts';
+import { pollOwnerSQL } from './poll-definition.ts';
 import { pollRecordSQL } from './poll-responses.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
