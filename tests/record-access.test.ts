@@ -4,6 +4,15 @@ import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { scopeFor,scopeContains,scopeAllowsRef,type Scope,type ResourceRef,type Capability } from '../src/core/policy.ts';
 
+test('selected-student received-report scope retains denials for historical source hubs outside the student current hub',()=>{
+ const deniedHub=randomUUID(),currentHub=randomUUID(),student=randomUUID(),classId=randomUUID(),capability='received-reports.view' as const;
+ const credential={token_id:randomUUID(),academy_id:randomUUID(),person_id:randomUUID(),capabilities:[capability],all_hubs:true,hub_ids:[],allowed:true,kind:'human' as const};
+ const scope=scopeFor(credential,[{capability,effect:'allow',allHubs:false,hubIds:[],personRefs:[{id:student,hubId:currentHub}]},{capability,effect:'deny',allHubs:false,hubIds:[deniedHub]}],capability);
+ assert.deepEqual(scope.excludedHubs,[deniedHub]);assert.equal(scopeAllowsRef(scope,{id:student,hubId:currentHub},'people'),true);
+ const target=(hubId:string):Scope=>({all:false,hubs:[],people:[{id:student,hubId}],recordContext:{classId,hubId,studentId:student}});
+ assert.equal(scopeContains(scope,target(deniedHub)),false);assert.equal(scopeContains(scope,target(currentHub)),true);
+});
+
 async function fixture() {
   const f=await operationsFixture(),country=randomUUID(),region=randomUUID(),city=randomUUID();
   await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);

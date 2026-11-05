@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.71.0",
+    "version": "0.72.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -23212,6 +23212,93 @@
         }
       }
     },
+    "/api/v1/report-publications/{id}": {
+      "get": {
+        "summary": "Private frozen publication/context and current active state, separate from mutable drafts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/report-publications/{id}/withdraw": {
+      "post": {
+        "summary": "Upper-reviewed immutable withdrawal blocks subsequent received-report access without deleting evidence",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/finance/balance-sheet": {
       "get": {
         "summary": "Exact posted assets, liabilities, equity and explicitly unclosed posted result at a date; per-currency equation checks and scope limitations, not invented closing entries or FX",
@@ -25636,6 +25723,139 @@
         }
       }
     },
+    "/api/v1/sessions/{id}/report/publications": {
+      "post": {
+        "summary": "Upper-reviewed publication of an exact frozen class-audience report; media is unavailable, no external delivery/payroll proof",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reportVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  },
+                  "priorId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "allowMissingMedia": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "classAudienceReviewed": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "reportVersion",
+                  "classAudienceReviewed",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Private source-permission-filtered publication chain history",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{id}/roster": {
       "get": {
         "summary": "Roster candidates using preserved session civil-time evidence; excludes pre-join and cancelled sessions, not a waiver override",
@@ -26644,6 +26864,99 @@
               "type": "integer",
               "minimum": 0,
               "maximum": 2147483647
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/published-reports": {
+      "get": {
+        "summary": "Current verified human self/parent/guardian recipient plus scoped student and dated membership; no peer rosters or drafts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "beforeOn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/published-reports/{publicationId}": {
+      "get": {
+        "summary": "Read active frozen report text/captions for eligible student; media identifiers/claims/private context omitted",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
