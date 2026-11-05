@@ -22,6 +22,7 @@ try {
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
   const providerPath=base+'/api/webhooks/boldsign/00000000-0000-4000-8000-000000000001';
+  for(const path of ['agreements/00000000-0000-4000-8000-000000000001/content-bindings','agreement-content-bindings/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/content_attestation|routing|source|storageTargetId|stack/);}
   const provider=await fetch(providerPath,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(provider.status,503);assert.equal(provider.headers.get('cache-control'),'no-store');assert.equal(provider.headers.get('x-content-type-options'),'nosniff');assert.doesNotMatch(await provider.text(),/secrets|connectionId|academyId|DATABASE|postgres|stack/);
   const providerGet=await fetch(providerPath);assert.equal(providerGet.status,405);assert.equal(providerGet.headers.get('cache-control'),'no-store');
   const trial=await fetch(base+'/api/v1/reports/finance/trial-balance?through=2026-12-31');assert.equal(trial.status,401);assert.equal(trial.headers.get('cache-control'),'no-store');assert.doesNotMatch(await trial.text(),/accountCount|currencies|snapshotAt|stack/);
