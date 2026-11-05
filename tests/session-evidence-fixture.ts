@@ -1,0 +1,8 @@
+import assert from 'node:assert/strict';
+import { reportFixture } from './report-fixture.ts';
+
+export const evidenceSourceCaps=['session-reports.view','attendance.view','rosters.view','session-time.view','staff.view','files.view'];
+export async function sessionEvidenceFixture(throughSchema?:number){const f=await reportFixture(throughSchema);for(const role of [f.staffRole,f.managerRole])for(const cap of [...evidenceSourceCaps,'session-time.record',...(throughSchema===undefined||throughSchema>=88?['session-evidence.view','session-evidence.edit','session-evidence.override']:[])])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,role,cap]);
+ const path='reports/learning/sessions/'+f.c.session.id+'/evidence',read=(as='master')=>f.request(path,undefined,as);
+ async function record(document:typeof f.document|null=f.document){if(document)assert.equal((await f.save({...f.input,document})).response.status,201);assert.equal((await f.request('sessions/'+f.c.session.id+'/attendance/change',{expectedVersion:0,sessionVersion:1,entries:[],reason:'PRIVATE exact empty attendance'})).response.status,200);const t=await f.request('sessions/'+f.c.session.id+'/my-time',{expectedVersion:0,sessionVersion:1,assignmentId:f.assignment.id,assignmentVersion:1,startsAt:'2026-01-03T04:20:00Z',endsAt:'2026-01-03T05:40:00Z',reason:'PRIVATE actual delivered time'},'staff');assert.equal(t.response.status,201,JSON.stringify(t.body));return t.body.data;}
+ return {...f,evidencePath:path,readEvidence:read,recordEvidence:record};}

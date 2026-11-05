@@ -1,13 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { reportFixture } from './report-fixture.ts';
-
-const caps=['session-reports.view','attendance.view','rosters.view','session-time.view','staff.view','files.view'];
-async function fixture(){const f=await reportFixture();for(const role of [f.staffRole,f.managerRole])for(const cap of [...caps,'session-time.record'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,role,cap]);
- const path='reports/learning/sessions/'+f.c.session.id+'/evidence',read=(as='master')=>f.request(path,undefined,as);
- async function record(){assert.equal((await f.save()).response.status,201);assert.equal((await f.request('sessions/'+f.c.session.id+'/attendance/change',{expectedVersion:0,sessionVersion:1,entries:[],reason:'PRIVATE exact empty attendance'})).response.status,200);const t=await f.request('sessions/'+f.c.session.id+'/my-time',{expectedVersion:0,sessionVersion:1,assignmentId:f.assignment.id,assignmentVersion:1,startsAt:'2026-01-03T04:20:00Z',endsAt:'2026-01-03T05:40:00Z',reason:'PRIVATE actual delivered time'},'staff');assert.equal(t.response.status,201,JSON.stringify(t.body));return t.body.data;}
- return {...f,evidencePath:path,readEvidence:read,recordEvidence:record};}
+import { sessionEvidenceFixture as fixture,evidenceSourceCaps as caps } from './session-evidence-fixture.ts';
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 check('session evidence distinguishes missing records from empty attendance and pending media without approving payroll',async f=>{

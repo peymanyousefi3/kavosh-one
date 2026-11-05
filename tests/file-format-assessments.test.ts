@@ -190,6 +190,7 @@ test('schema38 preserves an actual schema37 completed attempt without inventing 
   await f.pg.exec(await readFile(new URL('../db/migrations/085_poll_response_moderation.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/086_poll_templates.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/087_poll_template_use.sql',import.meta.url),'utf8'));
+  await f.pg.exec(await readFile(new URL('../db/migrations/088_session_evidence_reviews.sql',import.meta.url),'utf8'));
   assert.deepEqual((await f.view(item.id)).attempts[0].formatAssessment,{state:'unassessed',reason:'ASSESSMENT_NOT_RECORDED',structurallyValidated:false});
   const next=await f.prepare();await f.run();assert.equal((await f.view(next.id)).attempts[0].formatAssessment.state,'matched');
  }finally{await f.pg.close();}
