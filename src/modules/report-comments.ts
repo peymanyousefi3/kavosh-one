@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { databaseInstant } from '../core/date-time-input.ts';
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,master,permissionScope,lockApprovalWrites,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,scopeContains,type Capability,type Scope } from '../core/policy.ts';
@@ -11,7 +12,7 @@ const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().in
 const body=text.pipe(z.string().trim().min(1).max(10000)).refine(v=>Buffer.byteLength(v,'utf8')<=32000,'Comment exceeds 32000 UTF-8 bytes');
 const create=z.object({body,replyTo:uuid.nullable().default(null)}).strict(),edit=z.object({expectedVersion:version,body}).strict(),retract=z.object({expectedVersion:version}).strict();
 const moderate=z.object({expectedVersion:version,state:z.enum(['hidden','visible']),reason:text.pipe(z.string().trim().min(1).max(2000))}).strict(),moderatePayload=moderate.extend({commentId:uuid});
-const paging=z.object({limit:z.coerce.number().int().min(1).max(20).default(10),afterAt:z.iso.datetime({offset:true}).optional(),after:uuid.optional()}).strict().refine(q=>Boolean(q.afterAt)===Boolean(q.after),'Use both cursor fields'),historyQuery=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict(),empty=z.object({}).strict();
+const paging=z.object({limit:z.coerce.number().int().min(1).max(20).default(10),afterAt:databaseInstant.optional(),after:uuid.optional()}).strict().refine(q=>Boolean(q.afterAt)===Boolean(q.after),'Use both cursor fields'),historyQuery=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict(),empty=z.object({}).strict();
 type Kind='class_report'|'student_feedback';type Side='family'|'staff';
 type Source={kind:Kind;id:string;version:number;studentId:string;classId:string;hubId:string;sessionId:string;on:string;active:boolean;eligible:boolean;hasMedia:boolean};
 type Comment={id:string;source_kind:Kind;source_id:string;student_id:string;class_id:string;hub_id:string;posted_on:string;author_id:string;author_side:Side;reply_to:string|null;version:number;body:string;state:'visible'|'hidden'|'retracted';last_action:string;context:{source:Source};changed_by:string;created_at:string;changed_at:string;[key:string]:unknown};
