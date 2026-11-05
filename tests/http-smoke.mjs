@@ -21,6 +21,8 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const path of ['payroll/adjustments','payroll/adjustments/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/grossBaseAmount|earningReview|taxReview|source_snapshot|stack/);}
+  {const r=await fetch(base+'/api/v1/payroll/adjustments',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const path of ['payroll/preparations','payroll/preparations/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/source_snapshot|sourceRefs|gross|timeClaims|stack/);}
   for(const path of ['payroll/pay-periods','payroll/pay-periods/00000000-0000-4000-8000-000000000001','payroll/pay-periods/00000000-0000-4000-8000-000000000001/history']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/timingReview|source_snapshot|workVersion|reason|stack/);}
   {const r=await fetch(base+'/api/v1/reports/finance/outlook?on=2026-11-10&through=2027-01-10&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/currencies|openingCash|scheduledPayroll|snapshotAt|stack/);}
