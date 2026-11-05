@@ -39,11 +39,8 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     if(end<=Date.now())throw new ApiError(410,'FILE_LINK_EXPIRED');
     return {expiresIn:value,signingDate,expiresAt:new Date(end).toISOString()};
   }
-  return {
-    storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),
-    maximumUploadBytes:c.maximumUploadBytes,
-    async inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal) {
-      const objectKey=key('quarantine',fileId),input=inspectionClaims.safeParse(claims);
+  async function inspectStored<T>(stage:'quarantine'|'clean',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal) {
+      const objectKey=key(stage,fileId),input=inspectionClaims.safeParse(claims);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
       if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>600000)throw new ApiError(400,'INVALID_INSPECTION_TIMEOUT');
       if(signal?.aborted)throw new ApiError(502,'R2_INSPECTION_CANCELLED');
@@ -74,7 +71,12 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
         if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH','R2_INVALID_OBJECT','R2_INCOMPLETE_INSPECTION'].includes(error.code))throw error;
         throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');
       }finally{clearTimeout(deadline);signal?.removeEventListener('abort',cancel);controller.abort();body?.destroy();meter?.destroy();}
-    },
+  }
+  return {
+    storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),
+    maximumUploadBytes:c.maximumUploadBytes,
+    inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal){return inspectStored('quarantine',fileId,claims,inspect,timeoutMs,signal);},
+    inspectClean<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal){return inspectStored('clean',fileId,claims,inspect,timeoutMs,signal);},
     async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300,issuedAt?:string) {
       const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300,issuedAt);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_UPLOAD_METADATA');
