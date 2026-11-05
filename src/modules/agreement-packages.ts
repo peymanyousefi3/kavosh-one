@@ -47,7 +47,7 @@ async function sources(ctx:ApiContext,input:Pick<Input,'enrollmentId'|'templateI
  const {row:e,c}=await enrollment(ctx,input.enrollmentId);
  await classRow(ctx,c.id,'signatures.view');if(editing)await classRow(ctx,c.id,'signatures.edit');
  const student=await permittedPerson(ctx,e.student_id,'students.view');
- const t=await template(ctx,input.templateId);
+ const t=await template(ctx,input.templateId);if(t.definition.kind!=='unified_enrollment')throw new ApiError(409,'ENROLLMENT_AGREEMENT_REQUIRED');
  if(t.hub_id!==null&&t.hub_id!==e.hub_id)throw new ApiError(409,'AGREEMENT_HUB_MISMATCH');
  let signer=student;
  if(input.signerId!==e.student_id) {

@@ -15,7 +15,7 @@ const payload=input.extend({templateId:uuid});
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional()}).strict();
 type Input=z.infer<typeof payload>;
 async function sources(ctx:ApiContext,i:Pick<Input,'templateId'|'fileId'>,edit=false) {
- const t=await template(ctx,i.templateId,edit),f=await permittedFile(ctx,i.fileId);
+ const t=await template(ctx,i.templateId,edit),f=await permittedFile(ctx,i.fileId);if(t.definition.kind!=='unified_enrollment')throw new ApiError(409,'ENROLLMENT_AGREEMENT_REQUIRED');
  if(f.domain!=='agreement_definition'||f.hub_id!==t.hub_id)throw new ApiError(409,'AGREEMENT_FILE_ANCHOR_MISMATCH');
  return {t,f};
 }
