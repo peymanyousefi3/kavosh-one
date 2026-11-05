@@ -77,10 +77,12 @@ async function inspection(ctx:ApiContext,id:string):Promise<Reply> {
       CASE WHEN s.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('detector',s.detector,'sampleBytes',s.sample_bytes,'sampleSha256',s.sample_sha256,'mime',s.mime,'extension',s.extension) END AS "contentSignature",
       CASE WHEN screen.inspection_id IS NULL THEN jsonb_build_object('state','unassessed','reason','ASSESSMENT_NOT_RECORDED','structurallyValidated',false)
        ELSE jsonb_build_object('ruleVersion',screen.rule_version,'state',screen.state,'reason',screen.reason_code,'assessedAt',screen.assessed_at,'structurallyValidated',false) END AS "formatAssessment",
-      CASE WHEN image.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',image.recorded_at,'result',image.result) END AS "imageValidation"
+      CASE WHEN image.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',image.recorded_at,'result',image.result) END AS "imageValidation",
+      CASE WHEN scanner.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',scanner.recorded_at,'result',scanner.result,'currentFreshnessVerified',false,'configurationVerified',false,'officialSignaturesVerified',false,'scanEnginePinned',false) END AS "scannerObservation"
       FROM public.file_inspection_attempts a LEFT JOIN public.file_content_signatures s ON s.academy_id=a.academy_id AND s.inspection_id=a.inspection_id AND s.attempt_no=a.attempt_no
       LEFT JOIN public.file_format_assessments screen ON screen.academy_id=a.academy_id AND screen.inspection_id=a.inspection_id AND screen.attempt_no=a.attempt_no
       LEFT JOIN public.file_image_evidence image ON image.academy_id=a.academy_id AND image.inspection_id=a.inspection_id AND image.attempt_no=a.attempt_no
+      LEFT JOIN public.file_scanner_observations scanner ON scanner.academy_id=a.academy_id AND scanner.inspection_id=a.inspection_id AND scanner.attempt_no=a.attempt_no
       WHERE a.inspection_id=$1 ORDER BY a.attempt_no LIMIT 5`,[row.id])).rows;
     return {status:200,body:{data:inspectionReply({...row,processing,attempts})}};
   }
@@ -170,7 +172,7 @@ export const storageContract=[
   {path:'/api/v1/files/{id}/upload-reservation',method:'post',summary:'Atomically reserve capacity under current file/domain/upload permissions and school policy; does not transfer bytes',schema:reservationInput},
   {path:'/api/v1/files/{id}/upload-link',method:'post',summary:'Issue a five-minute conditional quarantine PUT with immutable format-policy provenance; replays retain original policy version/expiry but recheck current access/settings, legacy receipts stay explicitly unknown',schema:reservationInput},
   {path:'/api/v1/files/{id}/upload-grants',method:'get',summary:'Uploader/editor-scoped grant history with exact original allowed-format snapshots; no URLs, storage keys, school budgets or content-safety clearance',querySchema:grantHistoryQuery},
-  {path:'/api/v1/files/{id}/inspection',method:'get',summary:'Read scoped immutable inspection/signature evidence, original-policy screening and exact-content full-pixel decoder receipts when recorded; no malware freshness or safe-download clearance'},
+  {path:'/api/v1/files/{id}/inspection',method:'get',summary:'Read scoped immutable inspection/signature evidence, original-policy screening, exact-content image receipts and loaded-scanner observations when recorded. Old attempts remain without observations; no current freshness, authenticated official signatures, exact engine pinning, configuration or safe-download clearance'},
   {path:'/api/v1/files/{id}/inspection',method:'post',summary:'Request inspection for an existing upload grant and close new link issuance atomically; no browser claim establishes file safety',schema:inspectionInput,acceptedDescription:'Inspection request recorded; content is not verified or available'},
   {path:'/api/v1/files/{id}/upload-limits',method:'get',summary:'Uploader-safe enabled/per-file limits and declared-format choices for an authorized file, without school totals or other files'}
 ] as const;

@@ -9,6 +9,11 @@ export const clamdDatabasePolicy=z.object({timeZone:z.string().min(1).max(100).r
  if(/^[+-]/.test(v))return false;try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}
 }),maximumAgeSeconds:z.number().int().min(1).max(604800)}).strict();
 export type ClamdDatabasePolicy=z.infer<typeof clamdDatabasePolicy>;
+export const clamdDatabaseObservation=clamdDatabasePolicy.extend({formatVersion:z.literal(1),engineVersion:z.string().min(5).max(80).regex(/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+_][A-Za-z0-9._+-]+)?$/),databaseVersion:z.number().int().min(1).max(4294967295),
+ databaseCreatedAt:z.iso.datetime({precision:0}),observedAt:z.iso.datetime({precision:3}),observedBeforeAt:z.iso.datetime({precision:3})}).strict().refine(v=>{
+ const created=Date.parse(v.databaseCreatedAt),before=Date.parse(v.observedBeforeAt),after=Date.parse(v.observedAt);
+ return created<=before&&before<=after&&after-before<=600000&&after-created<=v.maximumAgeSeconds*1000;
+});
 
 // VERSION exposes the LOADED engine database time, not the file's mtime or the
 // updater's last run. ClamAV formats it with daemon-local ctime, WITHOUT a zone.
@@ -82,6 +87,6 @@ export async function scanWithFreshClamd(config:ClamdConfiguration,policy:ClamdD
   if(result.verdict==='detected')return {...result,database:null};
   const after=await getClamdDatabase(parsed.data,selected.data,combined);
   if(before.engineVersion!==after.engineVersion||before.databaseVersion!==after.databaseVersion||before.databaseCreatedAt!==after.databaseCreatedAt)throw new ApiError(503,'SCANNER_DATABASE_CHANGED');
-  return {...result,database:{...after,observedBeforeAt:before.observedAt}};
+  return {...result,database:clamdDatabaseObservation.parse({formatVersion:1,...after,observedBeforeAt:before.observedAt})};
  }catch(error){if(timeout.aborted&&!signal?.aborted)throw new ApiError(503,'SCANNER_TIMEOUT');throw error;}finally{source.destroy();}
 }

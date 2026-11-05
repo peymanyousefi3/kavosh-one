@@ -9,12 +9,13 @@ import { clamdPeer,clamdVersionString } from './fixtures/clamd-peer.ts';
 import { Readable } from 'node:stream';
 import { IdentityStore } from '../src/auth/store.ts';
 import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 
 const bytes=Buffer.from('Synthetic file-worker content.'),sha256=createHash('sha256').update(bytes).digest('hex');
 const success:InspectionResult={outcome:'no_detection',bytes:bytes.length,sha256,etag:'"synthetic-etag"',providerContentType:'application/octet-stream'};
 const connection={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-private-quarantine',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1000};
-async function fixture() {
-  const f=await operationsFixture({connections:()=>({accountId:'a'.repeat(32),jurisdiction:'default',bucket:'synthetic-private-quarantine',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1000})});
+async function fixture(throughSchema?:number) {
+  const f=await operationsFixture({throughSchema,connections:()=>({accountId:'a'.repeat(32),jurisdiction:'default',bucket:'synthetic-private-quarantine',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1000})});
   let held=0;const worker=randomUUID();
   const database:Database={async connect(){
     const connection=f.pg.runtime?await f.pg.runtime.connect():{async query<Row>(sql:string,params?:unknown[]){const r=await f.pg.query<Row>(sql,params);return {rows:r.rows,rowCount:r.affectedRows};},release(){}};
@@ -35,8 +36,10 @@ async function fixture() {
   }
   async function claim(academies=[f.a]) {const c=await database.connect();try{await assertFileWorkerRole(c);return (await c.query('SELECT * FROM public.claim_file_inspection($1,$2,30)',[academies,worker])).rows[0];}finally{c.release();await f.pg.exec('RESET ROLE');}}
   async function finish(job:Record<string,unknown>,outcome='no_detection') {const c=await database.connect();try{return (await c.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL) AS recorded',[job.academy_id,job.inspection_id,job.lease_token,outcome,outcome==='detected'?'MEASURED_DETECTION':'MEASURED_NO_DETECTION',bytes.length,sha256,'"synthetic-etag"','application/octet-stream'])).rows[0].recorded;}finally{c.release();await f.pg.exec('RESET ROLE');}}
-  return {...f,prepare,run,claim,finish,database,worker,held:()=>held};
+  async function finishObservation(job:Record<string,unknown>,observation:unknown,outcome='no_detection') {const c=await database.connect();try{return(await c.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,NULL,$10::jsonb) AS recorded',[job.academy_id,job.inspection_id,job.lease_token,outcome,outcome==='detected'?'MEASURED_DETECTION':'MEASURED_NO_DETECTION',bytes.length,sha256,'"synthetic-etag"','application/octet-stream',JSON.stringify(observation)])).rows[0].recorded;}finally{c.release();if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
+  return {...f,prepare,run,claim,finish,finishObservation,database,worker,held:()=>held};
 }
+function observation(now=Date.now()) {return {formatVersion:1,engineVersion:'1.5.4',databaseVersion:30001,databaseCreatedAt:new Date(Math.floor((now-60000)/1000)*1000).toISOString().replace('.000Z','Z'),observedAt:new Date(now).toISOString(),observedBeforeAt:new Date(now).toISOString(),timeZone:'UTC',maximumAgeSeconds:172800};}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 
@@ -54,12 +57,71 @@ check('strict loaded-database failures persist as blocked retryable inspections,
     try{
       assert.deepEqual(await f.run((task,signal)=>inspectStoredFile(task,()=>connection,peer.config,signal,5000,{async handle(){reads++;return {response:{statusCode:200,headers:{'content-length':String(bytes.length),'content-type':'application/octet-stream',etag:'"synthetic-freshness"'},body:Readable.from([bytes])}};}},undefined,{timeZone:'UTC',maximumAgeSeconds:172800})),{claimed:true,recorded:true});
       const view=(await f.request('files/'+item.fileId+'/inspection')).body.data;assert.equal(reads,1);assert.equal(view.safeToServe,false);assert.equal(view.uploadVerified,false);assert.equal(view.attempts.length,1);
+      if(mode==='success'){const s=view.attempts[0].scannerObservation;assert.equal(s.result.databaseVersion,30001);assert.ok(s.recordedAt);for(const key of ['currentFreshnessVerified','configurationVerified','officialSignaturesVerified','scanEnginePinned'])assert.equal(s[key],false);}
+      else assert.equal(view.attempts[0].scannerObservation,null);
       assert.equal(view.processing.lastOutcome,detected?'detected':valid?'no_detection':'unavailable');assert.equal(view.processing.state,valid?'evidence_recorded':'queued');
       if(!valid){assert.equal(view.processing.lastReason,'SCANNER_UNAVAILABLE');assert.equal(view.attempts[0].sha256,null);assert.equal(peer.received.length,0);}
       if(detected){assert.equal(view.attempts[0].contentSignature,null);assert.equal(view.attempts[0].formatAssessment.reason,'MALWARE_DETECTED');assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.format.rejected.critical' AND entity_id=$1",[item.fileId])).rows.length,1);}
       assert.deepEqual(peer.commands,detected?['VERSION','INSTREAM']:valid?['VERSION','INSTREAM','VERSION']:['VERSION']);
     }finally{await peer.close();}
   }
+});
+check('scanner observation native shape,time-window and outcome checks roll back nested measurement and events',async f=>{
+  await f.prepare();const job=await f.claim(),value=observation();
+  for(const invalid of [null,{},[],{...value,formatVersion:2},{...value,engineVersion:'PRIVATE invalid'},{...value,databaseVersion:'30001'},{...value,databaseVersion:0},{...value,databaseVersion:4294967296},
+    {...value,timeZone:'Not/AZone'},{...value,timeZone:'+00:00'},{...value,maximumAgeSeconds:0},{...value,maximumAgeSeconds:604801},{...value,maximumAgeSeconds:1},
+    {...value,databaseCreatedAt:'2026-02-30T00:00:00Z'},{...value,databaseCreatedAt:new Date(Date.now()+60000).toISOString().replace(/\.[0-9]{3}Z$/,'Z')},
+    {...value,observedAt:'bad'},{...value,observedBeforeAt:new Date(Date.now()+60000).toISOString()},{...value,observedAt:new Date(Date.now()+60000).toISOString()},
+    {...value,observedBeforeAt:new Date(Date.now()-60000).toISOString()},{...value,observedAt:new Date(Date.now()-360000).toISOString(),observedBeforeAt:new Date(Date.now()-360000).toISOString()},
+    {...value,currentFreshnessVerified:true},{...value,apiKey:'PRIVATE-not-a-key'}]){
+    await assert.rejects(f.finishObservation(job,invalid),/INVALID_FILE_SCANNER_OBSERVATION/);
+    for(const table of ['file_inspection_attempts','file_content_signatures','file_format_assessments','file_scanner_observations'])assert.equal((await f.pg.query('SELECT * FROM public.'+table)).rows.length,0);
+    assert.equal((await f.pg.query('SELECT state FROM public.file_inspection_jobs')).rows[0].state,'running');
+  }
+  await assert.rejects(f.finishObservation(job,value,'detected'),/INVALID_FILE_SCANNER_OBSERVATION/);
+  assert.equal(await f.finishObservation(job,value),true);assert.equal(await f.finishObservation(job,value),false);
+  assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,1);
+});
+check('scanner observation evidence is tenant-bound,source-private,immutable and unavailable through bypass finishers',async f=>{
+  const item=await f.prepare(),job=await f.claim(),value=observation();assert.equal(await f.finishObservation({...job,academy_id:f.b},value),false);assert.equal(await f.finishObservation({...job,lease_token:randomUUID()},value),false);
+  assert.equal(await f.finishObservation(job,value),true);
+  await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'files.view','allow')",[f.a,f.managerRole]);
+  assert.equal((await f.request('files/'+item.fileId+'/inspection',undefined,'manager')).response.status,200);
+  for(const [actor,status] of [['staff',403],['peer',404]] as const){const denied=await f.request('files/'+item.fileId+'/inspection',undefined,actor);assert.equal(denied.response.status,status);assert.equal(denied.body.data,undefined);}
+  assert.equal((await f.request('files/'+item.fileId+'/inspection',undefined,'foreignMaster',{academy:f.b})).response.status,404);
+  try{
+    await f.pg.exec('SET ROLE kavosh_runtime');await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,1);
+    await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.b]);assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,0);
+    for(const sql of ['DELETE FROM public.file_scanner_observations',"UPDATE public.file_scanner_observations SET input_sha256=repeat('0',64)",'INSERT INTO public.file_scanner_observations SELECT * FROM public.file_scanner_observations'])await assert.rejects(f.pg.exec(sql),/permission denied/i);
+    await f.pg.exec('RESET ROLE');await f.pg.exec('SET ROLE kavosh_file_worker');
+    await assert.rejects(f.pg.exec('SELECT * FROM public.file_scanner_observations'),/permission denied/i);
+    await assert.rejects(f.pg.query('SELECT public.finish_file_inspection_image_evidence($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,NULL)',[f.a,item.inspectionId,randomUUID(),'no_detection','MEASURED_NO_DETECTION',bytes.length,sha256,'"etag"','text/plain']),/permission denied/i);
+  }finally{await f.pg.exec('RESET ROLE');}
+});
+check('scanner observation composite identity and transactional outbox prevent misbinding or partial successful receipts',async f=>{
+  await f.prepare();const job=await f.claim(),value=observation();
+  await f.pg.exec(`CREATE FUNCTION public.test_scanner_event_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type='file.scanner.database.observed' THEN RAISE EXCEPTION 'SYNTHETIC_SCANNER_EVENT_FAILURE';END IF;RETURN NEW;END $$;
+    CREATE TRIGGER test_scanner_event_failure BEFORE INSERT ON public.outbox_events FOR EACH ROW EXECUTE FUNCTION public.test_scanner_event_failure()`);
+  try{await assert.rejects(f.finishObservation(job,value),/SYNTHETIC_SCANNER_EVENT_FAILURE/);}finally{await f.pg.exec('DROP TRIGGER test_scanner_event_failure ON public.outbox_events;DROP FUNCTION public.test_scanner_event_failure()');}
+  for(const table of ['file_inspection_attempts','file_format_assessments','file_scanner_observations'])assert.equal((await f.pg.query('SELECT * FROM public.'+table)).rows.length,0);
+  assert.equal(await f.finish(job),true);
+  await assert.rejects(f.pg.query('INSERT INTO public.file_scanner_observations(academy_id,inspection_id,attempt_no,input_bytes,input_sha256,result) VALUES($1,$2,1,$3,$4,$5::jsonb)',[f.a,job.inspection_id,bytes.length,'0'.repeat(64),JSON.stringify(value)]),/foreign key/i);
+  assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,0);
+});
+test('schema112 preserves real schema111 attempts without inventing old scanner observations',async()=>{
+  const f=await fixture(111);try{
+    const item=await f.prepare();await assert.rejects(f.run(),/SCHEMA_NOT_CURRENT/);const job=await f.claim();assert.equal(await f.finish(job),true);
+    const tables=['file_inspection_requests','file_inspection_jobs','file_inspection_attempts','file_content_signatures','file_format_assessments','file_image_evidence','outbox_events'];
+    const snapshot=async()=>{const rows:unknown[]=[];for(const table of tables)rows.push((await f.pg.query('SELECT * FROM public.'+table)).rows);return rows;};const before=await snapshot();
+    await f.pg.exec(await readFile(new URL('../db/migrations/112_file_scanner_observations.sql',import.meta.url),'utf8'));
+    assert.deepEqual(await snapshot(),before);assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,112);assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,0);
+    const view=(await f.request('files/'+item.fileId+'/inspection')).body.data;assert.equal(view.attempts[0].scannerObservation,null);assert.equal(view.safeToServe,false);
+  }finally{await f.pg.close();}
+});
+if(process.env.TEST_DATABASE_URL)check('scanner observation concurrent finishes retain one exact attempt,observation and event',async f=>{
+  await f.prepare();const job=await f.claim(),value=observation();assert.deepEqual((await Promise.all([f.finishObservation(job,value),f.finishObservation(job,value)])).sort(),[false,true]);
+  for(const table of ['file_inspection_attempts','file_scanner_observations'])assert.equal((await f.pg.query('SELECT * FROM public.'+table)).rows.length,1);
+  assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.scanner.database.observed'")).rows.length,1);
 });
 check('worker detection and content mismatch are recorded distinctly and neither grants clean access or releases capacity',async f=>{
   const a=await f.prepare();assert.deepEqual(await f.run(async()=>({...success,outcome:'detected'})),{claimed:true,recorded:true});

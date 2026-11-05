@@ -164,6 +164,7 @@ test('schema70 preserves a real schema69 prepared package without inventing a co
   await f.pg.exec(await readFile(new URL('../db/migrations/109_business_calendars.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/110_worker_agreement_preparations.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/111_work_agreement_contents.sql',import.meta.url),'utf8'));
+  await f.pg.exec(await readFile(new URL('../db/migrations/112_file_scanner_observations.sql',import.meta.url),'utf8'));
   assert.deepEqual((await f.pg.query('SELECT * FROM public.agreement_packages WHERE id=$1',[id])).rows[0],old);assert.equal((await f.pg.query('SELECT * FROM public.agreement_package_contents')).rows.length,0);
   const unbound=await f.request('agreement-packages/'+id);assert.equal(unbound.response.status,200);assert.equal(unbound.body.data.contentAttached,false);assert.equal(unbound.body.data.readyToSend,false);
   const binding=await reviewedAgreementContent(f);assert.equal((await f.request('agreement-packages/'+id+'/content',{bindingId:binding.id,reason:'Explicitly review historical preparation content'})).response.status,201);

@@ -91,6 +91,7 @@ test('strict production inspection composition reads one object and rejects stal
   let reads=0;const body=Readable.from([bytes]);
   const result=await inspectStoredFile(task,()=>connection,p.config,new AbortController().signal,5000,{async handle(){reads++;return {response:{statusCode:200,headers:{'content-length':String(bytes.length),'content-type':'application/octet-stream',etag:'"synthetic-fresh"'},body}};}},undefined,policy);
   assert.equal(reads,1);assert.equal(body.destroyed,true);assert.equal(result.outcome,fresh?'no_detection':'unavailable');if(result.outcome==='unavailable')assert.equal(result.reason,'SCANNER_UNAVAILABLE');assert.deepEqual(p.commands,fresh?['VERSION','INSTREAM','VERSION']:['VERSION']);
+  if(result.outcome==='no_detection')assert.equal(result.databaseObservation?.formatVersion,1);
   for(const key of ['safeToServe','downloadUrl','freshnessPersisted','scannerDatabase'])assert.equal(key in result,false);
  });
  let reads=0;const handler={async handle(){reads++;throw new Error('INVALID_POLICY_MUST_NOT_REACH_STORAGE');}};

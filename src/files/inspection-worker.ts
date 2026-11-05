@@ -3,7 +3,7 @@ import { assertSchemaReady,type Connection,type Database } from '../core/databas
 import { privateR2 } from '../integrations/r2.ts';
 import type { R2UploadConnections } from '../integrations/r2-config.ts';
 import { scanWithClamd,type ClamdConfiguration } from '../integrations/clamav.ts';
-import { clamdDatabasePolicy,scanWithFreshClamd,type ClamdDatabasePolicy } from '../integrations/clamav-database.ts';
+import { clamdDatabasePolicy,clamdDatabaseObservation,scanWithFreshClamd,type ClamdDatabasePolicy } from '../integrations/clamav-database.ts';
 import { ApiError } from '../core/policy.ts';
 import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { Transform } from 'node:stream';
@@ -18,7 +18,7 @@ export type InspectionTask=z.infer<typeof taskSchema>;
 const measured={bytes:z.number().int().min(1).max(4_294_967_296),sha256:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),providerContentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/),signature:signatureSchema.optional()};
 const problem=z.enum(['STORAGE_UNAVAILABLE','SCANNER_UNAVAILABLE','INSPECTION_TIMEOUT','INSPECTOR_INVALID_RESULT','WORKER_STOPPED','TARGET_UNAVAILABLE']);
 const resultSchema=z.discriminatedUnion('outcome',[
-  z.object({outcome:z.literal('no_detection'),...measured,imageValidation:imageValidationSchema.optional()}).strict(),z.object({outcome:z.literal('detected'),...measured}).strict(),
+  z.object({outcome:z.literal('no_detection'),...measured,imageValidation:imageValidationSchema.optional(),databaseObservation:clamdDatabaseObservation.optional()}).strict(),z.object({outcome:z.literal('detected'),...measured}).strict(),
   z.object({outcome:z.literal('content_mismatch')}).strict(),z.object({outcome:z.literal('unavailable'),reason:problem}).strict()
 ]);
 export type InspectionResult=z.infer<typeof resultSchema>;
@@ -61,7 +61,7 @@ export async function inspectStoredFile(task:InspectionTask,connections:R2Upload
         used+=chunk.copy(prefix,used,0,prefix.length-used);callback(null,chunk);
       }});
       try {
-        const scanning=database?scanWithFreshClamd(scanner,database,sampled,claims,combined):scanWithClamd(scanner,sampled,claims,combined);
+        const scanning=database?scanWithFreshClamd(scanner,database,sampled,claims,combined):scanWithClamd(scanner,sampled,claims,combined).then(scan=>({...scan,database:null}));
         const [,scan]=await Promise.all([pipeline(source,sampled),scanning.catch(error=>{scannerFailed=true;throw error;})]);
         // Detection already rejects the file. Do not parse rejected content or
         // let an unrelated format/decoder failure erase the critical receipt.
@@ -77,7 +77,8 @@ export async function inspectStoredFile(task:InspectionTask,connections:R2Upload
     },timeoutMs,signal);
     if(result.sha256!==result.inspection.sha256||result.bytes!==result.inspection.bytes)return {outcome:'content_mismatch'};
     const measured={bytes:result.bytes,sha256:result.sha256,etag:result.provider.etag,providerContentType:result.provider.contentType,signature:result.inspection.signature};
-    return result.inspection.verdict==='no_detection'?{outcome:'no_detection',...measured,...(result.inspection.imageValidation?{imageValidation:result.inspection.imageValidation}:{})}:{outcome:'detected',...measured};
+    return result.inspection.verdict==='no_detection'?{outcome:'no_detection',...measured,...(result.inspection.imageValidation?{imageValidation:result.inspection.imageValidation}:{}),
+      ...(result.inspection.database?{databaseObservation:result.inspection.database}:{})}:{outcome:'detected',...measured};
   }catch(error){
     if(signal.aborted)return {outcome:'unavailable',reason:'WORKER_STOPPED'};
     if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH'].includes(error.code))return {outcome:'content_mismatch'};
@@ -111,12 +112,13 @@ export async function processOneInspection(database:Database,academies:string[],
   finally{clearTimeout(deadline);options.signal?.removeEventListener('abort',cancel);controller.abort();}
   const measuredResult=result.outcome==='no_detection'||result.outcome==='detected'?result:null;
   const imageEvidence=result.outcome==='no_detection'?result.imageValidation:undefined;
+  const databaseObservation=result.outcome==='no_detection'?result.databaseObservation:undefined;
   const reason=result.outcome==='no_detection'?'MEASURED_NO_DETECTION':result.outcome==='detected'?'MEASURED_DETECTION':result.outcome==='content_mismatch'?'CONTENT_MISMATCH':result.reason;
   // No connection/transaction is held during object IO or scanning. A fencing
   // token and DB clock reject late workers; stale success never overwrites work.
   const finish=await database.connect();try {
     await assertFileWorkerRole(finish);await assertSchemaReady(finish);
-    const response=await finish.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb) AS recorded',[task.academyId,task.inspectionId,task.leaseToken,result.outcome,reason,measuredResult?.bytes??null,measuredResult?.sha256??null,measuredResult?.etag??null,measuredResult?.providerContentType??null,measuredResult?.signature?JSON.stringify(measuredResult.signature):null,imageEvidence?JSON.stringify(imageEvidence):null]);
+    const response=await finish.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb) AS recorded',[task.academyId,task.inspectionId,task.leaseToken,result.outcome,reason,measuredResult?.bytes??null,measuredResult?.sha256??null,measuredResult?.etag??null,measuredResult?.providerContentType??null,measuredResult?.signature?JSON.stringify(measuredResult.signature):null,imageEvidence?JSON.stringify(imageEvidence):null,databaseObservation?JSON.stringify(databaseObservation):null]);
     return {claimed:true,recorded:response.rows[0]?.recorded===true};
   }finally{finish.release();}
 }
