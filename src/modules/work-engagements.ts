@@ -94,3 +94,4 @@ export const workEngagementsContract=[
  {path:'/api/v1/payroll/engagements/{id}/pay-calendar',method:'get',summary:'Bounded civil pay dates from currently recorded effective arrangements; preserves each short-month slot. Not earned payroll, salary proration, payment amounts or bank-day adjustment.',querySchema:payCalendarRange},
  {path:'/api/v1/payroll/engagements/{id}/preview',method:'post',summary:'Read-only explicit configured compensation scenario: highest hourly overlap, preserved actual/rounded alternatives, and separate non-hourly components. Not statutory payroll, earned entitlement, evidence approval or payment.',schema:preview,readOnly:true}
 ] as const;
+export { header as workEngagementHeader,scope as workEngagementScope };
