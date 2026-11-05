@@ -5,7 +5,7 @@ import { operationsFixture } from './operations-fixture.ts';
 import { processOneInspection,assertFileWorkerRole,type InspectionResult,type InspectionTask } from '../src/files/inspection-worker.ts';
 import type { Database } from '../src/core/database.ts';
 import { inspectStoredFile } from '../src/files/inspection-worker.ts';
-import { clamdPeer } from './fixtures/clamd-peer.ts';
+import { clamdPeer,clamdVersionString } from './fixtures/clamd-peer.ts';
 import { Readable } from 'node:stream';
 import { IdentityStore } from '../src/auth/store.ts';
 import { spawnSync } from 'node:child_process';
@@ -46,6 +46,20 @@ check('a separate non-owner worker leases minimal claims, releases DB during IO 
   assert.deepEqual(r,{claimed:true,recorded:true});assert.equal(calls,1);
   const view=await f.request('files/'+item.fileId+'/inspection');assert.equal(view.body.data.processing.state,'evidence_recorded');assert.equal(view.body.data.processing.lastOutcome,'no_detection');assert.equal(view.body.data.attempts.length,1);assert.equal(view.body.data.attempts[0].sha256,sha256);assert.equal(view.body.data.safeToServe,false);assert.equal(view.body.data.uploadVerified,false);assert.equal(view.body.data.physicalStorageVerified,false);assert.ok(!JSON.stringify(view.body).includes('leaseToken'));
   assert.deepEqual(await f.run(async()=>{assert.fail('finished evidence cannot be claimed again');}),{claimed:false,recorded:false});
+});
+check('strict loaded-database failures persist as blocked retryable inspections,not successful scan or download evidence',async f=>{
+  const fresh=Buffer.from(clamdVersionString()+'\0'),stale=Buffer.from(clamdVersionString(Date.now()-173000000)+'\0');
+  for(const mode of ['success','stale','detected']){
+    const valid=mode!=='stale',detected=mode==='detected',item=await f.prepare(),peer=await clamdPeer(detected?'detected':'success',valid?[fresh,detected?null:fresh]:[stale]);let reads=0;
+    try{
+      assert.deepEqual(await f.run((task,signal)=>inspectStoredFile(task,()=>connection,peer.config,signal,5000,{async handle(){reads++;return {response:{statusCode:200,headers:{'content-length':String(bytes.length),'content-type':'application/octet-stream',etag:'"synthetic-freshness"'},body:Readable.from([bytes])}};}},undefined,{timeZone:'UTC',maximumAgeSeconds:172800})),{claimed:true,recorded:true});
+      const view=(await f.request('files/'+item.fileId+'/inspection')).body.data;assert.equal(reads,1);assert.equal(view.safeToServe,false);assert.equal(view.uploadVerified,false);assert.equal(view.attempts.length,1);
+      assert.equal(view.processing.lastOutcome,detected?'detected':valid?'no_detection':'unavailable');assert.equal(view.processing.state,valid?'evidence_recorded':'queued');
+      if(!valid){assert.equal(view.processing.lastReason,'SCANNER_UNAVAILABLE');assert.equal(view.attempts[0].sha256,null);assert.equal(peer.received.length,0);}
+      if(detected){assert.equal(view.attempts[0].contentSignature,null);assert.equal(view.attempts[0].formatAssessment.reason,'MALWARE_DETECTED');assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.format.rejected.critical' AND entity_id=$1",[item.fileId])).rows.length,1);}
+      assert.deepEqual(peer.commands,detected?['VERSION','INSTREAM']:valid?['VERSION','INSTREAM','VERSION']:['VERSION']);
+    }finally{await peer.close();}
+  }
 });
 check('worker detection and content mismatch are recorded distinctly and neither grants clean access or releases capacity',async f=>{
   const a=await f.prepare();assert.deepEqual(await f.run(async()=>({...success,outcome:'detected'})),{claimed:true,recorded:true});
@@ -100,7 +114,7 @@ check('an actual worker cycle composes native persistence, simulated S3 transpor
       }}));
       assert.deepEqual(result,{claimed:true,recorded:true});assert.equal(requests,1);assert.equal(peer.connections(),1);assert.deepEqual(Buffer.concat(peer.received),bytes);assert.equal(body.destroyed,true);
       const view=(await f.request('files/'+item.fileId+'/inspection')).body.data;assert.equal(view.processing.state,mode==='error'?'queued':'evidence_recorded');assert.equal(view.processing.lastOutcome,mode==='error'?'unavailable':mode==='detected'?'detected':'no_detection');assert.equal(view.safeToServe,false);
-      if(mode!=='error'){assert.equal(view.attempts[0].sha256,sha256);assert.deepEqual(view.attempts[0].contentSignature,{detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:null,extension:null});}
+      if(mode!=='error'){assert.equal(view.attempts[0].sha256,sha256);assert.deepEqual(view.attempts[0].contentSignature,mode==='detected'?null:{detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:null,extension:null});}
     }finally{await peer.close();body.destroy();}
   }
 });

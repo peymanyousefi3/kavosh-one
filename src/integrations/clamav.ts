@@ -5,10 +5,10 @@ import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 
-const configuration=z.object({socketPath:z.string().min(2).max(100).refine(v=>v.startsWith('/')&&!/[\0\r\n]/.test(v)&&!v.split('/').includes('..')),
+export const clamdConfiguration=z.object({socketPath:z.string().min(2).max(100).refine(v=>v.startsWith('/')&&Buffer.byteLength(v)<=100&&!/[\0\r\n]/.test(v)&&!v.split('/').some(p=>p==='.'||p==='..')),
   maximumBytes:z.number().int().min(1).max(4_294_967_296),timeoutMs:z.number().int().min(1).max(600_000)}).strict();
-const claims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional()}).strict();
-export type ClamdConfiguration=z.input<typeof configuration>;
+export const clamdScanClaims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional()}).strict();
+export type ClamdConfiguration=z.input<typeof clamdConfiguration>;
 
 // Official ClamAV engine over its existing INSTREAM protocol; no custom malware
 // detector. Private operator-configured Unix socket only, never a request URL.
@@ -19,8 +19,8 @@ export type ClamdConfiguration=z.input<typeof configuration>;
 // No local files, shell, subprocess, network hostname or inherited credentials.
 // no_detection is NOT clean eligibility: deployment configuration/signature
 // freshness, content inspection and durable worker evidence are still required.
-export async function scanWithClamd(config:ClamdConfiguration,source:Readable,expected:z.input<typeof claims>,signal?:AbortSignal) {
-  const parsed=configuration.safeParse(config),input=claims.safeParse(expected);
+export async function scanWithClamd(config:ClamdConfiguration,source:Readable,expected:z.input<typeof clamdScanClaims>,signal?:AbortSignal) {
+  const parsed=clamdConfiguration.safeParse(config),input=clamdScanClaims.safeParse(expected);
   if(!parsed.success)throw new ApiError(503,'SCANNER_NOT_CONFIGURED');
   if(!input.success||input.data.bytes>parsed.data.maximumBytes)throw new ApiError(400,'INVALID_SCAN_CLAIMS');
   if(signal?.aborted){source.destroy();throw new ApiError(503,'SCANNER_CANCELLED');}

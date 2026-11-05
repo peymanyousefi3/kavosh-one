@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { scanWithClamd } from '../src/integrations/clamav.ts';
+import { getClamdDatabase } from '../src/integrations/clamav-database.ts';
 
 // A real engine with an isolated harmless test signature, NOT current official
 // signatures, a production configuration, or proof that arbitrary files are safe.
@@ -35,6 +36,9 @@ test('actual ClamAV daemon distinguishes harmless signature detection, unmatched
     }
     assert.ok(ready,'Isolated test daemon did not expose its private socket: '+output);
     const configuration={socketPath,maximumBytes:262144,timeoutMs:5000};
+    // Actual custom-NDB daemon has no official loaded CVD version/time. Its
+    // ability to detect a test marker must NEVER pass the production preflight.
+    await assert.rejects(getClamdDatabase(configuration,{timeZone:'UTC',maximumAgeSeconds:172800}),{code:'SCANNER_DATABASE_METADATA_INVALID',status:503});
     const scan=(data:Buffer)=>scanWithClamd(configuration,Readable.from([data]),{bytes:data.length,sha256:createHash('sha256').update(data).digest('hex')});
     const unmatched=Buffer.from('This harmless payload deliberately does not match the test signature.');
     const clean=await scan(unmatched);assert.equal(clean.verdict,'no_detection');assert.equal(clean.bytes,unmatched.length);

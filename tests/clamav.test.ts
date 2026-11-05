@@ -19,7 +19,7 @@ test('scanner parses fragmented replies and distinguishes a detection from trans
   for(const mode of ['fragment','detected'])await withPeer(mode,async f=>{const r=await scanWithClamd(f.config,Readable.from([content]),{bytes:content.length});assert.equal(r.verdict,mode==='detected'?'detected':'no_detection');});
 });
 test('scanner rejects daemon limits, unknown statuses, wrong stream names, duplicate frames, non-ASCII replies and unbounded output',async()=>{
-  for(const mode of ['error','unknown','multiple','wrong','highbit','flood'])await withPeer(mode,async f=>{
+  for(const mode of ['error','unknown','multiple','wrong','highbit','flood','newline','carriage','detected_newline'])await withPeer(mode,async f=>{
     await assert.rejects(scanWithClamd(f.config,Readable.from([content]),{bytes:content.length}),{code:'SCANNER_INVALID_REPLY',status:503});
   });
 });

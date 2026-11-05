@@ -3,6 +3,7 @@ import { assertSchemaReady,type Connection,type Database } from '../core/databas
 import { privateR2 } from '../integrations/r2.ts';
 import type { R2UploadConnections } from '../integrations/r2-config.ts';
 import { scanWithClamd,type ClamdConfiguration } from '../integrations/clamav.ts';
+import { clamdDatabasePolicy,scanWithFreshClamd,type ClamdDatabasePolicy } from '../integrations/clamav-database.ts';
 import { ApiError } from '../core/policy.ts';
 import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { Transform } from 'node:stream';
@@ -39,11 +40,14 @@ export async function assertFileWorkerRole(db:Connection) {
 // Internal IO handler: no user-selected destination and no clean promotion.
 // A daemon response is recorded evidence, not MIME/configuration/freshness
 // attestation. Nothing in this worker may issue downloads or declare safe files.
-export async function inspectStoredFile(task:InspectionTask,connections:R2UploadConnections,scanner:ClamdConfiguration,signal:AbortSignal,timeoutMs=120000,handler?:S3ClientConfig['requestHandler'],imageService?:z.infer<typeof imageServiceConfiguration>):Promise<InspectionResult> {
+export async function inspectStoredFile(task:InspectionTask,connections:R2UploadConnections,scanner:ClamdConfiguration,signal:AbortSignal,timeoutMs=120000,handler?:S3ClientConfig['requestHandler'],imageService?:z.infer<typeof imageServiceConfiguration>,databasePolicy?:ClamdDatabasePolicy):Promise<InspectionResult> {
   let service:ReturnType<typeof privateR2>|undefined,scannerFailed=false,inspectionFailure:z.infer<typeof problem>|undefined;
   try {
     if(signal.aborted)return {outcome:'unavailable',reason:'WORKER_STOPPED'};
     if(imageService&&!imageServiceConfiguration.safeParse(imageService).success)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
+    const selectedDatabasePolicy=databasePolicy===undefined?undefined:clamdDatabasePolicy.safeParse(databasePolicy);
+    if(selectedDatabasePolicy&&!selectedDatabasePolicy.success)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
+    const database=selectedDatabasePolicy?.success?selectedDatabasePolicy.data:undefined;
     const decodeImage=Boolean(imageService&&imageMimeSchema.safeParse(task.claimedMimeType).success);
     if(decodeImage&&task.expectedBytes>maximumImageInputBytes)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
     if(task.expectedBytes>scanner.maximumBytes)return {outcome:'unavailable',reason:'TARGET_UNAVAILABLE'};
@@ -57,13 +61,17 @@ export async function inspectStoredFile(task:InspectionTask,connections:R2Upload
         used+=chunk.copy(prefix,used,0,prefix.length-used);callback(null,chunk);
       }});
       try {
-        const [,scan]=await Promise.all([pipeline(source,sampled),scanWithClamd(scanner,sampled,claims,combined).catch(error=>{scannerFailed=true;throw error;})]);
+        const scanning=database?scanWithFreshClamd(scanner,database,sampled,claims,combined):scanWithClamd(scanner,sampled,claims,combined);
+        const [,scan]=await Promise.all([pipeline(source,sampled),scanning.catch(error=>{scannerFailed=true;throw error;})]);
+        // Detection already rejects the file. Do not parse rejected content or
+        // let an unrelated format/decoder failure erase the critical receipt.
+        if(scan.verdict==='detected')return {...scan,signature:undefined,imageValidation:undefined};
         // R2 deliberately sanitizes callback exceptions. Preserve only the
         // bounded stage classification here, never raw provider diagnostics.
         const signature=await detectContentSignature(prefix.subarray(0,used),{signal:combined}).catch(error=>{inspectionFailure=error instanceof ApiError&&error.code==='CONTENT_SIGNATURE_TIMEOUT'?'INSPECTION_TIMEOUT':'INSPECTOR_INVALID_RESULT';throw error;});
         // Decode only the complete bytes already streamed through the scanner;
         // never perform a second mutable object read or decode detected malware.
-        const imageValidation=imageBytes&&scan.verdict==='no_detection'?await validateImageViaService(imageBytes,task.claimedMimeType,{...imageService!,signal:combined}).catch(error=>{inspectionFailure=error instanceof ApiError&&error.code==='IMAGE_SERVICE_TIMEOUT'?'INSPECTION_TIMEOUT':'TARGET_UNAVAILABLE';throw error;}):undefined;
+        const imageValidation=imageBytes?await validateImageViaService(imageBytes,task.claimedMimeType,{...imageService!,signal:combined}).catch(error=>{inspectionFailure=error instanceof ApiError&&error.code==='IMAGE_SERVICE_TIMEOUT'?'INSPECTION_TIMEOUT':'TARGET_UNAVAILABLE';throw error;}):undefined;
         return {...scan,signature,imageValidation};
       }finally{sampled.destroy();}
     },timeoutMs,signal);
