@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { readFile,readdir } from 'node:fs/promises';
 import { workFixture } from './work-fixture.ts';
 import { recordedWorkReport } from '../src/modules/recorded-work-report.ts';
 import type { ApiContext } from '../src/core/api.ts';
@@ -41,6 +41,9 @@ test('recorded work report index upgrade preserves actual time, private revision
   assert.deepEqual((await f.pg.query('SELECT to_jsonb(t) AS value FROM public.session_time_entries t ORDER BY id')).rows,before);assert.deepEqual((await f.pg.query('SELECT to_jsonb(r) AS value FROM public.session_time_revisions r ORDER BY entry_id,version')).rows,revisions);
   assert.equal((await f.pg.query('SELECT public.schema_revision() AS revision')).rows[0].revision,64);
   assert.match(String((await f.pg.query("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND indexname='session_time_start'")).rows[0].indexdef),/academy_id, starts_at, id/);
+  // Exercise the current report against the real full upgrade, not an
+  // undefined new helper on an intentionally historical schema64 fixture.
+  for(const file of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&Number.parseInt(n,10)>64).sort())await f.pg.exec(await readFile(new URL('../db/migrations/'+file,import.meta.url),'utf8'));
   const result=await f.report();assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'20.67');
  }finally{await f.pg.close();}
 });
@@ -102,6 +105,27 @@ check('recorded headcounts use the captured class civil day across UTC midnight 
  assert.equal((await f.save({sessionVersion:3,startsAt:'2026-01-06T04:30:00Z',endsAt:'2026-01-06T05:32:00Z'})).response.status,201);
  const result=await f.report('from=2026-01-06&through=2026-01-06&timeZone=UTC');assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'28.42');assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.enrollmentOn,'2026-01-05');assert.equal(result.body.data.currencies[0].workers[0].actualSegments[0].source.enrolledCount,1);
  assert.equal((await f.report('from=2026-01-05&through=2026-01-05&timeZone=UTC')).body.data.entries.length,0);
+});
+check('observed attendance prices present and late only, requires both source permissions and refuses stale or unsigned eligibility counts',async f=>{
+ const head={...f.components.find(c=>c.code==='HEAD')!,headcountBasis:'present',minimumStudents:1,includedStudents:0},engagement=(await f.create({components:[head]})).body.data;
+ assert.equal((await f.save()).response.status,201);
+ assert.equal((await f.request('enrollments/'+f.e.id+'/change',{expectedVersion:1,joinsOn:'2026-01-01',reason:'Historical attendance membership'})).response.status,200);
+ const sheet=(version:number,enrollmentVersion:number,status:string)=>f.request('sessions/'+f.session.id+'/attendance/change',{expectedVersion:version,sessionVersion:2,entries:[{enrollmentId:f.e.id,enrollmentVersion,status,note:'PRIVATE attendance note'}],reason:'Reviewed observed attendance, not admission clearance'});
+ let result=await f.report();assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);
+ assert.equal((await sheet(0,2,'present')).response.status,200);
+ result=await f.report();assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,'28.42');
+ let source=result.body.data.currencies[0].sourceAssessments[0];assert.equal(source.presentCount,1);assert.equal(source.attendanceVersion,1);assert.equal(source.attendanceCountBasis,'observed_present_and_late');assert.equal(source.admissionClearanceVerified,false);assert.doesNotMatch(JSON.stringify(result.body),/PRIVATE|enrolledCount|Adult learner/);
+ const attendance=(await f.request('sessions/'+f.session.id+'/attendance')).body.data;assert.equal(attendance.entries[0].effectiveAttendance,'absent');
+ for(const status of ['late','absent','excused']){const version=status==='late'?1:status==='absent'?2:3;assert.equal((await sheet(version,2,status)).response.status,200);result=await f.report();assert.equal(result.body.data.currencies[0].actualHourlyTotal.amount,status==='late'?'28.42':'0.00');}
+ for(const cap of ['rosters.view','attendance.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.staffRole,cap]);
+ assert.equal((await f.report(undefined,'staff')).body.data.currencies[0].actualHourlyTotal.amount,'0.00');
+ for(const cap of ['attendance.view','rosters.view']){await f.pg.query('DELETE FROM public.role_permissions WHERE role_id=$1 AND capability=$2',[f.staffRole,cap]);result=await f.report(undefined,'staff');assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal(result.body.data.unpricedComponents[0].reason,'SESSION_HEADCOUNT_EVIDENCE_REQUIRED');assert.doesNotMatch(JSON.stringify(result.body),/presentCount|attendanceVersion|enrolledCount/);await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.staffRole,cap]);}
+ assert.equal((await f.request('enrollments/'+f.e.id+'/change',{expectedVersion:2,leavesOn:'2026-01-31',reason:'Roster revision invalidates old attendance source'})).response.status,200);
+ result=await f.report();assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal((await sheet(4,3,'present')).response.status,200);assert.equal((await f.report()).body.data.currencies[0].actualHourlyTotal.amount,'28.42');
+ assert.equal((await f.request('sessions/'+f.session.id+'/change',{expectedVersion:2,reason:'Changed calendar cannot silently redate captured headcount',change:{kind:'reschedule',start:'2026-01-06T10:00',end:'2026-01-06T11:00'}})).response.status,200);assert.equal((await f.report()).body.data.currencies[0].actualHourlyTotal,null);
+ assert.equal((await f.request('sessions/'+f.session.id+'/attendance/change',{expectedVersion:5,sessionVersion:3,entries:[{enrollmentId:f.e.id,enrollmentVersion:3,status:'present',note:''}],reason:'New current calendar sheet is not evidence for the old captured session version'})).response.status,200);assert.equal((await f.report()).body.data.currencies[0].actualHourlyTotal,null);
+ assert.equal((await f.amend(engagement.id,{components:[{...head,headcountBasis:'eligible_present'}]})).response.status,200);result=await f.report();assert.equal(result.body.data.currencies[0].actualHourlyTotal,null);assert.equal(result.body.data.unpricedComponents[0].reason,'SIGNED_ADMISSION_HEADCOUNT_EVIDENCE_REQUIRED');
+ assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
 });
 check('per-source overtime tolerance is strict beyond the configured minutes and never hides shorter or shifted recorded hours',async f=>{
  assert.equal((await f.create({components:[f.hourly]})).response.status,201);assert.equal((await f.save({endsAt:'2026-01-05T16:05:00Z'})).response.status,201);

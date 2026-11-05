@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.104.0",
+    "version": "0.105.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -33952,7 +33952,7 @@
     },
     "/api/v1/reports/payroll/recorded-time": {
       "get": {
-        "summary": "Same-snapshot saved teacher-hour costs and authorized captured-date enrollment headcounts; actual/configured rounding, highest overlap once, strict excess-duration flags and explicit missing attendance evidence; never payroll approval or payment",
+        "summary": "Same-snapshot saved teacher-hour costs with authorized captured-date enrollment or current complete observed-present-and-late attendance headcounts; missing/stale/unsigned eligibility remains unpriced, actual/configured rounding and highest overlap once. Never payroll approval, signed admission clearance or payment.",
         "parameters": [
           {
             "name": "from",

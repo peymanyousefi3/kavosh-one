@@ -12,7 +12,7 @@ import { payrollHourlyCurrencyConflicts } from '../core/payroll-hourly-earnings.
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const zone=z.string().min(1).max(100).refine(v=>{if(/^[+-]/.test(v))return false;try{Temporal.Now.instant().toZonedDateTimeISO(v);return true;}catch{return false;}});
 const query=payCalendarRange.safeExtend({timeZone:zone,hubId:uuid.optional(),classId:uuid.optional(),personId:uuid.optional(),currencyId:uuid.optional()});
-export type Entry={id:string;version:number;person_id:string;hub_id:string;class_id:string;session_id:string;assignment_id:string;assignment_version:number;session_version:number;current_session_version:number;session_status:string;scheduled_start:string;scheduled_end:string;starts_at:string;ends_at:string;enrollment_on:string;enrolled:number|null};
+export type Entry={id:string;version:number;person_id:string;hub_id:string;class_id:string;session_id:string;assignment_id:string;assignment_version:number;session_version:number;current_session_version:number;session_status:string;scheduled_start:string;scheduled_end:string;starts_at:string;ends_at:string;enrollment_on:string;enrolled:number|null;attendance?:{version:number|null;sessionVersion:number|null;current:boolean;present:number|null}|null};
 export type Terms={engagement_id:string;person_id:string;version:number;effective_on:string;currency_id:string;currency_code:string;unit_scale:number;active:boolean;starts_on:string;ends_on:string|null;time_zone:string;components:CompensationRule[]};
 const target=`jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',t.class_id,'hubId',t.hub_id)))`;
 // One statement snapshot; all privacy predicates precede limits/aggregation.
@@ -24,7 +24,9 @@ const sources=`WITH entries AS MATERIALIZED(
  CASE WHEN public.scope_contains($11::jsonb,${target}) THEN(
   SELECT count(*)::integer FROM public.class_enrollments e WHERE e.academy_id=t.academy_id AND e.class_id=t.class_id AND e.enabled
   AND e.joins_on<=(t.scheduled_start AT TIME ZONE c.time_zone)::date AND(e.leaves_on IS NULL OR e.leaves_on>=(t.scheduled_start AT TIME ZONE c.time_zone)::date)
- ) ELSE NULL END AS enrolled
+ ) ELSE NULL END AS enrolled,
+ CASE WHEN public.scope_contains($11::jsonb,${target}) AND public.scope_contains($12::jsonb,${target})
+ THEN public.payroll_attendance_headcount(t.session_id,t.session_version) ELSE NULL END AS attendance
  FROM public.session_time_entries t JOIN public.class_sessions s ON s.academy_id=t.academy_id AND s.id=t.session_id
  JOIN public.classes c ON c.academy_id=t.academy_id AND c.id=t.class_id
  WHERE public.work_scope_allows($1::jsonb,t.hub_id,t.person_id) AND public.work_scope_allows($2::jsonb,t.hub_id,t.person_id)
@@ -68,14 +70,26 @@ export function priceRecordedHourlySources(entries:Entry[],terms:Terms[]){
     const old=scales.get(t.currency_id);scales.set(t.currency_id,{scale:Math.max(old?.scale??0,t.unit_scale),code:t.currency_code});
     if(r.assignment.version!==e.assignment_version){issue(e,'RECORDED_ASSIGNMENT_VERSION_MISMATCH',t,r);continue;}
     if(r.kind!=='hourly'&&r.kind!=='headcount_hourly'){issue(e,'NON_HOURLY_BASIS_REQUIRED',t,r);continue;}
-    if(r.kind==='headcount_hourly'&&(r.headcountBasis!=='enrolled'||e.enrolled===null)){issue(e,r.headcountBasis==='enrolled'?'ROSTER_SOURCE_NOT_AVAILABLE':'SESSION_HEADCOUNT_EVIDENCE_REQUIRED',t,r);continue;}
+    let headcount:number|undefined;
+    if(r.kind==='headcount_hourly'){
+     if(r.headcountBasis==='eligible_present'){issue(e,'SIGNED_ADMISSION_HEADCOUNT_EVIDENCE_REQUIRED',t,r);continue;}
+     const count=r.headcountBasis==='enrolled'?e.enrolled:e.attendance?.current===true?e.attendance.present:null;
+     if(count==null||!Number.isInteger(count)||count<0||count>1000){issue(e,r.headcountBasis==='enrolled'?'ROSTER_SOURCE_NOT_AVAILABLE':'SESSION_HEADCOUNT_EVIDENCE_REQUIRED',t,r);continue;}
+     headcount=count;
+    }
     if(priced.length>=200)throw oversized();
-    priced.push({entry:e,terms:t,rule:r,rate:hourlyCompensationRate(r,t.unit_scale,r.kind==='headcount_hourly'?e.enrolled!:undefined),start:ms(e.starts_at),end:ms(e.ends_at),key:createHash('sha256').update(JSON.stringify([e.id,t.engagement_id,t.version,r.code])).digest('hex')});
+    priced.push({entry:e,terms:t,rule:r,rate:hourlyCompensationRate(r,t.unit_scale,headcount),start:ms(e.starts_at),end:ms(e.ends_at),key:createHash('sha256').update(JSON.stringify([e.id,t.engagement_id,t.version,r.code])).digest('hex')});
    }
   }
   if(!matched)issue(e,'NO_VISIBLE_APPLICABLE_COMPENSATION');
  }
  return {priced,issues,scales,issue};
+}
+
+export function hourlyHeadcountDetails(p:ReturnType<typeof priceRecordedHourlySources>['priced'][number]){
+ if(p.rule.kind!=='headcount_hourly')return {};
+ return p.rule.headcountBasis==='enrolled'?{headcountBasis:'enrolled',enrolledCount:p.entry.enrolled,enrollmentOn:p.entry.enrollment_on}:
+  {headcountBasis:'present',presentCount:p.entry.attendance!.present,attendanceVersion:p.entry.attendance!.version,attendanceSessionVersion:p.entry.attendance!.sessionVersion,attendanceCountBasis:'observed_present_and_late',admissionClearanceVerified:false};
 }
 
 export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
@@ -84,10 +98,10 @@ export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
  if(![work,reports,time].every(scopeNonempty))throw new ApiError(403,'FORBIDDEN');
  const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),days=payCalendarDays({from:q.from,through:q.through}),first=days[0].toZonedDateTime(q.timeZone).toInstant(),last=days.at(-1)!.add({days:1}).toZonedDateTime(q.timeZone).toInstant();
  const sqlDate=(v:string)=>v.replace(/^\+0(?=\d{5}-)/,'');
- const data=(await ctx.db.query<{snapshot_at:string;entries:Entry[];terms:Terms[]}>(sources,[JSON.stringify(work),JSON.stringify(reports),JSON.stringify(time),ctx.credential.all_hubs,ctx.credential.hub_ids,sqlDate(first.toString()),sqlDate(last.toString()),q.hubId??null,q.classId??null,q.personId??null,JSON.stringify(permissionScope(ctx,'rosters.view'))])).rows[0];
+ const data=(await ctx.db.query<{snapshot_at:string;entries:Entry[];terms:Terms[]}>(sources,[JSON.stringify(work),JSON.stringify(reports),JSON.stringify(time),ctx.credential.all_hubs,ctx.credential.hub_ids,sqlDate(first.toString()),sqlDate(last.toString()),q.hubId??null,q.classId??null,q.personId??null,JSON.stringify(permissionScope(ctx,'rosters.view')),JSON.stringify(permissionScope(ctx,'attendance.view'))])).rows[0];
  const {priced,issues,scales,issue}=priceRecordedHourlySources(data.entries,data.terms);
  const source=(p:typeof priced[number])=>({entryId:p.entry.id,entryVersion:p.entry.version,engagementId:p.terms.engagement_id,termsVersion:p.terms.version,componentCode:p.rule.code,rounding:p.rule.rounding,excessToleranceMinutes:p.rule.excessToleranceMinutes,durationExceedsScheduleTolerance:p.end-p.start>ms(p.entry.scheduled_end)-ms(p.entry.scheduled_start)+p.rule.excessToleranceMinutes*60000,
-  ...p.rule.kind==='headcount_hourly'?{headcountBasis:p.rule.headcountBasis,enrolledCount:p.entry.enrolled,enrollmentOn:p.entry.enrollment_on}:{}});
+  ...hourlyHeadcountDetails(p)});
  // Check complete worker coverage before currency filtering. Configured
  // claims reserve actual work even when that work rounds down to zero.
  const conflicts=payrollHourlyCurrencyConflicts(priced.map(p=>({key:p.key,personId:p.entry.person_id,currencyId:p.terms.currency_id,start:p.start,end:p.end,rateMinor:p.rate,rounding:p.rule.rounding}))),ambiguous=new Set(priced.filter(p=>conflicts.has(p.key)).map(p=>p.entry.person_id));
@@ -110,4 +124,4 @@ export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
  return {status:200,body:{data:{report:'recorded_session_hourly_costs',...q,snapshotAt:data.snapshot_at,coverage:'visible_recorded_session_time_only',rangeBasis:'actual_start_in_report_time_zone_full_interval',rateDateBasis:'captured_scheduled_start_in_work_terms_time_zone',historyBasis:'current_recorded_time_and_effective_terms',roundingPolicy:'per_input_interval_before_configured_overlap',overlapPolicy:'highest_hourly_rate_stable_key_tie',currencyConversion:'none',completePayroll:false,payrollApproved:false,earnedEntitlementDetermined:false,statutoryDeductionsCalculated:false,paymentExecuted:false,sessionEvidenceReviewed:false,
   entries:data.entries.map(e=>({entryId:e.id,entryVersion:e.version,personId:e.person_id,hubId:e.hub_id,classId:e.class_id,sessionId:e.session_id,assignmentId:e.assignment_id,assignmentVersion:e.assignment_version,recordedMilliseconds:String(ms(e.ends_at)-ms(e.starts_at)),outsideScheduleMilliseconds:String(Math.max(0,ms(e.ends_at)-ms(e.starts_at)-Math.max(0,Math.min(ms(e.ends_at),ms(e.scheduled_end))-Math.max(ms(e.starts_at),ms(e.scheduled_start))))),scheduleChanged:e.session_version!==e.current_session_version,currentSessionStatus:e.session_status})),unpricedComponents:issues,currencies}}};
 }
-export const recordedWorkReportContract=[{path:'/api/v1/reports/payroll/recorded-time',method:'get',summary:'Same-snapshot saved teacher-hour costs and authorized captured-date enrollment headcounts; actual/configured rounding, highest overlap once, strict excess-duration flags and explicit missing attendance evidence; never payroll approval or payment',querySchema:query}] as const;
+export const recordedWorkReportContract=[{path:'/api/v1/reports/payroll/recorded-time',method:'get',summary:'Same-snapshot saved teacher-hour costs with authorized captured-date enrollment or current complete observed-present-and-late attendance headcounts; missing/stale/unsigned eligibility remains unpriced, actual/configured rounding and highest overlap once. Never payroll approval, signed admission clearance or payment.',querySchema:query}] as const;

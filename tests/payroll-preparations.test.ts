@@ -6,7 +6,7 @@ import { workFixture } from './work-fixture.ts';
 import { sessionEvidenceCapabilities } from '../src/modules/session-evidence-report.ts';
 
 const workCaps=['work-pay.view','pay-periods.view','payroll-preparations.view','payroll-preparations.edit'],sessionCaps=[...sessionEvidenceCapabilities,'session-evidence.view'];
-async function fixture(){const f=await workFixture();try{
+async function fixture(throughSchema?:number){const f=await workFixture({throughSchema});try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of [...workCaps,...sessionCaps,'session-time.record'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,role,cap]);
  const session=(await f.request('classes/'+f.c.id+'/sessions')).body.data[0];assert.equal((await f.request('sessions/'+session.id+'/change',{expectedVersion:1,reason:'Synthetic past teaching session',change:{kind:'reschedule',start:'2026-01-05T10:00',end:'2026-01-05T11:00'}})).response.status,200);
  const hourly=f.components.find(c=>c.code==='TEACH')!,engagement=(await f.create({components:[hourly]}));assert.equal(engagement.response.status,201);
@@ -31,6 +31,14 @@ check('later time and rate changes cannot rewrite retained source earnings and n
  const d=await made(f);assert.equal((await f.save({expectedVersion:1,endsAt:'2026-01-05T16:01:00Z'})).response.status,200);assert.equal((await f.amend(f.engagement.id,{components:[{...f.hourly,amount:'30'}]})).response.status,200);
  const old=(await f.request('payroll/preparations/'+d.id)).body.data;assert.equal(old.sourcesCurrent,false);assert.equal(old.calculation.currencies[0].hourly.actual.gross.amount,'20.67');assert.equal(old.calculation.currencies[0].sourceRefs[0].termsVersion,1);
  const next=await made(f);assert.equal(next.calculation.currencies[0].hourly.actual.gross.amount,'30.50');assert.equal(next.calculation.currencies[0].sourceRefs[0].termsVersion,2);assert.equal(next.sourcesCurrent,true);
+});
+check('attendance-priced preparations pin complete observed sheets and retain historical gross after attendance changes',async f=>{
+ const head={...f.components.find(c=>c.code==='HEAD')!,headcountBasis:'present',minimumStudents:0,includedStudents:0};assert.equal((await f.amend(f.engagement.id,{components:[head]})).response.status,200);
+ assert.equal((await f.request('enrollments/'+f.e.id+'/change',{expectedVersion:1,joinsOn:'2026-01-01',reason:'Historical attendance membership'})).response.status,200);
+ const save=(expectedVersion:number,status:string)=>f.request('sessions/'+f.session.id+'/attendance/change',{expectedVersion,sessionVersion:2,entries:[{enrollmentId:f.e.id,enrollmentVersion:2,status,note:'PRIVATE presence'}],reason:'Reviewed observed sheet'});
+ assert.equal((await save(0,'late')).response.status,200);const d=await made(f),h=d.calculation.currencies[0].hourly;assert.equal(h.actual.gross.amount,'28.42');assert.equal(h.sourceAssessments[0].presentCount,1);assert.equal(h.sourceAssessments[0].attendanceVersion,1);assert.equal(h.sourceAssessments[0].admissionClearanceVerified,false);
+ assert.equal((await save(1,'absent')).response.status,200);const old=(await f.request('payroll/preparations/'+d.id)).body.data;assert.equal(old.sourcesCurrent,false);assert.equal(old.calculation.currencies[0].hourly.actual.gross.amount,'28.42');assert.equal(old.calculation.currencies[0].hourly.sourceAssessments[0].attendanceVersion,1);
+ const next=await made(f);assert.equal(next.calculation.currencies[0].hourly.actual.gross.amount,'25.83');assert.equal(next.calculation.currencies[0].hourly.sourceAssessments[0].attendanceVersion,2);assert.equal(next.sourcesCurrent,true);assert.doesNotMatch(JSON.stringify(next),/PRIVATE presence/);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
 });
 check('a crossing-midnight time entry is retained and clipped instead of disappearing from the next payroll day',async f=>{
  assert.equal((await f.save({expectedVersion:1,startsAt:'2026-01-05T23:30:00Z',endsAt:'2026-01-06T00:30:00Z'})).response.status,200);
@@ -117,5 +125,16 @@ test('schema95 to96 preserves existing work terms and creates no invented payrol
   assert.equal((await f.create({components:[f.components[1]]})).response.status,201);const before=(await f.pg.query('SELECT to_jsonb(r) value FROM public.work_engagement_revisions r ORDER BY engagement_id,version')).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/096_payroll_preparations.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,96);assert.deepEqual((await f.pg.query('SELECT to_jsonb(r) value FROM public.work_engagement_revisions r ORDER BY engagement_id,version')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.payroll_preparations')).rows.length,0);
   const r=await f.request('payroll/preparations',{personId:f.actors.staff.person,from:'2026-01-01',through:'2026-01-31',timeZone:'UTC',label:'Explicit first draft after upgrade'});assert.equal(r.response.status,201,JSON.stringify(r.body));assert.equal(r.body.data.calculation.currencies.length,0);assert.equal(r.body.data.calculation.payrollApproved,false);
+ }finally{await f.pg.close();}
+});
+test('schema102 to103 preserves actual retained payroll and refuses to invent historical attendance counts',async()=>{
+ const f=await fixture(102);try{
+  const d=await made(f),snapshot=async()=>{const out:Record<string,unknown>={};for(const table of ['payroll_preparations','session_time_entries','session_time_revisions','work_engagement_revisions','finance_journals'])out[table]=(await f.pg.query('SELECT to_jsonb(x) data FROM public.'+table+' x ORDER BY to_jsonb(x)::text')).rows;return out;},before=await snapshot();
+  await f.pg.exec(await readFile(new URL('../db/migrations/103_attendance_payroll_basis.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,103);assert.deepEqual(await snapshot(),before);
+  const old=(await f.request('payroll/preparations/'+d.id)).body.data;assert.equal(old.sourcesCurrent,false);assert.deepEqual(old.calculation.currencies,d.calculation.currencies);const next=await made(f);assert.equal(next.sourcesCurrent,true);assert.equal(next.calculation.currencies[0].hourly.actual.gross.amount,'20.67');
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);let source=(await f.pg.query<{value:unknown}>('SELECT public.payroll_attendance_headcount($1,2) value',[f.session.id])).rows[0].value;assert.deepEqual(source,{version:null,sessionVersion:null,current:false,present:null});
+  const meta=(await f.pg.query<{prosecdef:boolean;proconfig:string[];public_execute:boolean}>("SELECT p.prosecdef,p.proconfig,EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') public_execute FROM pg_proc p WHERE p.oid='public.payroll_attendance_headcount(uuid,integer)'::regprocedure")).rows[0];assert.equal(meta.prosecdef,false);assert.deepEqual(meta.proconfig,['search_path=pg_catalog']);assert.equal(meta.public_execute,false);
+  assert.equal((await f.request('sessions/'+f.session.id+'/attendance/change',{expectedVersion:0,sessionVersion:2,entries:[],reason:'Complete empty observed sheet'})).response.status,200);
+  await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.b]);source=(await f.pg.query<{value:unknown}>('SELECT public.payroll_attendance_headcount($1,2) value',[f.session.id])).rows[0].value;assert.deepEqual(source,{version:null,sessionVersion:null,current:false,present:null});}finally{await f.pg.exec('RESET ROLE');}
  }finally{await f.pg.close();}
 });

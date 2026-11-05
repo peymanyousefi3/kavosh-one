@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { formatMoneyTotal } from '../core/money.ts';
 import { ApiError } from '../core/policy.ts';
 import type { HourlyWindow } from '../core/work-compensation.ts';
-import type { priceRecordedHourlySources } from './recorded-work-report.ts';
+import { hourlyHeadcountDetails,type priceRecordedHourlySources } from './recorded-work-report.ts';
 
 type Priced=ReturnType<typeof priceRecordedHourlySources>['priced'][number];
 type Evidence={evidence_version?:number|null;evidence_decision?:string|null;evidence_current?:boolean|null};
@@ -36,7 +36,7 @@ export function payrollHourlyPlan(priced:(Priced&{entry:Priced['entry']&Evidence
  const sourceAssessments=priced.map(p=>{
   const scheduledStart=Date.parse(p.entry.scheduled_start),scheduledEnd=Date.parse(p.entry.scheduled_end),duration=p.end-p.start;
   const overlap=Math.max(0,Math.min(p.end,scheduledEnd)-Math.max(p.start,scheduledStart));
-  return {...source(p),outsideScheduleMilliseconds:String(duration-overlap),durationExceedsScheduleTolerance:duration>scheduledEnd-scheduledStart+p.rule.excessToleranceMinutes*60000,
+  return {...source(p),...hourlyHeadcountDetails(p),outsideScheduleMilliseconds:String(duration-overlap),durationExceedsScheduleTolerance:duration>scheduledEnd-scheduledStart+p.rule.excessToleranceMinutes*60000,
    reviewVersion:p.entry.evidence_version??null,decision:p.entry.evidence_decision??null,reviewedSourceCurrent:p.entry.evidence_current??false,operationalReviewAccepted:p.entry.evidence_decision==='accepted'&&p.entry.evidence_current===true,
    scheduleChanged:p.entry.session_version!==p.entry.current_session_version,currentSessionStatus:p.entry.session_status};
  }).sort((a,b)=>a.key<b.key?-1:a.key>b.key?1:0);
