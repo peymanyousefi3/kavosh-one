@@ -11,7 +11,7 @@ const forecastAllocation=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('fixed_divisor'),divisor:z.number().int().min(1).max(1000),proration:z.enum(['manual','none']).default('manual')}).strict()
 ]);
 export const compensationRule=z.discriminatedUnion('kind',[
- z.object({...common,kind:z.literal('salary'),amount:money,frequency:z.enum(['month','year','pay_period']),forecastAllocation:forecastAllocation.optional()}).strict().refine(v=>v.frequency!=='pay_period'||v.forecastAllocation?.kind!=='calendar_pay_dates'),
+ z.object({...common,kind:z.literal('salary'),amount:money,frequency:z.enum(['month','year','pay_period']),forecastAllocation:forecastAllocation.optional(),earningBasis:z.enum(['calendar_days','whole_reference_period','whole_service_period']).optional()}).strict().refine(v=>v.frequency!=='pay_period'||v.forecastAllocation?.kind!=='calendar_pay_dates').refine(v=>v.earningBasis===undefined||(v.frequency==='pay_period')===(v.earningBasis==='whole_service_period')),
  z.object({...common,kind:z.literal('hourly'),...hourly}).strict(),
  z.object({...common,kind:z.literal('headcount_hourly'),...hourly,minimumStudents:z.number().int().min(0).max(1000000).default(0),includedStudents:z.number().int().min(0).max(1000000),increment:money,headcountBasis:z.enum(['enrolled','present','eligible_present'])}).strict(),
  z.object({...common,kind:z.literal('tuition_percentage'),percent:money,basis:z.enum(['session_net','session_gross','course_net','course_gross','period_collected_net','period_collected_gross'])}).strict(),

@@ -7,6 +7,7 @@ import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { payCalendarRange,payCalendarDays } from '../core/pay-calendar.ts';
 import { payrollHourlyCurrencyConflicts } from '../core/payroll-hourly-earnings.ts';
 import { payrollHourlyPlan } from './payroll-hourly-plan.ts';
+import { payrollSalaryPlan } from './payroll-salary-plan.ts';
 import type { HourlyWindow } from '../core/work-compensation.ts';
 import { priceRecordedHourlySources,type Entry,type Terms } from './recorded-work-report.ts';
 import { sessionEvidenceCapabilities } from './session-evidence-report.ts';
@@ -30,7 +31,7 @@ async function source(ctx:ApiContext,i:{personId:string;from:string;through:stri
  const s=(await ctx.db.query<{source:Source|null}>('SELECT public.payroll_preparation_source($1,$2::date,$3::date,$4) source',[i.personId,i.from,i.through,i.timeZone])).rows[0].source;if(!s)throw new ApiError(404,'NOT_FOUND');if(s.oversized)throw new ApiError(422,'PAYROLL_PREPARATION_REQUIRES_BACKGROUND_JOB');if(!s.work.length)throw new ApiError(404,'NOT_FOUND');return s;
 }
 async function row(ctx:ApiContext,id:string){scopes(ctx);const r=(await ctx.db.query<Preparation>('SELECT id,person_id,label,from_on::text,through_on::text,time_zone,captured_at::text,source_snapshot FROM public.payroll_preparations WHERE id=$1',[id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');await allowed(ctx,r.source_snapshot);return r;}
-function calculation(s:Source,priorClaims:HourlyWindow[]=[]){
+function calculation(s:Source,priorClaims:HourlyWindow[]=[],includeSalary=true){
  let pricing:ReturnType<typeof priceRecordedHourlySources>;
  try{pricing=priceRecordedHourlySources(s.entries,s.terms);}catch(e){if(e instanceof ApiError&&e.code==='RECORDED_WORK_REPORT_REQUIRES_BACKGROUND_JOB')throw new ApiError(422,'PAYROLL_PREPARATION_REQUIRES_BACKGROUND_JOB');throw e;}
  // Use the exact saved database window, not a second timezone-data version
@@ -40,7 +41,8 @@ function calculation(s:Source,priorClaims:HourlyWindow[]=[]){
  return {engine:'hourly-gross-v2',basis:'retained_sources_recomputed_by_current_engine',currencies:[...scales].map(([currencyId,c])=>({currencyId,currencyCode:c.code,unitScale:c.scale,requiresFXPolicy:ambiguous.has(currencyId),
   hourly:ambiguous.has(currencyId)?null:payrollHourlyPlan(priced.filter(p=>p.terms.currency_id===currencyId),{start:first,end:last},c.scale,priorClaims),
   sourceRefs:priced.filter(p=>p.terms.currency_id===currencyId).map(p=>({key:p.key,entryId:p.entry.id,entryVersion:p.entry.version,engagementId:p.terms.engagement_id,termsVersion:p.terms.version,componentCode:p.rule.code}))})),
-  unpricedComponents:issues,nonHourlySources:s.terms.flatMap(t=>t.components.filter(r=>r.kind!=='hourly'&&r.kind!=='headcount_hourly').map(r=>({engagementId:t.engagement_id,termsVersion:t.version,componentCode:r.code,kind:r.kind,reason:'EXPLICIT_NON_HOURLY_EARNING_BASIS_REQUIRED'}))),
+  unpricedComponents:issues,nonHourlySources:s.terms.flatMap(t=>t.components.filter(r=>r.kind!=='hourly'&&r.kind!=='headcount_hourly').map(r=>({engagementId:t.engagement_id,termsVersion:t.version,componentCode:r.code,kind:r.kind,reason:includeSalary&&r.kind==='salary'?'SEE_SALARY_SERVICE_PLANS_AND_REVIEW_FLAGS':'EXPLICIT_NON_HOURLY_EARNING_BASIS_REQUIRED'}))),
+  ...includeSalary?{salary:payrollSalaryPlan(s)}:{},
   sessionEvidence:s.entries.map(e=>({entryId:e.id,entryVersion:e.version,sessionId:e.session_id,reviewVersion:e.evidence_version,decision:e.evidence_decision,reviewedSourceCurrent:e.evidence_current,operationalReviewAccepted:e.evidence_decision==='accepted'&&e.evidence_current===true})),
   sessionEvidenceBasis:'captured_review_decision_and_source_freshness',completePayroll:false,claimsPersisted:false,wagesAccrued:false,earnedEntitlementDetermined:false,payrollApproved:false,statutoryDeductionsCalculated:false,paymentExecuted:false,mediaContentVerified:false};
 }
@@ -66,8 +68,8 @@ export async function payrollPreparations(ctx:ApiContext):Promise<Reply|null>{
 }
 export const payrollPreparationsContract=[
  {path:'/api/v1/payroll/preparations',method:'get',summary:'Source-scoped immutable payroll preparation directory; complete worker work/time authority including retained/current contexts before paging, not approved or paid payroll',querySchema:query},
- {path:'/api/v1/payroll/preparations',method:'post',summary:'Retain an exact bounded payroll source draft with crossing-window hours, all effective work terms, period pins and evidence-review freshness; actual/configured hourly calculation and explicit unresolved non-hourly bases. No source consumption, wage accrual, payroll approval or payment.',schema:create},
- {path:'/api/v1/payroll/preparations/{id}',method:'get',summary:'Read immutable source-based payroll draft with current-source change flag, exact source/work-agreement earning allocations, complete shadowed-source evidence and schedule review flags and conservative cross-currency actual/rounded coverage; no durable claims, paystub or earned-entitlement determination'}
+ {path:'/api/v1/payroll/preparations',method:'post',summary:'Retain an exact bounded payroll source draft with crossing-window hours, effective work terms, reviewed service periods and evidence freshness; actual/configured hourly calculation plus explicit salary service-earning rules and unresolved non-hourly sources. No source consumption, wage accrual, payroll approval or payment.',schema:create},
+ {path:'/api/v1/payroll/preparations/{id}',method:'get',summary:'Read immutable source-based payroll draft with current-source change flag, exact hourly/source allocations and salary plans pinned to reviewed service dates and explicit earning policies, missing-period/policy review flags, penny-conserving civil proration and per-currency totals; no durable claims, paystub or earned-entitlement determination'}
 ] as const;
 export {scopes as payrollPreparationScopes,allowed as payrollPreparationAllowed,calculation as calculatePayrollPreparation};
 export type {Source as PayrollPreparationSource};

@@ -87,7 +87,7 @@ export async function workEngagements(ctx:ApiContext,registry:ApprovalRegistry=w
 }
 export const workEngagementsContract=[
  {path:'/api/v1/payroll/engagements',method:'get',summary:'Private work engagements filtered by whole record hub/person authority before pagination; no class-roster grant implies payroll access',querySchema:list},
- {path:'/api/v1/payroll/engagements',method:'post',summary:'Request effective-dated employee/contractor terms, declared tax form, pay cycle and salary/hourly/headcount/percentage/project components; not a classification ruling or payroll activation',schema:create},
+ {path:'/api/v1/payroll/engagements',method:'post',summary:'Request effective-dated employee/contractor terms, declared tax form, pay cycle and salary/hourly/headcount/percentage/project components, including optional salary service-earning policy independent of forecast allocation; not a classification ruling or payroll activation',schema:create},
  {path:'/api/v1/payroll/engagements/{id}',method:'get',summary:'Read pinned engagement terms by version or civil effective date; latest recorded may be future-effective',querySchema:read},
  {path:'/api/v1/payroll/engagements/{id}/change',method:'post',summary:'Request exact versioned terms amendment without rewriting prior rates or creating wages, deductions or payments',schema:change},
  {path:'/api/v1/payroll/engagements/{id}/history',method:'get',summary:'Editor-only immutable work terms and private review history',querySchema:history},

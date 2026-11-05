@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.101.0",
+    "version": "0.102.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -25267,7 +25267,7 @@
         }
       },
       "post": {
-        "summary": "Request effective-dated employee/contractor terms, declared tax form, pay cycle and salary/hourly/headcount/percentage/project components; not a classification ruling or payroll activation",
+        "summary": "Request effective-dated employee/contractor terms, declared tax form, pay cycle and salary/hourly/headcount/percentage/project components, including optional salary service-earning policy independent of forecast allocation; not a classification ruling or payroll activation",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -25737,6 +25737,14 @@
                                   ],
                                   "additionalProperties": false
                                 }
+                              ]
+                            },
+                            "earningBasis": {
+                              "type": "string",
+                              "enum": [
+                                "calendar_days",
+                                "whole_reference_period",
+                                "whole_service_period"
                               ]
                             }
                           },
@@ -26803,6 +26811,14 @@
                                   ],
                                   "additionalProperties": false
                                 }
+                              ]
+                            },
+                            "earningBasis": {
+                              "type": "string",
+                              "enum": [
+                                "calendar_days",
+                                "whole_reference_period",
+                                "whole_service_period"
                               ]
                             }
                           },
@@ -28340,7 +28356,7 @@
         }
       },
       "post": {
-        "summary": "Retain an exact bounded payroll source draft with crossing-window hours, all effective work terms, period pins and evidence-review freshness; actual/configured hourly calculation and explicit unresolved non-hourly bases. No source consumption, wage accrual, payroll approval or payment.",
+        "summary": "Retain an exact bounded payroll source draft with crossing-window hours, effective work terms, reviewed service periods and evidence freshness; actual/configured hourly calculation plus explicit salary service-earning rules and unresolved non-hourly sources. No source consumption, wage accrual, payroll approval or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -28411,7 +28427,7 @@
     },
     "/api/v1/payroll/preparations/{id}": {
       "get": {
-        "summary": "Read immutable source-based payroll draft with current-source change flag, exact source/work-agreement earning allocations, complete shadowed-source evidence and schedule review flags and conservative cross-currency actual/rounded coverage; no durable claims, paystub or earned-entitlement determination",
+        "summary": "Read immutable source-based payroll draft with current-source change flag, exact hourly/source allocations and salary plans pinned to reviewed service dates and explicit earning policies, missing-period/policy review flags, penny-conserving civil proration and per-currency totals; no durable claims, paystub or earned-entitlement determination",
         "parameters": [
           {
             "name": "id",
