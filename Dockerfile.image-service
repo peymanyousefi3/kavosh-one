@@ -9,7 +9,7 @@ COPY workers/image-service/package.json ./workers/image-service/package.json
 COPY workers/notification-worker/package.json ./workers/notification-worker/package.json
 RUN pnpm install --frozen-lockfile
 COPY src/core/policy.ts ./src/core/policy.ts
-COPY src/files/image-validation.ts src/files/image-service.ts src/files/image-runtime.ts src/files/image-decoder.mjs ./src/files/
+COPY src/files/image-validation.ts src/files/image-service.ts src/files/image-runtime.ts src/files/isolated-runtime.ts src/files/image-decoder.mjs ./src/files/
 COPY scripts/image-validator-service.ts ./scripts/image-validator-service.ts
 RUN pnpm exec tsc --ignoreConfig --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir /compiled scripts/image-validator-service.ts
 RUN pnpm --filter @kavosh/image-service deploy --prod /runtime

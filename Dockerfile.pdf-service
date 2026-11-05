@@ -1,0 +1,33 @@
+# Native parser runs in a separate credential-free,networkless runtime.
+# CI verifies actual interpreter/Node PIE and kernel/cgroup controls,not a flag.
+FROM alpine:3.24 AS build
+RUN apk add --no-cache nodejs npm python3 py3-pip
+WORKDIR /build
+RUN npm install --global pnpm@11.25.0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY workers/image-service/package.json ./workers/image-service/package.json
+COPY workers/notification-worker/package.json ./workers/notification-worker/package.json
+COPY workers/pdf-validator/package.json ./workers/pdf-validator/package.json
+RUN pnpm install --frozen-lockfile
+COPY src/core/policy.ts ./src/core/policy.ts
+COPY src/files/pdf-validation.ts src/files/pdf-service.ts src/files/pdf-runtime.ts src/files/isolated-runtime.ts ./src/files/
+COPY scripts/pdf-validator-service.ts ./scripts/pdf-validator-service.ts
+RUN pnpm exec tsc --ignoreConfig --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir /compiled scripts/pdf-validator-service.ts
+RUN pnpm --filter @kavosh/pdf-validator deploy --prod /runtime
+COPY workers/pdf-validator/requirements.txt ./requirements.txt
+RUN python3 -m venv /opt/pdf && /opt/pdf/bin/python3 -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: --require-hashes -r requirements.txt
+
+FROM alpine:3.24 AS runtime
+RUN apk add --no-cache nodejs python3 libstdc++ && addgroup -g 10001 parser && adduser -D -u 10002 -G parser parser
+WORKDIR /app
+ENV NODE_ENV=production TZ=UTC
+COPY --from=build /runtime/package.json ./package.json
+COPY --from=build /runtime/node_modules ./node_modules
+COPY --from=build /compiled/src ./src
+COPY --from=build /compiled/scripts ./scripts
+COPY --from=build /opt/pdf /opt/pdf
+COPY src/files/pdf-inspector.py ./src/files/pdf-inspector.py
+COPY scripts/pdf-service-smoke.mjs ./scripts/pdf-service-smoke.mjs
+RUN mkdir /run/kavosh-pdf && chown 10002:10001 /run/kavosh-pdf && chmod 0750 /run/kavosh-pdf
+USER 10002:10001
+CMD ["node", "scripts/pdf-validator-service.js"]

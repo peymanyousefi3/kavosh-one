@@ -19,7 +19,9 @@ from decimal import Decimal
 from urllib.parse import unquote, urlsplit
 
 if sys.platform == "linux":
-    resource.setrlimit(resource.RLIMIT_AS, (536870912, 536870912))
+    # Two children share a1GiB service cgroup;leave space for the bounded Node
+    # broker and input/reply buffers rather than allocating the entire cgroup.
+    resource.setrlimit(resource.RLIMIT_AS, (402653184, 402653184))
     resource.setrlimit(resource.RLIMIT_CPU, (5, 5))
     resource.setrlimit(resource.RLIMIT_NOFILE, (32, 32))
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))

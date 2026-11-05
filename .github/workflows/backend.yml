@@ -230,9 +230,34 @@ jobs:
           python -m pip install --disable-pip-version-check pip-audit==2.10.1
           python -m pip_audit --require-hashes --progress-spinner off --strict -r workers/pdf-validator/requirements.txt
       - name: Required actual native PDF parser and short process-failure checks
-        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts
         env:
           PDF_VALIDATION_TEST_REQUIRED: 'true'
+      - name: Build minimal credential-free native PDF service
+        run: docker build --file Dockerfile.pdf-service --tag kavosh-pdf:ci .
+      - name: Refuse a PDF runtime missing required isolation controls
+        run: |
+          if docker run --rm --network none kavosh-pdf:ci; then
+            echo 'Unsafe PDF-service startup was accepted'
+            exit 1
+          fi
+      - name: Run actual isolated resource-limited PDF service
+        run: >-
+          docker run --detach --name kavosh-pdf-ci --network none --read-only
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --memory 1g --memory-swap 1g --cpus 1 --pids-limit 64
+          --tmpfs /run/kavosh-pdf:rw,noexec,nosuid,nodev,size=1m,uid=10002,gid=10001,mode=0750
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10002,gid=10001,mode=0700
+          kavosh-pdf:ci
+      - name: Verify actual PDF interpreter PIE,kernel controls,socket privacy and original-byte parsing
+        run: docker exec kavosh-pdf-ci node scripts/pdf-service-smoke.mjs
+      - name: Verify graceful PDF service shutdown
+        run: |
+          docker stop --time 10 kavosh-pdf-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' kavosh-pdf-ci)" = 0
+      - name: Remove disposable PDF-service container
+        if: always()
+        run: docker rm --force kavosh-pdf-ci || true
   scanner-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 5
