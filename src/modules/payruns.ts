@@ -5,6 +5,7 @@ import { permissionScope,propose,master,lockApprovalWrites,type ApprovalRegistry
 import { ApiError,scopeNonempty,type Capability,type Scope } from '../core/policy.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
+import { payrunReadiness } from './payrun-readiness.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const kind=z.enum(['hourly','salary','project','manual_bonus','tuition_course','tuition_session','tuition_collection']);
@@ -23,8 +24,8 @@ const ceiling=(ctx:ApiContext)=>({all:ctx.credential.all_hubs,hubs:ctx.credentia
 async function visible(ctx:ApiContext,scope:Scope,edit=false){for(const s of [...scopes(ctx,edit),ceiling(ctx)])if(!(await ctx.db.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,$2::jsonb) ok',[JSON.stringify(s),JSON.stringify(scope)])).rows[0].ok)throw new ApiError(404,'NOT_FOUND');}
 async function row(ctx:ApiContext,id:string,edit=false){scopes(ctx,edit);const r=(await ctx.db.query<Run>('SELECT '+columns+' FROM public.payrun_groups x WHERE id=$1',[id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');await visible(ctx,r.scope,edit);return r;}
 type AccessItem=Pick<Item,'kind'|'sourceId'|'allocationId'|'personId'|'hubId'>;
-async function sourceAuthority(ctx:ApiContext,items:AccessItem[]){
- const caps:Capability[]=['payruns.view','payruns.edit','work-pay.view','payroll-accruals.view','payroll-adjustments.view'],s=Object.fromEntries(caps.map(c=>[c,permissionScope(ctx,c)]));
+async function sourceAuthority(ctx:ApiContext,items:AccessItem[],edit=true){
+ const caps:Capability[]=['payruns.view','payruns.edit','work-pay.view','payroll-accruals.view','payroll-adjustments.view'],s=Object.fromEntries(caps.map(c=>[c,c==='payruns.edit'&&!edit?{all:true,hubs:[]}:permissionScope(ctx,c)]));
  const ok=(await ctx.db.query<{ok:boolean}>(`SELECT NOT EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) v CROSS JOIN LATERAL jsonb_array_elements(jsonb_build_array($2::jsonb->'payruns.view',$2::jsonb->'payruns.edit',$2::jsonb->'work-pay.view',CASE WHEN v->>'kind'='manual_bonus' THEN $2::jsonb->'payroll-adjustments.view' ELSE $2::jsonb->'payroll-accruals.view' END,$3::jsonb)) p WHERE public.work_scope_allows(p,(v->>'hubId')::uuid,(v->>'personId')::uuid) IS NOT TRUE)
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) v LEFT JOIN public.payroll_hourly_accruals h ON h.id=(v->>'sourceId')::uuid WHERE v->>'kind'='hourly' AND(h.id IS NULL OR public.payroll_preparation_allows(h.source_snapshot->'payroll',jsonb_build_array($2::jsonb->'work-pay.view',$2::jsonb->'payroll-accruals.view',$3::jsonb),'[{"all":true,"hubs":[]}]'::jsonb) IS NOT TRUE)) ok`,[JSON.stringify(items),JSON.stringify(s),JSON.stringify(ceiling(ctx))])).rows[0].ok;
  if(!ok)throw new ApiError(404,'NOT_FOUND');
@@ -59,7 +60,7 @@ export const payrunActions:ApprovalRegistry=Object.fromEntries([false,true].map(
  async authorizeReviewer(ctx:ApiContext,p:Proposal){if(await master(ctx))return;const id=cancelling?(await row(ctx,cancelInput.parse(p.payload).runId,true)).person_id:create.parse(p.payload).personId;if(id===ctx.credential.person_id)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');if(!cancelling)await sourceAuthority(ctx,(p.review_context as Source).items);},apply
 }])) as ApprovalRegistry;
 export async function payruns(ctx:ApiContext,registry:ApprovalRegistry=payrunActions):Promise<Reply|null>{
- const match=/^payroll\/payruns(?:\/([^/]+)(?:\/(cancel))?)?$/.exec(ctx.path);if(!match)return null;
+ const match=/^payroll\/payruns(?:\/([^/]+)(?:\/(cancel|readiness))?)?$/.exec(ctx.path);if(!match)return null;
  const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=Object.fromEntries(params);
  if(match[1]==='candidates'){
   if(ctx.request.method!=='GET'||match[2])throw new ApiError(405,'METHOD_NOT_ALLOWED');const i=candidates.parse(q);await lockApprovalWrites(ctx);const s=scopes(ctx,true),required=[permissionScope(ctx,'work-pay.view'),permissionScope(ctx,'payroll-accruals.view')],manual=permissionScope(ctx,'payroll-adjustments.view');
@@ -74,7 +75,7 @@ export async function payruns(ctx:ApiContext,registry:ApprovalRegistry=payrunAct
  }
  const id=match[1]?uuid.parse(match[1]):null;
  if(ctx.request.method==='POST'){empty.parse(q);if(!id)return propose(ctx,registry,'work.payrun.group',null,0,create.parse(await jsonBody(ctx.request,65536)));if(match[2]!=='cancel')throw new ApiError(405,'METHOD_NOT_ALLOWED');await row(ctx,id,true);return propose(ctx,registry,'work.payrun.cancel',null,0,{...cancel.parse(await jsonBody(ctx.request)),runId:id});}
- if(ctx.request.method!=='GET'||match[2])throw new ApiError(405,'METHOD_NOT_ALLOWED');await lockApprovalWrites(ctx);if(id){empty.parse(q);return {status:200,body:{data:output(await row(ctx,id))}};}
+ if(ctx.request.method!=='GET'||match[2]==='cancel')throw new ApiError(405,'METHOD_NOT_ALLOWED');await lockApprovalWrites(ctx);if(id){empty.parse(q);const r=await row(ctx,id);if(match[2]==='readiness'){await sourceAuthority(ctx,r.source_snapshot.items,false);return {status:200,body:{data:await payrunReadiness(ctx,r)}};}return {status:200,body:{data:output(r)}};}
  const i=paging.parse(q),s=[...scopes(ctx),ceiling(ctx)],rows=(await ctx.db.query<Run>(`SELECT ${columns} FROM public.payrun_groups x WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) p WHERE public.scope_contains(p,x.scope) IS NOT TRUE) AND($2::uuid IS NULL OR x.person_id=$2) AND($3::uuid IS NULL OR x.currency_id=$3) AND($4::text IS NULL OR(x.cancellation_id IS NULL)=($4='gross_grouped')) AND($5::uuid IS NULL OR x.id>$5) AND($7::text IS NULL OR EXISTS(SELECT 1 FROM public.payrun_earning_claims c WHERE c.academy_id=x.academy_id AND c.run_id=x.id AND c.kind=$7 AND c.source_id=$8)) ORDER BY x.id LIMIT $6`,[JSON.stringify(s),i.personId??null,i.currencyId??null,i.status??null,i.after??null,i.limit+1,i.sourceKind??null,i.sourceId??null])).rows;
  return {status:200,body:{data:rows.slice(0,i.limit).map(output),nextCursor:rows.length>i.limit?rows[i.limit-1].id:null}};
 }
@@ -83,5 +84,6 @@ export const payrunContract=[
  {path:'/api/v1/payroll/payruns',method:'get',summary:'Worker-private retained gross payrun groups with full-bundle scopes and currency/status filters',querySchema:paging},
  {path:'/api/v1/payroll/payruns',method:'post',summary:'Upper-human-reviewed grouping of real salary/hourly/project/manual/course/session/collection gross allocations for one worker,currency and immutable declared legal context. Exact native source ownership and conserved amounts; no duplicate expense,net calculation,payment or paystub.',schema:create},
  {path:'/api/v1/payroll/payruns/{id}',method:'get',summary:'Read retained gross payrun without private HR terms,parent receipt facts or review notes'},
+ {path:'/api/v1/payroll/payruns/{id}/readiness',method:'get',summary:'Current source-private class-input checklist for a permitted gross group. Rechecks durable earning claims,all priced hourly parent sources including shadowed classes,explicit session tuition,shared attendance/report/media-reference review and each worker\u0027s retained/current time. Authorized reversible report/media exceptions are respected;no attendance/time bypass. No wage erasure,teacher-agreement or safe-file certification,net pay,payment approval or retained payout clearance.'},
  {path:'/api/v1/payroll/payruns/{id}/cancel',method:'post',summary:'Upper-human-reviewed immutable cancellation releases only this run\u0027s gross allocation claims; no ledger inverse or payment/refund',schema:cancel}
 ] as const;
