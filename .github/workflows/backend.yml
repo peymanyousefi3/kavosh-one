@@ -50,6 +50,10 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Compile the isolated notification daemon without a TypeScript runtime
         run: pnpm notifications:build
+      - name: Focused shared attendance and time persistence
+        run: node --import tsx --test --test-concurrency=1 tests/session-attendance.test.ts tests/session-time.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: API contract matches the implemented schemas
         run: pnpm api:generate && git diff --exit-code -- public/openapi.json
       # Routine updates prioritize focused business/security/accounting logic.
