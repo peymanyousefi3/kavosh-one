@@ -206,6 +206,33 @@ jobs:
       - name: Remove disposable image-service container
         if: always()
         run: docker rm --force kavosh-image-ci || true
+  pdf-parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install exact binary PDF dependencies with official registry hashes
+        run: >-
+          python -m pip install --disable-pip-version-check --only-binary=:all:
+          --require-hashes -r workers/pdf-validator/requirements.txt
+      - name: Audit the pinned Python dependencies without adding tools to runtime requirements
+        run: |
+          python -m pip install --disable-pip-version-check pip-audit==2.10.1
+          python -m pip_audit --require-hashes --progress-spinner off --strict -r workers/pdf-validator/requirements.txt
+      - name: Required actual native PDF parser and short process-failure checks
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts
+        env:
+          PDF_VALIDATION_TEST_REQUIRED: 'true'
   scanner-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 5
