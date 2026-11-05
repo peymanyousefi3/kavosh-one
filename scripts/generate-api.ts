@@ -5,7 +5,7 @@ import { businessContract } from '../src/modules/business.ts';
 import { boldSignWebhookBody } from '../src/integrations/boldsign-inbox.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.73.0';
+api.info.version='0.74.0';
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
 api.components.securitySchemes.humanSession={type:'apiKey',in:'cookie',name:'__Secure-kavosh.session_token',description:'Opaque HttpOnly signed cookie set by login/MFA, never read or stored by frontend JavaScript. Local HTTP development uses kavosh.session_token.'};
@@ -24,7 +24,7 @@ for(const path of getPaths)api.paths['/api/auth'+path]={get:{security:[],summary
   responses:{'200':{description:'Result'},'302':{description:'Same-origin verification redirect'},default:{$ref:'#/components/responses/error'}}}};
 for(const endpoint of businessContract) {
   const parameters:Record<string,unknown>[]=[];
-  if(endpoint.path.includes('{id}'))parameters.push({name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}});
+  for(const [,name] of endpoint.path.matchAll(/\{([^}]+)\}/g))parameters.push({name,in:'path',required:true,schema:{type:'string',format:'uuid'}});
   if(endpoint.method==='post'&&!('readOnly' in endpoint&&endpoint.readOnly))parameters.push({$ref:'#/components/parameters/idempotency'});
   if('paged' in endpoint)parameters.push({$ref:'#/components/parameters/limit'},{$ref:'#/components/parameters/after'});
   if('querySchema' in endpoint&&endpoint.querySchema) {

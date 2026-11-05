@@ -1,16 +1,15 @@
 import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
-import { propose,master,permissionScope,lockApprovalWrites,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
+import { propose,master,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,type Capability } from '../core/policy.ts';
 import { classRow,sessionRow } from './classes.ts';
-import { permittedPerson } from './students.ts';
+import { authorizeLearningRecipient,receivedLearningQuery as receivedQuery,receivedLearningSelection } from './learning-recipients.ts';
 import { lockAcademyTopology } from './academy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().min(1).max(2147483647),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const input=z.object({reportVersion:version,priorId:uuid.nullable().default(null),allowMissingMedia:z.boolean().default(false),classAudienceReviewed:z.literal(true),reason}).strict(),publishPayload=input.extend({sessionId:uuid});
 const withdrawInput=z.object({reason}).strict(),withdrawPayload=withdrawInput.extend({publicationId:uuid}),empty=z.object({}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(20).default(10),after:uuid.optional()}).strict();
-const receivedQuery=paging.extend({beforeOn:z.iso.date().optional()}).refine(q=>Boolean(q.after)===Boolean(q.beforeOn),'Use both cursor fields');
 type Document={title:string;locale:string;blocks:({id:string;kind:'text';text:string}|{id:string;kind:'media';fileId:string;fileVersion:number;mediaKind:string;caption:string})[]};
 type Report={session_id:string;class_id:string;hub_id:string;changed_by:string;document:Document;[key:string]:unknown};
 type Publication={id:string;session_id:string;class_id:string;hub_id:string;report_version:number;context:{report:Report;source:{session:{on:string;timeZone:string}}};[key:string]:unknown};
@@ -55,17 +54,11 @@ async function received(ctx:ApiContext,studentId:string,id?:string):Promise<Repl
  const params=Object.fromEntries(new URL(ctx.request.url).searchParams),q=id?(empty.parse(params),null):receivedQuery.parse(params);
  // Shared policy lock keeps API family/access/enrollment/withdrawal changes
  // from committing halfway through this authorized response construction.
- await lockApprovalWrites(ctx);await permittedPerson(ctx,studentId,'received-reports.view');
- if(!(await ctx.db.query<{allowed:boolean}>('SELECT public.report_recipient($1,$2) allowed',[studentId,ctx.credential.person_id])).rows[0].allowed)throw new ApiError(404,'NOT_FOUND');
- const s=permissionScope(ctx,'received-reports.view'),selected=Boolean(s.people?.some(p=>p.id===studentId));
+ const {s,selected}=await authorizeLearningRecipient(ctx,studentId);
  const rows=(await ctx.db.query<{id:string;document?:Document;on:string}&Record<string,unknown>>(`SELECT p.id,p.session_id,p.report_version,p.created_at,c.name AS class_name,p.context#>>'{source,session,on}' AS on,p.context#>>'{source,session,timeZone}' AS time_zone,
   p.context#>>'{report,document,title}' AS title,p.context#>>'{report,document,locale}' AS locale${id?",p.context#>'{report,document}' AS document":''}
   FROM public.report_publications p JOIN public.classes c ON c.academy_id=p.academy_id AND c.id=p.class_id
-  WHERE public.report_publication_active(p.id) AND public.report_recipient($1,$2) AND($3::uuid IS NULL OR p.id=$3)
-  AND($4::boolean OR $5::boolean OR p.hub_id=ANY($6::uuid[])) AND NOT p.hub_id=ANY($7::uuid[])
-  AND EXISTS(SELECT 1 FROM public.class_enrollments e WHERE e.academy_id=p.academy_id AND e.class_id=p.class_id AND e.student_id=$1 AND e.enabled
-    AND e.joins_on<=(p.context#>>'{source,session,on}')::date AND(e.leaves_on IS NULL OR e.leaves_on>=(p.context#>>'{source,session,on}')::date))
-  AND($8::date IS NULL OR((p.context#>>'{source,session,on}')::date,p.id)<($8,$9::uuid))
+  WHERE public.report_publication_active(p.id) AND ${receivedLearningSelection}
   ORDER BY (p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $10`,[studentId,ctx.credential.person_id,id??null,s.all,selected,s.hubs,s.excludedHubs??[],q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
  if(id){if(!rows[0])throw new ApiError(404,'NOT_FOUND');const {document,...header}=rows[0];return {status:200,body:{data:{...header,document:parentDocument(document!),mediaServingEnabled:false,externalDeliveryVerified:false,payrollApproved:false}}};}
  return {status:200,body:{studentId,data:rows.slice(0,q!.limit),nextCursor:rows.length>q!.limit?{beforeOn:rows[q!.limit-1].on,after:rows[q!.limit-1].id}:null}};
