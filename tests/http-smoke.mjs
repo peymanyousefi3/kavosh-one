@@ -22,6 +22,7 @@ try {
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
   const providerPath=base+'/api/webhooks/boldsign/00000000-0000-4000-8000-000000000001';
+  {const r=await fetch(base+'/api/v1/sessions/00000000-0000-4000-8000-000000000001/my-evidence-feedback');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/staffNote|reason|source|reviewVersion|stack/);}
   for(const suffix of ['evidence-review','evidence-review/history']){const r=await fetch(base+'/api/v1/sessions/00000000-0000-4000-8000-000000000001/'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/source|decision|waive_report|reason|stack/);}
   {const r=await fetch(base+'/api/v1/reports/learning/sessions/00000000-0000-4000-8000-000000000001/evidence');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/attendanceVersion|entryId|staff|snapshotAt|stack/);}
   for(const [path,method] of [['poll-templates/00000000-0000-4000-8000-000000000001/create-poll','POST'],['polls/00000000-0000-4000-8000-000000000001/template-source','GET']]){const r=await fetch(base+'/api/v1/'+path,{method,headers:{'content-type':'application/json'},...method==='POST'?{body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/definition|template_id|approval_id|stack/);}
@@ -80,6 +81,7 @@ try {
   const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
   assert.ok(spec.paths['/api/v1/reports/learning/sessions/{id}/evidence']?.get);
   assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review']?.post);assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review']?.get);assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review/history']?.get);
+  assert.ok(spec.paths['/api/v1/sessions/{id}/my-evidence-feedback']?.get);assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review'].post.requestBody.content['application/json'].schema.properties.staffNote);
   assert.ok(spec.paths['/api/v1/students/{id}/homework/{homeworkId}/submission']?.post);assert.ok(spec.paths['/api/v1/homeworks/{id}/submissions']?.get);assert.ok(spec.paths['/api/v1/homework-submissions/{id}/history']?.get);
   assert.ok(spec.paths['/api/v1/homework-submissions/{id}/grades']?.post);assert.ok(spec.paths['/api/v1/homework-grades/{id}/withdraw']?.post);assert.ok(spec.paths['/api/v1/students/{id}/homework/{homeworkId}/grades/{gradeId}']?.get);
   assert.ok(spec.paths['/api/v1/homeworks/{id}/solutions']?.post);assert.ok(spec.paths['/api/v1/homework-solutions/{id}/withdraw']?.post);assert.ok(spec.paths['/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}']?.get);

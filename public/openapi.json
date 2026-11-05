@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.88.0",
+    "version": "0.89.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -31229,7 +31229,7 @@
     },
     "/api/v1/sessions/{id}/evidence-review": {
       "post": {
-        "summary": "Versioned upper-human accept/request-changes/reject decision; separate override permission for session report/media exceptions and their removal; current attendance and individual staff time mandatory on accept; immutable time/report/attendance pins; input review is not safe-media or payroll clearance",
+        "summary": "Versioned upper-human input decision with separate private reason and optional explicitly acknowledged teaching-team note; null/omission clears current staff note without erasing private history; scoped reversible exceptions, mandatory attendance/individual time, immutable pins; not payroll or safe-media clearance",
         "parameters": [
           {
             "name": "id",
@@ -31273,6 +31273,32 @@
                   "waiveMedia": {
                     "default": false,
                     "type": "boolean"
+                  },
+                  "staffNote": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          },
+                          "audienceReviewed": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "audienceReviewed"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "reason": {
                     "type": "string",
@@ -31864,6 +31890,37 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{id}/my-evidence-feedback": {
+      "get": {
+        "summary": "Verified human own-session current explicitly shared teaching-team feedback; dedicated class grant plus actual own staffing/time/reviewed relationship and frozen recipients; no private reason, peer hours, financial data or historical note-text endpoint; bots cannot impersonate staff",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
         "responses": {
           "200": {
             "description": "Current data or applied change"
