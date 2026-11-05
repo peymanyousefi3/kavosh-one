@@ -1,0 +1,97 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
+import { expenseFixture } from './expense-fixture.ts';
+import { workFixture } from './work-fixture.ts';
+import { assertOutlookBounds,assertOutlookOutputBounds } from '../src/modules/financial-outlook.ts';
+
+async function fixture(){
+ const f=await expenseFixture();try{
+ const invoice=await f.issue(),bill=await f.bill();assert.equal(invoice.response.status,201);assert.equal(bill.response.status,201);
+ const terms={code:'RENT',effectiveOn:'2026-01-01',currency:{id:f.currency.id,version:1},payee:{id:f.payee.id,version:1},definition:{name:'Synthetic monthly expected rent',active:true,startsOn:'2026-01-01',endsOn:null,confidence:'contracted',schedule:{kind:'monthly',day:7,shortMonth:'last_day'},lines:[{hubId:f.hub,classId:f.c.id,studentId:f.student.id,description:'Expected gross',amount:'113'}],taxReview:'Synthetic expected gross, not an actual tax declaration'},reason:'Private expected-cost review'},plan=await f.made('finance/expense-commitments',terms);
+ const link=()=>f.request('finance/expense-commitment-bill-links',{commitmentId:plan.id,termsVersion:1,occurrenceOn:'2026-12-07',billId:bill.body.data.id,effectiveOn:'2026-11-07',expectedAmount:'113',billAmount:'113',reason:'Private matching review'});
+ const collector=await f.made('finance/collectors',{hubId:f.hub,code:'CASH',kind:'hub',custody:'academy_funds',name:'Synthetic academy cash',accounts:[{id:f.cash.id,version:1}],reason:'Synthetic collector'});
+ const pay=(allocation='unallocated')=>f.request('finance/invoices/'+invoice.body.data.id+'/receipts',{amount:'50',collector:{id:collector.id,version:1},method:{id:f.method.id,version:1},holdingAccount:{id:f.cash.id,version:1},receivedAt:'2026-11-06T12:00:00Z',period:{id:f.period.id,version:1},missingEvidenceReason:'Synthetic receipt exception',taxTreatment:'settle_invoice',allocation,reason:'Private receipt review'});
+ return {...f,makeBill:f.bill,invoice:invoice.body.data,bill:bill.body.data,terms,plan,link,pay};
+ }catch(e){await f.pg.close();throw e;}
+}
+type Fixture=Awaited<ReturnType<typeof fixture>>;
+function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+async function report(f:Fixture,suffix='',as='master',on='2026-11-10'){const r=await f.request('reports/finance/outlook?on='+on+'&through=2027-01-10&timeZone=America/Toronto'+suffix,undefined,as);assert.equal(r.response.status,200,JSON.stringify({body:r.body,failures:f.metrics.queryFailures}));return r.body.data;}
+
+check('combined outlook uses current cash, real tuition and bills, and only unmatched expected portions without new postings',async f=>{
+ assert.equal((await f.link()).response.status,201);const before=(await f.pg.query('SELECT count(*)::integer n FROM public.finance_journals')).rows[0].n,r=await report(f),c=r.currencies[0];
+ assert.equal(c.openingCash.amount,'0.00');assert.equal(c.receivable.amount,'113.00');assert.equal(c.payable.amount,'113.00');assert.equal(c.expectedReceipts.amount,'113.00');assert.equal(c.expectedBillPayments.amount,'113.00');assert.equal(c.unmatchedPlannedCosts.amount,'113.00');assert.equal(c.knownScenarioClosingCash.amount,'-113.00');
+ assert.deepEqual(r.chartData.map((d:any)=>[d.on,d.knownScenarioCash.amount]),[['2026-12-01','50.00'],['2026-12-07','-63.00'],['2027-01-01','0.00'],['2027-01-07','-113.00']]);assert.equal(r.sourceSnapshot,'single_statement');assert.equal(r.completeAcademyForecast,false);assert.equal(r.payrollIncludedInCashScenario,false);assert.equal(r.accrualForecast,false);assert.equal(r.scheduledPayroll.snapshotAt,r.snapshotAt);assert.equal(r.reviewRequired.length,0);assert.ok(!JSON.stringify(r).includes('Private matching review'));assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.finance_journals')).rows[0].n,before);
+});
+check('unallocated real receipts remain cash and exact undated receivables, never guessed future receipts',async f=>{
+ assert.equal((await f.link()).response.status,201);assert.equal((await f.pay()).response.status,201);const r=await report(f),c=r.currencies[0];assert.equal(c.openingCash.amount,'50.00');assert.equal(c.receivable.amount,'63.00');assert.equal(c.undatedReceivable.amount,'63.00');assert.equal(c.expectedReceipts.amount,'0.00');assert.equal(c.knownScenarioClosingCash.amount,'-176.00');assert.deepEqual(r.reviewRequired,[{source:'invoice',id:f.invoice.id,code:'INSTALLMENT_ALLOCATION_REVIEW_REQUIRED'}]);
+});
+check('approved receipt allocation resolves due timing without adding cash twice',async f=>{
+ assert.equal((await f.link()).response.status,201);assert.equal((await f.pay('oldest_due')).response.status,201);const r=await report(f),c=r.currencies[0];assert.equal(c.openingCash.amount,'50.00');assert.equal(c.expectedReceipts.amount,'63.00');assert.equal(c.undatedReceivable.amount,'0.00');assert.equal(c.knownScenarioClosingCash.amount,'-113.00');assert.equal(r.reviewRequired.length,0);
+});
+check('partial paid expenses reduce both actual cash and the due obligation, not the matched expected deduction',async f=>{
+ assert.equal((await f.link()).response.status,201);const p=await f.request('finance/expense-bills/'+f.bill.id+'/payments',{fundingAccount:{id:f.cash.id,version:1},payableVersion:1,method:{id:f.method.id,version:1},amount:'50',period:{id:f.period.id,version:1},postedOn:'2026-11-08',paidAt:'2026-11-08T12:00:00Z',missingEvidenceReason:'Synthetic proof exception',taxTreatment:'settle_expense_bill',reason:'Private payment review'});assert.equal(p.response.status,201,JSON.stringify(p.body));const c=(await report(f)).currencies[0];assert.equal(c.openingCash.amount,'-50.00');assert.equal(c.payable.amount,'63.00');assert.equal(c.expectedBillPayments.amount,'63.00');assert.equal(c.unmatchedPlannedCosts.amount,'113.00');assert.equal(c.knownScenarioClosingCash.amount,'-113.00');
+});
+check('matching release and bill void apply at their effective baseline dates without rewriting history',async f=>{
+ const l=await f.link();assert.equal(l.response.status,201);assert.equal((await f.request('finance/expense-commitment-bill-links/'+l.body.data.id+'/release',{effectiveOn:'2026-11-20',reason:'Synthetic dated release'})).response.status,201);assert.equal((await report(f)).currencies[0].unmatchedPlannedCosts.amount,'113.00');assert.equal((await report(f,'','master','2026-11-20')).currencies[0].unmatchedPlannedCosts.amount,'226.00');
+ assert.equal((await f.cancel(f.bill.id,{postedOn:'2026-11-21'})).response.status,201);assert.equal((await report(f,'','master','2026-11-20')).currencies[0].payable.amount,'113.00');assert.equal((await report(f,'','master','2026-11-21')).currencies[0].payable.amount,'0.00');
+});
+check('changed expected terms are unresolved rather than silently deducting old matching from a new budget',async f=>{
+ assert.equal((await f.link()).response.status,201);const changed=await f.request('finance/expense-commitments/'+f.plan.id+'/change',{...f.terms,code:undefined,expectedVersion:1,effectiveOn:'2026-12-01',definition:{...f.terms.definition,lines:[{...f.terms.definition.lines[0],amount:'200'}]}});assert.equal(changed.response.status,200);const r=await report(f);assert.equal(r.currencies[0].unmatchedPlannedCosts.amount,'200.00');assert.deepEqual(r.reviewRequired,[{source:'expected_cost',id:f.plan.id,on:'2026-12-07',code:'SOURCE_ACCESS_OR_CHANGED_TERMS_REVIEW_REQUIRED'}]);
+});
+check('strict outlook inputs reject ambiguity, unsupported filters and excessive or invalid horizons',async f=>{
+ for(const query of ['on=2026-11-10&on=2026-11-11&through=2027-01-10&timeZone=UTC','on=2026-02-30&through=2026-12-01&timeZone=UTC','on=2026-11-10&through=2026-11-10&timeZone=UTC','on=2026-11-10&through=2028-01-01&timeZone=UTC','on=2026-11-10&through=2026-12-01&timeZone=Invalid/Zone','on=2026-11-10&through=2026-12-01&timeZone=UTC&unexpected=true'])assert.equal((await f.request('reports/finance/outlook?'+query)).response.status,400,query);
+ assert.equal((await f.request('reports/finance/outlook',{on:'2026-11-10'})).response.status,405);
+});
+check('outlook requires source permissions and hub filters never grant authority or expose another school',async f=>{
+ assert.equal((await f.request('reports/finance/outlook?on=2026-11-10&through=2026-12-01&timeZone=UTC',undefined,'staff')).response.status,403);
+ const hidden=await report(f,'&hubId='+randomUUID());assert.equal(hidden.currencies.length,0);
+ const r=await f.request('reports/finance/outlook?on=2026-11-10&through=2026-12-01&timeZone=UTC',undefined,'foreignMaster',{academy:f.b});assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(r.body.data.currencies.length,0);
+});
+test('outlook refuses each source ceiling rather than publishing truncated totals, not a capacity benchmark',()=>{
+ assert.doesNotThrow(()=>assertOutlookBounds(1000,10000,100000,10000));for(const b of [[1001,1,1,1],[1,10001,1,1],[1,1,100001,1],[1,1,1,10001]])assert.throws(()=>assertOutlookBounds(...b as [number,number,number,number]),{code:'FINANCIAL_OUTLOOK_REQUIRES_BACKGROUND_JOB'});
+ assert.doesNotThrow(()=>assertOutlookOutputBounds(1000,2000,10000));for(const b of [[1001,1,1],[1,2001,1],[1,1,10001]])assert.throws(()=>assertOutlookOutputBounds(...b as [number,number,number]),{code:'FINANCIAL_OUTLOOK_REQUIRES_BACKGROUND_JOB'});
+});
+
+async function limited(f:Pick<Fixture,'pg'|'made'|'request'|'actors'|'hub'>,cap:string){const caps=(await f.pg.query<{name:string}>('SELECT name FROM public.capability_catalog')).rows.map(r=>r.name),broad=await f.made('roles',{name:'Other source rights '+cap,permissions:caps.filter(c=>c!==cap).map(capability=>({capability,effect:'allow'}))}),narrow=await f.made('roles',{name:'One-hub right '+cap,permissions:[{capability:cap,effect:'allow'}]}),path='people/'+f.actors.staff.person+'/access',old=await f.request(path);assert.equal((await f.request(path,{expectedVersion:old.body.data.version,assignments:[{roleId:broad.id,allHubs:true},{roleId:narrow.id,allHubs:false,hubIds:[f.hub]}]})).response.status,200);return broad;}
+
+check('independent report and outlook scopes apply to expected costs before chart totals',async f=>{
+ await f.made('finance/expense-commitments',{...f.terms,code:'OTHER-HUB',definition:{...f.terms.definition,lines:[{hubId:f.otherHub,classId:null,studentId:null,description:'Hidden expected cost',amount:'9000'}]}});
+ assert.equal((await report(f)).currencies[0].unmatchedPlannedCosts.amount,'18226.00');
+ await limited(f,'financial-reports.view');assert.equal((await report(f,'','staff')).currencies[0].unmatchedPlannedCosts.amount,'226.00');
+ await limited(f,'financial-outlook.view');assert.equal((await report(f,'','staff')).currencies[0].unmatchedPlannedCosts.amount,'226.00');
+});
+check('hidden retained actual-bill contexts make matching unresolved without leaking that bill or a fabricated zero remainder',async f=>{
+ const ap=await f.made('finance/accounts',{code:'GLOBAL-AP',name:'Synthetic shared AP',kind:'liability',operationalRole:'payable',hubId:null,currencyId:f.currency.id,currencyVersion:1,reason:'Synthetic source'}),cost=await f.made('finance/accounts',{code:'OTHER-COST',name:'Synthetic other cost',kind:'expense',operationalRole:'expense',hubId:f.otherHub,currencyId:f.currency.id,currencyVersion:1,reason:'Synthetic source'}),tax=await f.made('finance/tax-codes',{code:'EXEMPT',name:'Synthetic exempt',hubId:null,countryCode:'CA',classification:'exempt',ratePercent:'0',startsOn:'2026-01-01',legalBasis:'Synthetic example',reason:'Synthetic source'});
+ const b=await f.makeBill({documentNumber:'HIDDEN',payableAccount:{id:ap.id,version:1},lines:[{...f.input.lines[0],hubId:f.otherHub,classId:null,studentId:null,expenseAccount:{id:cost.id,version:1},taxAccount:null,taxCode:{id:tax.id,version:1},pricing:'not_applicable',recoverablePercent:'0',amount:'113'}]});assert.equal(b.response.status,201,JSON.stringify(b.body));
+ const l=await f.request('finance/expense-commitment-bill-links',{commitmentId:f.plan.id,termsVersion:1,occurrenceOn:'2026-12-07',billId:b.body.data.id,effectiveOn:'2026-11-07',expectedAmount:'113',billAmount:'113',varianceAcknowledged:true,varianceNote:'Reviewed alternative cost context',reason:'Private matching'});assert.equal(l.response.status,201,JSON.stringify(l.body));
+ await limited(f,'expenses.view');const r=await report(f,'','staff');assert.equal(r.currencies[0].payable.amount,'113.00');assert.equal(r.currencies[0].unmatchedPlannedCosts.amount,'113.00');assert.equal(r.reviewRequired[0].code,'SOURCE_ACCESS_OR_CHANGED_TERMS_REVIEW_REQUIRED');assert.ok(!JSON.stringify(r).includes(b.body.data.id));
+});
+check('overdue items stay separately overdue and credits are never forecast as invented refunds',async f=>{
+ assert.equal((await f.link()).response.status,201);assert.equal((await f.pay('oldest_due')).response.status,201);const overdue=await report(f,'','master','2026-12-08');assert.equal(overdue.currencies[0].overduePayable.amount,'113.00');assert.equal(overdue.currencies[0].expectedBillPayments.amount,'0.00');assert.equal(overdue.currencies[0].overdueReceivable.amount,'0.00');
+ assert.equal((await f.credit(f.invoice.id,{issuedAt:'2026-12-09T12:00:00Z'})).response.status,201);const c=(await report(f,'','master','2026-12-09')).currencies[0];assert.equal(c.customerCredit.amount,'50.00');assert.equal(c.expectedReceipts.amount,'0.00');assert.equal(c.openingCash.amount,'50.00');
+});
+check('large planned amounts and independent currencies retain exact arithmetic without a converted grand total',async f=>{
+ const amount='9007199254740993.01';await f.made('finance/expense-commitments',{...f.terms,code:'LARGE',definition:{...f.terms.definition,lines:[{...f.terms.definition.lines[0],amount}]}});
+ const jpy=await f.made('finance/currencies',{code:'JPY',name:'Synthetic yen',unitScale:0,reason:'Synthetic currency'});await f.made('finance/expense-commitments',{...f.terms,code:'JPY-PLAN',currency:{id:jpy.id,version:1},definition:{...f.terms.definition,lines:[{...f.terms.definition.lines[0],amount:'19'}]}});
+ const r=await report(f);assert.equal(r.currencies.find((c:any)=>c.currencyId===f.currency.id).unmatchedPlannedCosts.amount,'18014398509482212.02');assert.equal(r.currencies.find((c:any)=>c.currencyId===jpy.id).unmatchedPlannedCosts.amount,'38');assert.equal(r.currencyConversion,'none');assert.equal(r.total,undefined);assert.equal((await report(f,'&currencyId='+jpy.id)).currencies.length,1);
+});
+
+test('combined outlook reuses real scheduled salary/hourly pricing without presenting work costs as settled or duplicate-free cash',async()=>{
+ const f=await workFixture();try{
+ assert.equal((await f.create({components:[f.components.find(c=>c.code==='ADMIN'),f.components.find(c=>c.code==='TEACH')]})).response.status,201);
+ const r=await f.request('reports/finance/outlook?on=2026-11-10&through=2027-01-10&timeZone=America/Toronto');assert.equal(r.response.status,200,JSON.stringify({body:r.body,failures:f.metrics.queryFailures}));const d=r.body.data,c=d.scheduledPayroll.currencies[0];assert.equal(c.knownHourlySubtotal.amount,'20.00');assert.equal(c.knownSalarySubtotal.amount,'6000.00');assert.equal(c.knownSubtotal.amount,'6020.00');assert.equal(d.currencies[0].knownScenarioClosingCash.amount,'0.00');assert.equal(d.payrollIncludedInCashScenario,false);assert.equal(d.scheduledPayroll.snapshotAt,d.snapshotAt);
+ assert.equal((await f.create({hubId:f.otherHub,code:'OTHER-SALARY',components:[{...f.components.find(c=>c.code==='ADMIN'),amount:'9000'}]})).response.status,201);await limited(f,'financial-outlook.view');const scoped=await f.request('reports/finance/outlook?on=2026-11-10&through=2027-01-10&timeZone=America/Toronto',undefined,'staff');assert.equal(scoped.response.status,200,JSON.stringify(scoped.body));assert.equal(scoped.body.data.scheduledPayroll.currencies[0].knownSubtotal.amount,'6020.00');
+ }finally{await f.pg.close();}
+});
+
+test('schema94 retains real schema93 invoices, bills and postings without inventing forecast transactions',async()=>{
+ const f=await expenseFixture({throughSchema:93});try{
+ assert.equal((await f.bill()).response.status,201);assert.equal((await f.issue()).response.status,201);const tables=['finance_journals','finance_journal_lines','expense_bills','tuition_invoices'],before=[];for(const t of tables)before.push(await f.pg.query('SELECT to_jsonb(r) data FROM public.'+t+' r ORDER BY to_jsonb(r)::text'));
+ await f.pg.exec(await readFile(new URL('../db/migrations/094_financial_outlook.sql',import.meta.url),'utf8'));
+ for(let i=0;i<tables.length;i++)assert.deepEqual((await f.pg.query('SELECT to_jsonb(r) data FROM public.'+tables[i]+' r ORDER BY to_jsonb(r)::text')).rows,before[i].rows);
+ const start=performance.now(),r=await f.request('reports/finance/outlook?on=2026-11-10&through=2027-01-10&timeZone=UTC');assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(r.body.data.currencies[0].receivable.amount,'113.00');assert.equal(r.body.data.currencies[0].payable.amount,'113.00');console.log(JSON.stringify({measurement:'brief-combined-financial-outlook',requests:1,elapsedMs:Math.ceil(performance.now()-start)}));
+ }finally{await f.pg.close();}
+});

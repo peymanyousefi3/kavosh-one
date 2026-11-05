@@ -21,6 +21,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/reports/finance/outlook?on=2026-11-10&through=2027-01-10&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/currencies|openingCash|scheduledPayroll|snapshotAt|stack/);}
   const providerPath=base+'/api/webhooks/boldsign/00000000-0000-4000-8000-000000000001';
   for(const path of ['finance/expense-commitment-bill-links?on=2026-11-10','finance/expense-commitments/00000000-0000-4000-8000-000000000001/bill-coverage?occurrenceOn=2026-12-07&on=2026-11-10']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/expectedCovered|billCovered|remainingExpected|source_snapshot|stack/);}
   for(const path of ['finance/expense-commitments','finance/expense-commitments/00000000-0000-4000-8000-000000000001/calendar?from=2026-01-01&through=2026-12-31']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/definition|expectedGross|source_snapshot|stack/);}

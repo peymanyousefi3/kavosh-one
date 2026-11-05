@@ -16,7 +16,7 @@ const hubTarget=(field:string)=>`jsonb_build_object('all',${field} IS NULL,'hubs
 // must cover every cost line. Payment visibility additionally covers every
 // retained funding context, even if its payment is future-dated or reversed.
 // This deliberately matches whole-bill access, not a guessed cost allocation.
-export const payableAgingSQL=`WITH selected AS MATERIALIZED(
+export const payableSourcesSQL=`WITH selected AS MATERIALIZED(
  SELECT b.academy_id,b.id,b.payee_id,b.payee_version,b.currency_id,b.unit_scale,b.document_number,b.issued_on,b.due_on,b.posted_on,b.gross_minor,b.void_id,c.code currency_code,p.name payee_name FROM public.expense_bills b
  JOIN public.finance_currencies c ON c.academy_id=b.academy_id AND c.id=b.currency_id
  JOIN public.financial_payee_revisions p ON p.academy_id=b.academy_id AND p.payee_id=b.payee_id AND p.version=b.payee_version
@@ -29,7 +29,8 @@ export const payableAgingSQL=`WITH selected AS MATERIALIZED(
 ),bill_bound AS(SELECT count(*)::integer bills FROM selected),limited AS MATERIALIZED(SELECT s.* FROM selected s CROSS JOIN bill_bound b WHERE b.bills<=${payableAgingLimits.bills}),
  events AS MATERIALIZED(SELECT e.bill_id,e.delta_minor FROM limited b JOIN public.expense_payment_events e ON e.academy_id=b.academy_id AND e.bill_id=b.id WHERE e.posted_on<=$1::date LIMIT ${payableAgingLimits.paymentEvents+1}),
  event_bound AS(SELECT count(*)::integer payment_events FROM events),paid AS MATERIALIZED(SELECT bill_id,sum(delta_minor) amount FROM events GROUP BY bill_id),
- balances AS MATERIALIZED(SELECT b.*,coalesce(p.amount,0) paid,CASE WHEN v.posted_on<=$1::date THEN b.gross_minor ELSE 0 END voided,b.gross_minor-CASE WHEN v.posted_on<=$1::date THEN b.gross_minor ELSE 0 END-coalesce(p.amount,0) balance FROM limited b CROSS JOIN event_bound bound LEFT JOIN paid p ON p.bill_id=b.id LEFT JOIN public.finance_journals v ON v.academy_id=b.academy_id AND v.id=b.void_id WHERE bound.payment_events<=${payableAgingLimits.paymentEvents}),
+ balances AS MATERIALIZED(SELECT b.*,coalesce(p.amount,0) paid,CASE WHEN v.posted_on<=$1::date THEN b.gross_minor ELSE 0 END voided,b.gross_minor-CASE WHEN v.posted_on<=$1::date THEN b.gross_minor ELSE 0 END-coalesce(p.amount,0) balance FROM limited b CROSS JOIN event_bound bound LEFT JOIN paid p ON p.bill_id=b.id LEFT JOIN public.finance_journals v ON v.academy_id=b.academy_id AND v.id=b.void_id WHERE bound.payment_events<=${payableAgingLimits.paymentEvents})`;
+export const payableAgingSQL=`${payableSourcesSQL},
  shown AS MATERIALIZED(SELECT *,max(unit_scale) OVER(PARTITION BY currency_id) scale,CASE WHEN due_on>=$1::date THEN 0 ELSE coalesce((SELECT n::integer FROM unnest($13::integer[]) WITH ORDINALITY bands(days,n) WHERE $1::date-due_on<=days ORDER BY n LIMIT 1),cardinality($13::integer[])+1) END bucket FROM balances WHERE $12::boolean OR balance<>0),
  normalized AS MATERIALIZED(SELECT *,('1'||repeat('0',scale-unit_scale))::numeric factor FROM shown),
  currency_totals AS MATERIALIZED(SELECT currency_id,currency_code,max(scale) scale,count(*)::integer bill_count,sum(gross_minor*factor)::text billed,sum(paid*factor)::text paid,sum(voided*factor)::text voided,sum(balance*factor)::text net_balance,sum(greatest(balance,0)*factor)::text payable,sum(greatest(-balance,0)*factor)::text supplier_credit FROM normalized GROUP BY currency_id,currency_code),

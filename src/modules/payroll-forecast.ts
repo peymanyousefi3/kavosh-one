@@ -3,7 +3,7 @@ import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { permissionScope } from '../core/approvals.ts';
-import { ApiError,scopeNonempty } from '../core/policy.ts';
+import { ApiError,scopeNonempty,type Scope } from '../core/policy.ts';
 import { parseMoney,formatMoneyTotal,allocateMoney } from '../core/money.ts';
 import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type HourlyInterval } from '../core/work-compensation.ts';
 import { payCalendarRange,payCalendarDays,payOccurrencesOn,type PayCycle } from '../core/pay-calendar.ts';
@@ -21,6 +21,7 @@ const classTarget=`jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',j
 const sourcesSQL=`WITH visible AS MATERIALIZED(
  SELECT e.id,e.person_id,e.hub_id FROM public.work_engagements e
  WHERE public.work_scope_allows($1::jsonb,e.hub_id,e.person_id) AND public.work_scope_allows($2::jsonb,e.hub_id,e.person_id)
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($13::jsonb) s WHERE public.work_scope_allows(s,e.hub_id,e.person_id) IS NOT TRUE)
  AND($3::boolean OR e.hub_id=ANY($4::uuid[])) AND($5::uuid IS NULL OR e.hub_id=$5) AND($6::uuid IS NULL OR e.person_id=$6)
  ORDER BY e.id LIMIT 101
 ),terms AS MATERIALIZED(
@@ -32,6 +33,7 @@ const sourcesSQL=`WITH visible AS MATERIALIZED(
 ),assignments AS MATERIALIZED(
  SELECT a.id,a.version,a.person_id FROM public.class_staff a JOIN public.classes c ON c.academy_id=a.academy_id AND c.id=a.class_id
  WHERE public.scope_contains($10::jsonb,${classTarget}) AND public.scope_contains($11::jsonb,${classTarget})
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($13::jsonb) s WHERE public.scope_contains(s,${classTarget}) IS NOT TRUE)
  AND EXISTS(SELECT 1 FROM terms t CROSS JOIN LATERAL jsonb_array_elements(t.components) component WHERE t.person_id=a.person_id AND component#>>'{assignment,id}'=a.id::text)
  ORDER BY a.id LIMIT 201
 ),sessions AS(
@@ -40,6 +42,7 @@ const sourcesSQL=`WITH visible AS MATERIALIZED(
  FROM public.class_staff a JOIN public.classes c ON c.academy_id=a.academy_id AND c.id=a.class_id JOIN public.class_sessions s ON s.academy_id=a.academy_id AND s.class_id=c.id
  WHERE s.starts_at>=$8::timestamptz AND s.starts_at<$9::timestamptz AND s.status='scheduled' AND c.active
  AND public.scope_contains($10::jsonb,${classTarget}) AND public.scope_contains($11::jsonb,${classTarget})
+ AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($13::jsonb) s WHERE public.scope_contains(s,${classTarget}) IS NOT TRUE)
  AND a.id IN(SELECT id FROM assignments)
  ORDER BY s.starts_at,s.id,a.id LIMIT 201
 )
@@ -56,10 +59,19 @@ function selected(terms:Terms[],on:(t:Terms)=>string){let winner:Terms|undefined
 export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
  if(ctx.path!=='reports/payroll/scheduled-costs')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const work=permissionScope(ctx,'work-pay.view'),reports=permissionScope(ctx,'financial-reports.view');if(!scopeNonempty(work)||!scopeNonempty(reports))throw new ApiError(403,'FORBIDDEN');
- const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),days=payCalendarDays({from:q.from,through:q.through});
+ const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),source=payrollForecastSource(ctx,q);
+ const result=(await ctx.db.query<PayrollForecastSources>(source.sql,source.params)).rows[0];return scheduledPayrollForecast(q,result);
+}
+export type PayrollForecastSources={snapshot_at:string;engagement_count:number;terms:Terms[];assignments:Assignment[];sessions:Session[]};
+export function payrollForecastSource(ctx:ApiContext,q:z.infer<typeof query>,additionalScopes:Scope[]=[]){
+ const work=permissionScope(ctx,'work-pay.view'),reports=permissionScope(ctx,'financial-reports.view'),days=payCalendarDays({from:q.from,through:q.through});
+ if(!scopeNonempty(work)||!scopeNonempty(reports))throw new ApiError(403,'FORBIDDEN');
  const first=days[0].toZonedDateTime(q.timeZone).toInstant(),last=days.at(-1)!.add({days:1}).toZonedDateTime(q.timeZone).toInstant();
  const sqlDate=(v:string)=>v.replace(/^\+0(?=\d{5}-)/,'');
- const result=(await ctx.db.query<{snapshot_at:string;engagement_count:number;terms:Terms[];assignments:Assignment[];sessions:Session[]}>(sourcesSQL,[JSON.stringify(work),JSON.stringify(reports),ctx.credential.all_hubs,ctx.credential.hub_ids,q.hubId??null,q.personId??null,sqlDate(days.at(-1)!.add({days:2}).toString()),sqlDate(first.toString()),sqlDate(last.toString()),...(['classes.view','staff.view','rosters.view'] as const).map(cap=>JSON.stringify(permissionScope(ctx,cap)))])).rows[0];
+ return {sql:sourcesSQL,params:[JSON.stringify(work),JSON.stringify(reports),ctx.credential.all_hubs,ctx.credential.hub_ids,q.hubId??null,q.personId??null,sqlDate(days.at(-1)!.add({days:2}).toString()),sqlDate(first.toString()),sqlDate(last.toString()),...(['classes.view','staff.view','rosters.view'] as const).map(cap=>JSON.stringify(permissionScope(ctx,cap))),JSON.stringify(additionalScopes)]};
+}
+export function scheduledPayrollForecast(q:z.infer<typeof query>,result:PayrollForecastSources){
+ const days=payCalendarDays({from:q.from,through:q.through});
  if(result.engagement_count>100||result.terms.length>1000||result.assignments.length>200||result.sessions.length>200)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');
  const groups=new Map<string,Terms[]>();for(const t of result.terms){const group=groups.get(t.engagement_id)??[];group.push(t);groups.set(t.engagement_id,group);}
  const scales=new Map<string,number>();for(const t of result.terms)scales.set(t.currency_id,Math.max(t.unit_scale,scales.get(t.currency_id)??0));

@@ -18,7 +18,7 @@ const target=`jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_
 // are explicitly the CURRENT approved mapping, restated to those payment dates;
 // this is not an assertion of what an operator knew at a historical timestamp.
 // Scope and filters precede source limits, balances, charts and final paging.
-export const receivableAgingSQL=`WITH selected AS MATERIALIZED(
+export const receivableSourcesSQL=`WITH selected AS MATERIALIZED(
  SELECT i.academy_id,i.id,i.plan_id,i.plan_version,i.student_id,i.class_id,i.hub_id,i.bill_to_id,p.currency_id,p.unit_scale,c.code currency_code,t.gross_minor,d.number,d.issued_on,
  coalesce(cd.issued_on<=$1::date,false) credited
  FROM public.tuition_invoices i JOIN public.billing_documents d ON d.academy_id=i.academy_id AND d.id=i.id
@@ -44,7 +44,8 @@ export const receivableAgingSQL=`WITH selected AS MATERIALIZED(
  amounts AS MATERIALIZED(SELECT i.*,coalesce(r.paid,0) received,coalesce(r.receipt_count,0) receipt_count,CASE WHEN i.credited THEN 0 ELSE coalesce(t.allocated,0) END allocated,
  i.gross_minor-CASE WHEN i.credited THEN i.gross_minor ELSE 0 END-coalesce(r.paid,0) balance,
  NOT i.credited AND(coalesce(r.paid,0)<>coalesce(t.allocated,0) OR coalesce(t.overallocated,false) OR coalesce(t.planned,0)<>i.gross_minor) allocation_review,
- coalesce(t.overallocated,false) historical_allocation_conflict FROM usable i LEFT JOIN receipts r ON r.invoice_id=i.id LEFT JOIN schedule_totals t ON t.invoice_id=i.id),
+ coalesce(t.overallocated,false) historical_allocation_conflict FROM usable i LEFT JOIN receipts r ON r.invoice_id=i.id LEFT JOIN schedule_totals t ON t.invoice_id=i.id)`;
+export const receivableAgingSQL=`${receivableSourcesSQL},
  shown AS MATERIALIZED(SELECT a.*,max(unit_scale) OVER(PARTITION BY currency_id) scale FROM amounts a WHERE $11::boolean OR balance<>0),
  normalized AS MATERIALIZED(SELECT *,('1'||repeat('0',scale-unit_scale))::numeric factor FROM shown),
  invoice_buckets AS MATERIALIZED(
