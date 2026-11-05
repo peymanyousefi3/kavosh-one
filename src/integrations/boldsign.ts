@@ -50,6 +50,9 @@ const agreementField=z.object({id:routingText.min(1).max(200),fieldType:routingT
 // support every recorded field; unknown types must never be silently dropped.
 export const agreementRouting=z.object({version:z.literal(1),role:z.literal('legal_signer'),fields:z.array(agreementField).min(1).max(100)
  .refine(v=>new Set(v.map(f=>f.id)).size===v.length&&v.some(f=>f.fieldType.toLowerCase()==='signature'),'Use unique field IDs and a required signature.')}).strict();
+export const workAgreementRouting=z.object({version:z.literal(1),parties:z.array(z.object({role:z.enum(['worker','academy_representative']),fields:agreementRouting.shape.fields}).strict()).length(2)
+ .refine(v=>new Set(v.map(p=>p.role)).size===2&&v.reduce((n,p)=>n+p.fields.length,0)<=100&&new Set(v.flatMap(p=>p.fields.map(f=>f.id))).size===v.reduce((n,p)=>n+p.fields.length,0),'Use both parties,at most100 fields and globally unique field IDs.')
+ .transform(v=>v.sort((a,b)=>a.role==='worker'?-1:b.role==='worker'?1:0))}).strict();
 
 // Shared bounded read-only transport. The fixed resource union cannot become
 // an arbitrary URL or mutation method. The absolute deadline also covers a

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { operationsFixture } from './operations-fixture.ts';
+import type { R2UploadConnections } from '../src/integrations/r2-config.ts';
 
-export async function invoiceFixture(options:{throughSchema?:number}={}){
+export async function invoiceFixture(options:{throughSchema?:number;connections?:R2UploadConnections}={}){
  const f=await operationsFixture(options),country=randomUUID(),region=randomUUID(),city=randomUUID();
  try{
  await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);

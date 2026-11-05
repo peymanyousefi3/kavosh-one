@@ -31,10 +31,12 @@ async function apply(ctx:ApiContext,p:Proposal){
  await ctx.db.query('INSERT INTO public.work_agreement_preparations(academy_id,id,input,source_snapshot,approval_id,created_by) VALUES($1,$2,$3::jsonb,$4::jsonb,$5,$6)',[ctx.credential.academy_id,p.target_id,JSON.stringify(i),JSON.stringify(b.source),p.id,ctx.credential.person_id]);
  await record(ctx.db,ctx.credential,ctx.requestId,'work.agreement.prepared',p.target_id,b.source.engagement.hubId,{severity:'critical',approvalId:p.id,hasReason:true,signedByBothParties:false,paymentCleared:false});return output(await row(ctx,p.target_id));
 }
+export async function authorizeWorkAgreementReviewer(ctx:ApiContext,raw:Pick<Input,'engagementId'|'templateId'|'academySignerId'>){const {e}=await sources(ctx,raw,true);if(!(await master(ctx))&&(ctx.credential.person_id===e.person_id||ctx.credential.person_id===raw.academySignerId))throw new ApiError(403,'PARTY_REVIEW_FORBIDDEN');}
+export { row as permittedWorkAgreement };
 export const workAgreementActions:ApprovalRegistry={'work.agreement.prepare':{requestCapability:'work-signatures.edit',privacyCapability:'work-signatures.edit',policyChange:true,createdStatus:201,
  async validate(ctx,_id,raw){const i=payload.parse(raw);await sources(ctx,i,true);await lockFinanceBook(ctx);await lockAcademyTopology(ctx);const {e}=await sources(ctx,i,true);return workEngagementScope(e);},
  async dependencies(ctx,_id,raw,purpose){try{return await basis(ctx,payload.parse(raw));}catch(e){if(purpose==='review'&&e instanceof ApiError&&[403,404,409].includes(e.status))return {unavailable:e.code};throw e;}},
- async authorizeReviewer(ctx,p){const i=payload.parse(p.payload),{e}=await sources(ctx,i,true);if(!(await master(ctx))&&(ctx.credential.person_id===e.person_id||ctx.credential.person_id===i.academySignerId))throw new ApiError(403,'PARTY_REVIEW_FORBIDDEN');},apply}};
+ async authorizeReviewer(ctx,p){await authorizeWorkAgreementReviewer(ctx,payload.parse(p.payload));},apply}};
 export async function workAgreements(ctx:ApiContext,registry:ApprovalRegistry=workAgreementActions):Promise<Reply|null>{
  const collection=/^payroll\/engagements\/([^/]+)\/agreement-preparations$/.exec(ctx.path),item=/^payroll\/work-agreements(?:\/([^/]+)(?:\/(review))?)?$/.exec(ctx.path);if(!collection&&!item)return null;
  const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=Object.fromEntries(params);

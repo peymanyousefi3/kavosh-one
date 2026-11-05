@@ -52,14 +52,9 @@ jobs:
         run: pnpm notifications:build
       - name: API contract matches the implemented schemas
         run: pnpm api:generate && git diff --exit-code -- public/openapi.json
-      # Routine updates prioritize focused business/security/accounting logic.
-      # Full cross-engine/load coverage remains an explicit release gate.
-      - name: Focused PostgreSQL business logic checks
-        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.full_suite }}
-        run: pnpm test:quick
-        env:
-          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
-          NOTIFICATION_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-notifications.js
+      # Routine native logic runs in isolated jobs below. Run42108232836
+      # passed that suite but exhausted30m while building the final container.
+      # Preserve ALL checks and the timeout;do not cancel earlier checkpoint runs.
       - name: Complete embedded-database suite (explicit milestone run)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
         run: pnpm test
@@ -110,6 +105,41 @@ jobs:
       - name: Remove disposable test container
         if: always()
         run: docker rm --force kavosh-one-ci || true
+  business-logic:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.full_suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        group: ['1', '2']
+    # Native roles must NEVER be shared between concurrent groups.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      NOTIFICATION_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-notifications.js
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm notifications:build
+      - name: Complete assigned quick-logic group without dropping or duplicating files
+        run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
   learning:
     runs-on: ubuntu-latest
     timeout-minutes: 30

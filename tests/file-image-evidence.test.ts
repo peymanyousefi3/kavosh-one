@@ -239,6 +239,7 @@ test('schema39 preserves actual prior attempts without fabricating historical fu
   await f.pg.exec(await readFile(new URL('../db/migrations/108_payrun_groups.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/109_business_calendars.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/110_worker_agreement_preparations.sql',import.meta.url),'utf8'));
+  await f.pg.exec(await readFile(new URL('../db/migrations/111_work_agreement_contents.sql',import.meta.url),'utf8'));
   assert.equal((await f.request('files/'+item.id+'/inspection')).body.data.attempts[0].imageValidation,null);
   const next=await f.prepare();await f.run(value);assert.equal((await f.request('files/'+next.id+'/inspection')).body.data.attempts[0].imageValidation.result.outcome,'decoded');
  }finally{await f.pg.close();}

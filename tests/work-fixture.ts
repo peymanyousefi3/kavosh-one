@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { invoiceFixture } from './invoice-fixture.ts';
+import type { R2UploadConnections } from '../src/integrations/r2-config.ts';
 
-export async function workFixture(options:{throughSchema?:number}={}){const f=await invoiceFixture(options);try{
+export async function workFixture(options:{throughSchema?:number;connections?:R2UploadConnections}={}){const f=await invoiceFixture(options);try{
  const employer=await f.made('finance/payees',{kind:'academy',code:'EMPLOYER',name:'Synthetic academy',legalName:'Synthetic Academy Inc.',reason:'Configured legal employer'}),payee=await f.made('finance/payees',{kind:'person',personId:f.actors.staff.person,code:'EMPLOYEE',name:'Synthetic worker',legalName:'Private legal worker',reason:'Configured worker payee'}),assignment=await f.made('classes/'+f.c.id+'/staff',{personId:f.actors.staff.person,role:'teacher',startsOn:'2026-01-01',reason:'Accepted class staff assignment'});
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['work-pay.view','work-pay.edit','staff.view','payees.view','payment-methods.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,role,cap]);
  const labels=await f.made('roles',{name:'Currency labels only',permissions:[{capability:'currencies.view',effect:'allow'}]});for(const person of [f.actors.staff.person,f.actors.manager.person,f.bot])await f.pg.query('INSERT INTO public.role_assignments(academy_id,id,person_id,role_id,all_hubs) VALUES($1,$2,$3,$4,true)',[f.a,randomUUID(),person,labels.id]);
