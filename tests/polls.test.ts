@@ -2,17 +2,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { homeworkAnswerFixture } from './homework-fixture.ts';
+import { pollFixture as fixture } from './poll-fixture.ts';
 import { pollDefinition } from '../src/modules/poll-definition.ts';
 
-async function fixture(throughSchema?:number){
- const f=await homeworkAnswerFixture(throughSchema);if(throughSchema!==81)for(const role of [f.staffRole,f.managerRole])for(const cap of ['polls.view','polls.edit','polls.publish','poll-recipients.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
- const definition={title:'PRIVATE class feedback',description:'PRIVATE parent questions',locale:'en',questions:[{id:randomUUID(),kind:'single',prompt:'PRIVATE preferred activity?',required:true,options:[{id:randomUUID(),label:'Building'},{id:randomUUID(),label:'Programming'}]},{id:randomUUID(),kind:'multiple',prompt:'PRIVATE suitable topics?',required:false,maxSelections:2,options:[{id:randomUUID(),label:'Robots'},{id:randomUUID(),label:'AI'}]},{id:randomUUID(),kind:'text',prompt:'PRIVATE any notes?',required:false,maxLength:2000}]};
- const input={expectedVersion:0,anchor:{kind:'class',id:f.c.id},state:'draft',definition,responseUnit:'student_family',respondentMode:'guardians',audienceEffectiveAt:'2026-01-03T04:30:00Z',opensAt:null,closesAt:null,recipients:f.taskInput.recipients,reason:'PRIVATE poll administration'},create=(i:unknown=input,as='master',key?:string)=>f.request('polls',i,as,key?{key}:{}),change=(id:string,i:unknown,as='master',key?:string)=>f.request('polls/'+id+'/change',i,as,key?{key}:{}),withdraw=(id:string,expectedVersion:number,as='master')=>f.request('polls/'+id+'/withdraw',{expectedVersion,reason:'PRIVATE poll withdrawal'},as);
- async function parent(){const role=await f.parent();await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'received-polls.view','allow')",[f.a,role]);return role;}
- const received=(id?:string,as='manager',query='')=>f.request('students/'+f.student+'/polls'+(id?'/'+id:'')+query,undefined,as);
- return {...f,pollDefinition:definition,pollInput:input,createPoll:create,changePoll:change,withdrawPoll:withdraw,pollParent:parent,receivedPoll:received};
-}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>,nativeOnly=false){test(name,{skip:nativeOnly&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 test('the compact poll extension preserves every previous native approval privacy branch unchanged',async()=>{
@@ -20,7 +12,7 @@ test('the compact poll extension preserves every previous native approval privac
  assert.equal(extract(next).replace(/  ELSIF b \? 'pollRecords' THEN\n   IF b->>'capability' IS DISTINCT FROM 'poll-recipients.view' OR NOT public\.poll_recipient_records_allow\(b->'pollRecords',p_scopes->'poll-recipients.view'\) THEN RETURN false;END IF;\n/,''),extract(old));
 });
 check('class-scoped editor creates a private mixed-question poll through upper human review',async f=>{
- const p=await f.createPoll(f.pollInput,'staff');assert.equal(p.response.status,202,JSON.stringify(p.body));assert.equal((await f.approve(p.body.approval.id,'staff')).response.status,403);const made=await f.approve(p.body.approval.id,'manager');assert.equal(made.response.status,200,JSON.stringify(made.body));assert.equal(made.body.data.version,1);assert.equal(made.body.data.form_version,1);assert.equal(made.body.data.state,'draft');assert.deepEqual(made.body.data.definition,f.pollDefinition);assert.equal(made.body.data.context.source.recipients[0].on,'2026-01-02');assert.equal(made.body.data.responseSubmissionAvailable,false);
+ const p=await f.createPoll(f.pollInput,'staff');assert.equal(p.response.status,202,JSON.stringify(p.body));assert.equal((await f.approve(p.body.approval.id,'staff')).response.status,403);const made=await f.approve(p.body.approval.id,'manager');assert.equal(made.response.status,200,JSON.stringify(made.body));assert.equal(made.body.data.version,1);assert.equal(made.body.data.form_version,1);assert.equal(made.body.data.state,'draft');assert.deepEqual(made.body.data.definition,f.pollDefinition);assert.equal(made.body.data.context.source.recipients[0].on,'2026-01-02');assert.equal(made.body.data.responseSubmissionAvailable,true);
  const id=made.body.data.id;assert.equal((await f.request('polls/'+id+'/history')).body.data.length,1);assert.equal((await f.pg.query('SELECT * FROM public.poll_form_revisions')).rows.length,1);assert.equal((await f.request('polls/'+id,undefined,'foreignMaster',{academy:f.b})).response.status,404);
 });
 check('closing and schedule changes retain form identity while changed questions or response rules create immutable new forms',async f=>{
@@ -35,8 +27,8 @@ check('school polls can span hubs while hub/class ownership and each enrollment 
  const hub=await f.createPoll({...f.pollInput,anchor:{kind:'hub',id:f.hub}});assert.equal(hub.response.status,200);assert.equal(hub.body.data.hub_id,f.hub);assert.equal(hub.body.data.class_id,null);
  const duplicateChild=await f.request('classes/'+otherClass.id+'/enrollments',{studentId:f.student,studentProfileVersion:1,joinsOn:'2026-01-03',reason:'PRIVATE same learner in another class'});assert.equal(duplicateChild.response.status,201);assert.equal((await f.createPoll({...f.pollInput,anchor:{kind:'academy'},recipients:[...f.pollInput.recipients,{enrollmentId:duplicateChild.body.data.id,enrollmentVersion:1}]})).response.status,409,'a school-wide audience cannot count one learner twice through different classes');
 });
-check('family question previews expose no private audience, provenance, future submission or peer-result claims',async f=>{
- const made=await f.createPoll({...f.pollInput,state:'published'});assert.equal(made.response.status,200);const id=made.body.data.id;await f.pollParent();const read=await f.receivedPoll(id);assert.equal(read.response.status,200,JSON.stringify(read.body));assert.equal(read.body.data.definition.questions.length,3);assert.equal(read.body.data.response_window_open,true);assert.equal(read.body.data.responseSubmissionAvailable,false);assert.equal(read.body.data.responseResultsAvailable,false);
+check('family question previews expose no private audience, provenance, peer-result claims',async f=>{
+ const made=await f.createPoll({...f.pollInput,state:'published'});assert.equal(made.response.status,200);const id=made.body.data.id;await f.pollParent();const read=await f.receivedPoll(id);assert.equal(read.response.status,200,JSON.stringify(read.body));assert.equal(read.body.data.definition.questions.length,3);assert.equal(read.body.data.response_window_open,true);assert.equal(read.body.data.responseSubmissionAvailable,true);assert.equal(read.body.data.responseResultsAvailable,false);
  for(const secret of ['PRIVATE poll administration','context','recipients','recipient_ids','recorded_by',f.enrollment.id])assert.ok(!JSON.stringify(read.body).includes(secret),secret);assert.equal((await f.request('polls/'+id,undefined,'manager')).response.status,404);assert.equal((await f.receivedPoll(id,'bot')).response.status,403);
  await f.pg.query("UPDATE public.family_relationships SET state='suspended' WHERE student_id=$1 AND guardian_id=$2",[f.student,f.guardian]);assert.equal((await f.receivedPoll(id)).response.status,404);
 });

@@ -69,7 +69,7 @@ export async function record(db: Connection, c: Credential, requestId: string, a
   await db.query(`INSERT INTO public.outbox_events (academy_id,id,event_type,entity_id,request_id) VALUES ($1,$2,$3,$4,$5)`, [c.academy_id, randomUUID(), action, entityId, requestId]);
 }
 
-export async function mutation(context:ApiContext,input:unknown,work:()=>Promise<Reply>):Promise<Reply> {
+export async function mutation(context:ApiContext,input:unknown,work:()=>Promise<Reply>,authorizeReplay?:(reply:Reply)=>Promise<void>):Promise<Reply> {
   const {db,credential:c,request,path}=context;
   if(new URL(request.url).search)throw new ApiError(400,'INVALID_QUERY');
   const key=id.parse(request.headers.get('idempotency-key'));
@@ -78,7 +78,9 @@ export async function mutation(context:ApiContext,input:unknown,work:()=>Promise
   if(!inserted.rows.length) {
     const prior=(await db.query<{request_hash:string;status_code:number;response:unknown}>('SELECT request_hash,status_code,response FROM public.request_keys WHERE credential_id=$1 AND key=$2 FOR UPDATE',[c.token_id,key])).rows[0];
     if(!prior||prior.request_hash!==fingerprint)throw new ApiError(409,'IDEMPOTENCY_CONFLICT');
-    return {status:prior.status_code,body:prior.response};
+    const reply={status:prior.status_code,body:prior.response};
+    await authorizeReplay?.(reply);
+    return reply;
   }
   const reply=await work();
   await db.query('UPDATE public.request_keys SET status_code=$3,response=$4::jsonb WHERE credential_id=$1 AND key=$2',[c.token_id,key,reply.status,JSON.stringify(reply.body)]);
