@@ -12,6 +12,7 @@ import { journalPointLookupSQL } from './finance-journals.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 export const reconciliationExportRowLimit=1000;
+export const reconciliationExportByteLimit=4_194_304;
 const query=z.object({accountId:uuid,from:accountingDate,through:accountingDate,snapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),openingObservationId:uuid.optional(),closingObservationId:uuid.optional(),
  status:z.enum(['unresolved','all','matched','non_activity']).default('unresolved'),periodOnly:z.enum(['true','false']).transform(v=>v==='true').default(false),limit:z.coerce.number().int().min(1).max(100).default(50),
  statementAfterPostedOn:accountingDate.optional(),statementAfterImportId:uuid.optional(),statementAfterLine:z.coerce.number().int().min(1).max(500).optional(),
@@ -24,7 +25,7 @@ type BankPage=Page&{importId:string;line:number;description:string;reference:str
 type BookPage=Page&{journalId:string;lineNumber:number;purpose:string;accountVersion:number;reversedById:string|null};
 type Summary={totalCount:number;matchedCount:number;unmatchedCount:number;cutoffPendingCount:number;priorUnresolvedCount:number;unresolvedNetMinor:string;periodCount:number;periodNetMinor:string;nonActivityCount:number;legacyCount:number};
 type Observation={id:string;as_of:string;state:string;balance_minor:string|null;normal_balance:string;currency_id:string;unit_scale:number;superseded_by:string|null};
-type Result=Parameters<typeof accountBalances>[0]&{source_stamp:{accountVersion:number;imports:string;voids:string;lines:string;groups:string;releases:string};snapshot_at:string;bank_summary:Summary;book_summary:Summary;bank_page:BankPage[];book_page:BookPage[];observations:Observation[];cutoff_groups:number;nonactivity_matches:number};
+type Result=Parameters<typeof accountBalances>[0]&{export_text_exceeded:boolean;source_stamp:{accountVersion:number;imports:string;voids:string;lines:string;groups:string;releases:string};snapshot_at:string;bank_summary:Summary;book_summary:Summary;bank_page:BankPage[];book_page:BookPage[];observations:Observation[];cutoff_groups:number;nonactivity_matches:number};
 
 // All totals, links, selected balance observations and both independent pages
 // share one MVCC statement snapshot. Money is never summed from a page.
@@ -44,12 +45,18 @@ const sql=`WITH ledger_totals AS(${accountTotalsSQL}),active_groups AS MATERIALI
  FROM public.finance_statement_rows r JOIN public.finance_statement_imports i ON i.academy_id=r.academy_id AND i.id=r.import_id
  LEFT JOIN active_rows x ON x.import_id=r.import_id AND x.line=r.line
  WHERE r.account_id=$1 AND r.posted_on<=$3::date AND NOT EXISTS(SELECT 1 FROM public.finance_statement_voids v WHERE v.academy_id=i.academy_id AND v.import_id=i.id)
+),export_budget AS MATERIALIZED(
+ -- Free-text bytes alone are a strict lower bound for a complete CSV/JSON
+ -- archive. Reject known oversize input in this same snapshot before sorting
+ -- long duplicate keys or constructing/transferring either full JSON page.
+ -- Interactive pages retain their normal totals and are not export-limited.
+ SELECT coalesce(sum(octet_length(description)+octet_length(reference)),0)>${reconciliationExportByteLimit} AS exceeded FROM bank WHERE $6>101
 ),bank_duplicates AS MATERIALIZED(
  -- Interactive pages keep indexed candidate probes. Export-size pages must
  -- classify long source text once, not repeatedly detoast/compare it for each
  -- row. Skip that work when the full export already exceeds its row ceiling.
- SELECT import_id,line,count(*) OVER(PARTITION BY posted_on,debit_net_minor,description,reference)>1 AS possible_duplicate
- FROM bank WHERE $6>101 AND(SELECT count(*) FROM bank)<=${reconciliationExportRowLimit}
+ SELECT import_id,line,count(*) OVER(PARTITION BY posted_on,debit_net_minor,description COLLATE "C",reference COLLATE "C")>1 AS possible_duplicate
+ FROM bank WHERE $6>101 AND NOT(SELECT exceeded FROM export_budget) AND(SELECT count(*) FROM bank)<=${reconciliationExportRowLimit}
 ),book AS MATERIALIZED(
  SELECT l.*,j.posted_on,j.purpose,(CASE WHEN l.side='debit' THEN l.amount_minor ELSE -l.amount_minor END) AS debit_net_minor,x.match_id,
  CASE WHEN j.purpose NOT IN('activity','legacy_unclassified') THEN 'non_activity' WHEN x.match_id IS NULL THEN 'unmatched' WHEN x.cutoff_pending THEN 'cutoff_pending' ELSE 'matched' END AS status
@@ -57,19 +64,20 @@ const sql=`WITH ledger_totals AS(${accountTotalsSQL}),active_groups AS MATERIALI
  WHERE l.account_id=$1 AND j.posted_on<=$3::date
 ),bank_page AS(
  SELECT r.import_id AS "importId",r.line,r.posted_on::text AS "postedOn",r.debit_net_minor::text AS "debitNetMinor",r.description,r.reference,r.status,r.match_id AS "matchId",r.posted_on<$2::date AS "beforePeriod",
- CASE WHEN $6>101 THEN coalesce(d.possible_duplicate,false) ELSE EXISTS(SELECT 1 FROM public.finance_statement_rows other JOIN public.finance_statement_imports i ON i.academy_id=other.academy_id AND i.id=other.import_id WHERE other.account_id=r.account_id AND other.posted_on=r.posted_on AND other.debit_net_minor=r.debit_net_minor AND other.description=r.description AND other.reference=r.reference AND(other.import_id<>r.import_id OR other.line<>r.line) AND NOT EXISTS(SELECT 1 FROM public.finance_statement_voids v WHERE v.academy_id=i.academy_id AND v.import_id=i.id)) END AS "possibleDuplicate"
- FROM bank r LEFT JOIN bank_duplicates d ON d.import_id=r.import_id AND d.line=r.line WHERE($7::text='all' OR($7='unresolved' AND r.status IN('unmatched','cutoff_pending')) OR r.status=$7)
+ CASE WHEN $6>101 THEN coalesce(d.possible_duplicate,false) ELSE EXISTS(SELECT 1 FROM public.finance_statement_rows other JOIN public.finance_statement_imports i ON i.academy_id=other.academy_id AND i.id=other.import_id WHERE other.account_id=r.account_id AND other.posted_on=r.posted_on AND other.debit_net_minor=r.debit_net_minor AND other.description COLLATE "C"=r.description COLLATE "C" AND other.reference COLLATE "C"=r.reference COLLATE "C" AND(other.import_id<>r.import_id OR other.line<>r.line) AND NOT EXISTS(SELECT 1 FROM public.finance_statement_voids v WHERE v.academy_id=i.academy_id AND v.import_id=i.id)) END AS "possibleDuplicate"
+ FROM bank r LEFT JOIN bank_duplicates d ON d.import_id=r.import_id AND d.line=r.line WHERE NOT(SELECT exceeded FROM export_budget) AND($7::text='all' OR($7='unresolved' AND r.status IN('unmatched','cutoff_pending')) OR r.status=$7)
  AND(NOT $14::boolean OR r.posted_on>=$2::date) AND($8::date IS NULL OR(r.posted_on,r.import_id,r.line)>($8::date,$9::uuid,$10::integer)) ORDER BY r.posted_on,r.import_id,r.line LIMIT $6
 ),book_page AS(
  SELECT l.journal_id AS "journalId",l.line_number AS "lineNumber",l.posted_on::text AS "postedOn",l.account_version AS "accountVersion",l.purpose,l.debit_net_minor::text AS "debitNetMinor",l.status,l.match_id AS "matchId",l.posted_on<$2::date AS "beforePeriod",
  (SELECT j.id FROM public.finance_journals j WHERE j.reverses_id=l.journal_id) AS "reversedById"
- FROM book l WHERE($7::text='all' OR($7='unresolved' AND l.status IN('unmatched','cutoff_pending')) OR l.status=$7)
+ FROM book l WHERE NOT(SELECT exceeded FROM export_budget) AND($7::text='all' OR($7='unresolved' AND l.status IN('unmatched','cutoff_pending')) OR l.status=$7)
  AND(NOT $14::boolean OR l.posted_on>=$2::date) AND($11::date IS NULL OR(l.posted_on,l.journal_id,l.line_number)>($11::date,$12::uuid,$13::smallint)) ORDER BY l.posted_on,l.journal_id,l.line_number LIMIT $6
 ),observations AS(
  SELECT o.id,o.as_of::text,o.state,o.balance_minor::text,o.normal_balance,o.currency_id,o.unit_scale,(SELECT c.id FROM public.finance_balance_observations c WHERE c.supersedes_id=o.id) AS superseded_by
  FROM public.finance_balance_observations o WHERE o.account_id=$1 AND o.id IN($4::uuid,$5::uuid)
 )
 SELECT ledger_totals.*,statement_timestamp()::text AS snapshot_at,
+ (SELECT exceeded FROM export_budget) AS export_text_exceeded,
  public.reconciliation_source_stamp($1) AS source_stamp,
  (SELECT jsonb_build_object('totalCount',count(*)::integer,'matchedCount',count(*) FILTER(WHERE status='matched')::integer,'unmatchedCount',count(*) FILTER(WHERE status='unmatched')::integer,'cutoffPendingCount',count(*) FILTER(WHERE status='cutoff_pending')::integer,
   'priorUnresolvedCount',count(*) FILTER(WHERE posted_on<$2::date AND status IN('unmatched','cutoff_pending'))::integer,'unresolvedNetMinor',coalesce(sum(debit_net_minor) FILTER(WHERE status IN('unmatched','cutoff_pending')),0)::text,
@@ -88,6 +96,7 @@ export async function reconciliationReportData(ctx:ApiContext,q:z.infer<typeof q
  const capabilities:Capability[]=['financial-reports.view','ledger.view','bank-statements.view','bank-matches.view',...(q.openingObservationId||q.closingObservationId?['bank-balances.view' as const]:[])];
  for(const cap of capabilities)requireScope(permissionScope(ctx,cap),a.hubId??undefined);
  const result=(await ctx.db.query<Result>(sql,[a.id,q.from,q.through,q.openingObservationId??null,q.closingObservationId??null,q.limit+1,q.status,q.statementAfterPostedOn??null,q.statementAfterImportId??null,q.statementAfterLine??null,q.ledgerAfterPostedOn??null,q.ledgerAfterJournalId??null,q.ledgerAfterLine??null,q.periodOnly])).rows[0];
+ if(result.export_text_exceeded)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');
  // Native sources cannot be updated/deleted or extended after commit; these
  // counts only increase, even after void/release/rematch or net-neutral posts.
  // Account versions increase too. Selected observations include their current

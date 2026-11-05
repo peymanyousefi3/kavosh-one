@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
 import { accountingDate } from './finance-periods.ts';
-import { reconciliationReportData,reconciliationExportRowLimit } from './bank-reconciliation-report.ts';
+import { reconciliationReportData,reconciliationExportRowLimit,reconciliationExportByteLimit } from './bank-reconciliation-report.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const query=z.object({accountId:uuid,from:accountingDate,through:accountingDate,snapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),openingObservationId:uuid.optional(),closingObservationId:uuid.optional()}).strict().refine(v=>v.from<=v.through);
@@ -30,7 +30,7 @@ export function reconciliationCsv(d:ReconciliationCsvReport,archive?:Archive):Re
  for(const r of d.ledgerItems)rows.push(['ledger','','',r.postedOn,r.journalId,r.lineNumber,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId,null,'','',r.purpose,r.accountVersion,r.reversedById]);
  if(archive){const lines=new Map(d.ledgerItems.map(r=>[r.journalId+':'+r.lineNumber,r]));for(const n of archive.outstanding){const r=lines.get(n.journalId+':'+n.lineNumber);if(!r)throw new ApiError(409,'RECONCILIATION_ARCHIVE_INVALID');rows.push(['reviewed_outstanding',n.kind,reconciliationCsvText(n.reason),r.postedOn,r.journalId,r.lineNumber,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId]);}}
  const csv='\uFEFF'+rows.map(row=>Array.from({length:17},(_,i)=>'"'+String(row[i]??'').replaceAll('"','""')+'"').join(',')).join('\r\n')+'\r\n';
- if(Buffer.byteLength(csv,'utf8')>4_194_304)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');
+ if(Buffer.byteLength(csv,'utf8')>reconciliationExportByteLimit)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');
  return {status:200,body:csv,csv:{filename:archive?`bank-reconciliation-record-${archive.id}.csv`:`bank-reconciliation-${d.accountId}-${d.from}-${d.through}.csv`}};
 }
 export async function bankReconciliationExport(ctx:ApiContext):Promise<Reply|null>{

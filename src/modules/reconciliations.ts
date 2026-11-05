@@ -39,7 +39,7 @@ async function basis(ctx:ApiContext,raw:unknown){
  if(v.state==='void'){if(prior?.state!=='finalized'||prior.starts_on!==v.from)throw new ApiError(409,'RECONCILIATION_VOID_PRIOR_INVALID');return {a,accounts,prior,report:null};}
  if(!a.active||!['cash','bank','credit_card'].includes(a.operationalRole))throw new ApiError(409,'ACTIVE_TREASURY_ACCOUNT_REQUIRED');
  if(!(await ctx.db.query<{valid:boolean}>("SELECT $1::date<=(clock_timestamp() AT TIME ZONE 'UTC'+interval '14 hours')::date AS valid",[v.through])).rows[0].valid)throw new ApiError(400,'FUTURE_RECONCILIATION_FORBIDDEN');
- const d=await reconciliationReportData(ctx,{accountId:a.id,from:v.from,through:v.through,snapshot:v.snapshot,openingObservationId:v.openingObservationId,closingObservationId:v.closingObservationId,status:'all',periodOnly:false,limit:reconciliationExportRowLimit});
+ const d=await reconciliationReportData(ctx,{accountId:a.id,from:v.from,through:v.through,snapshot:v.snapshot,openingObservationId:v.openingObservationId,closingObservationId:v.closingObservationId,status:'all',periodOnly:false,limit:reconciliationExportRowLimit}).catch(error=>{if(error instanceof ApiError&&error.code==='REPORT_REQUIRES_BACKGROUND_JOB')throw new ApiError(409,'RECONCILIATION_REQUIRES_BACKGROUND_JOB');throw error;});
  if(d.nextStatementCursor||d.nextLedgerCursor)throw new ApiError(409,'RECONCILIATION_REQUIRES_BACKGROUND_JOB');
  if(!d.openingObservation?.usable||!d.closingObservation?.usable)throw new ApiError(409,'RECONCILIATION_OBSERVATIONS_INVALID');
  if(d.statement.unmatchedCount||d.statement.cutoffPendingCount||d.review.nonActivityMatchedLines||d.review.legacyPurposeReviewRequired)throw new ApiError(409,'RECONCILIATION_SOURCE_BLOCKED');
