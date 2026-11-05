@@ -31,7 +31,7 @@ async function ownAuthority(ctx:ApiContext,studentId:string,homeworkId:string){
 function view(r:Submission,editable=false,currentHomeworkVersion?:number){return {id:r.id,homeworkId:r.homework_id,homeworkVersion:r.homework_version,studentId:r.student_id,version:r.version,state:r.state,text:r.answer.text,
  attachments:r.answer.attachments.map((f,n)=>({caption:f.caption,name:r.context.attachments[n]?.name,claimedMimeType:r.context.attachments[n]?.claimed_mime_type,availability:'unavailable'})),
  instructions:receivedHomeworkDocument(r.instructions),sessionOn:r.context.homework.on,timeZone:r.context.homework.timeZone,dueAt:r.context.homework.dueAt,acceptLate:r.context.homework.acceptLate,
- submittedAt:r.submitted_at,changedAt:r.changed_at,createdAt:r.created_at,isLate:r.is_late,...currentHomeworkVersion===undefined?{}:{instructionsChanged:r.homework_version!==currentHomeworkVersion},...editable?{editableAnswer:r.answer}:{},mediaServingEnabled:false,attachmentContentVerified:false,externalDeliveryVerified:false,gradingAvailable:true,solutionsAvailable:false};}
+ submittedAt:r.submitted_at,changedAt:r.changed_at,createdAt:r.created_at,isLate:r.is_late,...currentHomeworkVersion===undefined?{}:{instructionsChanged:r.homework_version!==currentHomeworkVersion},...editable?{editableAnswer:r.answer}:{},mediaServingEnabled:false,attachmentContentVerified:false,externalDeliveryVerified:false,gradingAvailable:true,solutionsAvailable:true};}
 async function write(ctx:ApiContext,studentId:string,homeworkId:string,i:Input):Promise<Reply>{
  await ownAuthority(ctx,studentId,homeworkId);await lockAcademyTopology(ctx);
  return mutation(ctx,i,async()=>{
