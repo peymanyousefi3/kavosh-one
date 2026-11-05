@@ -45,6 +45,8 @@ test('PUT failure or failed verification is outcome-unknown with no automatic wr
 test('promotion rejects same-target copies,wrong source identity,URL/path injection,oversize and unknown controls before IO',async()=>{
  const f=fixture();for(const i of [{...input,storageTargetId:'0'.repeat(64)},{...input,fileId:'../clean/secret'},{...input,academyId:'https://localhost'},{...input,sha256:'bad'},{...input,bytes:0},{...input,bytes:33_554_433},{...input,outputPath:'/PRIVATE'}])await assert.rejects(promoteQuarantinedFile(source,destination,i,{},f.handlers),e=>['INVALID_FILE_PROMOTION_CONFIGURATION','INVALID_FILE_PROMOTION_TARGET'].includes((e as {code:string}).code));
  await assert.rejects(promoteQuarantinedFile(source,{...source,accessKeyId:'different-credential'},input,{},f.handlers),{code:'INVALID_FILE_PROMOTION_TARGET'});
+ await assert.rejects(promoteQuarantinedFile(source,{...destination,accessKeyId:source.accessKeyId},input,{},f.handlers),{code:'INVALID_FILE_PROMOTION_TARGET'});
+ await assert.rejects(promoteQuarantinedFile(source,{...destination,bucket:source.bucket,jurisdiction:'eu'},input,{},f.handlers),{code:'INVALID_FILE_PROMOTION_TARGET'});
  for(const options of [{timeoutMs:0},{timeoutMs:600001},{timeoutMs:1.5},{url:'https://localhost'}])await assert.rejects(promoteQuarantinedFile(source,destination,input,options, f.handlers),{code:'INVALID_FILE_PROMOTION_CONFIGURATION'});assert.equal(f.counts().sourceReads,0);assert.equal(f.counts().puts,0);
 });
 test('pre-cancelled promotion never contacts storage and active source cancellation releases admission capacity',async()=>{

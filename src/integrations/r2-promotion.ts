@@ -19,6 +19,10 @@ export async function promoteQuarantinedFile(sourceConfiguration:R2Connection,de
  if(!sourceConfig.success||!destinationConfig.success||!parsed.success||!settings.success)throw new ApiError(400,'INVALID_FILE_PROMOTION_CONFIGURATION');
  const c=destinationConfig.data,expected=parsed.data,limits=settings.data;
  if(expected.bytes>sourceConfig.data.maximumUploadBytes||expected.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_FILE_PROMOTION_CONFIGURATION');
+ // A changed endpoint/jurisdiction hash must not disguise the same physical
+ // bucket,and one known reused access key cannot provide credential separation.
+ // Different keys still require independent real bucket-scoped IAM review.
+ if(sourceConfig.data.accessKeyId===c.accessKeyId||(sourceConfig.data.accountId===c.accountId&&sourceConfig.data.bucket===c.bucket))throw new ApiError(400,'INVALID_FILE_PROMOTION_TARGET');
  if(limits.signal?.aborted)throw new ApiError(503,'FILE_PROMOTION_CANCELLED');
  // ponytail: at most two 32 MiB broker-owned copy buffers per process. Larger media needs
  // separately bounded spool/streaming verification,not an unbounded Buffer.
