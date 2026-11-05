@@ -54,17 +54,17 @@ export const workAgreementRouting=z.object({version:z.literal(1),parties:z.array
  .refine(v=>new Set(v.map(p=>p.role)).size===2&&v.reduce((n,p)=>n+p.fields.length,0)<=100&&new Set(v.flatMap(p=>p.fields.map(f=>f.id))).size===v.reduce((n,p)=>n+p.fields.length,0),'Use both parties,at most100 fields and globally unique field IDs.')
  .transform(v=>v.sort((a,b)=>a.role==='worker'?-1:b.role==='worker'?1:0))}).strict();
 
-// Shared bounded read-only transport. The fixed resource union cannot become
+// Shared bounded provider transport. The fixed resource union cannot become
 // an arbitrary URL or mutation method. The absolute deadline also covers a
 // transport/stream implementation that fails to honor its AbortSignal.
 type PdfResource='template-pdf'|'document-pdf'|'audit-pdf';
 const pdfError={ 'template-pdf':'BOLDSIGN_TEMPLATE_PDF_UNAVAILABLE','document-pdf':'BOLDSIGN_DOCUMENT_PDF_UNAVAILABLE','audit-pdf':'BOLDSIGN_AUDIT_PDF_UNAVAILABLE' } as const;
-async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource,send:typeof fetch,externalSignal?:AbortSignal) {
- const pdf=resource!=='document'&&resource!=='template',kind=resource==='template'||resource==='template-pdf'?'template':'document';
+async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource|'send',send:typeof fetch,externalSignal?:AbortSignal,wire?:{body:string;onAttempt:()=>void}) {
+ const posting=resource==='send',pdf=resource.endsWith('-pdf'),kind=resource==='template'||resource==='template-pdf'?'template':'document';
  const configured=connection.safeParse(config),upper=kind.toUpperCase(),mime=pdf?'application/pdf':'application/json',limit=pdf?10_485_760:1_048_576;
  if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
- const selected=uuid.safeParse(id);if(!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_'+upper+'_ID');
- const unavailable=()=>new ApiError(502,pdf?pdfError[resource]:'BOLDSIGN_'+(resource==='document'?'STATUS':'TEMPLATE')+'_UNAVAILABLE');
+ const selected=posting?null:uuid.safeParse(id);if(selected&&!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_'+upper+'_ID');
+ const unavailable=()=>new ApiError(502,posting?'BOLDSIGN_SEND_OUTCOME_UNKNOWN':pdf?pdfError[resource as PdfResource]:'BOLDSIGN_'+(resource==='document'?'STATUS':'TEMPLATE')+'_UNAVAILABLE');
  const abort=new AbortController(),cancel=()=>abort.abort(),timer=setTimeout(cancel,10000);
  let rejectAbort:(error:Error)=>void=()=>{};
  const interrupted=new Promise<never>((_,reject)=>{rejectAbort=reject;});
@@ -75,19 +75,22 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
  const discard=(body:ReadableStream<Uint8Array>|null|undefined)=>{try{void body?.cancel().catch(()=>{});}catch{/* Never expose upstream cancellation errors. */}};
  try {
   if(externalSignal?.aborted)throw unavailable();
-  const query=new URLSearchParams({[kind+'Id']:selected.data});
+  const query=new URLSearchParams(selected?.success?{[kind+'Id']:selected.data}:{});
   if(resource==='template-pdf')query.set('includeFormFieldValues','true');
   if(resource==='document-pdf')query.set('format','Combined');
-  const operation=resource==='audit-pdf'?'downloadAuditLog':pdf?'download':'properties';
-  const request=send(endpoints[configured.data.region]+'/v1/'+kind+'/'+operation+'?'+query,{
-   method:'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:mime},redirect:'error',cache:'no-store',credentials:'omit',signal:abort.signal
+  const operation=posting?'send':resource==='audit-pdf'?'downloadAuditLog':pdf?'download':'properties';
+  if(posting&&!wire)throw unavailable();
+  if(posting)wire!.onAttempt();
+  const request=send(endpoints[configured.data.region]+'/v1/'+kind+'/'+operation+(posting?'':'?'+query),{
+   method:posting?'POST':'GET',headers:{'X-API-KEY':configured.data.apiKey,accept:mime,...posting?{'content-type':'application/json'}:{}},
+   ...posting?{body:wire!.body}:{},redirect:'error',cache:'no-store',credentials:'omit',signal:abort.signal
   });
   // A non-cooperative transport may settle after cancellation. Dispose of its
   // late response without waiting or retaining the body in the worker.
   void request.then(value=>{if(abort.signal.aborted)discard(value.body);},()=>{});
   response=await Promise.race([request,interrupted]);
   if(abort.signal.aborted)throw unavailable();
-  if(response.status!==200||response.redirected||(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase()!==mime)throw unavailable();
+  if(response.status!==(posting?201:200)||response.redirected||(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase()!==mime)throw unavailable();
   reader=response.body?.getReader();if(!reader)throw unavailable();
   const chunks:Uint8Array[]=[];let size=0;
   while(true) {
@@ -101,6 +104,32 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
   throw unavailable();
  }finally {
   clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);reader?.releaseLock();
+ }
+}
+
+export type BoldSignSubmissionOutcome=
+ |{state:'not_attempted';automaticRetryAllowed:false;reconciliationRequired:false;deliveryVerified:false}
+ |{state:'outcome_unknown';automaticRetryAllowed:false;reconciliationRequired:true;deliveryVerified:false}
+ |{state:'accepted_for_processing';documentId:string;automaticRetryAllowed:false;reconciliationRequired:true;deliveryVerified:false};
+
+// Internal IO primitive, NOT a public endpoint or authorization boundary.
+// Caller must retain a durable single-use attempt BEFORE invoking it, bind the
+// exact body to reviewed source/identity and clear all file/provider gates.
+// No retry: a timeout, 4xx/5xx, redirect or malformed response after invocation
+// cannot prove that the provider did not create/send the document.
+// 201/documentId only acknowledges asynchronous processing, not Sent/Completed:
+// https://developers.boldsign.com/documents/send-document/
+export async function submitBoldSignWireRequest(config:BoldSignConnection,body:string,send:typeof fetch=fetch,signal?:AbortSignal):Promise<BoldSignSubmissionOutcome> {
+ if(!connection.safeParse(config).success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
+ if(typeof body!=='string'||!body.length||body.length>16_777_216||!body.isWellFormed()||Buffer.byteLength(body)>16_777_216)throw new ApiError(400,'INVALID_BOLDSIGN_WIRE_REQUEST');
+ let attempted=false;
+ try {
+  const bytes=await readBoldSignBytes(config,'','send',send,signal,{body,onAttempt(){attempted=true;}});
+  const response=z.object({documentId:uuid}).parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)));
+  return {state:'accepted_for_processing',documentId:response.documentId,automaticRetryAllowed:false,reconciliationRequired:true,deliveryVerified:false};
+ }catch {
+  return attempted?{state:'outcome_unknown',automaticRetryAllowed:false,reconciliationRequired:true,deliveryVerified:false}
+   :{state:'not_attempted',automaticRetryAllowed:false,reconciliationRequired:false,deliveryVerified:false};
  }
 }
 
