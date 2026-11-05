@@ -27,10 +27,10 @@ async function row(ctx:ApiContext,id:string,cap:Capability='homeworks.view'){
  try{await classRow(ctx,r.class_id,'homeworks.view');if(cap!=='homeworks.view')await classRow(ctx,r.class_id,cap);await sourceAccess(ctx,r);}catch(error){if(error instanceof ApiError&&[403,404].includes(error.status))throw new ApiError(404,'NOT_FOUND');throw error;}return r;
 }
 function view(r:Homework){return {...r,mediaContentVerified:false,mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:true,solutionsAvailable:false};}
-async function basis(ctx:ApiContext,id:string,i:Input){
+async function basis(ctx:ApiContext,id:string,i:Input,checkTarget=true){
  const s=await sessionRow(ctx,i.sessionId,'homeworks.view'),c=await classRow(ctx,s.class_id,'homeworks.view');sessionLocalDate(s,c.time_zone);
  const before=(await ctx.db.query<{homework:Homework}>('SELECT to_jsonb(h) homework FROM public.homeworks h WHERE id=$1',[id])).rows[0]?.homework??null;
- if((before?.version??0)!==i.expectedVersion||before&&before.session_id!==i.sessionId)throw new ApiError(409,'TARGET_CHANGED');if(before)await sourceAccess(ctx,before);
+ if(checkTarget&&((before?.version??0)!==i.expectedVersion||before&&before.session_id!==i.sessionId))throw new ApiError(409,'TARGET_CHANGED');if(before)await sourceAccess(ctx,before);
  if(Buffer.byteLength(JSON.stringify(i.document),'utf8')>100000)throw new ApiError(413,'HOMEWORK_DOCUMENT_TOO_LARGE');
  const source=(await ctx.db.query<{source:Source|null}>('SELECT public.homework_source($1,$2::jsonb,$3::jsonb,$4) source',[i.sessionId,JSON.stringify(i.document),JSON.stringify(i.recipients),i.assignmentId])).rows[0].source;
  if(!source||source.session.version!==i.sessionVersion||source.assignment?.version!==(i.assignmentVersion??undefined))throw new ApiError(409,'HOMEWORK_SOURCE_CHANGED');
@@ -44,7 +44,9 @@ async function validate(ctx:ApiContext,action:string,id:string,raw:unknown,purpo
  if(action==='homework.withdraw'){const r=await row(ctx,id,'homeworks.edit');withdrawPayload.parse(raw);await classRow(ctx,r.class_id,'homeworks.publish');return {all:false,hubs:[],classes:[{id:r.class_id,hubId:r.hub_id}]};}
  const i=payload.parse(raw),s=await sessionRow(ctx,i.sessionId,action==='homework.record'&&purpose==='request'?'homeworks.record':'homeworks.edit');await classRow(ctx,s.class_id,'homeworks.view');
  const before=(await ctx.db.query<{state:string}>('SELECT state FROM public.homeworks WHERE id=$1',[id])).rows[0];if(i.state==='published'||before?.state==='published')await classRow(ctx,s.class_id,'homeworks.publish');
- const b=await basis(ctx,id,i);
+ // Recheck private source authority before receipt lookup, but keep the
+ // optimistic target version inside mutation dependencies for exact retries.
+ const b=await basis(ctx,id,i,false);
  if(action==='homework.record'&&purpose==='request'&&(ctx.credential.kind!=='human'||b.source.assignment?.person_id!==ctx.credential.person_id))throw new ApiError(403,'ASSIGNED_HUMAN_STAFF_REQUIRED');
  return {all:false,hubs:[],classes:[{id:s.class_id,hubId:s.hub_id}]};
 }
