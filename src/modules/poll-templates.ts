@@ -6,12 +6,16 @@ import { lockAcademyTopology } from './academy.ts';
 import { pollDefinition,pollAnchor,pollOwnerScope,pollOwnerSQL,pollResponseUnit,pollRespondentMode } from './poll-definition.ts';
 import { pollTemplate,type PollTemplate } from './poll-template-source.ts';
 import { pollTemplatePresets } from './poll-template-presets.ts';
+import { millisecondInstant } from '../core/date-time-input.ts';
+import { homeworkRecipients } from './homeworks.ts';
+import { pollActions } from './polls.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().min(1).max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.pipe(z.string().trim().min(1).max(2000));
 const fields={definition:pollDefinition,active:z.boolean(),responseUnit:pollResponseUnit,respondentMode:pollRespondentMode,reason};
 const input=z.object({...fields,anchor:pollAnchor,active:z.boolean().default(true),responseUnit:pollResponseUnit.default('student_family'),respondentMode:pollRespondentMode.default('guardians')}).strict();
 const createPayload=input.extend({copiedFrom:z.object({id:uuid,version}).strict().nullable().default(null)}),updateInput=z.object({...fields,expectedVersion:version}).strict();
 const duplicateInput=z.object({expectedSourceVersion:version,anchor:pollAnchor.optional(),title:text.pipe(z.string().trim().min(1).max(200)),reason}).strict();
+const createPollInput=z.object({expectedTemplateVersion:version,anchor:pollAnchor,audienceEffectiveAt:millisecondInstant,recipients:homeworkRecipients,title:text.pipe(z.string().trim().min(1).max(200)).optional(),opensAt:millisecondInstant.nullable().default(null),closesAt:millisecondInstant.nullable().default(null),reason}).strict().refine(v=>!v.opensAt||!v.closesAt||Date.parse(v.opensAt)<Date.parse(v.closesAt),'Opening must precede closing');
 const query=z.object({limit:z.coerce.number().int().min(1).max(20).default(10),after:uuid.optional(),hubId:uuid.optional(),classId:uuid.optional(),kind:z.enum(['academy','hub','class']).optional(),locale:z.enum(['en','fr','zh-CN']).optional(),active:z.enum(['true','false']).transform(v=>v==='true').optional(),q:text.pipe(z.string().trim().min(1).max(100)).optional()}).strict();
 const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict(),presetQuery=z.object({locale:z.enum(['en','fr','zh-CN']).optional()}).strict(),empty=z.object({}).strict();
 type Basis={record:PollTemplate|null;owner:{hubId:string|null;classId:string|null;active:boolean};copy:PollTemplate|null};
@@ -38,11 +42,12 @@ export const pollTemplateActions:ApprovalRegistry=Object.fromEntries(['poll-temp
  validate:(ctx:ApiContext,id:string,raw:unknown)=>validate(ctx,action==='poll-template.create',id,raw),
  async dependencies(ctx:ApiContext,id:string,raw:unknown,purpose:'request'|'review'){try{return await basis(ctx,action==='poll-template.create',id,raw);}catch(error){if(purpose==='review'&&error instanceof ApiError&&[403,404,409].includes(error.status))return {unavailable:error.code};throw error;}},apply
 }])) as ApprovalRegistry;
-export async function pollTemplates(ctx:ApiContext,registry:ApprovalRegistry=pollTemplateActions):Promise<Reply|null>{
- const path=/^poll-templates(?:\/([^/]+)(?:\/(change|history|duplicate))?)?$/.exec(ctx.path);if(!path)return null;const method=ctx.request.method,params=Object.fromEntries(new URL(ctx.request.url).searchParams);
+export async function pollTemplates(ctx:ApiContext,registry:ApprovalRegistry={...pollActions,...pollTemplateActions}):Promise<Reply|null>{
+ const path=/^poll-templates(?:\/([^/]+)(?:\/(change|history|duplicate|create-poll))?)?$/.exec(ctx.path);if(!path)return null;const method=ctx.request.method,params=Object.fromEntries(new URL(ctx.request.url).searchParams);
  if(path[1]==='presets'){if(path[2])throw new ApiError(404,'NOT_FOUND');if(method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const q=presetQuery.parse(params);await lockApprovalWrites(ctx);if(!scopeNonempty(permissionScope(ctx,'poll-templates.view')))throw new ApiError(403,'FORBIDDEN');return {status:200,body:{data:pollTemplatePresets.filter(p=>!q.locale||p.definition.locale===q.locale),persisted:false,requiresApprovedEditableCopy:true,pollsOrAnswersCreated:false}};}
  const id=path[1]?uuid.parse(path[1]):null,section=path[2];
  if(method==='POST'){empty.parse(params);if(!id)return propose(ctx,registry,'poll-template.create',null,0,{...input.parse(await jsonBody(ctx.request,131072)),copiedFrom:null});if(section==='change'){const i=updateInput.parse(await jsonBody(ctx.request,131072));return propose(ctx,registry,'poll-template.update',id,i.expectedVersion,i);}
+  if(section==='create-poll'){const i=createPollInput.parse(await jsonBody(ctx.request,131072));await pollTemplate(ctx,id);const original=(await ctx.db.query<{definition:PollTemplate}>('SELECT definition FROM public.poll_template_revisions WHERE template_id=$1 AND version=$2',[id,i.expectedTemplateVersion])).rows[0]?.definition;if(!original)throw new ApiError(404,'NOT_FOUND');return propose(ctx,registry,'poll.change',null,0,{expectedVersion:0,anchor:i.anchor,state:'draft',definition:{...original.definition,title:i.title??original.definition.title},responseUnit:original.response_unit,respondentMode:original.respondent_mode,audienceEffectiveAt:i.audienceEffectiveAt,recipients:i.recipients,opensAt:i.opensAt,closesAt:i.closesAt,templateSource:{id,version:i.expectedTemplateVersion},reason:i.reason});}
   if(section==='duplicate'){const i=duplicateInput.parse(await jsonBody(ctx.request));await pollTemplate(ctx,id);const original=(await ctx.db.query<{definition:PollTemplate}>('SELECT definition FROM public.poll_template_revisions WHERE template_id=$1 AND version=$2',[id,i.expectedSourceVersion])).rows[0]?.definition;if(!original)throw new ApiError(404,'NOT_FOUND');return propose(ctx,registry,'poll-template.create',null,0,createPayload.parse({anchor:i.anchor??original.anchor,definition:{...original.definition,title:i.title},active:original.active,responseUnit:original.response_unit,respondentMode:original.respondent_mode,copiedFrom:{id,version:i.expectedSourceVersion},reason:i.reason}));}throw new ApiError(405,'METHOD_NOT_ALLOWED');
  }
  if(method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');await lockApprovalWrites(ctx);
@@ -56,5 +61,6 @@ export const pollTemplatesContract=[
  {path:'/api/v1/poll-templates/{id}',method:'get',summary:'Read an explicitly permitted current template and its response defaults'},
  {path:'/api/v1/poll-templates/{id}/change',method:'post',summary:'Upper-reviewed exact-version template content, response-rule or activation change; immutable ownership and copy provenance',schema:updateInput},
  {path:'/api/v1/poll-templates/{id}/duplicate',method:'post',summary:'Reviewed independent exact-version copy into permitted ownership; rename only on copy, edit contents later',schema:duplicateInput},
+ {path:'/api/v1/poll-templates/{id}/create-poll',method:'post',summary:'Propose a new draft from an exact active template; explicit new destination/date/enrollments, optional renamed title, no inherited audience/answers/publication; immutable native origin',schema:createPollInput},
  {path:'/api/v1/poll-templates/{id}/history',method:'get',summary:'Private immutable template versions with ten-revision/two-MiB read bound',querySchema:historyQuery}
 ] as const;

@@ -16,6 +16,7 @@ export const pollAnchor=z.discriminatedUnion('kind',[
 ]);
 export const pollResponseUnit=z.enum(['student_family','guardian_per_student']);
 export const pollRespondentMode=z.enum(['guardians','students','both']);
+export const pollTemplateReference=z.object({id:uuid,version:z.number().int().min(1).max(2147483647)}).strict();
 export type PollDefinition=z.infer<typeof pollDefinition>;
 export function pollOwnerScope(a:z.infer<typeof pollAnchor>,hubId:string|null):Scope{return a.kind==='academy'?{all:true,hubs:[]}:a.kind==='hub'?{all:false,hubs:[a.id]}:{all:false,hubs:[],classes:[{id:a.id,hubId:hubId!}]};}
 // Code-owned alias p is shared by the poll, template and reporting directories.
