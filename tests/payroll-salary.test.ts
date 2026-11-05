@@ -56,7 +56,8 @@ test('salary plans retain per-currency precision and require fresh reviewed peri
 test('salary service and full-reference components cannot be duplicated by splitting revisions, report windows or inactive periods',()=>{
  const s=source();s.terms[0].components=[rule({frequency:'pay_period',earningBasis:'whole_service_period'})];assert.equal(payrollSalaryPlan(s).plans[0].calculation.gross.amount,'3000.00');
  s.from='2026-01-02';assert.equal(payrollSalaryPlan(s).unpricedComponents[0].reason,'SALARY_FULL_SERVICE_PERIOD_REQUIRED');s.from='2026-01-01';
- s.terms.push({...s.terms[0],version:2,effective_on:'2026-01-16'});assert.equal(payrollSalaryPlan(s).plans.length,0);assert.equal(payrollSalaryPlan(s).unpricedComponents.length,2);
+ s.terms.push({...s.terms[0],version:2,effective_on:'2026-01-16'});assert.equal(payrollSalaryPlan(s).plans.length,1);assert.equal(payrollSalaryPlan(s).plans[0].calculation.gross.amount,'3000.00');assert.deepEqual(payrollSalaryPlan(s).plans[0].termsVersions,[1,2]);
+ s.terms[1].components=[rule({frequency:'pay_period',earningBasis:'whole_service_period',amount:'6000'})];assert.equal(payrollSalaryPlan(s).plans.length,0);assert.equal(payrollSalaryPlan(s).unpricedComponents.length,2);
  s.periods[0].definition.active=false;assert.equal(payrollSalaryPlan(s).plans.length,0);assert.ok(payrollSalaryPlan(s).unpricedComponents.every(i=>i.reason==='SALARY_SERVICE_PERIOD_REQUIRED'));
 });
 test('bounded synchronous salary plans reject excess work instead of silently truncating payable sources',()=>{
