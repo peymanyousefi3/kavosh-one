@@ -1,0 +1,98 @@
+import assert from 'node:assert/strict';
+import { randomUUID,createHash } from 'node:crypto';
+import { readFile,mkdtemp,rmdir } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { Readable } from 'node:stream';
+import { test } from 'node:test';
+import { operationsFixture } from './operations-fixture.ts';
+import { processOneInspection,inspectStoredFile,type InspectionResult,type InspectionTask } from '../src/files/inspection-worker.ts';
+import { validateUnsignedPdf } from '../src/files/pdf-validation.ts';
+import { createPdfValidationServer } from '../src/files/pdf-service.ts';
+import { detectContentSignature } from '../src/files/content-signature.ts';
+import type { Database } from '../src/core/database.ts';
+import { clamdPeer,clamdVersionString } from './fixtures/clamd-peer.ts';
+
+const pythonPath=process.env.TEST_PDF_PYTHON_BINARY;
+if(process.env.PDF_VALIDATION_TEST_REQUIRED==='true'&&!pythonPath)throw new Error('PDF_TEST_INTERPRETER_REQUIRED');
+const connection={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-pdf-evidence',accessKeyId:'synthetic-id',secretAccessKey:'synthetic-not-real-secret',maximumUploadBytes:100000};
+const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
+let vectors:Record<string,Buffer>|undefined;
+function bytes(name='ordinary'){
+ if(!vectors){assert.ok(pythonPath);const r=spawnSync(pythonPath,['-I','-B',fileURLToPath(new URL('./fixtures/pdf-fixtures.py',import.meta.url))],{env:{NODE_ENV:'test',TZ:'UTC'},encoding:'utf8',timeout:10000,maxBuffer:2_097_152});assert.equal(r.status,0,r.stderr);vectors=Object.fromEntries(Object.entries(JSON.parse(r.stdout) as Record<string,string>).map(([k,v])=>[k,Buffer.from(v,'base64')]));}return vectors[name];
+}
+async function fixture(throughSchema?:number){
+ const f=await operationsFixture({connections:()=>connection,throughSchema});
+ const configured=await f.request('storage-policy',{expectedVersion:0,uploadsEnabled:true,maximumFileBytes:100000,maximumReservedBytes:1000000,maximumFiles:100,allowedMimeTypes:['application/pdf','text/plain'],reason:'Synthetic PDF evidence policy'});assert.equal(configured.response.status,200,JSON.stringify(configured.body));
+ const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{async query<Row>(sql:string,params?:unknown[]){return f.pg.query<Row>(sql,params);},release(){}};await c.query('SET ROLE kavosh_file_worker');return c;}};
+ async function workerQuery<Row=Record<string,unknown>>(sql:string,params?:unknown[]){const c=await database.connect();try{return await c.query<Row>(sql,params);}finally{c.release();if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
+ async function prepare(content=bytes(),claim='application/pdf',hub=f.hub){
+  const file=await f.request('files',{anchor:{kind:'hub',id:hub},name:'Untrusted source.pdf',claimedMimeType:claim,expectedBytes:content.length,expectedSha256:sha(content)});assert.equal(file.response.status,201,JSON.stringify(file.body));
+  const id=file.body.data.id,grant=await f.request('files/'+id+'/upload-link',{expectedMetadataVersion:1});assert.equal(grant.response.status,201);
+  const inspection=await f.request('files/'+id+'/inspection',{expectedMetadataVersion:1,grantId:grant.body.data.id});assert.equal(inspection.response.status,202);return {id,grantId:grant.body.data.id,inspectionId:inspection.body.data.id};
+ }
+ async function evidence(content=bytes()):Promise<InspectionResult>{return {outcome:'no_detection',bytes:content.length,sha256:sha(content),etag:'"synthetic-pdf"',providerContentType:'application/octet-stream',signature:await detectContentSignature(content),pdfValidation:await validateUnsignedPdf(content,{pythonPath:pythonPath!})};}
+ async function run(value:InspectionResult|((task:InspectionTask,signal:AbortSignal)=>Promise<InspectionResult>)){try{return await processOneInspection(database,[f.a],randomUUID(),typeof value==='function'?value:async()=>value);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
+ const claim=async()=>(await workerQuery('SELECT * FROM public.claim_file_inspection($1,$2,30)',[[f.a],randomUUID()])).rows[0];
+ async function finish(job:Record<string,unknown>,value:InspectionResult,pdf?:unknown,outcome='no_detection'){
+  if(value.outcome!=='no_detection')throw new Error('TEST_EVIDENCE_REQUIRED');return (await workerQuery<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NULL,NULL,$11::jsonb) AS recorded',[job.academy_id,job.inspection_id,job.lease_token,outcome,outcome==='detected'?'MEASURED_DETECTION':'MEASURED_NO_DETECTION',value.bytes,value.sha256,value.etag,value.providerContentType,JSON.stringify(value.signature),pdf===undefined?JSON.stringify(value.pdfValidation):JSON.stringify(pdf)])).rows[0].recorded;
+ }
+ async function assertEmpty(){for(const table of ['file_inspection_attempts','file_content_signatures','file_format_assessments','file_pdf_evidence'])assert.equal((await f.pg.query('SELECT * FROM public.'+table)).rows.length,0,table);}
+ return {...f,database,prepare,evidence,run,claim,finish,workerQuery,assertEmpty};
+}
+type Fixture=Awaited<ReturnType<typeof fixture>>;
+function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,{skip:!pythonPath},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+check('actual native PDF service,streamed object and fresh-scan protocol persist exact PDF and scanner observations with one read',async f=>{
+ const directory=await mkdtemp('/tmp/kavosh-pdf-pipe-'),socketPath=directory+'/s.sock',server=createPdfValidationServer({pythonPath:pythonPath!});let calls=0;
+ server.on('request',r=>{calls++;for(const key of ['cookie','authorization','x-academy-id','x-output-path'])assert.equal(r.headers[key],undefined);});await new Promise<void>(resolve=>server.listen(socketPath,resolve));
+ try{
+  for(const mode of ['success','detected','error'] as const){const item=await f.prepare(),b=bytes(),version=Buffer.from(clamdVersionString()+'\0'),peer=await clamdPeer(mode,mode==='success'?[version,version]:mode==='detected'?[version]:undefined);let reads=0;
+   try{
+    assert.deepEqual(await f.run((task,signal)=>inspectStoredFile(task,()=>connection,peer.config,signal,5000,{async handle(){reads++;return {response:{statusCode:200,headers:{'content-length':String(b.length),'content-type':'application/octet-stream',etag:'"synthetic-pdf"'},body:Readable.from([b.subarray(0,40),b.subarray(40)])}};}},undefined,mode==='error'?undefined:{timeZone:'UTC',maximumAgeSeconds:172800},{socketPath})),{claimed:true,recorded:true});assert.equal(reads,1);
+    const v=(await f.request('files/'+item.id+'/inspection')).body.data;assert.equal(v.safeToServe,false);
+    if(mode==='success'){assert.equal(v.attempts[0].pdfValidation.result.outcome,'screened');assert.equal(v.attempts[0].pdfValidation.result.inputSha256,sha(b));assert.ok(v.attempts[0].scannerObservation);assert.equal(v.attempts[0].pdfValidation.profile,'unsigned_source');for(const key of ['renderingVerified','providerCoordinatesVerified','signatureVerified'])assert.equal(v.attempts[0].pdfValidation[key],false);}
+    else{assert.equal(v.attempts[0].pdfValidation,null);assert.equal(v.processing.lastOutcome,mode==='detected'?'detected':'unavailable');}
+   }finally{await peer.close();}
+  }assert.equal(calls,1,'detected or failed scans must never reach the PDF parser');
+ }finally{await new Promise<void>(resolve=>{server.close(()=>resolve());server.closeAllConnections();});await rmdir(directory);}
+});
+check('native screened and active-content rejected PDF observations remain immutable exact-byte policy evidence,not malware verdicts or downloads',async f=>{
+ for(const name of ['ordinary','javascript','claimed_provenance','existing_signature']){const b=bytes(name),item=await f.prepare(b),value=await f.evidence(b);assert.deepEqual(await f.run(value),{claimed:true,recorded:true});const v=(await f.request('files/'+item.id+'/inspection')).body.data;assert.equal(v.safeToServe,false);assert.equal(v.uploadVerified,false);assert.equal(v.attempts[0].outcome,'no_detection');assert.deepEqual(v.attempts[0].pdfValidation.result,value.outcome==='no_detection'?value.pdfValidation:null);assert.equal(v.attempts[0].pdfValidation.result.outcome,name==='ordinary'?'screened':'rejected');assert.equal(v.attempts[0].imageValidation,null);}
+ assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.pdf.screened'")).rows.length,1);assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.pdf.policy_rejected.critical'")).rows.length,3);
+});
+check('native PDF validator independently refuses forged keys,limits,coordinates,resources,hashes,counts and incompatible scan outcomes atomically',async f=>{
+ await f.prepare();const job=await f.claim(),value=await f.evidence();if(value.outcome!=='no_detection'||value.pdfValidation?.outcome!=='screened')throw new Error('NATIVE_PDF_REQUIRED');const p=value.pdfValidation,page=p.pages[0];
+ const invalid:unknown[]=[null,{},[],{...p,safeToServe:true},{...p,validator:1},{...p,qpdf:'old'},{...p,policyVersion:2},{...p,inputSha256:'0'.repeat(64)},{...p,inputBytes:p.inputBytes+1},{...p,maximumDepth:65},{...p,pageCount:2},{...p,objectCount:0},{...p,interactiveForms:'false'},{...p,coordinateSpace:'pixels'},
+  {...p,pages:[{...page,rotation:45}]},{...p,pages:[{...page,userUnit:0}]},{...p,pages:[{...page,userUnit:100}]},{...p,pages:[{...page,mediaBox:[0,0,0,792]}]},{...p,pages:[{...page,cropBox:[-1,0,612,792]}]},{...p,pages:[{...page,mediaBox:[0,0,'612',792]}]},{...p,pages:[{...page,PRIVATE:'text'}]},
+  {...p,resources:{...p.resources,peakRssKiB:0}},{...p,resources:{...p.resources,userCpuMicros:-1}},{...p,resources:{...p.resources,PRIVATE:'text'}},{...p,outcome:'rejected',reason:'MALWARE'}];
+ for(const bad of invalid){await assert.rejects(f.finish(job,value,bad),/INVALID_FILE_PDF_EVIDENCE/);await f.assertEmpty();}
+ await assert.rejects(f.finish(job,value,undefined,'detected'),/INVALID_FILE_PDF_EVIDENCE/);await f.assertEmpty();
+ await assert.rejects(f.finish(job,{...value,signature:undefined}),/INVALID_FILE_PDF_EVIDENCE/);await f.assertEmpty();assert.equal(await f.finish(job,value),true);assert.equal(await f.finish(job,value),false);
+ await f.prepare(bytes(),'text/plain');const nonPdf=await f.claim();await assert.rejects(f.finish(nonPdf,value),/INVALID_FILE_PDF_EVIDENCE/);assert.equal((await f.pg.query('SELECT * FROM public.file_pdf_evidence')).rows.length,1);
+});
+check('PDF worker rejects forged context and missing services,while invalid destinations and oversized work fail before storage IO',async f=>{
+ const item=await f.prepare(),value=await f.evidence();if(value.outcome!=='no_detection'||!value.pdfValidation)throw new Error('NATIVE_PDF_REQUIRED');let task!:InspectionTask;
+ await f.run(async t=>{task=t;return {...value,pdfValidation:{...value.pdfValidation!,inputSha256:'0'.repeat(64)}};});let v=(await f.request('files/'+item.id+'/inspection')).body.data;assert.equal(v.processing.lastReason,'INSPECTOR_INVALID_RESULT');assert.equal(v.attempts[0].pdfValidation,null);
+ const peer=await clamdPeer('success');let reads=0,lookups=0;const handler={async handle(){reads++;throw new Error('MUST_NOT_READ');}},connections=()=>{lookups++;return connection;};
+ try{for(const [t,config]of [[task,{socketPath:'https://localhost'}],[{...task,expectedBytes:10_485_761},{socketPath:'/tmp/not-contacted.sock'}]] as const)assert.deepEqual(await inspectStoredFile(t,connections,peer.config,new AbortController().signal,5000,handler,undefined,undefined,config),{outcome:'unavailable',reason:'TARGET_UNAVAILABLE'});assert.equal(reads,0);assert.equal(lookups,0);assert.equal(peer.connections(),0);}finally{await peer.close();}
+ const missing=await f.prepare(),p=await clamdPeer('success');try{await f.run((t,s)=>inspectStoredFile(t,()=>connection,p.config,s,5000,{async handle(){return {response:{statusCode:200,headers:{'content-length':String(bytes().length),'content-type':'application/octet-stream',etag:'"synthetic-pdf"'},body:Readable.from([bytes()])}};}},undefined,undefined,{socketPath:'/tmp/'+randomUUID()+'.sock'}));v=(await f.request('files/'+missing.id+'/inspection')).body.data;assert.equal(v.processing.lastReason,'TARGET_UNAVAILABLE');assert.equal(v.attempts[0].pdfValidation,null);}finally{await p.close();}
+});
+check('PDF evidence stays tenant/feature scoped and append-only;clients and inner worker bypass entrypoints cannot change it',async f=>{
+ const own=await f.prepare(),value=await f.evidence();await f.run(value);const other=await f.prepare(bytes(),'application/pdf',f.otherHub);await f.run(value);await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'files.view','allow')",[f.a,f.staffRole]);assert.equal((await f.request('files/'+own.id+'/inspection',undefined,'staff')).response.status,200);assert.equal((await f.request('files/'+other.id+'/inspection',undefined,'staff')).response.status,404);assert.equal((await f.request('files/'+own.id+'/inspection',undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ try{await f.pg.exec('SET ROLE kavosh_runtime');await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.b]);assert.equal((await f.pg.query('SELECT * FROM public.file_pdf_evidence')).rows.length,0);await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);for(const sql of ['DELETE FROM public.file_pdf_evidence','UPDATE public.file_pdf_evidence SET input_bytes=1','INSERT INTO public.file_pdf_evidence SELECT * FROM public.file_pdf_evidence'])await assert.rejects(f.pg.exec(sql),/permission denied/i);await f.pg.exec('RESET ROLE');await f.pg.exec('SET ROLE kavosh_file_worker');await assert.rejects(f.pg.exec('SELECT * FROM public.file_pdf_evidence'),/permission denied/i);await assert.rejects(f.pg.query('SELECT public.finish_file_inspection_scanner_evidence($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,NULL,NULL)',[f.a,own.inspectionId,randomUUID(),'no_detection','MEASURED_NO_DETECTION',bytes().length,sha(bytes()),'"etag"','application/pdf']),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+ assert.equal((await f.request('files/'+own.id+'/inspection',{expectedMetadataVersion:1,grantId:own.grantId,pdfValidation:value.outcome==='no_detection'?value.pdfValidation:null})).response.status,400);
+});
+check('PDF composite measured identity and outbox rollback prevent misbinding and partial successful evidence',async f=>{
+ const item=await f.prepare(),job=await f.claim(),value=await f.evidence();if(value.outcome!=='no_detection'||!value.pdfValidation)throw new Error('NATIVE_PDF_REQUIRED');await f.pg.exec(`CREATE FUNCTION public.test_pdf_event_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_type LIKE 'file.pdf.%' THEN RAISE EXCEPTION 'SYNTHETIC_PDF_EVENT_FAILURE';END IF;RETURN NEW;END $$;CREATE TRIGGER test_pdf_event_failure BEFORE INSERT ON public.outbox_events FOR EACH ROW EXECUTE FUNCTION public.test_pdf_event_failure()`);
+ try{await assert.rejects(f.finish(job,value),/SYNTHETIC_PDF_EVENT_FAILURE/);}finally{await f.pg.exec('DROP TRIGGER test_pdf_event_failure ON public.outbox_events;DROP FUNCTION public.test_pdf_event_failure()');}await f.assertEmpty();assert.equal((await f.pg.query('SELECT state FROM public.file_inspection_jobs')).rows[0].state,'running');assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type LIKE 'file.pdf.%' OR event_type LIKE 'file.format.%' OR event_type='file.inspection.evidence.recorded'")).rows.length,0);
+ assert.equal((await f.workerQuery<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) AS recorded',[f.a,item.inspectionId,job.lease_token,'no_detection','MEASURED_NO_DETECTION',value.bytes,value.sha256,value.etag,value.providerContentType,JSON.stringify(value.signature)])).rows[0].recorded,true);
+ const forged={...value.pdfValidation,inputSha256:'0'.repeat(64)};await assert.rejects(f.pg.query('INSERT INTO public.file_pdf_evidence(academy_id,inspection_id,attempt_no,input_bytes,input_sha256,result) VALUES($1,$2,1,$3,$4,$5::jsonb)',[f.a,item.inspectionId,bytes().length,forged.inputSha256,JSON.stringify(forged)]),/foreign key/i);
+});
+test('schema113 preserves actual schema112 records and does not invent historical PDF observations',{skip:!pythonPath},async()=>{
+ const f=await fixture(112);try{const item=await f.prepare(),value=await f.evidence(),job=await f.claim();if(value.outcome!=='no_detection')throw new Error('NATIVE_PDF_REQUIRED');await assert.rejects(f.run(value),/SCHEMA_NOT_CURRENT/);
+  const now=Date.now(),scanner={formatVersion:1,engineVersion:'1.5.4',databaseVersion:30001,databaseCreatedAt:new Date(Math.floor((now-60000)/1000)*1000).toISOString().replace('.000Z','Z'),observedAt:new Date(now).toISOString(),observedBeforeAt:new Date(now).toISOString(),timeZone:'UTC',maximumAgeSeconds:172800};
+  assert.equal((await f.workerQuery<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,NULL,$11::jsonb) AS recorded',[f.a,item.inspectionId,job.lease_token,'no_detection','MEASURED_NO_DETECTION',value.bytes,value.sha256,value.etag,value.providerContentType,JSON.stringify(value.signature),JSON.stringify(scanner)])).rows[0].recorded,true);assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,1);
+  const tables=['file_inspection_requests','file_inspection_jobs','file_inspection_attempts','file_content_signatures','file_format_assessments','file_image_evidence','file_scanner_observations','outbox_events'],snapshot=async()=>{const result:unknown[]=[];for(const table of tables)result.push((await f.pg.query('SELECT * FROM public.'+table)).rows);return result;},before=await snapshot();await f.pg.exec(await readFile(new URL('../db/migrations/113_file_pdf_evidence.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,113);assert.equal((await f.pg.query('SELECT * FROM public.file_pdf_evidence')).rows.length,0);assert.equal((await f.request('files/'+item.id+'/inspection')).body.data.attempts[0].pdfValidation,null);
+ }finally{await f.pg.close();}
+});
+if(process.env.TEST_DATABASE_URL)check('two native PDF finishes retain one measured receipt and one event',async f=>{await f.prepare();const value=await f.evidence(),job=await f.claim();assert.deepEqual((await Promise.all([f.finish(job,value),f.finish(job,value)])).sort(),[false,true]);assert.equal((await f.pg.query('SELECT * FROM public.file_pdf_evidence')).rows.length,1);assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='file.pdf.screened'")).rows.length,1);});

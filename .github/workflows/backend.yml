@@ -209,6 +209,15 @@ jobs:
   pdf-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -230,9 +239,10 @@ jobs:
           python -m pip install --disable-pip-version-check pip-audit==2.10.1
           python -m pip_audit --require-hashes --progress-spinner off --strict -r workers/pdf-validator/requirements.txt
       - name: Required actual native PDF parser and short process-failure checks
-        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts tests/file-pdf-evidence.test.ts
         env:
           PDF_VALIDATION_TEST_REQUIRED: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Build minimal credential-free native PDF service
         run: docker build --file Dockerfile.pdf-service --tag kavosh-pdf:ci .
       - name: Refuse a PDF runtime missing required isolation controls

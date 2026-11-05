@@ -115,6 +115,7 @@ test('schema112 preserves real schema111 attempts without inventing old scanner 
     const snapshot=async()=>{const rows:unknown[]=[];for(const table of tables)rows.push((await f.pg.query('SELECT * FROM public.'+table)).rows);return rows;};const before=await snapshot();
     await f.pg.exec(await readFile(new URL('../db/migrations/112_file_scanner_observations.sql',import.meta.url),'utf8'));
     assert.deepEqual(await snapshot(),before);assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,112);assert.equal((await f.pg.query('SELECT * FROM public.file_scanner_observations')).rows.length,0);
+    await f.pg.exec(await readFile(new URL('../db/migrations/113_file_pdf_evidence.sql',import.meta.url),'utf8'));
     const view=(await f.request('files/'+item.fileId+'/inspection')).body.data;assert.equal(view.attempts[0].scannerObservation,null);assert.equal(view.safeToServe,false);
   }finally{await f.pg.close();}
 });
