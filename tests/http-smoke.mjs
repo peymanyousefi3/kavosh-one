@@ -22,6 +22,7 @@ try {
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
   const providerPath=base+'/api/webhooks/boldsign/00000000-0000-4000-8000-000000000001';
+  {const r=await fetch(base+'/api/v1/reports/finance/payables-aging?on=2026-12-08');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/billCount|currencies|payeeId|snapshotAt|stack/);}
   {const r=await fetch(base+'/api/v1/reports/finance/receivables-aging?on=2026-12-02');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/invoiceCount|currencies|studentId|snapshotAt|stack/);}
   {const r=await fetch(base+'/api/v1/sessions/00000000-0000-4000-8000-000000000001/my-evidence-feedback');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/staffNote|reason|source|reviewVersion|stack/);}
   for(const suffix of ['evidence-review','evidence-review/history']){const r=await fetch(base+'/api/v1/sessions/00000000-0000-4000-8000-000000000001/'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/source|decision|waive_report|reason|stack/);}
@@ -80,6 +81,7 @@ try {
   assert.equal(inspection.status,401);assert.equal(inspection.headers.get('cache-control'),'no-store');assert.doesNotMatch(await inspection.text(),/X-Amz|secretAccessKey|storageTargetId|stack/);
   const grantHistory=await fetch(base+'/api/v1/files/73e6a708-ad23-484b-9b12-91db85854593/upload-grants?limit=1');assert.equal(grantHistory.status,401);assert.equal(grantHistory.headers.get('cache-control'),'no-store');assert.doesNotMatch(await grantHistory.text(),/formatPolicy|X-Amz|storageTargetId|stack/);
   const spec=await (await fetch(base+'/openapi.json')).json();assert.equal(spec.openapi,'3.1.0');assert.ok(spec.paths['/api/v1/files/{id}/upload-link']?.post);
+  assert.ok(spec.paths['/api/v1/reports/finance/payables-aging']?.get);assert.ok(spec.paths['/api/v1/reports/finance/payables-aging'].get.parameters.some(p=>p.name==='on'&&p.required));
   assert.ok(spec.paths['/api/v1/reports/finance/receivables-aging']?.get);assert.ok(spec.paths['/api/v1/reports/finance/receivables-aging'].get.parameters.some(p=>p.name==='on'&&p.required));
   assert.ok(spec.paths['/api/v1/reports/learning/sessions/{id}/evidence']?.get);
   assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review']?.post);assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review']?.get);assert.ok(spec.paths['/api/v1/sessions/{id}/evidence-review/history']?.get);

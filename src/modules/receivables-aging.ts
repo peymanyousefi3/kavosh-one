@@ -2,12 +2,12 @@ import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
-import { readMinorUnits,formatMoneyTotal } from '../core/money.ts';
+import { readMinorUnits } from '../core/money.ts';
+import { agingCutoffs as cutoffs,agingBandDefinitions,exactReportMoney as exact } from '../core/aging.ts';
 import { accountingDate } from './finance-periods.ts';
 import { financialIds } from './financial-reports.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
-const cutoffs=z.string().max(47).regex(/^[1-9]\d{0,4}(?:,[1-9]\d{0,4}){0,7}$/).default('30,60,90').transform(v=>v.split(',').map(Number)).refine(v=>v.every((n,i)=>n<=36500&&(!i||n>v[i-1])),'Use one to eight increasing overdue-day boundaries, each at most 36500.');
 const query=z.object({on:accountingDate,hubIds:financialIds.optional(),classIds:financialIds.optional(),studentIds:financialIds.optional(),invoiceIds:financialIds.optional(),currencyIds:financialIds.optional(),countryIds:financialIds.optional(),regionIds:financialIds.optional(),cityIds:financialIds.optional(),billToIds:financialIds.optional(),includeSettled:z.enum(['true','false']).default('false').transform(v=>v==='true'),cutoffs,after:uuid.optional(),limit:z.coerce.number().int().min(1).max(100).default(50)}).strict();
 const caps:Capability[]=['receivables-reports.view','invoices.view','receipts.view','allocations.view'];
 export const receivableAgingLimits={invoices:10000,installments:100000,receipts:100000,allocations:200000,chartGroups:1000} as const;
@@ -69,8 +69,7 @@ type BandAmount={bucket:number;minor:string};
 type Currency={currency_id:string;currency_code:string;scale:number;invoice_count:number;gross:string;received:string;credited:string;net_balance:string;receivable:string;customer_credit:string;unallocated_received:string;ambiguous_invoices:number;needs_allocation:string;bands:BandAmount[]};
 type Hub=Pick<Currency,'currency_id'|'currency_code'|'scale'|'invoice_count'|'receivable'|'customer_credit'|'needs_allocation'>&{hub_id:string};
 type Entry={invoiceId:string;unitScale:number;gross:string;received:string;allocated:string;balance:string;credited:boolean;bands:BandAmount[];[key:string]:unknown};
-function exact(value:string|bigint,scale:number){const n=typeof value==='bigint'?value:readMinorUnits(value);return {minor:n.toString(),amount:formatMoneyTotal(n,scale)};}
-function bandDefinitions(days:number[]){return [{key:'not_due',fromDays:null,throughDays:0},...days.map((n,i)=>({key:`${i?days[i-1]+1:1}_${n}`,fromDays:i?days[i-1]+1:1,throughDays:n})),{key:`over_${days.at(-1)!}`,fromDays:days.at(-1)!+1,throughDays:null},{key:'needs_allocation',fromDays:null,throughDays:null}];}
+function bandDefinitions(days:number[]){return [...agingBandDefinitions(days),{key:'needs_allocation',fromDays:null,throughDays:null}];}
 export async function receivablesAging(ctx:ApiContext):Promise<Reply|null>{
  if(ctx.path!=='reports/finance/receivables-aging')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=new URL(ctx.request.url).searchParams;if(new Set(params.keys()).size!==[...params.keys()].length)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params));await lockApprovalWrites(ctx);const scopes=caps.map(c=>permissionScope(ctx,c));if(!scopes.every(scopeNonempty))throw new ApiError(403,'FORBIDDEN');const anchor=scopes.find(s=>!s.all)??scopes[0];
  const r=(await ctx.db.query<{snapshotAt:string;bounds:Bounds;invoiceCount:number;currencyCount:number;hubGroupCount:number;currencies:Currency[];hubs:Hub[];entries:Entry[]}>(receivableAgingSQL,[q.on,JSON.stringify(scopes),q.hubIds??null,q.classIds??null,q.studentIds??null,q.invoiceIds??null,q.currencyIds??null,q.countryIds??null,q.regionIds??null,q.cityIds??null,q.includeSettled,q.cutoffs,q.after??null,q.limit+1,ctx.credential.all_hubs,ctx.credential.hub_ids,anchor.all,anchor.hubs,(anchor.classes??[]).map(c=>c.id),(anchor.people??[]).map(p=>p.id),q.billToIds??null])).rows[0];assertReceivableAgingBounds(r.bounds,r.currencyCount,r.hubGroupCount);
