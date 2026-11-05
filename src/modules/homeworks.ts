@@ -26,7 +26,7 @@ async function row(ctx:ApiContext,id:string,cap:Capability='homeworks.view'){
  const r=(await ctx.db.query<{homework:Homework}>('SELECT to_jsonb(h) homework FROM public.homeworks h WHERE id=$1',[id])).rows[0]?.homework;if(!r)throw new ApiError(404,'NOT_FOUND');
  try{await classRow(ctx,r.class_id,'homeworks.view');if(cap!=='homeworks.view')await classRow(ctx,r.class_id,cap);await sourceAccess(ctx,r);}catch(error){if(error instanceof ApiError&&[403,404].includes(error.status))throw new ApiError(404,'NOT_FOUND');throw error;}return r;
 }
-function view(r:Homework){return {...r,mediaContentVerified:false,mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:false,solutionsAvailable:false};}
+function view(r:Homework){return {...r,mediaContentVerified:false,mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:true,solutionsAvailable:false};}
 async function basis(ctx:ApiContext,id:string,i:Input){
  const s=await sessionRow(ctx,i.sessionId,'homeworks.view'),c=await classRow(ctx,s.class_id,'homeworks.view');sessionLocalDate(s,c.time_zone);
  const before=(await ctx.db.query<{homework:Homework}>('SELECT to_jsonb(h) homework FROM public.homeworks h WHERE id=$1',[id])).rows[0]?.homework??null;
@@ -73,7 +73,7 @@ async function received(ctx:ApiContext,studentId:string,id?:string):Promise<Repl
  FROM public.homeworks p JOIN public.classes c ON c.academy_id=p.academy_id AND c.id=p.class_id JOIN public.approval_requests a ON a.academy_id=p.academy_id AND a.id=p.approval_id
  WHERE p.state='published' AND p.recipient_ids @> ARRAY[$1::uuid] AND a.status='applied' AND a.reviewer_id=p.changed_by AND a.target_id=p.id AND a.action IN('homework.record','homework.edit') AND ${receivedLearningSelection}
  ORDER BY(p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $10`,[studentId,ctx.credential.person_id,id??null,s.all,selected,s.hubs,s.excludedHubs??[],q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
- if(id){const r=rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:{...r,document:receivedDocument(r.document!),mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:false,solutionsAvailable:false}}};}
+ if(id){const r=rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:{...r,document:receivedDocument(r.document!),mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:true,solutionsAvailable:false}}};}
  return {status:200,body:{studentId,data:rows.slice(0,q!.limit),nextCursor:rows.length>q!.limit?{beforeOn:rows[q!.limit-1].on,after:rows[q!.limit-1].id}:null}};
 }
 export async function homeworks(ctx:ApiContext,registry:ApprovalRegistry=homeworkActions):Promise<Reply|null>{

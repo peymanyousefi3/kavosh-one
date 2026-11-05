@@ -181,6 +181,7 @@ test('schema38 preserves an actual schema37 completed attempt without inventing 
   await f.pg.exec(await readFile(new URL('../db/migrations/076_student_feedback.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/077_homeworks.sql',import.meta.url),'utf8'));
   await f.pg.exec(await readFile(new URL('../db/migrations/078_homework_submissions.sql',import.meta.url),'utf8'));
+  await f.pg.exec(await readFile(new URL('../db/migrations/079_homework_grades.sql',import.meta.url),'utf8'));
   assert.deepEqual((await f.view(item.id)).attempts[0].formatAssessment,{state:'unassessed',reason:'ASSESSMENT_NOT_RECORDED',structurallyValidated:false});
   const next=await f.prepare();await f.run();assert.equal((await f.view(next.id)).attempts[0].formatAssessment.state,'matched');
  }finally{await f.pg.close();}

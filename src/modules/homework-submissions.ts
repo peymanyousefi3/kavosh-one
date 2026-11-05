@@ -11,6 +11,7 @@ const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().in
 const answer=z.object({text:text.max(50000),attachments:z.array(z.object({fileId:uuid,fileVersion:version,caption:text.max(2000).default('')}).strict()).max(20).refine(v=>new Set(v.map(f=>f.fileId)).size===v.length,'Duplicate attachment').default([])}).strict();
 const input=z.object({expectedVersion:z.number().int().min(0).max(2147483647),homeworkVersion:version,state:z.enum(['draft','submitted']),answer}).strict().refine(v=>v.state==='draft'||Boolean(v.answer.text.trim()||v.answer.attachments.length),'Answer required');
 const historyQuery=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict(),paging=z.object({limit:z.coerce.number().int().min(1).max(20).default(10),after:uuid.optional()}).strict(),empty=z.object({}).strict();
+const readQuery=z.object({version:z.coerce.number().int().min(1).max(2147483647).optional()}).strict();
 type Input=z.infer<typeof input>;type TaskDocument=Parameters<typeof receivedHomeworkDocument>[0];
 type Source={homework:{id:string;version:number;classId:string;hubId:string;sessionId:string;on:string;timeZone:string;dueAt:string|null;acceptLate:boolean};enrollment:{id:string;version:number;student_id:string};attachments:{id:string;version:number;name:string;claimed_mime_type:string}[]};
 type Submission={id:string;homework_id:string;homework_version:number;student_id:string;class_id:string;hub_id:string;version:number;state:'draft'|'submitted';answer:z.infer<typeof answer>;context:Source;instructions:TaskDocument;submitted_at:string|null;changed_at:string;created_at:string;is_late:boolean};
@@ -30,7 +31,7 @@ async function ownAuthority(ctx:ApiContext,studentId:string,homeworkId:string){
 function view(r:Submission,editable=false,currentHomeworkVersion?:number){return {id:r.id,homeworkId:r.homework_id,homeworkVersion:r.homework_version,studentId:r.student_id,version:r.version,state:r.state,text:r.answer.text,
  attachments:r.answer.attachments.map((f,n)=>({caption:f.caption,name:r.context.attachments[n]?.name,claimedMimeType:r.context.attachments[n]?.claimed_mime_type,availability:'unavailable'})),
  instructions:receivedHomeworkDocument(r.instructions),sessionOn:r.context.homework.on,timeZone:r.context.homework.timeZone,dueAt:r.context.homework.dueAt,acceptLate:r.context.homework.acceptLate,
- submittedAt:r.submitted_at,changedAt:r.changed_at,createdAt:r.created_at,isLate:r.is_late,...currentHomeworkVersion===undefined?{}:{instructionsChanged:r.homework_version!==currentHomeworkVersion},...editable?{editableAnswer:r.answer}:{},mediaServingEnabled:false,attachmentContentVerified:false,externalDeliveryVerified:false,gradingAvailable:false,solutionsAvailable:false};}
+ submittedAt:r.submitted_at,changedAt:r.changed_at,createdAt:r.created_at,isLate:r.is_late,...currentHomeworkVersion===undefined?{}:{instructionsChanged:r.homework_version!==currentHomeworkVersion},...editable?{editableAnswer:r.answer}:{},mediaServingEnabled:false,attachmentContentVerified:false,externalDeliveryVerified:false,gradingAvailable:true,solutionsAvailable:false};}
 async function write(ctx:ApiContext,studentId:string,homeworkId:string,i:Input):Promise<Reply>{
  await ownAuthority(ctx,studentId,homeworkId);await lockAcademyTopology(ctx);
  return mutation(ctx,i,async()=>{
@@ -46,7 +47,7 @@ async function write(ctx:ApiContext,studentId:string,homeworkId:string,i:Input):
 }
 function datedMembership(parameter:3|5){return `($${parameter}::uuid IS NULL OR EXISTS(SELECT 1 FROM public.class_enrollments e WHERE e.class_id=(v.definition->>'class_id')::uuid AND e.student_id=$${parameter} AND e.enabled AND e.joins_on<=(v.definition#>>'{context,homework,on}')::date AND(e.leaves_on IS NULL OR e.leaves_on>=(v.definition#>>'{context,homework,on}')::date)))`;}
 const instructionRevisionJoin=`JOIN public.homework_revisions h ON h.academy_id=v.academy_id AND h.homework_id=(v.definition->>'homework_id')::uuid AND h.version=(v.definition->>'homework_version')::integer`;
-async function selectedRevision(ctx:ApiContext,id:string,drafts:boolean,studentId?:string){return(await ctx.db.query<{definition:Submission}>(`SELECT v.definition||jsonb_build_object('instructions',h.definition->'document') definition FROM public.homework_submission_revisions v ${instructionRevisionJoin} WHERE v.submission_id=$1 AND($2::boolean OR v.state='submitted') AND ${datedMembership(3)} ORDER BY v.version DESC LIMIT 1`,[id,drafts,studentId??null])).rows[0]?.definition??null;}
+async function selectedRevision(ctx:ApiContext,id:string,drafts:boolean,studentId?:string,exactVersion?:number){return(await ctx.db.query<{definition:Submission}>(`SELECT v.definition||jsonb_build_object('instructions',h.definition->'document') definition FROM public.homework_submission_revisions v ${instructionRevisionJoin} WHERE v.submission_id=$1 AND($2::boolean OR v.state='submitted') AND ${datedMembership(3)} AND($4::integer IS NULL OR v.version=$4) ORDER BY v.version DESC LIMIT 1`,[id,drafts,studentId??null,exactVersion??null])).rows[0]?.definition??null;}
 async function history(ctx:ApiContext,id:string,drafts:boolean,q:z.infer<typeof historyQuery>,editable:boolean,currentVersion?:number,studentId?:string):Promise<Reply>{
  const rows=(await ctx.db.query<{version:number;definition:Submission|null}>(`WITH selected AS MATERIALIZED(SELECT v.version,v.definition||jsonb_build_object('instructions',h.definition->'document') definition FROM public.homework_submission_revisions v ${instructionRevisionJoin} WHERE v.submission_id=$1 AND v.version>$2 AND($4::boolean OR v.state='submitted') AND ${datedMembership(5)} ORDER BY v.version LIMIT $3),budget AS(SELECT *,sum(octet_length(definition::text)) OVER(ORDER BY version) bytes FROM selected) SELECT version,CASE WHEN bytes<=2097152 THEN definition ELSE NULL END definition FROM budget ORDER BY version`,[id,q.afterVersion,q.limit+1,drafts,studentId??null])).rows;
  const visible=rows.filter((r):r is typeof r&{definition:Submission}=>r.definition!==null).slice(0,q.limit);if(rows.length&&!visible.length)throw new ApiError(409,'SUBMISSION_HISTORY_REQUIRES_BACKGROUND_JOB');return {status:200,body:{data:visible.map(r=>({version:r.version,definition:view(r.definition,editable,currentVersion)})),nextVersion:rows.length>visible.length?visible.at(-1)!.version:null}};
@@ -54,7 +55,7 @@ async function history(ctx:ApiContext,id:string,drafts:boolean,q:z.infer<typeof 
 async function family(ctx:ApiContext,studentId:string,homeworkId:string,section?:string):Promise<Reply>{
  const params=Object.fromEntries(new URL(ctx.request.url).searchParams),method=ctx.request.method;
  if(method==='POST'&&!section){empty.parse(params);return write(ctx,studentId,homeworkId,input.parse(await jsonBody(ctx.request,131072)));}
- if(method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const q=section==='history'?historyQuery.parse(params):(empty.parse(params),null);
+ if(method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const q=section==='history'?historyQuery.parse(params):null;if(section==='context')empty.parse(params);const exactVersion=section?undefined:readQuery.parse(params).version;
  if(section==='context'){
   const task=await ownAuthority(ctx,studentId,homeworkId),actual=await source(ctx,homeworkId,studentId,{text:'',attachments:[]});if(!actual)throw new ApiError(409,'SUBMISSION_SOURCE_CHANGED');const r=await current(ctx,homeworkId,studentId),now=(await ctx.db.query<{now:string}>('SELECT clock_timestamp()::text now')).rows[0].now;
   const document=(await ctx.db.query<{document:TaskDocument}>("SELECT definition->'document' document FROM public.homework_revisions WHERE homework_id=$1 AND version=$2",[homeworkId,task.version])).rows[0].document;
@@ -62,7 +63,7 @@ async function family(ctx:ApiContext,studentId:string,homeworkId:string,section?
  }
  await authorizeLearningRecipient(ctx,studentId,'received-submissions.view');const r=await current(ctx,homeworkId,studentId);if(!r||!permitted(ctx,r,'received-submissions.view'))throw new ApiError(404,'NOT_FOUND');
  const self=ctx.credential.person_id===studentId,drafts=self||permitted(ctx,r,'received-submissions.drafts'),h=(await ctx.db.query<{version:number}>('SELECT version FROM public.homeworks WHERE id=$1',[homeworkId])).rows[0];
- const selected=await selectedRevision(ctx,r.id,drafts,studentId);if(!selected)throw new ApiError(404,'NOT_FOUND');
+ const selected=await selectedRevision(ctx,r.id,drafts,studentId,exactVersion);if(!selected)throw new ApiError(404,'NOT_FOUND');
  if(section==='history')return history(ctx,r.id,drafts,q!,false,h?.version,studentId);return {status:200,body:{data:view(selected,self,h?.version)}};
 }
 export async function homeworkSubmissions(ctx:ApiContext):Promise<Reply|null>{
@@ -80,14 +81,14 @@ export async function homeworkSubmissions(ctx:ApiContext):Promise<Reply|null>{
  }
  const id=uuid.parse(item![1]),r=(await ctx.db.query<{submission:Submission}>('SELECT to_jsonb(s) submission FROM public.homework_submissions s WHERE id=$1',[id])).rows[0]?.submission;if(!r||!permitted(ctx,r,'homework-submissions.view'))throw new ApiError(404,'NOT_FOUND');const drafts=permitted(ctx,r,'homework-submissions.drafts');
  const h=(await ctx.db.query<{version:number}>('SELECT version FROM public.homeworks WHERE id=$1',[r.homework_id])).rows[0];
- if(item![2])return history(ctx,id,drafts,historyQuery.parse(params),false,h?.version);empty.parse(params);const selected=await selectedRevision(ctx,id,drafts);if(!selected)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:view(selected,false,h?.version)}};
+ if(item![2])return history(ctx,id,drafts,historyQuery.parse(params),false,h?.version);const q=readQuery.parse(params),selected=await selectedRevision(ctx,id,drafts,undefined,q.version);if(!selected)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:view(selected,false,h?.version)}};
 }
 export const homeworkSubmissionsContract=[
  {path:'/api/v1/students/{id}/homework/{homeworkId}/submission/context',method:'get',summary:'Verified own-student authoring context and private editable answer; explicit instruction version and server deadline hint'},
  {path:'/api/v1/students/{id}/homework/{homeworkId}/submission',method:'post',summary:'Verified self student saves a draft or submits an immutable-history answer against the current exact assignment; no guardian/admin/bot impersonation',schema:input},
- {path:'/api/v1/students/{id}/homework/{homeworkId}/submission',method:'get',summary:'Current scoped self/guardian answer projection; guardians receive only submitted revisions unless drafts explicitly granted'},
+ {path:'/api/v1/students/{id}/homework/{homeworkId}/submission',method:'get',summary:'Current scoped self/guardian answer or exact permitted revision; no implicit access to drafts or ineligible original session days',querySchema:readQuery},
  {path:'/api/v1/students/{id}/homework/{homeworkId}/submission/history',method:'get',summary:'Own/linked student answer revisions filtered by draft permission before cursor and two-MiB budget',querySchema:historyQuery},
  {path:'/api/v1/homeworks/{id}/submissions',method:'get',summary:'Exact student/class-scoped answer directory; latest submitted revision remains visible when a newer private draft exists',querySchema:paging},
- {path:'/api/v1/homework-submissions/{id}',method:'get',summary:'Scoped submitted student work with pinned instructions and unavailable attachment placeholders, not other student files'},
+ {path:'/api/v1/homework-submissions/{id}',method:'get',summary:'Scoped submitted student work or exact permitted revision with pinned instructions; no draft bypass through version selection',querySchema:readQuery},
  {path:'/api/v1/homework-submissions/{id}/history',method:'get',summary:'Immutable submitted answer history; separate explicit permission needed for private drafts',querySchema:historyQuery}
 ] as const;
