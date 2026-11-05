@@ -37,6 +37,11 @@ test('duration tolerance is strict above the threshold; shifted and shorter sess
 test('prior worker-time claims exclude every work arrangement and leave exact surviving source allocations',()=>{
  const r=plan([source('low',0,2*hour,2000n),source('high',hour,3*hour)],[{start:0,end:2*hour}]);assert.equal(r.actual.gross.amount,'30.00');assert.deepEqual(r.actual.workAllocations.map(w=>w.engagementId),['high']);assert.deepEqual(r.actual.timeClaims,[{start:2*hour,end:3*hour}]);assert.equal(r.priorClaimsVerified,false);conserved(r);
 });
+test('earning source identity is independent of payroll window and operational review but changes with price or entry revision',()=>{
+ const s=source('work',0,hour),original=plan([s]).sourceIdentities,reviewed=structuredClone(s);reviewed.entry.evidence_current=false;reviewed.entry.evidence_decision=null;reviewed.entry.current_session_version=2;assert.deepEqual(plan([reviewed]).sourceIdentities,original);
+ assert.deepEqual(payrollHourlyPlan([s],{start:hour/2,end:hour},2).sourceIdentities,original);assert.deepEqual(plan([s],[{start:0,end:hour/2}]).sourceIdentities,original);
+ const repriced=structuredClone(s);repriced.rate=4000n;assert.notDeepEqual(plan([repriced]).sourceIdentities,original);const corrected=structuredClone(s);corrected.entry.version=2;assert.notDeepEqual(plan([corrected]).sourceIdentities,original);
+});
 test('rounded-to-zero work remains reviewable and configured claims are not mistaken for paid earnings',()=>{
  const s=source('short',0,120000);s.rule.rounding='nearest_5';const r=plan([s]);assert.equal(r.actual.gross.amount,'1.00');assert.equal(r.configured.gross.minor,'0');assert.deepEqual(r.configured.workAllocations,[]);assert.equal(r.sourceAssessments.length,1);assert.equal(r.sourceDurationReductionRequiresReview,true);assert.equal(r.configuredReductionRequiresReview,true);assert.deepEqual(r.configured.timeClaims,[{start:0,end:120000}]);conserved(r);
 });

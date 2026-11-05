@@ -119,6 +119,7 @@ async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
   if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.expense_bills WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'EXPENSE_VOID_WORKFLOW_REQUIRED');
   if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.expense_payments WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'EXPENSE_PAYMENT_CORRECTION_WORKFLOW_REQUIRED');
   if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payroll_adjustments WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'PAYROLL_ADJUSTMENT_CORRECTION_WORKFLOW_REQUIRED');
+  if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payroll_hourly_accruals WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'HOURLY_CORRECTION_WORKFLOW_REQUIRED');
  return prepared;
 }
 export const journalActions:ApprovalRegistry={

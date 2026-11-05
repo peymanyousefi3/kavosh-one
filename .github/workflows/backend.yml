@@ -50,10 +50,6 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Compile the isolated notification daemon without a TypeScript runtime
         run: pnpm notifications:build
-      - name: Focused report publication, shared evidence and time persistence
-        run: node --import tsx --test --test-concurrency=1 tests/session-staff-feedback.test.ts tests/session-evidence-reviews.test.ts tests/session-evidence-report.test.ts tests/poll-template-use.test.ts tests/poll-templates.test.ts tests/poll-response-moderation.test.ts tests/poll-results.test.ts tests/poll-responses.test.ts tests/poll-answer.test.ts tests/date-time-input.test.ts tests/polls.test.ts tests/report-comments.test.ts tests/homework-solutions.test.ts tests/homework-grades.test.ts tests/homework-submissions.test.ts tests/homeworks.test.ts tests/student-feedback.test.ts tests/assessment-rubrics.test.ts tests/report-publications.test.ts tests/session-reports.test.ts tests/session-attendance.test.ts tests/session-time.test.ts
-        env:
-          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: API contract matches the implemented schemas
         run: pnpm api:generate && git diff --exit-code -- public/openapi.json
       # Routine updates prioritize focused business/security/accounting logic.
@@ -114,6 +110,36 @@ jobs:
       - name: Remove disposable test container
         if: always()
         run: docker rm --force kavosh-one-ci || true
+  learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Independent PostgreSQL service: keep native roles/fixtures isolated.
+    # The old monolithic run42033366344 spent9m33here,then exceeded30m
+    # during build after all logic passed. Keep every check,run in parallel.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Focused report publication, shared evidence and time persistence
+        run: node --import tsx --test --test-concurrency=1 tests/session-staff-feedback.test.ts tests/session-evidence-reviews.test.ts tests/session-evidence-report.test.ts tests/poll-template-use.test.ts tests/poll-templates.test.ts tests/poll-response-moderation.test.ts tests/poll-results.test.ts tests/poll-responses.test.ts tests/poll-answer.test.ts tests/date-time-input.test.ts tests/polls.test.ts tests/report-comments.test.ts tests/homework-solutions.test.ts tests/homework-grades.test.ts tests/homework-submissions.test.ts tests/homeworks.test.ts tests/student-feedback.test.ts tests/assessment-rubrics.test.ts tests/report-publications.test.ts tests/session-reports.test.ts tests/session-attendance.test.ts tests/session-time.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
   image-engine:
     runs-on: ubuntu-latest
     timeout-minutes: 10
