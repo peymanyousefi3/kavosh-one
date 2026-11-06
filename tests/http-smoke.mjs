@@ -21,6 +21,8 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['copies','copy-destinations']){const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceFingerprint|sourceTargetId|destinationTargetId|stack/);}
+  {const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/copies',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const path of ['storage/routes','storage/routes/00000000-0000-4000-8000-000000000001','storage/routes/00000000-0000-4000-8000-000000000001/history']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceTargetId|destinationTargetId|definition|stack/);}
   for(const path of ['storage/routes','storage/routes/00000000-0000-4000-8000-000000000001/change']){const r=await fetch(base+'/api/v1/'+path,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const path of ['payroll/work-agreements/00000000-0000-4000-8000-000000000001/content','payroll/work-agreements/00000000-0000-4000-8000-000000000001/content/review']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/contentAttestation|sourceSnapshot|routing|stack/);}
