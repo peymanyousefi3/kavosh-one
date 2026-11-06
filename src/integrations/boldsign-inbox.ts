@@ -13,7 +13,7 @@ export const boldSignWebhookBody=z.union([probe,event]).describe('Original UTF-8
 function json(bytes:Uint8Array){try{return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)) as unknown;}catch{throw new ApiError(400,'INVALID_BOLDSIGN_EVENT');}}
 export async function assertSignatureIngestRole(db:Connection){
  const r=await db.query<{safe:boolean}>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls AND pg_has_role(current_user,'kavosh_signature_ingest','member')
- AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE (left(b.rolname,3)='pg_' OR b.rolname IN ('kavosh_runtime','kavosh_identity','kavosh_identity_policy','kavosh_delivery','kavosh_file_worker','kavosh_file_policy','kavosh_signature_policy')) AND pg_has_role(current_user,b.oid,'member'))
+ AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE (left(b.rolname,3)='pg_' OR b.rolname IN ('kavosh_runtime','kavosh_identity','kavosh_identity_policy','kavosh_delivery','kavosh_file_worker','kavosh_file_policy','kavosh_signature_policy','kavosh_signature_result_worker','kavosh_signature_result_policy')) AND pg_has_role(current_user,b.oid,'member'))
  AND NOT has_schema_privilege(current_user,'identity','usage') AND NOT has_schema_privilege(current_user,'auth_private','usage') AND NOT has_schema_privilege(current_user,'public','create')
  AND NOT EXISTS(SELECT 1 FROM pg_database d WHERE d.datname=current_database() AND pg_has_role(current_user,d.datdba,'member'))
  AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname IN ('public','identity','auth_private') AND pg_has_role(current_user,n.nspowner,'member'))

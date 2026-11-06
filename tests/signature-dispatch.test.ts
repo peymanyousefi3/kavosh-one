@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { agreementFixture,reviewedAgreementContent } from './agreement-fixture.ts';
 import { buildBoldSignSendRequest } from '../src/integrations/boldsign-send-request.ts';
+import { recordSignatureTransportReceipt } from '../src/integrations/signature-result-worker.ts';
+import type { Database } from '../src/core/database.ts';
 
 async function fixture(throughSchema?:number){
  const f=await agreementFixture(throughSchema);
@@ -133,8 +135,16 @@ test('schema121 preserves a real schema120 coordination start without fabricatin
    await f.pg.query(`INSERT INTO public.audit_events(academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes) VALUES($1,$2,$3,$4,'human',$5,'signature.dispatch.started',$6,$7,$8::jsonb)`,[f.a,auditId,f.actors.master.person,f.actors.master.session,randomUUID(),startId,f.hub,JSON.stringify({requestId:f.requestId,attemptId:f.attemptId,severity:'critical',providerVerified:false})]);
    await f.pg.query('INSERT INTO public.signature_dispatch_starts(academy_id,id,attempt_id,actor_id,audit_id) VALUES($1,$2,$3,$4,$5)',[f.a,startId,f.attemptId,f.actors.master.person,auditId]);await f.pg.exec('COMMIT');
   }catch(error){await f.pg.exec('ROLLBACK');throw error;}
-  const before=(await f.pg.query('SELECT * FROM public.signature_dispatch_starts WHERE id=$1',[startId])).rows[0];await f.pg.exec(await readFile(new URL('../db/migrations/121_signature_original_binding.sql',import.meta.url),'utf8'));
+  const before=(await f.pg.query('SELECT * FROM public.signature_dispatch_starts WHERE id=$1',[startId])).rows[0];await f.pg.exec(await readFile(new URL('../db/migrations/121_signature_original_binding.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,121);
   const {original_copy_id,original_source,original_source_fingerprint,...unchanged}=(await f.pg.query('SELECT * FROM public.signature_dispatch_starts WHERE id=$1',[startId])).rows[0];assert.deepEqual(unchanged,before);assert.equal(original_copy_id,null);assert.equal(original_source,null);assert.equal(original_source_fingerprint,null);
-  const history=await f.request(f.path);assert.equal(history.response.status,200);assert.equal(history.body.data.start.originalCopyBound,false);assert.equal(history.body.data.start.originalCopyCurrent,null);
+  await f.pg.exec(await readFile(new URL('../db/migrations/122_signature_transport_receipts.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT * FROM public.signature_transport_receipts')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.signature_transport_conflicts')).rows.length,0);
+  const history=await f.request(f.path);assert.equal(history.response.status,200);assert.equal(history.body.data.start.originalCopyBound,false);assert.equal(history.body.data.start.originalCopyCurrent,null);assert.equal(history.body.data.workerObservation,null);
  }finally{await f.pg.close();}
+});
+check('a service receipt cannot promote unbound coordination into provider authority',async f=>{
+ const started=await f.start();assert.equal(started.response.status,201);assert.equal(started.body.data.originalCopyBound,false);
+ const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_signature_result_worker');return c;}},before=(await f.pg.query('SELECT count(*)::int n FROM public.outbox_events')).rows[0].n;
+ try{const result=await recordSignatureTransportReceipt(database,{academyId:f.a,startId:started.body.data.id,workerId:randomUUID(),outcome:{state:'outcome_unknown',automaticRetryAllowed:false,reconciliationRequired:true,deliveryVerified:false}});assert.equal(result.status,'unavailable');assert.equal(result.recorded,false);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+ assert.equal((await f.pg.query('SELECT count(*)::int n FROM public.outbox_events')).rows[0].n,before);assert.equal((await f.pg.query('SELECT * FROM public.signature_transport_receipts')).rows.length,0);
+ assert.deepEqual((await f.request(f.path+'/conflicts')).body.data,[]);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='files.view'",[f.managerRole]);assert.ok([403,404].includes((await f.request(f.path+'/conflicts',undefined,'bot')).response.status));
 });

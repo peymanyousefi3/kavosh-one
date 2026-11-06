@@ -107,10 +107,12 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
  }
 }
 
-export type BoldSignSubmissionOutcome=
- |{state:'not_attempted';automaticRetryAllowed:false;reconciliationRequired:false;deliveryVerified:false}
- |{state:'outcome_unknown';automaticRetryAllowed:false;reconciliationRequired:true;deliveryVerified:false}
- |{state:'accepted_for_processing';documentId:string;automaticRetryAllowed:false;reconciliationRequired:true;deliveryVerified:false};
+export const boldSignSubmissionOutcomeSchema=z.discriminatedUnion('state',[
+ z.object({state:z.literal('not_attempted'),automaticRetryAllowed:z.literal(false),reconciliationRequired:z.literal(false),deliveryVerified:z.literal(false)}).strict(),
+ z.object({state:z.literal('outcome_unknown'),automaticRetryAllowed:z.literal(false),reconciliationRequired:z.literal(true),deliveryVerified:z.literal(false)}).strict(),
+ z.object({state:z.literal('accepted_for_processing'),documentId:uuid,automaticRetryAllowed:z.literal(false),reconciliationRequired:z.literal(true),deliveryVerified:z.literal(false)}).strict()
+]);
+export type BoldSignSubmissionOutcome=z.infer<typeof boldSignSubmissionOutcomeSchema>;
 
 // Internal IO primitive, NOT a public endpoint or authorization boundary.
 // Caller must retain a durable single-use attempt BEFORE invoking it, bind the

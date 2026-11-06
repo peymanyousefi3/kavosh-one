@@ -9,6 +9,7 @@ import { boldSignStoredOriginalSchema } from '../integrations/boldsign-stored-re
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const sourceQuery=z.object({copyId:uuid.optional()}).strict();
+const conflictQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(20),after:hash.optional()}).strict();
 const manifest=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash,
  original:z.object({copyId:uuid,sourceFingerprint:hash}).strict().optional()}).strict();
 const observation=z.discriminatedUnion('state',[
@@ -57,14 +58,23 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
   await record(ctx.db,ctx.credential,ctx.requestId,'signature.dispatch.source.read',requestId,p.hub_id,{privateContactRead:true,externalRequestMade:false});
   return {status:200,body:{data:{draft:prepared.data,file:{id:binding.file_id,version:binding.file_version,inspectionId:binding.inspection_id,attemptNo:binding.attempt_no},original,originalEvidenceAvailable:Boolean(original),...markers,originalBytesRetrieved:false,fileSafetyCleared:false,externalRequestMade:false}}};
  }
- const path=/^signature-send-requests\/([^/]+)\/attempts\/([^/]+)\/dispatch(?:\/(outcome))?$/.exec(ctx.path);if(!path)return null;
- z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
- const requestId=uuid.parse(path[1]),attemptId=uuid.parse(path[2]),outcome=Boolean(path[3]);
+ const path=/^signature-send-requests\/([^/]+)\/attempts\/([^/]+)\/dispatch(?:\/(outcome|conflicts))?$/.exec(ctx.path);if(!path)return null;
+ const params=Object.fromEntries(new URL(ctx.request.url).searchParams),requestId=uuid.parse(path[1]),attemptId=uuid.parse(path[2]),outcome=path[3]==='outcome';
+ if(path[3]==='conflicts'){
+  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const query=conflictQuery.parse(params);await selected(ctx,requestId,attemptId,false);
+  const start=(await ctx.db.query<{id:string}>('SELECT id FROM public.signature_dispatch_starts WHERE attempt_id=$1',[attemptId])).rows[0];
+  const rows=start?(await ctx.db.query<{payload_fingerprint:string}>('SELECT payload_fingerprint,worker_id,state,document_id,received_at FROM public.signature_transport_conflicts WHERE start_id=$1 AND($2::text IS NULL OR payload_fingerprint>$2) ORDER BY payload_fingerprint LIMIT $3',[start.id,query.after??null,query.limit+1])).rows:[];
+  return {status:200,body:{data:rows.slice(0,query.limit),nextCursor:rows.length>query.limit?rows[query.limit-1].payload_fingerprint:null,providerVerified:false,admissionCleared:false}};
+ }
+ z.object({}).strict().parse(params);
  if(ctx.request.method==='GET'&&!outcome){
   await selected(ctx,requestId,attemptId,false);
   const start=(await ctx.db.query(`SELECT id,attempt_id,actor_id,created_at,original_copy_id,original_source_fingerprint,original_copy_id IS NOT NULL AS "originalCopyBound",CASE WHEN original_copy_id IS NULL THEN NULL ELSE coalesce(original_source IS NOT DISTINCT FROM public.signature_dispatch_original_source(attempt_id,original_copy_id),false) END AS "originalCopyCurrent" FROM public.signature_dispatch_starts WHERE attempt_id=$1`,[attemptId])).rows[0];
   const observed=start?(await ctx.db.query('SELECT id,state,document_id,source_current,created_at FROM public.signature_dispatch_outcomes WHERE start_id=$1',[start.id])).rows[0]??null:null;
-  return {status:200,body:{data:{start:start??null,observation:observed,state:observed?.state??(start?'started_outcome_unrecorded':'not_started'),reconciliationRequired:Boolean(start)&&observed?.state!=='not_attempted',...markers}}};
+  const worker=start?(await ctx.db.query('SELECT worker_id,state,document_id,received_at FROM public.signature_transport_receipts WHERE start_id=$1',[start.id])).rows[0]??null:null;
+  const workerConflict=start?Boolean((await ctx.db.query<{present:boolean}>('SELECT EXISTS(SELECT 1 FROM public.signature_transport_conflicts WHERE start_id=$1) present',[start.id])).rows[0].present):false;
+  const conflict=workerConflict||Boolean(worker&&observed&&(worker.state!==observed.state||worker.document_id!==observed.document_id)),state=conflict?'conflicting_observations':worker?.state??observed?.state??(start?'started_outcome_unrecorded':'not_started');
+  return {status:200,body:{data:{start:start??null,observation:observed,workerObservation:worker?{...worker,sourceRecheckedAtRecording:false}:null,observationConflict:conflict,state,reconciliationRequired:conflict||(Boolean(start)&&state!=='not_attempted'),...markers}}};
  }
  if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const input=outcome?observation.parse(await jsonBody(ctx.request)):manifest.parse(await jsonBody(ctx.request));
@@ -98,6 +108,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
 export const signatureDispatchContract=[
  {path:'/api/v1/signature-send-requests/{id}/dispatch-source',method:'get',summary:'Audited private signing draft and optional exact verified-copy descriptor under current reviewed serving policy; no bytes, safety clearance or provider call',querySchema:sourceQuery},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'post',summary:'Consume one durable reservation once; optional original binds current verified-copy/policy fingerprint natively. Unbound coordination is not provider authority; no provider call or file clearance',schema:manifest},
- {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'get',summary:'Read private send-once start and bounded unverified transport observation'},
+ {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'get',summary:'Read private actor/service observations and original-binding status;conflicts require reconciliation,never signature/admission proof'},
+ {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch/conflicts',method:'get',summary:'Private paginated immutable contradictory service observations;current source rights required,no promotion to signature proof',querySchema:conflictQuery},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch/outcome',method:'post',summary:'Record one immutable transport observation by starter, including after source expiry; never signature/admission proof',schema:observation}
 ] as const;
