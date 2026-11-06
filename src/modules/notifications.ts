@@ -4,7 +4,7 @@ import { jsonBody,assignmentGrantsForPeople,mutation,record,type ApiContext,type
 import { approvalReadParameters,approvalReadPolicyParameters,permissionScope } from '../core/approvals.ts';
 import { ApiError,requireScope,type Capability } from '../core/policy.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
-import { boundAutomationEvent,automationEventReadSelectionSQL,requireCurrentSessionEvent } from './automation-events.ts';
+import { boundAutomationEvent,automationEventReadSelectionSQL,requireCurrentSessionEvent,type BoundEvent } from './automation-events.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { automationRuleHeader,automationRuleRevision } from './automation-rules.ts';
 
@@ -27,6 +27,19 @@ async function own(ctx:ApiContext,id:string){human(ctx);const n=(await ctx.db.qu
 // Substitute only our five constant parameter names, never user SQL. This is
 // the identical shared case predicate, evaluated for all recipient policies.
 const recipientSelection=automationEventReadSelectionSQL.replace(/\$([1-5])\b/g,(_m,n:string)=>['r.is_master','r.person_id','r.has_approval_scope','r.approval_scope','r.private_scopes'][Number(n)-1]);
+async function sessionAudiences(ctx:ApiContext,event:BoundEvent){
+ if(event.source_kind!=='session')return [];
+ // Current effective membership,not a saved roster or a person's primary hub.
+ // The ordinary recipient policy below still independently gates every person.
+ const rows=(await ctx.db.query<{kind:'session_guardians'|'session_staff';person_id:string}>(`WITH source AS MATERIALIZED(SELECT public.session_notification_source($1) s)
+ SELECT DISTINCT 'session_guardians' AS kind,f.guardian_id AS person_id FROM source
+ JOIN public.class_enrollments e ON e.class_id=(s->>'classId')::uuid AND e.enabled AND e.joins_on<=(s->>'on')::date AND(e.leaves_on IS NULL OR e.leaves_on>=(s->>'on')::date)
+ JOIN public.family_relationships f ON f.academy_id=e.academy_id AND f.student_id=e.student_id AND f.relationship IN('parent','legal_guardian') AND f.state='approved'
+ WHERE public.report_recipient(e.student_id,f.guardian_id)
+ UNION SELECT 'session_staff',a.person_id FROM source JOIN public.class_staff a ON a.class_id=(s->>'classId')::uuid AND a.active AND a.starts_on<=(s->>'on')::date AND(a.ends_on IS NULL OR a.ends_on>=(s->>'on')::date)
+ ORDER BY kind,person_id LIMIT 1001`,[event.projection.entityId])).rows;
+ if(rows.length>1000)throw new ApiError(422,'AUTOMATION_RECIPIENT_SCAN_LIMIT');return rows;
+}
 
 export async function notifications(ctx:ApiContext):Promise<Reply|null>{
  const history=/^automations\/rules\/([^/]+)\/runs$/.exec(ctx.path);
@@ -54,14 +67,15 @@ export async function notifications(ctx:ApiContext):Promise<Reply|null>{
    if(outcome==='processed'){
     const master=(await ctx.db.query<{master_person_id:string}>('SELECT master_person_id FROM public.academies')).rows[0].master_person_id;
     const supervisors=event.projection.actorId&&simulation.actions.some(a=>a.audience.kind==='actor_supervisors')?(await ctx.db.query<{id:string}>('SELECT person_id AS id FROM public.supervisor_chain($1)',[event.projection.actorId])).rows.map(p=>p.id):[];
-    const audiences=simulation.actions.map(a=>a.audience.kind==='school_master'?[master]:a.audience.kind==='people'?a.audience.personIds:supervisors),ids=[...new Set(audiences.flat())];
+    const sessionRecipients=simulation.actions.some(a=>a.audience.kind==='session_guardians'||a.audience.kind==='session_staff')?await sessionAudiences(ctx,event):[],recordRecipients=new Set(sessionRecipients.map(p=>p.person_id));
+    const audiences=simulation.actions.map(a=>a.audience.kind==='school_master'?[master]:a.audience.kind==='people'?a.audience.personIds:a.audience.kind==='actor_supervisors'?supervisors:sessionRecipients.filter(p=>p.kind===a.audience.kind).map(p=>p.person_id)),ids=[...new Set(audiences.flat())];
     if(ids.length>1000)throw new ApiError(422,'AUTOMATION_RECIPIENT_SCAN_LIMIT');
     const capabilities=(await ctx.db.query<{name:Capability}>('SELECT name FROM public.capability_catalog')).rows.map(c=>c.name);
     const people=(await ctx.db.query<{id:string;hub_id:string|null}>('SELECT id,hub_id FROM public.people WHERE id=ANY($1::uuid[]) AND kind=\'human\' AND status=\'active\' AND auth_user_id IS NOT NULL ORDER BY id',[ids])).rows;
     const grants=await assignmentGrantsForPeople(ctx.db,people.map(p=>p.id)),policies=[];
     // Bounded recipients share existing policy evaluation, without a query per
     // person. No producer/bot grants are lent to notification recipients.
-    for(const person of people){if(header.hub_id!==null&&person.hub_id!==header.hub_id&&person.id!==master)continue;
+    for(const person of people){if(header.hub_id!==null&&person.hub_id!==header.hub_id&&person.id!==master&&!recordRecipients.has(person.id))continue;
      const recipient={...ctx,credential:{...ctx.credential,person_id:person.id,kind:'human' as const,capabilities,all_hubs:true,hub_ids:[]},grants:person.id===master?capabilities.map(capability=>({capability,effect:'allow' as const,allHubs:true,hubIds:[]})):grants.get(person.id)??[]};
      const [is_master,person_id,has_approval_scope,approval_scope,private_scopes]=approvalReadPolicyParameters(recipient,person.id===master);policies.push({is_master,person_id,has_approval_scope,approval_scope:JSON.parse(approval_scope as string),private_scopes:JSON.parse(private_scopes as string)});
     }

@@ -6,17 +6,56 @@ import { reportFixture } from './report-fixture.ts';
 import { processOneNotification } from '../src/automations/notification-worker.ts';
 import type { Database } from '../src/core/database.ts';
 
-async function fixture(){const f=await reportFixture(),student=f.actors.peer.person,guardian=f.actors.staff.person;try{
+async function fixture(audienceKind?:'session_guardians'|'session_staff',throughSchema?:number){const f=await reportFixture(throughSchema),student=f.actors.peer.person,guardian=f.actors.staff.person;try{
  assert.equal((await f.request('students',{personId:student,legalName:'PRIVATE calendar student',dateOfBirth:'2014-03-20',recruiter:{kind:'academy'}})).response.status,201);
  assert.equal((await f.request('guardians',{personId:guardian,legalName:'PRIVATE calendar guardian'})).response.status,201);
  const relationship=await f.request('students/'+student+'/guardians',{guardianId:guardian,relationship:'parent',reason:'PRIVATE calendar relationship'});assert.equal(relationship.response.status,201);
  const enrollment=await f.request('classes/'+f.c.id+'/enrollments',{studentId:student,studentProfileVersion:1,joinsOn:'2026-01-02',reason:'PRIVATE dated calendar membership'});assert.equal(enrollment.response.status,201);
  const role=await f.request('roles',{name:'Own linked calendar',permissions:[{capability:'received-calendar.view',effect:'allow'}]});assert.equal(role.response.status,201,JSON.stringify(role.body));const access='people/'+guardian+'/access',version=(await f.request(access)).body.data.version,granted=await f.request(access,{expectedVersion:version,assignments:[{roleId:role.body.data.id,allHubs:false,personIds:[student]}]});assert.equal(granted.response.status,200,JSON.stringify(granted.body));
- const definition={name:'Session changes',enabled:true,trigger:{kind:'domain_event',eventTypes:['session.changed']},condition:{op:'exists',field:'entityId'},actions:[{kind:'notify',channels:['portal'],audience:{kind:'people',personIds:[guardian]},title:{en:'Class details changed'},body:{en:'Open the linked session for current details.'}}],execution:{mode:'automatic',maxRecipientsPerEvent:100,maxDailyDeliveries:100,maxDailySms:0,cooldownSeconds:0,maxChainDepth:1}};
+ const definition={name:'Session changes',enabled:true,trigger:{kind:'domain_event',eventTypes:['session.changed']},condition:{op:'exists',field:'entityId'},actions:[{kind:'notify',channels:['portal'],audience:audienceKind?{kind:audienceKind}:{kind:'people',personIds:[guardian]},title:{en:'Class details changed'},body:{en:'Open the linked session for current details.'}}],execution:{mode:'automatic',maxRecipientsPerEvent:100,maxDailyDeliveries:100,maxDailySms:0,cooldownSeconds:0,maxChainDepth:1}};
  const rule=await f.request('automations/rules',{hubId:f.hub,code:'SESSION_CHANGES',definition,reason:'Reviewed calendar notification'});assert.equal(rule.response.status,201,JSON.stringify(rule.body));
  const path='received-sessions/'+f.c.session.id,change=(expectedVersion:number,change:unknown)=>f.request('sessions/'+f.c.session.id+'/change',{expectedVersion,change,reason:'PRIVATE session change note'}),event=async()=>{const e=await f.request('automations/events?sourceKind=session&eventType=session.changed');assert.equal(e.response.status,200,JSON.stringify(e.body));return e.body.data;},dispatch=(eventId:string)=>f.request('automations/rules/'+rule.body.data.id+'/dispatch',{eventId,expectedVersion:1});
  return {...f,student,guardian,parentRole:role.body.data.id,relationship:relationship.body.data,enrollment:enrollment.body.data,rule:rule.body.data,path,changeSession:change,events:event,dispatch};
  }catch(error){await f.pg.close();throw error;}}
+test('dynamic guardian audience follows current effective enrollment and family authority,not a saved person list',async()=>{
+ const f=await fixture('session_guardians');try{
+  await f.pg.query('UPDATE public.people SET hub_id=$1 WHERE id=$2',[f.otherHub,f.guardian]);
+  assert.equal((await f.changeSession(1,{kind:'cancel'})).response.status,200);assert.equal((await f.dispatch((await f.events())[0].id)).body.data.summary.portalNotifications,1);
+  assert.equal((await f.request('enrollments/'+f.enrollment.id+'/change',{expectedVersion:1,joinsOn:'2026-01-03',reason:'Student joins after this session'})).response.status,200);
+  assert.equal((await f.changeSession(2,{kind:'restore'})).response.status,200);assert.equal((await f.dispatch((await f.events()).find((e:{sourceVersion:number})=>e.sourceVersion===3).id)).body.data.summary.portalNotifications,0);
+  assert.equal((await f.request('enrollments/'+f.enrollment.id+'/change',{expectedVersion:2,joinsOn:'2026-01-02',reason:'Restore actual effective membership'})).response.status,200);
+  assert.equal((await f.request('family-relationships/'+f.relationship.id+'/suspend',{expectedVersion:1,reason:'Guardian authority withdrawn'})).response.status,200);
+  assert.equal((await f.changeSession(3,{kind:'cancel'})).response.status,200);assert.equal((await f.dispatch((await f.events()).find((e:{sourceVersion:number})=>e.sourceVersion===4).id)).body.data.summary.portalNotifications,0);
+ }finally{await f.pg.close();}
+});
+test('one guardian with two enrolled siblings receives one notice and retains access when only one child leaves',async()=>{
+ const f=await fixture('session_guardians');try{
+  const sibling=f.actors.manager.person;assert.equal((await f.request('students',{personId:sibling,legalName:'PRIVATE sibling',dateOfBirth:'2015-04-12',recruiter:{kind:'academy'}})).response.status,201);
+  assert.equal((await f.request('students/'+sibling+'/guardians',{guardianId:f.guardian,relationship:'parent',reason:'Verified sibling relationship'})).response.status,201);
+  assert.equal((await f.request('classes/'+f.c.id+'/enrollments',{studentId:sibling,studentProfileVersion:1,joinsOn:'2026-01-02',reason:'Sibling also attends this session'})).response.status,201);
+  const access='people/'+f.guardian+'/access';assert.equal((await f.request(access,{expectedVersion:(await f.request(access)).body.data.version,assignments:[{roleId:f.parentRole,allHubs:false,personIds:[f.student,sibling]}]})).response.status,200);
+  assert.equal((await f.changeSession(1,{kind:'cancel'})).response.status,200);assert.equal((await f.dispatch((await f.events())[0].id)).body.data.summary.portalNotifications,1,'two children do not duplicate the same action for their guardian');
+  assert.equal((await f.request('enrollments/'+f.enrollment.id+'/change',{expectedVersion:1,joinsOn:'2026-01-03',reason:'One sibling joins later'})).response.status,200);
+  assert.equal((await f.request('family-relationships/'+f.relationship.id+'/suspend',{expectedVersion:1,reason:'One relationship withdrawn'})).response.status,200);
+  assert.equal((await f.changeSession(2,{kind:'restore'})).response.status,200);assert.equal((await f.dispatch((await f.events()).find((e:{sourceVersion:number})=>e.sourceVersion===3).id)).body.data.summary.portalNotifications,1);assert.equal((await f.request(f.path,undefined,'staff')).response.status,200,'other current child still grants authorized calendar access');
+ }finally{await f.pg.close();}
+});
+test('audience migration preserves existing approved static definitions and permits a newly reviewed dynamic revision',async()=>{
+ const f=await fixture(undefined,126);try{
+  const before=(await f.pg.query('SELECT * FROM public.automation_rule_revisions WHERE rule_id=$1 ORDER BY version',[f.rule.id])).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/127_session_notification_audiences.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query('SELECT * FROM public.automation_rule_revisions WHERE rule_id=$1 ORDER BY version',[f.rule.id])).rows,before);
+  const prior=before[0].definition as {actions:{audience:unknown}[]},definition={...prior,trigger:{kind:'domain_event',eventTypes:['*']},actions:prior.actions.map(a=>({...a,audience:{kind:'session_guardians'}}))};const changed=await f.request('automations/rules/'+f.rule.id+'/change',{expectedVersion:1,definition,reason:'Use current class families instead of static audience'});assert.equal(changed.response.status,200,JSON.stringify(changed.body));assert.equal(changed.body.data.latestVersion,2);
+  assert.equal((await f.changeSession(1,{kind:'cancel'})).response.status,200);const sent=await f.request('automations/rules/'+f.rule.id+'/dispatch',{eventId:(await f.events())[0].id,expectedVersion:2});assert.equal(sent.response.status,201);assert.equal(sent.body.data.summary.portalNotifications,1);
+  const audit=(await f.request('automations/events?sourceKind=audit&limit=100')).body.data.find((e:{sample:{hubId:string|null}})=>e.sample.hubId===f.hub);assert.ok(audit);const unrelated=await f.request('automations/rules/'+f.rule.id+'/dispatch',{eventId:audit.id,expectedVersion:2});assert.equal(unrelated.response.status,201);assert.equal(unrelated.body.data.outcome,'processed');assert.equal(unrelated.body.data.summary.portalNotifications,0,'wildcard audit events cannot borrow class audiences from their entity ID');
+ }finally{await f.pg.close();}
+});
+test('dynamic teaching audience follows inclusive session-day assignments and suppresses deactivated staff',async()=>{
+ const f=await fixture('session_staff');try{
+  assert.equal((await f.changeSession(1,{kind:'cancel'})).response.status,200);assert.equal((await f.dispatch((await f.events())[0].id)).body.data.summary.portalNotifications,1,'assignment ending on local session day is included even when UTC day is later');
+  assert.equal((await f.request('class-staff/'+f.assignment.id+'/update',{expectedVersion:1,active:false,reason:'Teacher no longer assigned'})).response.status,200);
+  assert.equal((await f.changeSession(2,{kind:'restore'})).response.status,200);assert.equal((await f.dispatch((await f.events()).find((e:{sourceVersion:number})=>e.sourceVersion===3).id)).body.data.summary.portalNotifications,0);
+ }finally{await f.pg.close();}
+});
 test('linked parent receives current private calendar and approved session-change notice without roster,private notes or meeting URL in events',async()=>{
  const f=await fixture();try{
   const original=await f.request(f.path,undefined,'staff');assert.equal(original.response.status,200,JSON.stringify({body:original.body,failures:f.metrics.queryFailures}));assert.equal(original.body.data.localStart,'2026-01-02T23:30');assert.equal(original.body.rosterIncluded,false);assert.equal(original.body.privateProfilesIncluded,false);

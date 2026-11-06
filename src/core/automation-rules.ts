@@ -65,6 +65,7 @@ const template=(max:number)=>text.min(1).max(max).refine(v=>v.trim().length>0&&(
 const localized=(max:number)=>z.object({en:template(max),fr:template(max).optional(),'zh-CN':template(max).optional()}).strict();
 const audience=z.discriminatedUnion('kind',[
  z.object({kind:z.literal('school_master')}).strict(),z.object({kind:z.literal('actor_supervisors')}).strict(),
+ z.object({kind:z.literal('session_guardians')}).strict(),z.object({kind:z.literal('session_staff')}).strict(),
  z.object({kind:z.literal('people'),personIds:z.array(uuid).min(1).max(100).refine(v=>new Set(v).size===v.length)}).strict()
 ]);
 const action=z.object({kind:z.literal('notify'),channels:z.array(z.enum(['portal','email','sms'])).min(1).max(3).refine(v=>new Set(v).size===v.length),audience,severity:z.enum(['inherit','normal','critical']).default('inherit'),title:localized(200),body:localized(2000)}).strict();
