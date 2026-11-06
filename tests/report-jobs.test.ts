@@ -90,17 +90,22 @@ check('queued bot reports retain finite credential scope and revoked credentials
 test('two brief native report workers lease a queued generation only once',{skip:!process.env.TEST_DATABASE_URL},async()=>{
  const f=await fixture();try{const q=await f.queue();assert.equal(q.response.status,202);const started=performance.now(),results=await Promise.all([f.work(),f.work()]);assert.equal(results.filter(r=>r.claimed).length,1,JSON.stringify(f.errors));assert.ok(results.some(r=>r.recorded&&r.outcome==='succeeded'));assert.equal((await f.pg.query('SELECT * FROM public.report_job_results')).rows.length,1);console.log(JSON.stringify({measurement:'brief-report-worker-race',workers:2,elapsedMs:Math.ceil(performance.now()-started)}));}finally{await f.pg.close();}
 });
-test('one actual queued CSV completes the first row beyond the synchronous ceiling without partial totals',{skip:!process.env.TEST_DATABASE_URL},async()=>{
- const f=await fixture();try{
+async function boundaryAccounts(f:F,count:number){
  // Boundary fixture only,not a parallel load test. Seed valid synthetic chart
  // rows in one transaction;the actual loader/worker/API still run unchanged.
  const approval=(await f.pg.query<{approval_id:string}>('SELECT approval_id FROM public.finance_journals LIMIT 1')).rows[0].approval_id;await f.pg.exec('BEGIN');try{
- await f.pg.exec('CREATE TEMP TABLE synthetic_queued_accounts AS SELECT gen_random_uuid() id,n FROM generate_series(1,1999) n');await f.pg.query("INSERT INTO public.finance_accounts(academy_id,id,hub_id,currency_id,currency_version,code,created_by) SELECT $1,s.id,$2,$3,1,'Q'||lpad(s.n::text,5,'0'),$4 FROM synthetic_queued_accounts s",[f.a,f.hub,f.currency.id,f.actors.master.person]);
+ await f.pg.query('CREATE TEMP TABLE synthetic_queued_accounts AS SELECT gen_random_uuid() id,n FROM generate_series(1,$1::integer) n',[count]);await f.pg.query("INSERT INTO public.finance_accounts(academy_id,id,hub_id,currency_id,currency_version,code,created_by) SELECT $1,s.id,$2,$3,1,'Q'||lpad(s.n::text,5,'0'),$4 FROM synthetic_queued_accounts s",[f.a,f.hub,f.currency.id,f.actors.master.person]);
  await f.pg.query("INSERT INTO public.finance_account_revisions(academy_id,account_id,version,code,name,description,kind,normal_balance,active,changed_by,approval_id,reason) SELECT $1,s.id,1,'Q'||lpad(s.n::text,5,'0'),'Synthetic boundary account '||s.n,'','asset','debit',true,$2,$3,'One-row-beyond export boundary' FROM synthetic_queued_accounts s",[f.a,f.actors.master.person,approval]);await f.pg.exec('COMMIT');
  }catch(e){await f.pg.exec('ROLLBACK');throw e;}
+}
+test('one actual queued CSV completes the first row beyond the synchronous ceiling without partial totals',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{await boundaryAccounts(f,1999);
  const immediate=await f.request('reports/finance/trial-balance/export?through=2026-12-31&includeZero=true',undefined,'staff');assert.equal(immediate.response.status,409);assert.equal(immediate.response.headers.get('content-disposition'),null);
  const q=await f.queue('staff',undefined,{through:'2026-12-31',includeZero:'true'});assert.equal(q.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));const file=await f.download(q.body.data.id);assert.equal(file.response.status,200);const rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.filter(r=>r.section==='account').length,2001);assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='debit')?.amount,'100.00');assert.equal(rows.find(r=>r.section==='metadata'&&r.field==='accountCount')?.value,'2001');
  }finally{await f.pg.close();}
+});
+test('queued output beyond its own bound stops once with a useful limit error,not advice to queue again',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{await boundaryAccounts(f,9999);const q=await f.queue('staff',undefined,{through:'2026-12-31',includeZero:'true'});assert.equal(q.response.status,202);const result=await f.work();assert.deepEqual(result,{claimed:true,recorded:true,outcome:'cancelled'});const state=(await f.state(q.body.data.id)).body.data;assert.equal(state.status,'cancelled');assert.equal(state.last_error,'REPORT_OUTPUT_LIMIT_EXCEEDED');assert.equal(state.attempts,1);assert.equal((await f.pg.query('SELECT * FROM public.report_job_results')).rows.length,0);assert.equal((await f.pg.query("SELECT * FROM public.audit_events WHERE action='report.generated'")).rows.length,0);assert.equal((await f.download(q.body.data.id)).response.status,409);assert.deepEqual(await f.work(),{claimed:false,recorded:false});}finally{await f.pg.close();}
 });
 test('actual separately compiled report daemon generates a stored CSV and stops cleanly',{skip:!process.env.TEST_DATABASE_URL},async()=>{
  const f=await fixture();let child:ReturnType<typeof spawn>|undefined,login:string|undefined;try{

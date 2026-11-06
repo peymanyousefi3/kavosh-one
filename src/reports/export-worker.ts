@@ -38,7 +38,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    const saved=(await db.query<{ok:boolean}>('SELECT public.finish_report_job($1,$2,\'succeeded\',NULL,$3,$4,$5::jsonb) ok',[lease.id,lease.lease_token,file.body,file.csv!.filename,JSON.stringify(proof)])).rows[0]?.ok;
    if(!saved)throw new ApiError(409,'REPORT_LEASE_LOST');if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
    await db.query('COMMIT');transaction=false;return {claimed:true,recorded:true,outcome:'succeeded' as const};
-  }catch(error){if(transaction){await db.query('ROLLBACK');transaction=false;}if(error instanceof ApiError){problem=error.code;outcome=[400,401,403,404,409,422].includes(error.status)?'cancelled':'retry';}}
+  }catch(error){if(transaction){await db.query('ROLLBACK');transaction=false;}if(error instanceof ApiError){problem=error.code==='REPORT_REQUIRES_BACKGROUND_JOB'?'REPORT_OUTPUT_LIMIT_EXCEEDED':error.code;outcome=[400,401,403,404,409,422].includes(error.status)?'cancelled':'retry';}}
   await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('app.academy_id',$1,true)",[lease.academy_id]);const recorded=(await db.query<{ok:boolean}>('SELECT public.finish_report_job($1,$2,$3,$4,NULL,NULL,NULL) ok',[lease.id,lease.lease_token,outcome,problem])).rows[0]?.ok===true;await db.query('COMMIT');transaction=false;return {claimed:true,recorded,outcome};
  }catch(error){if(transaction)try{await db.query('ROLLBACK');}catch{broken=true;}throw error;}finally{db.release(broken);}
 }
