@@ -58,8 +58,8 @@ export function configuredReportContext(ctx:ApiContext,configuration:ReportConfi
  const path=entry.path.replace('{id}',checked.pathParameters.id??''),url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;url.search=new URLSearchParams(parameters).toString();
  return {...ctx,path,request:new Request(url,{method:'GET'})};
 }
-export async function resolveConfiguredReportContext(ctx:ApiContext,configuration:ReportConfiguration,overrides:Record<string,string>={}){
- const at=configuration.dateWindow?(await ctx.db.query<{instant:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') instant`)).rows[0].instant:undefined,context=configuredReportContext(ctx,configuration,overrides,at);
+export async function resolveConfiguredReportContext(ctx:ApiContext,configuration:ReportConfiguration,overrides:Record<string,string>={},scheduledAt?:string){
+ const at=configuration.dateWindow?(scheduledAt??(await ctx.db.query<{instant:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') instant`)).rows[0].instant):undefined,context=configuredReportContext(ctx,configuration,overrides,at);
  const generated=configuration.dateWindow?reportWindowParameters(configuration.reportId,configuration.dateWindow,at!):undefined;
  const resolvedDateWindow=generated?{...generated.resolved,effectiveParameters:Object.fromEntries(Object.keys(generated.parameters).map(k=>[k,new URL(context.request.url).searchParams.get(k)])),overriddenFields:Object.keys(overrides).filter(k=>Object.hasOwn(generated.parameters,k))}:undefined;
  return {context,resolvedDateWindow};

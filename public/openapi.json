@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.142.0",
+    "version": "0.143.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39505,7 +39505,7 @@
     },
     "/api/v1/reports/presets/{id}/schedules": {
       "post": {
-        "summary": "Upper-reviewed recurring report configuration with original owner credential,explicit civil recurrence and DST policies; stores a planned next occurrence,not automatic execution or delivery",
+        "summary": "Upper-reviewed recurring financial CSV schedule with original credential,civil recurrence and DST policies; separate opt-in worker queues one occurrence atomically,never external delivery or historical backfill",
         "parameters": [
           {
             "name": "id",
@@ -39864,7 +39864,7 @@
     },
     "/api/v1/reports/schedules/{id}": {
       "get": {
-        "summary": "Current-authorized configuration and lifecycle,not private credentials or worker-liveness proof",
+        "summary": "Current-authorized configuration,lifecycle and paused/retry state without credentials or leases; automatic generation requires an opt-in worker and is not delivery or worker-liveness proof",
         "parameters": [
           {
             "name": "id",
@@ -40261,6 +40261,58 @@
         }
       }
     },
+    "/api/v1/reports/schedules/{id}/occurrences": {
+      "get": {
+        "summary": "Current-scope immutable queued/missed occurrence receipts with linked job IDs and planned next date; history is not a claim of successful generation or delivery",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/schedules/{id}/preview": {
       "get": {
         "summary": "Bounded upcoming civil-date preview with actual UTC instants,gap shifts and no queued job or external action",
@@ -40315,7 +40367,7 @@
     },
     "/api/v1/reports/schedules/{id}/stop": {
       "post": {
-        "summary": "Owner or authorized upper human stops future recurring configuration; human owners may revoke after losing feature rights,but bots retain current scope/capability ceilings; independent manually queued jobs are unchanged",
+        "summary": "Owner or authorized upper human stops future recurring configuration; human owners may revoke after losing feature rights,but bots retain current scope/capability ceilings; already queued scheduled and manual jobs remain independently manageable and are not cancelled",
         "parameters": [
           {
             "name": "id",
