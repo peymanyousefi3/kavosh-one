@@ -241,7 +241,7 @@ jobs:
           python -m pip install --disable-pip-version-check pip-audit==2.10.1
           python -m pip_audit --require-hashes --progress-spinner off --strict -r workers/pdf-validator/requirements.txt
       - name: Required actual native PDF parser and short process-failure checks
-        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts tests/file-pdf-evidence.test.ts tests/file-copies.test.ts tests/file-copy-worker.test.ts
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts tests/file-pdf-evidence.test.ts tests/file-copies.test.ts tests/file-copy-worker.test.ts tests/file-copy-reconciliation.test.ts tests/copy-check-adapter.test.ts
         env:
           PDF_VALIDATION_TEST_REQUIRED: 'true'
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
