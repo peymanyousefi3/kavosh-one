@@ -25,7 +25,7 @@ export function agreementRequiresGuardian(birth:string,on:string) {
  if(Temporal.PlainDate.compare(d,b)<0)throw new ApiError(409,'AGREEMENT_DATE_BEFORE_BIRTH');
  return d.year-b.year-(on.slice(5)<birth.slice(5)?1:0)<18;
 }
-export interface AgreementPackageRow extends Record<string,unknown> {id:string;enrollment_id:string;template_id:string;template_version:number;template_hash:string;locale:string;signer_id:string;student_id:string;hub_id:string;class_id:string;approval_id:string;created_by:string}
+export interface AgreementPackageRow extends Record<string,unknown> {id:string;enrollment_id:string;template_id:string;template_version:number;template_hash:string;locale:string;signer_id:string;student_id:string;hub_id:string;class_id:string;approval_id:string;created_by:string;connection_id:string;connection_target:string}
 export async function permittedAgreementPackage(ctx:ApiContext,id:string,editing=false) {
  const row=(await ctx.db.query<AgreementPackageRow>('SELECT * FROM public.agreement_packages WHERE id=$1',[id])).rows[0];if(!row)throw new ApiError(404,'NOT_FOUND');
  await sources(ctx,{enrollmentId:row.enrollment_id,templateId:row.template_id,signerId:row.signer_id},editing);

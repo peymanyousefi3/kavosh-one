@@ -3,9 +3,19 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { assertRuntimeRole,expectedSchemaRevision,type Database } from '../src/core/database.ts';
-import { assertSignatureResultRole,recordSignatureTransportReceipt } from '../src/integrations/signature-result-worker.ts';
+import { assertSignatureResultRole,probeSignatureResultSink,recordSignatureTransportReceipt } from '../src/integrations/signature-result-worker.ts';
 
 const outcome={state:'outcome_unknown',automaticRetryAllowed:false,reconciliationRequired:true,deliveryVerified:false};
+test('result sink preflight checks native policy grants and refuses an unrelated committed start',async()=>{
+ const f=await operationsFixture();
+ const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_signature_result_worker');return c;}};
+ try{
+  await probeSignatureResultSink(database);if(!f.pg.runtime)await f.pg.exec('RESET ROLE');
+  await assert.rejects(probeSignatureResultSink(database,{academyId:f.a,startId:randomUUID(),sourceFingerprint:'a'.repeat(64)}),{code:'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE'});if(!f.pg.runtime)await f.pg.exec('RESET ROLE');
+  await f.pg.exec('REVOKE INSERT ON public.signature_transport_receipts FROM kavosh_signature_result_policy');
+  await assert.rejects(probeSignatureResultSink(database),{code:'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE'});
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.exec('GRANT INSERT ON public.signature_transport_receipts TO kavosh_signature_result_policy');await f.pg.close();}
+});
 test('receipt connection failures never expose operator credentials or private diagnostics',async()=>{
  const database:Database={async connect(){throw new Error('PRIVATE synthetic operator credential');}};await assert.rejects(recordSignatureTransportReceipt(database,{academyId:randomUUID(),startId:randomUUID(),workerId:randomUUID(),outcome}),e=>{assert.equal((e as {code:string}).code,'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE');assert.doesNotMatch(String(e),/PRIVATE|credential/);return true;});
 });

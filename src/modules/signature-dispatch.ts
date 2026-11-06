@@ -42,6 +42,8 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
    document:{sha256:binding.source.sha256,sizeBytes:binding.source.sizeBytes},routing:binding.routing,
    signer:{personId:contact.person_id,legalName:contact.legal_name,email:contact.email,phoneE164:contact.phone_e164,emailVerified:true,phoneVerified:true,contactFingerprint:contact.contact_fingerprint}});
   if(!prepared.success)throw new ApiError(503,'SIGNATURE_DISPATCH_SOURCE_INVALID');
+  const provider=(await ctx.db.query<{id:string;region:string}>('SELECT id,region FROM public.signature_connection_status($1)',[p.connection_id])).rows[0];
+  if(!provider)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
   let original:null|z.infer<typeof boldSignStoredOriginalSchema>=null;
   if(query.copyId){
    const copy=(await ctx.db.query('SELECT route_id FROM public.file_copy_requests WHERE id=$1 AND file_id=$2',[query.copyId,binding.file_id])).rows[0];if(!copy)throw new ApiError(404,'NOT_FOUND');
@@ -56,7 +58,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
   // Actual sending must reauthorize AGAIN after original-byte retrieval.
   if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
   await record(ctx.db,ctx.credential,ctx.requestId,'signature.dispatch.source.read',requestId,p.hub_id,{privateContactRead:true,externalRequestMade:false});
-  return {status:200,body:{data:{draft:prepared.data,file:{id:binding.file_id,version:binding.file_version,inspectionId:binding.inspection_id,attemptNo:binding.attempt_no},original,originalEvidenceAvailable:Boolean(original),...markers,originalBytesRetrieved:false,fileSafetyCleared:false,externalRequestMade:false}}};
+  return {status:200,body:{data:{draft:prepared.data,file:{id:binding.file_id,version:binding.file_version,inspectionId:binding.inspection_id,attemptNo:binding.attempt_no},connection:{id:provider.id,targetId:p.connection_target,region:provider.region},original,originalEvidenceAvailable:Boolean(original),...markers,originalBytesRetrieved:false,fileSafetyCleared:false,externalRequestMade:false}}};
  }
  const path=/^signature-send-requests\/([^/]+)\/attempts\/([^/]+)\/dispatch(?:\/(outcome|conflicts))?$/.exec(ctx.path);if(!path)return null;
  const params=Object.fromEntries(new URL(ctx.request.url).searchParams),requestId=uuid.parse(path[1]),attemptId=uuid.parse(path[2]),outcome=path[3]==='outcome';

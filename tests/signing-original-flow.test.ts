@@ -13,10 +13,13 @@ import { r2TargetId } from '../src/integrations/r2-config.ts';
 import type { Database } from '../src/core/database.ts';
 import { recordSignatureTransportReceipt } from '../src/integrations/signature-result-worker.ts';
 import { buildBoldSignSendRequest } from '../src/integrations/boldsign-send-request.ts';
+import { createSigningControlApi } from '../src/integrations/signing-control-api.ts';
+import { processEnrollmentSigning } from '../src/integrations/signing-orchestrator.ts';
+import { mintToken } from '../src/core/tokens.ts';
 
 const python=process.env.TEST_PDF_PYTHON_BINARY;
 if(process.env.PDF_VALIDATION_TEST_REQUIRED==='true'&&!python)throw new Error('PDF_TEST_INTERPRETER_REQUIRED');
-test('approved signing source,real PDF parsing,verified-copy policy,conditional measured read and durable reservation work together without a provider send',{skip:!python},async()=>{
+test('approved source,real PDF parsing,verified-copy policy and native signing controller work without live provider delivery',{skip:!python},async()=>{
  const f=await agreementFixture();try{
   for(const cap of ['signature-sends.view','signature-sends.execute','signature-dispatch.execute'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.managerRole,cap]);
   const resultDatabase:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{async query<Row>(sql:string,params?:unknown[]){return f.pg.query<Row>(sql,params);},release(){}};await c.query('SET ROLE kavosh_signature_result_worker');return c;}};
@@ -69,6 +72,18 @@ test('approved signing source,real PDF parsing,verified-copy policy,conditional 
   const secondAttempt=await f.request('signature-send-requests/'+secondId+'/attempts',secondManifest);assert.equal(secondAttempt.response.status,201);const secondDispatch='signature-send-requests/'+secondId+'/attempts/'+secondAttempt.body.data.id+'/dispatch',secondStart=await f.request(secondDispatch,{...secondManifest,original:{copyId,sourceFingerprint:secondSource.body.data.original.sourceFingerprint}},'bot');assert.equal(secondStart.response.status,201);
   assert.equal((await save({academyId:f.a,startId:secondStart.body.data.id,workerId:randomUUID(),outcome:{state:'outcome_unknown',automaticRetryAllowed:false,reconciliationRequired:true,deliveryVerified:false}})).status,'recorded');
   assert.equal((await f.request(secondDispatch+'/outcome',{state:'not_attempted'},'bot')).response.status,201);assert.equal((await f.request(secondDispatch)).body.data.state,'conflicting_observations');assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE entity_id=$1 AND event_type='signature.transport.actor_conflict.critical'",[secondStart.body.data.id])).rows.length,1);
+  if(f.pg.runtime){
+   const thirdPackage=await f.prepare();assert.equal(thirdPackage.response.status,201);const thirdLink=await f.request('agreement-packages/'+thirdPackage.body.data.id+'/content',{bindingId:binding.id,reason:'Controller native fixture package'});assert.equal(thirdLink.response.status,201);
+   const third=await f.request('agreement-packages/'+thirdPackage.body.data.id+'/send-requests',{attachmentId:thirdLink.body.data.id,options:{title:'Controller explicit intention',message:'Review',expiryDays:30},dispatchWithinMinutes:60,reason:'Synthetic provider controller test'});assert.equal(third.response.status,201);
+   const token=mintToken(),api=createSigningControlApi({origin:'https://synthetic-control.example',academyId:f.a,token},async(url,options)=>{
+    const headers=new Headers(options?.headers);assert.equal(headers.get('authorization'),'Bearer '+token);assert.equal(headers.get('x-academy-id'),f.a);
+    const target=new URL(String(url)),reply=await f.request(target.pathname.replace('/api/v1/','')+target.search,options?.body?JSON.parse(String(options.body)):undefined,'bot',{key:headers.get('idempotency-key')??undefined});return Response.json(reply.body,{status:reply.response.status});
+   });
+   let syntheticSends=0,originalReads=0;const fakeDocument=randomUUID(),task={academyId:f.a,requestId:third.body.data.id,copyId,workerId:randomUUID(),attemptKey:randomUUID(),startKey:randomUUID()},services={api,resultDatabase,readers:()=>reader,providers:()=>({region:'CA' as const,apiKey:'synthetic-provider-key'}),storageHandler:{destroy(){},async handle(){originalReads++;return {response:{statusCode:200,headers:{'content-type':'application/octet-stream','content-length':String(bytes.length),etag:'"verified-original"'},body:Readable.from([bytes])}};}},providerFetch:(async()=>{syntheticSends++;return Response.json({documentId:fakeDocument},{status:201});}) as typeof fetch};
+   const result=await processEnrollmentSigning(task,services,{enabled:true,dualOtpAccountAttested:true});assert.equal(result.state,'accepted_for_processing',JSON.stringify(result));assert.equal(result.receiptStored,true);assert.equal(result.admissionCleared,false);assert.equal(result.deliveryVerified,false);
+   assert.equal((await f.pg.query('SELECT document_id FROM public.signature_transport_receipts WHERE start_id=$1',[result.startId])).rows[0].document_id,fakeDocument);
+   assert.equal((await processEnrollmentSigning(task,services,{enabled:true,dualOtpAccountAttested:true})).state,'already_started');assert.equal(syntheticSends,1);assert.equal(originalReads,1);
+  }
   assert.equal((await f.pg.query('SELECT * FROM public.signature_webhook_inbox')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.file_download_grants')).rows.length,0,'internal preparation must not create/log a bearer URL');
   const disabled=await f.request('storage/routes/'+route.body.data.id+'/change',{expectedVersion:3,definition:{...policy.body.data.definition,serving:{enabled:false,allowedMimeTypes:['application/pdf'],maximumLinkSeconds:20}},reason:'Disable subsequent original access'});assert.equal(disabled.response.status,200);assert.equal((await f.request(path+'?copyId='+copyId)).response.status,409);assert.equal((await f.request(dispatch)).body.data.start.originalCopyCurrent,false);
   const stopped=await f.request(dispatch+'/outcome',{state:'not_attempted'},'bot');assert.equal(stopped.response.status,201);assert.equal(stopped.body.data.admissionCleared,false);assert.equal(stopped.body.data.source_current,false,'late outcome must retain the changed original policy,not only contact validity');

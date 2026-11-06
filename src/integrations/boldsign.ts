@@ -32,6 +32,7 @@ export function verifyBoldSignSignature(body:Uint8Array,header:string|null,secre
 const endpoints={US:'https://api.boldsign.com',CA:'https://api-ca.boldsign.com',EU:'https://api-eu.boldsign.com',AU:'https://api-au.boldsign.com'} as const;
 const connection=z.object({region:z.enum(['US','CA','EU','AU']),apiKey:z.string().min(1).max(4096).regex(/^[\x21-\x7e]+$/)}).strict();
 export type BoldSignConnection=z.infer<typeof connection>;
+export const boldSignConnectionSchema=connection;
 const uuid=z.string().uuid().transform(s=>s.toLowerCase()),status=z.string().min(1).max(80);
 const properties=z.object({documentId:uuid,status,signerDetails:z.array(z.object({
   id:uuid,signerEmail:z.string().email().max(254),status,signerType:z.string().max(80).optional(),
@@ -59,7 +60,7 @@ export const workAgreementRouting=z.object({version:z.literal(1),parties:z.array
 // transport/stream implementation that fails to honor its AbortSignal.
 type PdfResource='template-pdf'|'document-pdf'|'audit-pdf';
 const pdfError={ 'template-pdf':'BOLDSIGN_TEMPLATE_PDF_UNAVAILABLE','document-pdf':'BOLDSIGN_DOCUMENT_PDF_UNAVAILABLE','audit-pdf':'BOLDSIGN_AUDIT_PDF_UNAVAILABLE' } as const;
-async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource|'send',send:typeof fetch,externalSignal?:AbortSignal,wire?:{body:string;onAttempt:()=>void}) {
+async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource|'send',send:typeof fetch,externalSignal?:AbortSignal,wire?:{body:string;onAttempt:()=>void;observeResources?:(settled:Promise<unknown>)=>void}) {
  const posting=resource==='send',pdf=resource.endsWith('-pdf'),kind=resource==='template'||resource==='template-pdf'?'template':'document';
  const configured=connection.safeParse(config),upper=kind.toUpperCase(),mime=pdf?'application/pdf':'application/json',limit=pdf?10_485_760:1_048_576;
  if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
@@ -71,8 +72,8 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
  void interrupted.catch(()=>{});
  const onAbort=()=>rejectAbort(unavailable());abort.signal.addEventListener('abort',onAbort,{once:true});
  externalSignal?.addEventListener('abort',cancel,{once:true});
- let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined;
- const discard=(body:ReadableStream<Uint8Array>|null|undefined)=>{try{void body?.cancel().catch(()=>{});}catch{/* Never expose upstream cancellation errors. */}};
+ let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined,pendingRequest:Promise<unknown>|undefined,pendingRead:Promise<ReadableStreamReadResult<Uint8Array>>|undefined;const disposals:Promise<unknown>[]=[];
+ const discard=(body:ReadableStream<Uint8Array>|null|undefined)=>{try{const p=body?.cancel();if(p){disposals.push(p);void p.catch(()=>{});}return p;}catch{/* Never expose upstream cancellation errors. */}};
  try {
   if(externalSignal?.aborted)throw unavailable();
   const query=new URLSearchParams(selected?.success?{[kind+'Id']:selected.data}:{});
@@ -87,7 +88,7 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
   });
   // A non-cooperative transport may settle after cancellation. Dispose of its
   // late response without waiting or retaining the body in the worker.
-  void request.then(value=>{if(abort.signal.aborted)discard(value.body);},()=>{});
+  pendingRequest=request.then(value=>abort.signal.aborted?discard(value.body):undefined,()=>{});void pendingRequest.catch(()=>{});
   response=await Promise.race([request,interrupted]);
   if(abort.signal.aborted)throw unavailable();
   if(response.status!==(posting?201:200)||response.redirected||(response.headers.get('content-type')??'').split(';')[0].trim().toLowerCase()!==mime)throw unavailable();
@@ -95,15 +96,16 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
   const chunks:Uint8Array[]=[];let size=0;
   while(true) {
    if(abort.signal.aborted)throw unavailable();
-   const part=await Promise.race([reader.read(),interrupted]);if(part.done)break;
+   pendingRead=reader.read();const part=await Promise.race([pendingRead,interrupted]);if(part.done)break;
    size+=part.value.byteLength;if(size>limit)throw unavailable();chunks.push(part.value);
   }
   return Buffer.concat(chunks,size);
  }catch {
-  abort.abort();if(reader){try{void reader.cancel().catch(()=>{});}catch{/* Cancellation must not hold the deadline open. */}}else discard(response?.body);
+  abort.abort();if(reader){try{const p=reader.cancel();disposals.push(p);void p.catch(()=>{});}catch{/* Cancellation must not hold the deadline open. */}}else discard(response?.body);
   throw unavailable();
  }finally {
-  clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);reader?.releaseLock();
+  clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);
+  try{reader?.releaseLock();}finally{wire?.observeResources?.(Promise.allSettled([...(pendingRequest?[pendingRequest]:[]),...(pendingRead?[pendingRead]:[]),...disposals]));}
  }
 }
 
@@ -121,12 +123,12 @@ export type BoldSignSubmissionOutcome=z.infer<typeof boldSignSubmissionOutcomeSc
 // cannot prove that the provider did not create/send the document.
 // 201/documentId only acknowledges asynchronous processing, not Sent/Completed:
 // https://developers.boldsign.com/documents/send-document/
-export async function submitBoldSignWireRequest(config:BoldSignConnection,body:string,send:typeof fetch=fetch,signal?:AbortSignal):Promise<BoldSignSubmissionOutcome> {
+export async function submitBoldSignWireRequest(config:BoldSignConnection,body:string,send:typeof fetch=fetch,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void):Promise<BoldSignSubmissionOutcome> {
  if(!connection.safeParse(config).success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
  if(typeof body!=='string'||!body.length||body.length>16_777_216||!body.isWellFormed()||Buffer.byteLength(body)>16_777_216)throw new ApiError(400,'INVALID_BOLDSIGN_WIRE_REQUEST');
  let attempted=false;
  try {
-  const bytes=await readBoldSignBytes(config,'','send',send,signal,{body,onAttempt(){attempted=true;}});
+  const bytes=await readBoldSignBytes(config,'','send',send,signal,{body,observeResources,onAttempt(){attempted=true;}});
   const response=z.object({documentId:uuid}).parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)));
   return {state:'accepted_for_processing',documentId:response.documentId,automaticRetryAllowed:false,reconciliationRequired:true,deliveryVerified:false};
  }catch {
