@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { agreementFixture,reviewedAgreementContent } from './agreement-fixture.ts';
+import { buildBoldSignSendRequest } from '../src/integrations/boldsign-send-request.ts';
 
 async function fixture(){
  const f=await agreementFixture();
@@ -71,3 +72,47 @@ check('native final guard catches a signer change after API authorization and ro
  try{const denied=await f.start('master',key);assert.equal(denied.response.status,409,JSON.stringify(denied.body));assert.equal(denied.body.error.code,'SIGNATURE_DISPATCH_SOURCE_CHANGED');}finally{await f.pg.exec('DROP TRIGGER aa_synthetic_dispatch_signer_change ON public.signature_dispatch_starts;DROP FUNCTION public.synthetic_dispatch_signer_change()');}
  assert.deepEqual(await counts(),before);assert.equal((await f.start('master',key)).response.status,201);
 },true);
+check('private draft hydrates verified account contacts and legal profile name,not public aliases or caller assertions',async f=>{
+ await f.pg.query("UPDATE public.people SET name='PRIVATE wrong public alias',email='wrong-public@example.test' WHERE id=$1",[f.signer]);
+ const result=await f.request('signature-send-requests/'+f.requestId+'/dispatch-source',undefined,'bot');assert.equal(result.response.status,200,JSON.stringify(result.body));assert.equal(result.response.headers.get('cache-control'),'no-store');
+ const contact=(await f.pg.query('SELECT u.email,u."phoneNumber" phone,g.legal_name FROM public.people p JOIN identity."user" u ON u.id=p.auth_user_id JOIN public.guardian_profiles g ON g.academy_id=p.academy_id AND g.person_id=p.id WHERE p.id=$1',[f.signer])).rows[0],data=result.body.data;
+ assert.deepEqual(data.draft.signer,{personId:f.signer,legalName:contact.legal_name,email:contact.email,phoneE164:contact.phone,emailVerified:true,phoneVerified:true,contactFingerprint:data.draft.signer.contactFingerprint});assert.match(data.draft.signer.contactFingerprint,/^[a-f0-9]{64}$/);
+ assert.equal(data.file.id,f.binding.fileId);assert.equal(data.file.version,1);assert.equal(data.draft.attachmentId,(await f.request('signature-send-requests/'+f.requestId)).body.data.attachment_id);
+ const built=buildBoldSignSendRequest(data.draft,f.binding.bytes);assert.equal(built.receipt.documentSha256,f.binding.sha256);const wire=JSON.parse(built.body);assert.equal(wire.Signers[0].EmailAddress,contact.email);assert.equal(wire.Signers[0].Name,contact.legal_name);
+ for(const flag of ['readyToSend','admissionCleared','providerVerified','originalBytesRetrieved','fileSafetyCleared','externalRequestMade'])assert.equal(data[flag],false);
+ const audits=(await f.pg.query("SELECT changes FROM public.audit_events WHERE action='signature.dispatch.source.read'")).rows;assert.equal(audits.length,1);assert.doesNotMatch(JSON.stringify(audits),/PRIVATE|example.test|phoneNumber|contactFingerprint/);
+ assert.equal((await f.pg.query('SELECT * FROM public.signature_dispatch_starts')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.signature_dispatch_outcomes')).rows.length,0);
+});
+check('draft privacy requires distinct current dispatch and all underlying source rights,including for bots',async f=>{
+ const path='signature-send-requests/'+f.requestId+'/dispatch-source';assert.equal((await f.request(path,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ for(const cap of ['signature-dispatch.execute','signature-sends.view','files.view','signatures.view','enrollments.view','guardians.view','families.view']){await f.pg.query('DELETE FROM public.role_permissions WHERE role_id=$1 AND capability=$2',[f.managerRole,cap]);assert.ok([403,404].includes((await f.request(path,undefined,'bot')).response.status),cap);await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.managerRole,cap]);}
+ assert.equal((await f.request(path+'?email=other@example.test')).response.status,400);assert.equal((await f.request(path,{emailVerified:true,phoneVerified:true})).response.status,405);
+});
+check('changed verified contact or archived original invalidates draft without exposing the new private contact',async f=>{
+ const path='signature-send-requests/'+f.requestId+'/dispatch-source';await f.pg.query('UPDATE identity."user" SET email=$1 WHERE id=$2',['new-PRIVATE@example.test',f.actors.staff.user]);
+ const denied=await f.request(path);assert.equal(denied.response.status,409);assert.ok(!JSON.stringify(denied.body).includes('new-PRIVATE'));
+ await f.pg.query('UPDATE identity."user" SET email=$1 WHERE id=$2',['staff@example.test',f.actors.staff.user]);assert.equal((await f.request(path)).response.status,200);
+ assert.equal((await f.request('files/'+f.binding.fileId+'/change',{expectedVersion:1,archived:true})).response.status,200);assert.equal((await f.request(path)).response.status,409);
+});
+check('narrow native contact helper is tenant-bound and leaves raw identity access and file-worker access denied',async f=>{
+ await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.b]);assert.equal((await f.pg.query('SELECT * FROM public.signature_dispatch_contact($1)',[f.requestId])).rows.length,0);await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.equal((await f.pg.query('SELECT * FROM public.signature_dispatch_contact($1)',[f.requestId])).rows.length,1);await assert.rejects(f.pg.exec('SELECT email,"phoneNumber" FROM identity."user"'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+ await f.pg.exec('SET ROLE kavosh_file_worker');try{await assert.rejects(f.pg.query('SELECT * FROM public.signature_dispatch_contact($1)',[f.requestId]),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+ await f.pg.query('UPDATE identity."user" SET "phoneNumberVerified"=false WHERE id=$1',[f.actors.staff.user]);await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.equal((await f.pg.query('SELECT * FROM public.signature_dispatch_contact($1)',[f.requestId])).rows.length,0);}finally{await f.pg.exec('RESET ROLE');}
+});
+check('private-contact read fails closed if its audit outbox cannot commit and does not cache contacts in retry receipts',async f=>{
+ const path='signature-send-requests/'+f.requestId+'/dispatch-source',before=(await f.pg.query("SELECT count(*)::int n FROM public.audit_events WHERE action='signature.dispatch.source.read'")).rows[0].n;
+ await f.pg.exec('REVOKE INSERT ON public.outbox_events FROM kavosh_runtime');try{const denied=await f.request(path);assert.equal(denied.response.status,503);assert.doesNotMatch(JSON.stringify(denied.body),/PRIVATE|staff@example.test|phoneE164|legalName/);}finally{await f.pg.exec('GRANT INSERT ON public.outbox_events TO kavosh_runtime');}
+ assert.equal((await f.pg.query("SELECT count(*)::int n FROM public.audit_events WHERE action='signature.dispatch.source.read'")).rows[0].n,before);assert.equal((await f.request(path)).response.status,200);
+ assert.equal((await f.pg.query("SELECT count(*)::int n FROM public.request_keys WHERE response::text LIKE '%phoneE164%' OR response::text LIKE '%staff@example.test%'")).rows[0].n,0);
+});
+check('native contact hydration excludes an explicitly cancelled signing intention',async f=>{
+ const pkg=await f.prepare();assert.equal(pkg.response.status,201);const linked=await f.request('agreement-packages/'+pkg.body.data.id+'/content',{bindingId:f.binding.id,reason:'Second reviewed package'});assert.equal(linked.response.status,201);
+ const made=await f.request('agreement-packages/'+pkg.body.data.id+'/send-requests',{attachmentId:linked.body.data.id,options:{title:'Second agreement',message:'Review',expiryDays:30},dispatchWithinMinutes:60,reason:'Second reviewed intention'});assert.equal(made.response.status,201);const id=made.body.data.id;
+ assert.equal((await f.request('signature-send-requests/'+id+'/dispatch-source')).response.status,200);assert.equal((await f.request('signature-send-requests/'+id+'/cancel',{reason:'Do not send'})).response.status,201);assert.equal((await f.request('signature-send-requests/'+id+'/dispatch-source')).response.status,409);
+ await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.equal((await f.pg.query('SELECT * FROM public.signature_dispatch_contact($1)',[id])).rows.length,0);const owner=(await f.pg.query("SELECT r.rolname,p.proconfig,r.rolsuper,r.rolbypassrls FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid='public.signature_dispatch_contact(uuid)'::regprocedure")).rows[0];assert.equal(owner.rolname,'kavosh_identity_policy');assert.deepEqual(owner.proconfig,['search_path=pg_catalog']);assert.equal(owner.rolsuper,false);assert.equal(owner.rolbypassrls,false);}finally{await f.pg.exec('RESET ROLE');}
+});
+check('send-only bot uses explicit execution plus private viewing rights without acquiring signature editing',async f=>{
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability IN('signatures.edit','signature-sends.edit')",[f.managerRole]);
+ assert.equal((await f.request('signature-send-requests/'+f.requestId+'/dispatch-source',undefined,'bot')).response.status,200);assert.equal((await f.start('bot')).response.status,201);assert.equal((await f.outcome({state:'outcome_unknown'},'bot')).response.status,201);
+ const stopped=await f.request('signature-send-requests/'+f.requestId+'/cancel',{reason:'Execution must not grant editing'},'bot');assert.ok([403,404].includes(stopped.response.status));
+});

@@ -4,6 +4,7 @@ import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api
 import { ApiError } from '../core/policy.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { permittedSignatureSend } from './signature-sends.ts';
+import { boldSignSendDraftSchema } from '../integrations/boldsign-send-request.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const manifest=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash}).strict();
@@ -22,6 +23,27 @@ async function selected(ctx:ApiContext,requestId:string,attemptId:string,write:b
 // Coordination only, NOT provider IO, original-file clearance or admission.
 // The eventual sender must hydrate/rebuild/validate BEFORE consuming the start.
 export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
+ const sourcePath=/^signature-send-requests\/([^/]+)\/dispatch-source$/.exec(ctx.path);
+ if(sourcePath){
+  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+  const requestId=uuid.parse(sourcePath[1]);await lockAcademyTopology(ctx);
+  const {r,p}=await permittedSignatureSend(ctx,requestId,'signature-dispatch.execute');
+  if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
+  const contact=(await ctx.db.query<{person_id:string;legal_name:string;email:string;phone_e164:string;contact_fingerprint:string}>('SELECT * FROM public.signature_dispatch_contact($1)',[requestId])).rows[0];
+  if(!contact)throw new ApiError(409,'SIGNATURE_CONTACT_NOT_CURRENT');
+  const binding=(await ctx.db.query<{id:string;file_id:string;file_version:number;inspection_id:string;attempt_no:number;source:{sha256:string;sizeBytes:number};routing:unknown}>(`SELECT b.id,b.file_id,b.file_version,b.inspection_id,b.attempt_no,b.source,b.routing FROM public.agreement_package_contents l JOIN public.agreement_content_bindings b ON b.academy_id=l.academy_id AND b.id=l.binding_id WHERE l.id=$1 AND l.package_id=$2`,[r.attachment_id,r.package_id])).rows[0];
+  if(!binding)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
+  const prepared=boldSignSendDraftSchema.safeParse({...(r.options as object),packageId:r.package_id,attachmentId:r.attachment_id,bindingId:binding.id,locale:p.locale,
+   document:{sha256:binding.source.sha256,sizeBytes:binding.source.sizeBytes},routing:binding.routing,
+   signer:{personId:contact.person_id,legalName:contact.legal_name,email:contact.email,phoneE164:contact.phone_e164,emailVerified:true,phoneVerified:true,contactFingerprint:contact.contact_fingerprint}});
+  if(!prepared.success)throw new ApiError(503,'SIGNATURE_DISPATCH_SOURCE_INVALID');
+  // The final source comparison catches a concurrent contact/profile change.
+  // Actual sending must reauthorize AGAIN after original-byte retrieval.
+  if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
+  await record(ctx.db,ctx.credential,ctx.requestId,'signature.dispatch.source.read',requestId,p.hub_id,{privateContactRead:true,externalRequestMade:false});
+  return {status:200,body:{data:{draft:prepared.data,file:{id:binding.file_id,version:binding.file_version,inspectionId:binding.inspection_id,attemptNo:binding.attempt_no},...markers,originalBytesRetrieved:false,fileSafetyCleared:false,externalRequestMade:false}}};
+ }
  const path=/^signature-send-requests\/([^/]+)\/attempts\/([^/]+)\/dispatch(?:\/(outcome))?$/.exec(ctx.path);if(!path)return null;
  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
  const requestId=uuid.parse(path[1]),attemptId=uuid.parse(path[2]),outcome=Boolean(path[3]);
@@ -60,6 +82,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
  });
 }
 export const signatureDispatchContract=[
+ {path:'/api/v1/signature-send-requests/{id}/dispatch-source',method:'get',summary:'Audited private signing draft hydrated from verified account contacts and exact reviewed source; distinct dispatch rights required, no bytes, safety clearance or provider call'},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'post',summary:'Consume one durable reservation exactly once; replay is conflict, no provider call or file clearance',schema:manifest},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'get',summary:'Read private send-once start and bounded unverified transport observation'},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch/outcome',method:'post',summary:'Record one immutable transport observation by starter, including after source expiry; never signature/admission proof',schema:observation}

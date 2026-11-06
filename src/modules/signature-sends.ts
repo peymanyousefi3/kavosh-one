@@ -18,7 +18,9 @@ const fields=`r.*,c.id AS cancellation_id,a.id AS attempt_id,s.id AS successor_i
 const from=`public.signature_send_requests r LEFT JOIN public.signature_send_cancellations c ON c.academy_id=r.academy_id AND c.request_id=r.id LEFT JOIN public.signature_send_attempts a ON a.academy_id=r.academy_id AND a.request_id=r.id LEFT JOIN public.signature_send_requests s ON s.academy_id=r.academy_id AND s.prior_id=r.id LEFT JOIN public.signature_dispatch_starts d ON d.academy_id=a.academy_id AND d.attempt_id=a.id LEFT JOIN public.signature_dispatch_outcomes o ON o.academy_id=d.academy_id AND o.start_id=d.id`;
 function view(r:SendRow){return {...r,state:r.successor_id?'superseded':r.cancellation_id?'cancelled':r.dispatch_id?r.dispatch_observation??'started_outcome_unrecorded':r.attempt_id?'attempt_reserved':r.expired?'expired':'approved',readyToSend:false,deliveryVerified:false,admissionCleared:false};}
 async function authority(ctx:ApiContext,id:string,cap:Capability='signature-sends.view') {
- const p=await permittedAgreementPackage(ctx,id,cap!=='signature-sends.view');
+ // Execution consumes an already reviewed intention; it does not authorize
+ // editing its package. Keep source viewing plus explicit execution rights.
+ const p=await permittedAgreementPackage(ctx,id,cap==='signature-sends.edit');
  const people=(await ctx.db.query<{id:string;hub_id:string|null}>('SELECT id,hub_id FROM public.people WHERE id=ANY($1::uuid[]) ORDER BY id',[[p.student_id,p.signer_id]])).rows;
  const scope={all:false,hubs:[],classes:[{id:p.class_id,hubId:p.hub_id}],people:people.map(p=>({id:p.id,hubId:p.hub_id}))};
  for(const selected of ['signature-sends.view',cap] as Capability[])if(!scopeContains(permissionScope(ctx,selected),scope))throw new ApiError(404,'NOT_FOUND');
