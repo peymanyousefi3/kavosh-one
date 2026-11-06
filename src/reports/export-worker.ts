@@ -6,6 +6,8 @@ import { ApiError,type Credential } from '../core/policy.ts';
 import { configuredReportContext,reportConfiguration } from '../modules/report-catalogue.ts';
 import { completeFinancialReport,financialReportCsv } from '../modules/financial-report-export.ts';
 import { requireReportResultAccess,reportAuthorizationContext } from '../modules/report-jobs.ts';
+import { executionReportPreset } from '../modules/report-presets.ts';
+import { frozenReportWindow } from '../core/report-window.ts';
 
 export const backgroundFinancialEntryLimit=10000;
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(a=>new Set(a).size===a.length);
@@ -24,9 +26,11 @@ export async function processOneReport(database:Database,allowedAcademies:string
    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[lease.academy_id]);
    const valid=c.kind==='human'?await db.query<{valid:boolean}>('SELECT public.lock_human($1,$2) valid',[c.token_id,c.user_id]):await db.query<{valid:boolean}>('SELECT public.lock_bot($1) valid',[c.token_id]);if(!valid.rows[0]?.valid)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');
    const school=(await db.query<{status:string}>('SELECT status FROM public.academies WHERE id=$1',[lease.academy_id])).rows[0];if(!school||!['active','read_only'].includes(school.status))throw new ApiError(403,'ACADEMY_UNAVAILABLE');
-   const job=(await db.query<{configuration:ReturnType<typeof reportConfiguration>}>('SELECT configuration FROM public.report_jobs WHERE id=$1',[lease.id])).rows[0];if(!job)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');
-   const request=new Request('https://internal.invalid/api/v1/reports/jobs/'+lease.id),ctx:ApiContext={db,credential:c,grants:await loadGrants(db,c),request,path:'reports/jobs/'+lease.id,requestId:randomUUID()},source=configuredReportContext(ctx,job.configuration),url=new URL(source.request.url);url.searchParams.delete('limit');source.request=new Request(url);
-   if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const data=await completeFinancialReport(source,backgroundFinancialEntryLimit),proof=reportAuthorizationContext.parse(data.authorizationContext);requireReportResultAccess(source,proof);const file=financialReportCsv(data,undefined,backgroundFinancialEntryLimit);
+   const job=(await db.query<{configuration:ReturnType<typeof reportConfiguration>;preset_id:string|null;preset_version:number|null;window_resolution:unknown}>('SELECT configuration,preset_id,preset_version,window_resolution FROM public.report_jobs WHERE id=$1',[lease.id])).rows[0];if(!job)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');
+   const request=new Request('https://internal.invalid/api/v1/reports/jobs/'+lease.id),ctx:ApiContext={db,credential:c,grants:await loadGrants(db,c),request,path:'reports/jobs/'+lease.id,requestId:randomUUID()};
+   if(job.preset_id)await executionReportPreset(ctx,job.preset_id,job.preset_version!);
+   const window=job.window_resolution?frozenReportWindow.parse(job.window_resolution):undefined,source=configuredReportContext(ctx,job.configuration),url=new URL(source.request.url);url.searchParams.delete('limit');source.request=new Request(url);
+   if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const data=await completeFinancialReport(source,backgroundFinancialEntryLimit),proof=reportAuthorizationContext.parse(data.authorizationContext);requireReportResultAccess(source,proof);const file=financialReportCsv(data,{id:job.preset_id??undefined,version:job.preset_version??undefined,dateWindow:window},backgroundFinancialEntryLimit);
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
    await record(db,c,ctx.requestId,'report.generated',lease.id,null,{reportId:job.configuration.reportId,sha256:createHash('sha256').update(file.body as string).digest('hex'),bytes:Buffer.byteLength(file.body as string),externalRequestMade:false});
    // Final source-policy locks remain held;cancel/replacement/expiry must still

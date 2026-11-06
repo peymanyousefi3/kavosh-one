@@ -5,6 +5,7 @@ import { ApiError } from './policy.ts';
 const zone=z.string().min(1).max(100).refine(v=>{if(/^[+-]/.test(v))return false;try{Temporal.Instant.from('2000-06-15T12:00:00Z').toZonedDateTimeISO(v);return true;}catch{return false;}});
 export const reportDateWindow=z.object({kind:z.enum(['today','yesterday','week_to_date','previous_week','month_to_date','previous_month','quarter_to_date','previous_quarter','year_to_date','previous_year','last_days','next_days']),timeZone:zone,weekStartsOn:z.number().int().min(1).max(7).default(1),days:z.number().int().min(1).max(3660).optional()}).strict().refine(w=>['last_days','next_days'].includes(w.kind)===(w.days!==undefined),'Only rolling-day windows require days.');
 export type ReportDateWindow=z.infer<typeof reportDateWindow>;
+export const frozenReportWindow=z.object({window:reportDateWindow,resolvedAt:z.iso.datetime(),from:z.iso.date(),through:z.iso.date(),calendar:z.literal('iso8601'),interval:z.literal('inclusive_civil_days'),effectiveParameters:z.partialRecord(z.enum(['on','from','through','timeZone']),z.string().nullable()),overriddenFields:z.array(z.enum(['on','from','through','timeZone'])).max(4)}).strict();
 type Inputs={fields:readonly string[];timeZone?:true};
 const inputs:Record<string,Inputs>={
  'finance.trial-balance':{fields:['through']},'finance.balance-sheet':{fields:['through']},

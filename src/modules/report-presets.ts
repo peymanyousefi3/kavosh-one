@@ -17,8 +17,14 @@ type Definition=z.infer<typeof definition>;type Owner={anchor:z.infer<typeof anc
 type Header={id:string;anchor:Owner['anchor'];owner:Owner;hub_id:string|null;class_id:string|null;person_id:string|null;version:number;copied_from_id:string|null;copied_from_version:number|null};
 type Basis={owner:Owner|null;before:{version:number;definition:Definition}|null;copy:{id:string;version:number;definition:Definition}|null};
 function scopes(ctx:ApiContext,edit=false){return (edit?['report-presets.view','report-presets.edit']:['report-presets.view']).map(cap=>{const s=permissionScope(ctx,cap as Capability);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;});}
-async function header(ctx:ApiContext,id:string,edit=false){const allowed=scopes(ctx,edit),h=(await ctx.db.query<Header>('SELECT * FROM public.report_presets WHERE id=$1',[id])).rows[0];if(!h||!allowed.every(s=>scopeContains(s,h.owner.scope)))throw new ApiError(404,'NOT_FOUND');return h;}
+async function header(ctx:ApiContext,id:string,edit=false,lock=false){const allowed=scopes(ctx,edit),h=(await ctx.db.query<Header>('SELECT * FROM public.report_presets WHERE id=$1'+(lock?' FOR SHARE':''),[id])).rows[0];if(!h||!allowed.every(s=>scopeContains(s,h.owner.scope)))throw new ApiError(404,'NOT_FOUND');return h;}
 async function revision(ctx:ApiContext,h:Header,v=h.version){const r=(await ctx.db.query<{version:number;definition:Definition}>('SELECT version,definition FROM public.report_preset_revisions WHERE preset_id=$1 AND version=$2',[h.id,v])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return r;}
+export async function executionReportPreset(ctx:ApiContext,id:string,pinnedVersion:number){
+ await lockApprovalWrites(ctx);const h=await header(ctx,id,false,true),r=await revision(ctx,h,pinnedVersion);
+ if(!r.definition.active)throw new ApiError(409,'REPORT_PRESET_INACTIVE');
+ if(!(await ctx.db.query<{valid:boolean}>('SELECT public.report_job_preset_current($1,$2) valid',[id,pinnedVersion])).rows[0].valid)throw new ApiError(409,'REPORT_PRESET_CHANGED');
+ return {id:h.id,version:r.version,definition:r.definition};
+}
 function output(h:Header,r:{version:number;definition:Definition}){return {id:h.id,anchor:h.anchor,owner:h.owner,latestVersion:h.version,...r,copiedFrom:h.copied_from_id?{id:h.copied_from_id,version:h.copied_from_version}:null,containsReportResults:false,sourceAccessGranted:false,ownershipControlsConfigurationSharingOnly:true};}
 async function basis(ctx:ApiContext,creating:boolean,id:string,raw:unknown){
  const i=creating?create.parse(raw):change.parse(raw),h=creating?null:await header(ctx,id,true),c='copiedFrom'in i?i.copiedFrom:null;

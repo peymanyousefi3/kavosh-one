@@ -23,7 +23,7 @@ export async function completeFinancialReport(ctx:ApiContext,entryLimit=financia
  financialExportParameters(ctx.request);await lockApprovalWrites(ctx);const reply=ctx.path==='reports/finance/trial-balance'?await financialReports(ctx,entryLimit):await financialStatements(ctx,entryLimit);if(!reply||reply.status!==200)throw new Error('FINANCIAL_REPORT_INVALID');
  const body=reply.body as {data:unknown;nextCursor:unknown};if(body.nextCursor)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');return completeData(body.data,entryLimit);
 }
-export function financialReportCsv(input:unknown,provenance?:{id:string;version:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}},entryLimit=financialExportEntryLimit):Reply{
+export function financialReportCsv(input:unknown,provenance?:{id?:string;version?:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}},entryLimit=financialExportEntryLimit):Reply{
  const d=completeData(input,entryLimit);
  const width=23,rows:(string|number|boolean|null|undefined)[][]=[['section','field','value','account_id','account_code','account_name','hub_id','classification','current_classification','currency_id','currency_code','unit_scale','closing_minor','closing_amount','debit_minor','debit_amount','credit_minor','credit_amount','debit_net_minor','debit_net_amount','amount_minor','amount','current_account_version']];
  const meta=(field:string,value:string|number|boolean|null|undefined)=>{if(value!==undefined)rows.push(['metadata',field,typeof value==='string'?csvText(value):value]);};

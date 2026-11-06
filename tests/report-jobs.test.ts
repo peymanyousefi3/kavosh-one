@@ -12,7 +12,7 @@ import { businessContract } from '../src/modules/business.ts';
 import { reportJobsContract } from '../src/modules/report-jobs.ts';
 
 test('every implemented report job operation is registered in the main generated bot API',async()=>{
- const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportJobsContract.length,5);for(const endpoint of reportJobsContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
+ const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportJobsContract.length,6);for(const endpoint of reportJobsContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
 });
 
 async function fixture(){const f=await operationsFixture();try{

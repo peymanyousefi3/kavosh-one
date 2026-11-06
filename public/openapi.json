@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.140.0",
+    "version": "0.141.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -37909,6 +37909,49 @@
                       "type": "string",
                       "maxLength": 8000
                     }
+                  },
+                  "dateWindow": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "today",
+                          "yesterday",
+                          "week_to_date",
+                          "previous_week",
+                          "month_to_date",
+                          "previous_month",
+                          "quarter_to_date",
+                          "previous_quarter",
+                          "year_to_date",
+                          "previous_year",
+                          "last_days",
+                          "next_days"
+                        ]
+                      },
+                      "timeZone": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "weekStartsOn": {
+                        "default": 1,
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 7
+                      },
+                      "days": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3660
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "timeZone"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -39354,6 +39397,74 @@
           },
           "202": {
             "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/presets/{id}/queue": {
+      "post": {
+        "summary": "Queue an exact reviewed active financial CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "overrides": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9]{0,63}$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "maxLength": 8000
+                    }
+                  }
+                },
+                "required": [
+                  "expectedVersion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Requester-bound report queued with frozen date filters,not generated or sent."
           },
           "default": {
             "$ref": "#/components/responses/error"

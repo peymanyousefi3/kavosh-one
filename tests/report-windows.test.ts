@@ -7,6 +7,7 @@ import { parse } from 'csv-parse/sync';
 import { reportDateWindow,resolveReportWindow,reportWindowParameters } from '../src/core/report-window.ts';
 import { reportConfiguration,configuredReportContext } from '../src/modules/report-catalogue.ts';
 import { operationsFixture } from './operations-fixture.ts';
+import { historicalReportJob } from './historical-report-job.ts';
 
 const window=(kind:string,patch:Record<string,unknown>={})=>reportDateWindow.parse({kind,timeZone:'America/Toronto',...patch});
 test('civil calendar windows have explicit inclusive bounds across leap years,quarters,week starts,DST and international midnight',()=>{
@@ -68,7 +69,7 @@ test('native relative-definition guard rejects forged clock rules,conflicting da
  }finally{await f.pg.close();}
 });
 test('schema131 retains real schema130 absolute presets and queued jobs,keeps validator identity and does not invent date windows',async()=>{
- const f=await operationsFixture({throughSchema:130});try{const input={anchor:{kind:'hub',id:f.hub},definition:{name:'Old absolute dates',reportId:'finance.trial-balance',parameters:{through:'2026-12-31'}},reason:'Real preupgrade definition'},saved=await f.request('reports/presets',input);assert.equal(saved.response.status,201,JSON.stringify(saved.body));assert.equal((await f.request('reports/jobs',{reportId:'finance.trial-balance',parameters:{through:'2026-12-31'}})).response.status,202);const defs=(await f.pg.query('SELECT * FROM public.report_preset_revisions')).rows,jobs=(await f.pg.query('SELECT * FROM public.report_jobs')).rows,oid=(await f.pg.query("SELECT 'public.report_preset_definition_valid(jsonb)'::regprocedure::oid oid")).rows[0].oid;
+ const f=await operationsFixture({throughSchema:130});try{const input={anchor:{kind:'hub',id:f.hub},definition:{name:'Old absolute dates',reportId:'finance.trial-balance',parameters:{through:'2026-12-31'}},reason:'Real preupgrade definition'},saved=await f.request('reports/presets',input);assert.equal(saved.response.status,201,JSON.stringify(saved.body));await historicalReportJob(f);const defs=(await f.pg.query('SELECT * FROM public.report_preset_revisions')).rows,jobs=(await f.pg.query('SELECT * FROM public.report_jobs')).rows,oid=(await f.pg.query("SELECT 'public.report_preset_definition_valid(jsonb)'::regprocedure::oid oid")).rows[0].oid;
  await f.pg.exec(await readFile(new URL('../db/migrations/131_report_date_windows.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query('SELECT * FROM public.report_preset_revisions')).rows,defs);assert.deepEqual((await f.pg.query('SELECT * FROM public.report_jobs')).rows,jobs);assert.equal((await f.pg.query("SELECT 'public.report_preset_definition_valid(jsonb)'::regprocedure::oid oid")).rows[0].oid,oid);
  const next=await f.request('reports/presets',{...input,definition:{...input.definition,parameters:{},dateWindow:{kind:'today',timeZone:'UTC'}}});assert.equal(next.response.status,201,JSON.stringify(next.body));assert.equal(next.body.data.definition.dateWindow.kind,'today');assert.equal((await f.request('reports/presets/'+saved.body.data.id+'/run')).response.status,200);
  }finally{await f.pg.close();}
