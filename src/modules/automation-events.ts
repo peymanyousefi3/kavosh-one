@@ -16,6 +16,13 @@ const selected=`((e.hub_id IS NULL AND $6::boolean AND cardinality($8::uuid[])=0
 const columns=`e.event_id AS id,e.audit_id,e.approval_id,e.source_kind,e.source_version,e.projection,to_char(e.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS occurred_at,CASE WHEN e.source_kind='audit' THEN 1 ELSE p.version END AS current_source_version,CASE WHEN e.source_kind='audit' THEN 'recorded' ELSE p.status END AS current_status`;
 const from=`FROM public.automation_event_sources e LEFT JOIN public.approval_requests p ON p.academy_id=e.academy_id AND p.id=e.approval_id WHERE ${automationEventReadSelectionSQL} AND ${selected}`;
 export async function boundAutomationEvent(ctx:ApiContext,id:string){const e=(await ctx.db.query<BoundEvent>('SELECT '+columns+' '+from+' AND e.event_id=$10',[...await approvalReadParameters(ctx),...scopeParameters(ctx),id])).rows[0];if(!e)throw new ApiError(404,'NOT_FOUND');return e;}
+// Internal watcher selection. Snapshot visibility catches late commits;the
+// indexed xmin lower bound skips old epochs without trusting a time watermark.
+export async function pendingSubscriptionEvent(ctx:ApiContext,subscriptionId:string,snapshot:string,activationTransaction:string){
+ return (await ctx.db.query<BoundEvent>('SELECT '+columns+' '+from+` AND e.origin_transaction IS NOT NULL AND e.origin_transaction<>$12::xid8 AND e.origin_transaction>=pg_snapshot_xmin($11::pg_snapshot) AND NOT pg_visible_in_snapshot(e.origin_transaction,$11::pg_snapshot)
+  AND NOT EXISTS(SELECT 1 FROM public.automation_subscription_events done WHERE done.academy_id=e.academy_id AND done.subscription_id=$10 AND done.event_id=e.event_id)
+  ORDER BY e.origin_transaction,e.event_id LIMIT 1`,[...await approvalReadParameters(ctx),...scopeParameters(ctx),subscriptionId,snapshot,activationTransaction])).rows[0]??null;
+}
 export function boundEventView(e:BoundEvent){return {id:e.id,sourceKind:e.source_kind,sourceVersion:e.source_version,auditId:e.audit_id,approvalId:e.approval_id,recordedAt:e.occurred_at,sample:e.projection,sourceVerification:e.source_kind==='audit'?'database_bound_audit_event':'database_bound_approval_event',underlyingBusinessFactsIndependentlyVerified:false,currentSourceVersion:e.current_source_version,currentStatus:e.current_status,sourceStateChanged:e.current_source_version!==e.source_version,dispatchStateIncluded:false};}
 export async function automationEvents(ctx:ApiContext):Promise<Reply|null>{
  const m=/^automations\/events(?:\/([^/]+))?$/.exec(ctx.path);if(!m)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
