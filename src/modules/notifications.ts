@@ -4,7 +4,7 @@ import { jsonBody,assignmentGrantsForPeople,mutation,record,type ApiContext,type
 import { approvalReadParameters,approvalReadPolicyParameters,permissionScope } from '../core/approvals.ts';
 import { ApiError,requireScope,type Capability } from '../core/policy.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
-import { boundAutomationEvent,automationEventReadSelectionSQL,requireCurrentSessionEvent,type BoundEvent } from './automation-events.ts';
+import { boundAutomationEvent,automationEventReadSelectionSQL,lockCurrentSessionEvent,type BoundEvent } from './automation-events.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { automationRuleHeader,automationRuleRevision } from './automation-rules.ts';
 
@@ -53,7 +53,7 @@ export async function notifications(ctx:ApiContext):Promise<Reply|null>{
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const id=uuid.parse(process[1]),input=dispatch.parse(await jsonBody(ctx.request));
   await lockAcademyTopology(ctx);const header=await automationRuleHeader(ctx,id);requireScope(permissionScope(ctx,'automations.execute'),header.hub_id??undefined);
   const locked=(await ctx.db.query<{version:number}>('SELECT version FROM public.automation_rules WHERE id=$1 FOR SHARE',[id])).rows[0];if(locked?.version!==header.version)throw new ApiError(409,'AUTOMATION_RULE_CHANGED');
-  const event=await boundAutomationEvent(ctx,input.eventId);requireCurrentSessionEvent(event);
+  const event=await lockCurrentSessionEvent(ctx,await boundAutomationEvent(ctx,input.eventId));
   // One rule lock makes duplicate checks, UTC-day budgets and cooldowns atomic
   // across API processes. Different rules remain concurrent.
   await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,16))',[ctx.credential.academy_id+':'+id]);
