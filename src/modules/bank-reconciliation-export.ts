@@ -3,6 +3,7 @@ import type { ApiContext,Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
 import { accountingDate } from './finance-periods.ts';
 import { reconciliationReportData,reconciliationExportRowLimit,reconciliationExportByteLimit } from './bank-reconciliation-report.ts';
+import { csvText as reconciliationCsvText,csvRow } from '../core/csv.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const query=z.object({accountId:uuid,from:accountingDate,through:accountingDate,snapshot:z.string().regex(/^[a-f0-9]{64}$/).optional(),openingObservationId:uuid.optional(),closingObservationId:uuid.optional()}).strict().refine(v=>v.from<=v.through);
@@ -10,7 +11,7 @@ const query=z.object({accountId:uuid,from:accountingDate,through:accountingDate,
 // keeps dangerous free text distinguishable from the original source. Quoting
 // alone does not stop formula interpretation. Never apply this to exact,
 // code-generated signed numeric amounts. CSV is not a round-trip source format.
-export function reconciliationCsvText(value:string){return /^(?:[\t\r\n]|[\s\p{Cc}\p{Cf}]*[=+\-@＝＋－＠])/u.test(value)?'text: '+value:value;}
+export { reconciliationCsvText };
 export type ReconciliationCsvReport=Omit<Awaited<ReturnType<typeof reconciliationReportData>>,'snapshotAt'|'review'>&{snapshotAt?:string;review:Record<string,string|number|boolean>};
 type Archive={id:string;approvalId:string;capturedAt:string;supersedesId:string|null;supersededBy:string|null;reference:string;coverageAttestation:string;outstanding:{journalId:string;lineNumber:number;kind:string;reason:string}[]};
 export function reconciliationCsv(d:ReconciliationCsvReport,archive?:Archive):Reply{
@@ -29,7 +30,7 @@ export function reconciliationCsv(d:ReconciliationCsvReport,archive?:Archive):Re
  for(const r of d.statementItems)rows.push(['statement','','',r.postedOn,r.importId,r.line,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId,r.possibleDuplicate,reconciliationCsvText(r.description),reconciliationCsvText(r.reference)]);
  for(const r of d.ledgerItems)rows.push(['ledger','','',r.postedOn,r.journalId,r.lineNumber,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId,null,'','',r.purpose,r.accountVersion,r.reversedById]);
  if(archive){const lines=new Map(d.ledgerItems.map(r=>[r.journalId+':'+r.lineNumber,r]));for(const n of archive.outstanding){const r=lines.get(n.journalId+':'+n.lineNumber);if(!r)throw new ApiError(409,'RECONCILIATION_ARCHIVE_INVALID');rows.push(['reviewed_outstanding',n.kind,reconciliationCsvText(n.reason),r.postedOn,r.journalId,r.lineNumber,r.status,r.debitNet.minor,r.debitNet.amount,r.beforePeriod,r.matchId]);}}
- const csv='\uFEFF'+rows.map(row=>Array.from({length:17},(_,i)=>'"'+String(row[i]??'').replaceAll('"','""')+'"').join(',')).join('\r\n')+'\r\n';
+ const csv='\uFEFF'+rows.map(row=>csvRow(Array.from({length:17},(_,i)=>row[i]))).join('\r\n')+'\r\n';
  if(Buffer.byteLength(csv,'utf8')>reconciliationExportByteLimit)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');
  return {status:200,body:csv,csv:{filename:archive?`bank-reconciliation-record-${archive.id}.csv`:`bank-reconciliation-${d.accountId}-${d.from}-${d.through}.csv`}};
 }

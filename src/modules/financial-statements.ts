@@ -47,9 +47,10 @@ SELECT statement_timestamp()::text AS "snapshotAt",(SELECT coalesce(sum(unclassi
  coalesce((SELECT jsonb_agg(to_jsonb(totals) ORDER BY "currencyCode","currencyId") FROM totals),'[]'::jsonb) AS currencies,
  coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY sort,code,"accountId") FROM page),'[]'::jsonb) AS entries`;
 function exact(value:bigint,scale:number){return {minor:value.toString(),amount:formatMoneyTotal(value,scale)};}
-export async function financialStatements(ctx:ApiContext):Promise<Reply|null>{
+export async function financialStatements(ctx:ApiContext,exportEntryLimit?:number):Promise<Reply|null>{
   const match=/^reports\/finance\/(profit-loss|balance-sheet)$/.exec(ctx.path);if(!match)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
   const sheet=match[1]==='balance-sheet',access=financialReportAccess(ctx),q=(sheet?sheetQuery:profitQuery).parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),from='from' in q?q.from:null;
+  if(exportEntryLimit!==undefined){if(!Number.isInteger(exportEntryLimit)||exportEntryLimit<1||exportEntryLimit>10000)throw new Error('INVALID_REPORT_EXPORT_LIMIT');q.limit=exportEntryLimit;}
   // Classify using each line's immutable account revision, not today's chart
   // kind. One account can legitimately have multiple as-posted kind groups.
   const result=(await ctx.db.query<{snapshotAt:string;unclassifiedLineCount:string;accountCount:number;rowCount:number;currencies:Total[];entries:Entry[]}>(financialStatementSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,from,sheet,q.afterKind===undefined?null:financialKinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];

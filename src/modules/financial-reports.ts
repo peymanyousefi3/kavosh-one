@@ -54,9 +54,10 @@ SELECT statement_timestamp()::text AS "snapshotAt",(SELECT count(*)::integer FRO
  coalesce((SELECT jsonb_agg(to_jsonb(currency_totals) ORDER BY "currencyCode","currencyId") FROM currency_totals),'[]'::jsonb) AS currencies,
  coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY sort,code,"accountId") FROM page),'[]'::jsonb) AS entries`;
 function exact(minor:bigint,scale:number){return {minor:minor.toString(),amount:formatMoneyTotal(minor,scale)};}
-export async function financialReports(ctx:ApiContext):Promise<Reply|null>{
+export async function financialReports(ctx:ApiContext,exportEntryLimit?:number):Promise<Reply|null>{
   if(ctx.path!=='reports/finance/trial-balance')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
   const access=authority(ctx),q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+  if(exportEntryLimit!==undefined){if(!Number.isInteger(exportEntryLimit)||exportEntryLimit<1||exportEntryLimit>10000)throw new Error('INVALID_REPORT_EXPORT_LIMIT');q.limit=exportEntryLimit;}
   // Account rights intersect report and ledger rights before both totals and
   // pagination. Never infer a whole-school balance from a narrower hub view.
   const result=(await ctx.db.query<{snapshotAt:string;accountCount:number;currencies:CurrencyTotal[];entries:Entry[]}>(trialBalanceSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,q.includeZero,q.afterKind===undefined?null:kinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
