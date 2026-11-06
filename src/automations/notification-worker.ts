@@ -17,8 +17,12 @@ export async function processOneNotification(database:Database,allowedAcademies:
   lease=(await db.query<Lease>('SELECT * FROM public.claim_notification_job($1)',[ids])).rows[0];if(!lease)return {claimed:false,recorded:false};
   let result:'succeeded'|'cancelled'|'retry'='retry',runId:string|null=null,problem:string|null=null;
   try{
+   // Authentication/rate accounting commits before domain work,as in the web
+   // API. The correlated materialized context is local to this one statement;
+   // it preserves the existing tenant-bound broker without a session setting.
+   const c=(await db.query<Actor>(`WITH scope_context AS MATERIALIZED(SELECT set_config('app.academy_id',$3,true) academy)
+    SELECT actor.* FROM scope_context CROSS JOIN LATERAL public.notification_job_actor($1,CASE WHEN scope_context.academy=$3::text THEN $2::uuid END) actor`,[lease.id,lease.lease_token,lease.academy_id])).rows[0];if(!c)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');if(!c.allowed)throw new ApiError(429,'RATE_LIMITED');
    await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)",[lease.academy_id]);
-   const c=(await db.query<Actor>('SELECT * FROM public.notification_job_actor($1,$2)',[lease.id,lease.lease_token])).rows[0];if(!c)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');if(!c.allowed)throw new ApiError(429,'RATE_LIMITED');
    const locked=c.kind==='human'?await db.query<{valid:boolean}>('SELECT public.lock_human($1,$2) AS valid',[c.token_id,c.user_id]):await db.query<{valid:boolean}>('SELECT public.lock_bot($1) AS valid',[c.token_id]);if(!locked.rows[0]?.valid)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');
    const school=(await db.query<{status:string}>('SELECT status FROM public.academies WHERE id=$1',[lease.academy_id])).rows[0];if(school?.status!=='active')throw new ApiError(403,'ACADEMY_UNAVAILABLE');
    if(!(await db.query('SELECT id FROM public.people WHERE id=$1 AND kind=$2 AND status=\'active\'',[c.person_id,c.kind])).rows.length)throw new ApiError(401,'QUEUED_AUTHORIZATION_EXPIRED');
