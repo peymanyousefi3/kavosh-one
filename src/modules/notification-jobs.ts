@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
-import { master,permissionScope,approvalReadParameters,approvalReadSelectionSQL } from '../core/approvals.ts';
+import { master,permissionScope,approvalReadParameters } from '../core/approvals.ts';
 import { ApiError,requireScope } from '../core/policy.ts';
 import { automationRuleHeader } from './automation-rules.ts';
-import { boundAutomationEvent } from './automation-events.ts';
+import { boundAutomationEvent,automationEventReadSelectionSQL } from './automation-events.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
 
@@ -14,7 +14,7 @@ const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50)
 const fanoutInput=z.object({limit:z.number().int().min(1).max(25).default(10),after:uuid.optional(),locale:z.enum(['en','fr','zh-CN']).default('en')}).strict();
 type Job={id:string;rule_id:string;rule_version:number;event_id:string;requester_id:string;status:string;attempts:number;generation:number;retry_of:string|null;locale:string;created_at:string;expires_at:string;finished_at:string|null;run_id:string|null;last_error:string|null};
 const columns='j.id,j.rule_id,j.rule_version,j.event_id,j.requester_id,j.status,j.attempts,j.generation,j.retry_of,j.locale,j.created_at,j.expires_at,j.finished_at,j.run_id,j.last_error';
-const from=`FROM public.notification_jobs j JOIN public.automation_event_sources e ON e.academy_id=j.academy_id AND e.event_id=j.event_id JOIN public.approval_requests p ON p.academy_id=e.academy_id AND p.id=e.approval_id WHERE ${approvalReadSelectionSQL}`;
+const from=`FROM public.notification_jobs j JOIN public.automation_event_sources e ON e.academy_id=j.academy_id AND e.event_id=j.event_id LEFT JOIN public.approval_requests p ON p.academy_id=e.academy_id AND p.id=e.approval_id WHERE ${automationEventReadSelectionSQL}`;
 async function visible(ctx:ApiContext,id:string){const j=(await ctx.db.query<Job>('SELECT '+columns+' '+from+' AND j.id=$6',[...await approvalReadParameters(ctx),id])).rows[0];if(!j)throw new ApiError(404,'NOT_FOUND');await automationRuleHeader(ctx,j.rule_id);return j;}
 export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
  const fanout=/^automations\/events\/([^/]+)\/queue$/.exec(ctx.path);
@@ -40,7 +40,7 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
    }
    await record(ctx.db,ctx.credential,ctx.requestId,'notification.batch_queued',eventId,event.projection.hubId,{rulesScanned:Math.min(rows.length,input.limit),jobs:queued.length,severity:'critical',externalRequestMade:false});
    const pending=queued.some(j=>j.jobStatus==='queued'||j.jobStatus==='running');
-   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['approval'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
+   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['approval','audit'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
   });
  }
  const queue=/^automations\/rules\/([^/]+)\/queue$/.exec(ctx.path),list=/^automations\/rules\/([^/]+)\/jobs$/.exec(ctx.path),detail=/^automations\/jobs\/([^/]+)(?:\/(cancel))?$/.exec(ctx.path);
@@ -68,7 +68,7 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await visible(ctx,id)}};
 }
 export const notificationJobsContract=[
- {path:'/api/v1/automations/events/{id}/queue',method:'post',summary:'Queue matching enabled automatic rules for one currently authorized bound approval event,in bounded permission-filtered pages; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon',schema:fanoutInput,acceptedDescription:'Matching automatic-rule jobs queued; a separately enabled worker rechecks current source,actor,rule and recipient rights.'},
+ {path:'/api/v1/automations/events/{id}/queue',method:'post',summary:'Queue matching enabled automatic rules for one currently authorized approval or audit-backed event,in bounded permission-filtered pages; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon',schema:fanoutInput,acceptedDescription:'Matching automatic-rule jobs queued; a separately enabled worker rechecks current source,actor,rule and recipient rights.'},
  {path:'/api/v1/automations/rules/{id}/queue',method:'post',summary:'Persist an immediate notification job bound to the authenticated requester; current actor/source/rule rights are rechecked by the worker. An explicitly resubmitted failed/cancelled job creates a fresh linked generation; history is never rewritten',schema:notificationJobInput,acceptedDescription:'Durable notification job queued, not delivered and not a pending upper-approval case. A separately enabled worker is required.'},
  {path:'/api/v1/automations/rules/{id}/jobs',method:'get',summary:'Current-rule and source-authorized job metadata, filtered before pagination; never credential IDs, user IDs, lease tokens or raw errors',querySchema:paging},
  {path:'/api/v1/automations/jobs/{id}',method:'get',summary:'Current-authorized job state and redacted outcome without private execution credentials'},

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.130.0",
+    "version": "0.131.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -3099,7 +3099,7 @@
     },
     "/api/v1/automations/events": {
       "get": {
-        "summary": "Read server-bound approval event projections using current approval and automation rights before pagination; no raw audits, caller samples, unbound events or delivery claims",
+        "summary": "Read bound approval events under case privacy or new audit-backed metadata under current audit scope,plus automation rights before pagination; no private audit changes,unbound events or delivery claims",
         "parameters": [
           {
             "name": "limit",
@@ -3148,12 +3148,19 @@
             "required": false,
             "schema": {
               "type": "string",
+              "maxLength": 160,
+              "pattern": "^[a-z][a-z0-9_-]*(?:\\.[a-z][a-z0-9_-]*)+$"
+            }
+          },
+          {
+            "name": "sourceKind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
               "enum": [
-                "approval.requested",
-                "approval.applied",
-                "approval.rejected",
-                "approval.withdrawn",
-                "approval.stale"
+                "approval",
+                "audit"
               ]
             }
           }
@@ -3208,7 +3215,7 @@
     },
     "/api/v1/automations/events/{id}/queue": {
       "post": {
-        "summary": "Queue matching enabled automatic rules for one currently authorized bound approval event,in bounded permission-filtered pages; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon",
+        "summary": "Queue matching enabled automatic rules for one currently authorized approval or audit-backed event,in bounded permission-filtered pages; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon",
         "parameters": [
           {
             "name": "id",
@@ -4312,7 +4319,7 @@
     },
     "/api/v1/automations/rules/{id}/event-preview": {
       "post": {
-        "summary": "Read-only evaluation of a current-authorized server-bound approval event, never a caller-substituted payload; source-state drift is explicit, dispatch is not performed",
+        "summary": "Read-only evaluation of a current-authorized approval or audit-backed event,never a caller-substituted payload; source kind and approval-state drift are explicit,dispatch is not performed",
         "parameters": [
           {
             "name": "id",
@@ -26016,7 +26023,7 @@
     },
     "/api/v1/notifications/{id}": {
       "get": {
-        "summary": "Read own portal notification and linked approval ID only while its underlying source remains authorized",
+        "summary": "Read own portal notification and linked approval or audit ID only while its underlying source remains authorized",
         "parameters": [
           {
             "name": "id",
