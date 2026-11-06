@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.139.0",
+    "version": "0.140.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -38640,7 +38640,7 @@
         }
       },
       "post": {
-        "summary": "Upper-reviewed reusable report type,canonical filters and defaults; stores no report output or executable query",
+        "summary": "Upper-reviewed reusable report type,canonical filters/defaults and optional database-clock civil date window; static dates cannot compete with generated dates; stores no output or executable query",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -38804,6 +38804,49 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         }
+                      },
+                      "dateWindow": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "today",
+                              "yesterday",
+                              "week_to_date",
+                              "previous_week",
+                              "month_to_date",
+                              "previous_month",
+                              "quarter_to_date",
+                              "previous_quarter",
+                              "year_to_date",
+                              "previous_year",
+                              "last_days",
+                              "next_days"
+                            ]
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          },
+                          "weekStartsOn": {
+                            "default": 1,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 7
+                          },
+                          "days": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3660
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "timeZone"
+                        ],
+                        "additionalProperties": false
                       },
                       "active": {
                         "default": true,
@@ -38996,6 +39039,49 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         }
+                      },
+                      "dateWindow": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "today",
+                              "yesterday",
+                              "week_to_date",
+                              "previous_week",
+                              "month_to_date",
+                              "previous_month",
+                              "quarter_to_date",
+                              "previous_quarter",
+                              "year_to_date",
+                              "previous_year",
+                              "last_days",
+                              "next_days"
+                            ]
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          },
+                          "weekStartsOn": {
+                            "default": 1,
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 7
+                          },
+                          "days": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 3660
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "timeZone"
+                        ],
+                        "additionalProperties": false
                       },
                       "active": {
                         "default": true,
@@ -39277,7 +39363,7 @@
     },
     "/api/v1/reports/presets/{id}/run": {
       "get": {
-        "summary": "Run current active preset through the original report handler with CURRENT caller source permissions; optional one-off valid query overrides and cursors; fresh data,not a frozen export or background job",
+        "summary": "Run current active preset through original handlers with CURRENT caller rights; relative civil dates use one database-clock instant and explicit time zone; one-off overrides are marked without changing saved rules; fresh JSON,not a frozen job",
         "parameters": [
           {
             "name": "id",

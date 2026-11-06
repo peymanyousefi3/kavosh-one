@@ -5,10 +5,11 @@ import { ApiError,scopeContains,scopeNonempty,type Capability,type Scope } from 
 import { lockAcademyTopology } from './academy.ts';
 import { reportId,reportParameters,reportConfiguration,runConfiguredReport } from './report-catalogue.ts';
 import { exportConfiguredFinancialReport } from './financial-report-export.ts';
+import { reportDateWindow } from '../core/report-window.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().min(1).max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000),empty=z.object({}).strict();
 const anchor=z.discriminatedUnion('kind',[z.object({kind:z.literal('academy')}).strict(),...(['hub','class','person'] as const).map(kind=>z.object({kind:z.literal(kind),id:uuid}).strict())]);
-const definition=z.object({name,translations:z.object({en:name.optional(),fr:name.optional(),'zh-CN':name.optional()}).strict().default({}),reportId,queryContractVersion:z.literal(1).default(1),parameters:reportParameters,pathParameters:z.record(z.string().regex(/^id$/),uuid).default({}),active:z.boolean().default(true)}).strict().transform(d=>({...d,...reportConfiguration(d.reportId,d.parameters,d.pathParameters)})).refine(d=>Buffer.byteLength(JSON.stringify(d),'utf8')<=65536);
+const definition=z.object({name,translations:z.object({en:name.optional(),fr:name.optional(),'zh-CN':name.optional()}).strict().default({}),reportId,queryContractVersion:z.literal(1).default(1),parameters:reportParameters,pathParameters:z.record(z.string().regex(/^id$/),uuid).default({}),dateWindow:reportDateWindow.optional(),active:z.boolean().default(true)}).strict().transform(d=>({...d,...reportConfiguration(d.reportId,d.parameters,d.pathParameters,d.dateWindow)})).refine(d=>Buffer.byteLength(JSON.stringify(d),'utf8')<=65536);
 const input=z.object({anchor,definition,reason}).strict(),copy=z.object({id:uuid,version}).strict(),create=input.extend({copiedFrom:copy.nullable().default(null)}),change=z.object({expectedVersion:version,definition,reason}).strict();
 const duplicate=z.object({expectedSourceVersion:version,anchor,name,reason}).strict(),read=z.object({version:z.coerce.number().int().positive().max(2147483647).optional()}).strict(),history=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),hubId:uuid.optional(),classId:uuid.optional(),personId:uuid.optional(),reportId:reportId.optional(),active:z.enum(['true','false']).transform(v=>v==='true').optional(),q:text.trim().min(1).max(100).optional()}).strict();
@@ -53,11 +54,11 @@ export async function reportPresets(ctx:ApiContext,registry:ApprovalRegistry=rep
 }
 export const reportPresetsContract=[
  {path:'/api/v1/reports/presets',method:'get',summary:'Central saved-report configurations scoped by academy,hub,class or fixed person record ownership before paging; definitions contain filters,not results or data grants',querySchema:query},
- {path:'/api/v1/reports/presets',method:'post',summary:'Upper-reviewed reusable report type,canonical filters and defaults; stores no report output or executable query',schema:input},
+ {path:'/api/v1/reports/presets',method:'post',summary:'Upper-reviewed reusable report type,canonical filters/defaults and optional database-clock civil date window; static dates cannot compete with generated dates; stores no output or executable query',schema:input},
  {path:'/api/v1/reports/presets/{id}',method:'get',summary:'Read current or retained configuration under current preset permissions',querySchema:read},
  {path:'/api/v1/reports/presets/{id}/change',method:'post',summary:'Reviewed exact-version rename,filter,report-type or activation change; retained history,immutable ownership',schema:change},
  {path:'/api/v1/reports/presets/{id}/duplicate',method:'post',summary:'Reviewed independent disabled exact-version copy to a permitted owner; no stored results,audience,credentials or authority inherited',schema:duplicate},
  {path:'/api/v1/reports/presets/{id}/history',method:'get',summary:'Editor-only retained configuration and review history',querySchema:history},
- {path:'/api/v1/reports/presets/{id}/run',method:'get',summary:'Run current active preset through the original report handler with CURRENT caller source permissions; optional one-off valid query overrides and cursors; fresh data,not a frozen export or background job',querySchema:reportParameters}
+ {path:'/api/v1/reports/presets/{id}/run',method:'get',summary:'Run current active preset through original handlers with CURRENT caller rights; relative civil dates use one database-clock instant and explicit time zone; one-off overrides are marked without changing saved rules; fresh JSON,not a frozen job',querySchema:reportParameters}
  ,{path:'/api/v1/reports/presets/{id}/export',method:'get',summary:'Download complete current permitted trial-balance/profit-loss/balance-sheet CSV from an active saved configuration; original source permissions and export limits apply,no page cursor or limit override,other report formats unavailable',querySchema:reportParameters,responseContentType:'text/csv' as const}
 ] as const;

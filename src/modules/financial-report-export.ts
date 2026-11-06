@@ -5,7 +5,8 @@ import { lockApprovalWrites } from '../core/approvals.ts';
 import { csvText,csvRow } from '../core/csv.ts';
 import { financialReports,financialReportsContract } from './financial-reports.ts';
 import { financialStatements,financialStatementsContract } from './financial-statements.ts';
-import { catalogueReport,configuredReportContext } from './report-catalogue.ts';
+import { catalogueReport,configuredReportContext,resolveConfiguredReportContext } from './report-catalogue.ts';
+import type { ResolvedReportWindow } from '../core/report-window.ts';
 
 // ponytail: complete synchronous export is bounded at2,000 entries/4MiB.
 // Larger results must use queued generation,never a partial screen-page file.
@@ -22,13 +23,14 @@ export async function completeFinancialReport(ctx:ApiContext,entryLimit=financia
  financialExportParameters(ctx.request);await lockApprovalWrites(ctx);const reply=ctx.path==='reports/finance/trial-balance'?await financialReports(ctx,entryLimit):await financialStatements(ctx,entryLimit);if(!reply||reply.status!==200)throw new Error('FINANCIAL_REPORT_INVALID');
  const body=reply.body as {data:unknown;nextCursor:unknown};if(body.nextCursor)throw new ApiError(409,'REPORT_REQUIRES_BACKGROUND_JOB');return completeData(body.data,entryLimit);
 }
-export function financialReportCsv(input:unknown,provenance?:{id:string;version:number},entryLimit=financialExportEntryLimit):Reply{
+export function financialReportCsv(input:unknown,provenance?:{id:string;version:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}},entryLimit=financialExportEntryLimit):Reply{
  const d=completeData(input,entryLimit);
  const width=23,rows:(string|number|boolean|null|undefined)[][]=[['section','field','value','account_id','account_code','account_name','hub_id','classification','current_classification','currency_id','currency_code','unit_scale','closing_minor','closing_amount','debit_minor','debit_amount','credit_minor','credit_amount','debit_net_minor','debit_net_amount','amount_minor','amount','current_account_version']];
  const meta=(field:string,value:string|number|boolean|null|undefined)=>{if(value!==undefined)rows.push(['metadata',field,typeof value==='string'?csvText(value):value]);};
  for(const field of ['report','from','through','snapshotAt','coverage','scopeMayOmitCounterparties','currencyConversion','postingBasis','chartBasis','journalPurposeTreatment','classificationBasis','labelBasis','unclassifiedLineCount','requiresPurposeReview','accountCount','rowCount'] as const)meta(field,d[field]);
  meta('exportCompleteness','complete_permitted_report_within_limits');meta('currencyPolicy','Separate currencies; no invented exchange conversion.');meta('numericPrecisionPolicy','Money and minor units are exact CSV text. Import as text to preserve long decimals; spreadsheet auto-conversion can lose precision.');meta('textPolicy','Formula-like free text uses a visible text: prefix; original records are unchanged.');meta('blankNumericCells','Not applicable; never an invented zero.');
  if(provenance){meta('presetId',provenance.id);meta('presetVersion',provenance.version);}
+ if(provenance?.dateWindow){const w=provenance.dateWindow;meta('dateWindowKind',w.window.kind);meta('dateWindowTimeZone',w.window.timeZone);meta('dateWindowResolvedAt',w.resolvedAt);meta('dateWindowGeneratedFrom',w.from);meta('dateWindowGeneratedThrough',w.through);meta('dateWindowOverriddenFields',JSON.stringify(w.overriddenFields??[]));}
  const measures=['debit','credit','difference','income','expenses','netResult','assets','liabilities','equity','unclosedPostedResult','liabilitiesEquityAndResult'] as const;
  for(const c of d.currencies){for(const m of measures){const value=c[m];if(value){const row:(string|number|boolean|null|undefined)[]=[];Object.assign(row,{0:'currency_total',1:m,9:c.currencyId,10:csvText(c.currencyCode),11:c.unitScale,20:value.minor,21:value.amount});rows.push(row);}}if(c.balanced!==undefined)rows.push(['currency_status','balanced',c.balanced,'','','','','','',c.currencyId,csvText(c.currencyCode),c.unitScale]);}
  for(const e of d.entries)rows.push(['account',csvText(e.section??e.kind),'',e.accountId,csvText(e.code),csvText(e.name),e.hubId,e.kind,e.currentKind??e.kind,e.currencyId,csvText(e.currencyCode),e.unitScale,e.closing?.minor,e.closing?.amount,e.debit?.minor,e.debit?.amount,e.credit?.minor,e.credit?.amount,e.debitNet?.minor,e.debitNet?.amount,e.amount?.minor,e.amount?.amount,e.chartVersion]);
@@ -41,6 +43,6 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
 }
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
- const source=configuredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');return financialReportCsv(await completeFinancialReport({...source,request:new Request(url,{method:'GET'})}),provenance);
+ const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');return financialReportCsv(await completeFinancialReport({...source,request:new Request(url,{method:'GET'})}),{...provenance,dateWindow:resolvedDateWindow});
 }
 export const financialReportExportContract=[financialReportsContract[0],...financialStatementsContract].map(c=>({path:c.path+'/export',method:'get' as const,summary:'Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating',querySchema:(c.querySchema as z.ZodObject).safeExtend({limit:z.never().optional(),afterKind:z.never().optional(),afterCode:z.never().optional(),afterId:z.never().optional()}),responseContentType:'text/csv' as const}));
