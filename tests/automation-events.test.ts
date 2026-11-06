@@ -60,7 +60,10 @@ test('event-source migration does not invent historical approval snapshots and c
  const f=await fixture({throughSchema:59});try{
   const pending=await f.request('automations/rules',{...f.input,definition:{...f.definition,trigger:{kind:'domain_event',eventTypes:['approval.requested']}}},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));const before=(await f.pg.query('SELECT * FROM public.outbox_events ORDER BY id')).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/060_automation_event_sources.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query('SELECT * FROM public.outbox_events ORDER BY id')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.automation_event_sources')).rows.length,0);
-  assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);const sources=await f.events(pending.body.approval.id);assert.equal(sources.body.data.length,1);assert.equal(sources.body.data[0].sample.eventType,'approval.applied');assert.equal(sources.body.data[0].sourceVersion,2);
+  assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
+  // Query the actual schema60 native projection;current event API additionally
+  // requires later source tables/functions and is not a legacy runtime.
+  const sources=(await f.pg.query<{projection:{eventType:string};source_version:number}>('SELECT projection,source_version FROM public.automation_event_sources WHERE approval_id=$1',[pending.body.approval.id])).rows;assert.equal(sources.length,1);assert.equal(sources[0].projection.eventType,'approval.applied');assert.equal(sources[0].source_version,2);
  }finally{await f.pg.close();}
 });
 check('server capture time is not replaced by an outbox supplied timestamp',async f=>{

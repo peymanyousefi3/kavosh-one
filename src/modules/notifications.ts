@@ -4,7 +4,7 @@ import { jsonBody,assignmentGrantsForPeople,mutation,record,type ApiContext,type
 import { approvalReadParameters,approvalReadPolicyParameters,permissionScope } from '../core/approvals.ts';
 import { ApiError,requireScope,type Capability } from '../core/policy.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
-import { boundAutomationEvent,automationEventReadSelectionSQL } from './automation-events.ts';
+import { boundAutomationEvent,automationEventReadSelectionSQL,requireCurrentSessionEvent } from './automation-events.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { automationRuleHeader,automationRuleRevision } from './automation-rules.ts';
 
@@ -15,11 +15,11 @@ const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50)
 const readInput=z.object({locale:locale.optional()}).strict();
 const runPaging=z.object({limit:paging.shape.limit,afterCreatedAt:paging.shape.afterCreatedAt,afterId:paging.shape.afterId,eventId:uuid.optional()}).strict().refine(v=>(v.afterCreatedAt===undefined)===(v.afterId===undefined));
 const empty=z.object({}).strict();
-type Notification={id:string;title:string;body:string;severity:string;locale:string;origin:'automation'|'mandatory';source_id:string;source_kind:'approval'|'audit';event_id:string;created_at:string;read_at:string|null};
+type Notification={id:string;title:string;body:string;severity:string;locale:string;origin:'automation'|'mandatory';source_id:string;source_kind:'approval'|'audit'|'session';event_id:string;created_at:string;read_at:string|null};
 // Match current approval-case or audit-envelope rights,not the producer's snapshot. The
 // recipient does not need permission to edit or inspect automation definitions.
 const inboxFrom=`FROM public.portal_notifications n JOIN public.automation_event_sources e ON e.academy_id=n.academy_id AND e.event_id=n.event_id LEFT JOIN public.approval_requests p ON p.academy_id=e.academy_id AND p.id=e.approval_id LEFT JOIN public.portal_notification_reads rd ON rd.academy_id=n.academy_id AND rd.notification_id=n.id WHERE n.person_id=$2 AND ${automationEventReadSelectionSQL}`;
-const fields=`n.id,n.title,n.body,n.severity,n.locale,n.origin,coalesce(e.approval_id,e.audit_id) AS source_id,e.source_kind,n.event_id,to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,rd.read_at`;
+const fields=`n.id,n.title,n.body,n.severity,n.locale,n.origin,coalesce(e.approval_id,e.session_id,e.audit_id) AS source_id,e.source_kind,n.event_id,to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at,rd.read_at`;
 function human(ctx:ApiContext){if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_ACCOUNT_REQUIRED');}
 const mandatoryLabels={en:{title:'Critical activity recorded',body:'Open the linked approval record to review this activity. Reading this notification does not approve or resolve it.'},fr:{title:'Activité critique enregistrée',body:'Ouvrez le dossier d’approbation associé pour examiner cette activité. Lire cette notification ne vaut ni approbation ni résolution.'},'zh-CN':{title:'已记录重要操作',body:'请打开关联的审批记录查看此操作。阅读本通知不会批准或解决该事项。'}};
 function view(n:Notification,language:'en'|'fr'|'zh-CN'='en'){return {id:n.id,...(n.origin==='mandatory'?mandatoryLabels[language]:{title:n.title,body:n.body}),severity:n.severity,locale:n.origin==='mandatory'?language:n.locale,origin:n.origin,source:{kind:n.source_kind,id:n.source_id},eventId:n.event_id,createdAt:n.created_at,readAt:n.read_at,contentType:'text/plain',deliveryChannel:'portal'};}
@@ -40,7 +40,7 @@ export async function notifications(ctx:ApiContext):Promise<Reply|null>{
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const id=uuid.parse(process[1]),input=dispatch.parse(await jsonBody(ctx.request));
   await lockAcademyTopology(ctx);const header=await automationRuleHeader(ctx,id);requireScope(permissionScope(ctx,'automations.execute'),header.hub_id??undefined);
   const locked=(await ctx.db.query<{version:number}>('SELECT version FROM public.automation_rules WHERE id=$1 FOR SHARE',[id])).rows[0];if(locked?.version!==header.version)throw new ApiError(409,'AUTOMATION_RULE_CHANGED');
-  const event=await boundAutomationEvent(ctx,input.eventId);
+  const event=await boundAutomationEvent(ctx,input.eventId);requireCurrentSessionEvent(event);
   // One rule lock makes duplicate checks, UTC-day budgets and cooldowns atomic
   // across API processes. Different rules remain concurrent.
   await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,16))',[ctx.credential.academy_id+':'+id]);

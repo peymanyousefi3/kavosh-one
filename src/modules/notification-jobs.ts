@@ -4,7 +4,7 @@ import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api
 import { master,permissionScope,approvalReadParameters } from '../core/approvals.ts';
 import { ApiError,requireScope } from '../core/policy.ts';
 import { automationRuleHeader } from './automation-rules.ts';
-import { boundAutomationEvent,automationEventReadSelectionSQL } from './automation-events.ts';
+import { boundAutomationEvent,automationEventReadSelectionSQL,requireCurrentSessionEvent } from './automation-events.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
 
@@ -20,7 +20,7 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
  const fanout=/^automations\/events\/([^/]+)\/queue$/.exec(ctx.path);
  if(fanout){
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const eventId=uuid.parse(fanout[1]),input=fanoutInput.parse(await jsonBody(ctx.request));await lockAcademyTopology(ctx);
-  const event=await boundAutomationEvent(ctx,eventId),scopes=['automations.view','automations.execute'].map(cap=>permissionScope(ctx,cap as 'automations.view'|'automations.execute'));
+  const event=await boundAutomationEvent(ctx,eventId);requireCurrentSessionEvent(event);const scopes=['automations.view','automations.execute'].map(cap=>permissionScope(ctx,cap as 'automations.view'|'automations.execute'));
   if(scopes.some(s=>!s.all&&!s.hubs.length))throw new ApiError(403,'FORBIDDEN');
   // Filter both current scopes BEFORE paging. A cursor never identifies a rule
   // outside the caller's view/execute ceiling. Source rights are independent.
@@ -40,13 +40,13 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
    }
    await record(ctx.db,ctx.credential,ctx.requestId,'notification.batch_queued',eventId,event.projection.hubId,{rulesScanned:Math.min(rows.length,input.limit),jobs:queued.length,severity:'critical',externalRequestMade:false});
    const pending=queued.some(j=>j.jobStatus==='queued'||j.jobStatus==='running');
-   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['approval','audit'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
+   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['approval','audit','session'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
   });
  }
  const queue=/^automations\/rules\/([^/]+)\/queue$/.exec(ctx.path),list=/^automations\/rules\/([^/]+)\/jobs$/.exec(ctx.path),detail=/^automations\/jobs\/([^/]+)(?:\/(cancel))?$/.exec(ctx.path);
  if(!queue&&!list&&!detail)return null;
  if(queue){
-  if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const id=uuid.parse(queue[1]),i=notificationJobInput.parse(await jsonBody(ctx.request));await lockAcademyTopology(ctx);const r=await automationRuleHeader(ctx,id);requireScope(permissionScope(ctx,'automations.execute'),r.hub_id??undefined);await boundAutomationEvent(ctx,i.eventId);
+  if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const id=uuid.parse(queue[1]),i=notificationJobInput.parse(await jsonBody(ctx.request));await lockAcademyTopology(ctx);const r=await automationRuleHeader(ctx,id);requireScope(permissionScope(ctx,'automations.execute'),r.hub_id??undefined);requireCurrentSessionEvent(await boundAutomationEvent(ctx,i.eventId));
   const locked=(await ctx.db.query<{version:number}>('SELECT version FROM public.automation_rules WHERE id=$1 FOR SHARE',[id])).rows[0];if(locked?.version!==r.version)throw new ApiError(409,'AUTOMATION_RULE_CHANGED');
   await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,17))',[ctx.credential.academy_id+':'+ctx.credential.person_id]);
   return mutation(ctx,{ruleId:id,...i},async()=>{
