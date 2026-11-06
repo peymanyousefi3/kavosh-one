@@ -5,7 +5,9 @@ import { ApiError,requireScope } from '../core/policy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),
  name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000),hash=z.string().regex(/^[a-f0-9]{64}$/);
-const definition=z.object({name,translations:z.object({en:name.optional(),fr:name.optional(),'zh-CN':name.optional()}).strict().default({}),enabled:z.boolean().default(false),sourceTargetId:hash,destinationTargetId:hash,maximumBytes:z.number().int().min(1).max(33554432).default(33554432)}).strict().refine(v=>v.sourceTargetId!==v.destinationTargetId);
+const serving=z.object({enabled:z.boolean().default(false),allowedMimeTypes:z.array(z.enum(['image/jpeg','image/png','image/webp','image/gif','image/avif','application/pdf'])).max(6).refine(v=>new Set(v).size===v.length).default(['image/jpeg','image/png','image/webp','image/gif','image/avif','application/pdf']),maximumLinkSeconds:z.number().int().min(1).max(60).default(60)}).strict();
+// Optional preserves existing exact approvals;absence ALWAYS means disabled.
+const definition=z.object({name,translations:z.object({en:name.optional(),fr:name.optional(),'zh-CN':name.optional()}).strict().default({}),enabled:z.boolean().default(false),sourceTargetId:hash,destinationTargetId:hash,maximumBytes:z.number().int().min(1).max(33554432).default(33554432),serving:serving.optional()}).strict().refine(v=>v.sourceTargetId!==v.destinationTargetId);
 const create=z.object({definition,reason}).strict(),change=z.object({expectedVersion:version,definition,reason}).strict(),empty=z.object({}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(25),after:uuid.optional(),enabled:z.enum(['true','false']).optional(),q:text.trim().min(1).max(100).optional()}).strict();
 const history=z.object({limit:z.coerce.number().int().min(1).max(100).default(25),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
@@ -42,7 +44,7 @@ export async function storageRoutes(ctx:ApiContext,registry:ApprovalRegistry=sto
 }
 export const storageRoutesContract=[
  {path:'/api/v1/storage/routes',method:'get',summary:'School-wide permitted non-secret storage destination directory;not bucket/IAM certification or live transfer authority',querySchema:paging},
- {path:'/api/v1/storage/routes',method:'post',summary:'Upper-reviewed named distinct source/destination identities with bounded copy size;no credentials or network operation',schema:create},
+ {path:'/api/v1/storage/routes',method:'post',summary:'Upper-reviewed named source/destination identities and optional explicit private-serving policy,disabled when absent;bounded copy size and1to60second attachment links,no credentials or network operation',schema:create},
  {path:'/api/v1/storage/routes/{id}',method:'get',summary:'Read a permitted current storage destination definition,not download clearance'},
  {path:'/api/v1/storage/routes/{id}/change',method:'post',summary:'Upper-reviewed exact storage destination revision;old definitions remain immutable',schema:change},
  {path:'/api/v1/storage/routes/{id}/history',method:'get',summary:'Storage-editor-only destination revision and private review history',querySchema:history}

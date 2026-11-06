@@ -55,6 +55,11 @@ test('R2 clean downloads cannot address quarantine and force attachment, binary 
     const changed=new URL(link.url);changed.searchParams.set('response-content-disposition','inline');assert.notEqual(signature(changed.href,'GET',{}),u.searchParams.get('X-Amz-Signature'));
   }finally{f.store.close();}
 });
+test('conditional private downloads bind the measured object identity and original grant clock in independently verified signatures',async()=>{
+ const f=fixture();try{const issuedAt=new Date(Math.floor(Date.now()/1000)*1000-5000).toISOString(),link=await f.store.cleanDownload(file,30,{issuedAt,ifMatch:'"measured-object-etag"'}),u=new URL(link.url);assert.deepEqual(link.headers,{'if-match':'"measured-object-etag"'});assert.equal(u.searchParams.get('X-Amz-Date'),issuedAt.replaceAll(/[-:]|\.000/g,''));assert.ok(u.searchParams.get('X-Amz-SignedHeaders')!.split(';').includes('if-match'));assert.equal(signature(link.url,'GET',link.headers!),u.searchParams.get('X-Amz-Signature'));assert.notEqual(signature(link.url,'GET',{'if-match':'"changed-object"'}),u.searchParams.get('X-Amz-Signature'));assert.notEqual(signature(link.url,'GET',{}),u.searchParams.get('X-Amz-Signature'));assert.equal(Date.parse(link.expiresAt),Date.parse(issuedAt)+30000);assert.equal(f.requests(),0);
+  for(const bad of [{ifMatch:'*'},{ifMatch:'"bad\r\netag"'},{url:'https://localhost'},{issuedAt:'yesterday'}])await assert.rejects(f.store.cleanDownload(file,30,bad),{code:'INVALID_FILE_DOWNLOAD_CONDITION'});
+ }finally{f.store.close();}
+});
 test('R2 config rejects missing credentials, untrusted endpoints and malformed account/bucket/tenant fields without leaking secrets',()=>{
   for(const c of [{...config,accountId:'localhost'},{...config,endpoint:'http://localhost'},{...config,jurisdiction:'unknown'},{...config,bucket:'../unsafe'},
     {...config,accessKeyId:''},{...config,accessKeyId:'bad\r\nkey'},{...config,secretAccessKey:''},{...config,maximumUploadBytes:0},{...config,maximumUploadBytes:4_294_967_297}])

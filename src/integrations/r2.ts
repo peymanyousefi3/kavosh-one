@@ -89,11 +89,13 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
         return {url,method:'PUT' as const,headers:{'content-type':input.data.contentType,'content-length':String(input.data.bytes),'if-none-match':'*'},expiresAt:time.expiresAt};
       }catch{throw new ApiError(502,'R2_LINK_UNAVAILABLE');}
     },
-    async cleanDownload(fileId:string,expiresSeconds=60) {
-      const objectKey=key('clean',fileId),time=expiry(expiresSeconds,60);
+    async cleanDownload(fileId:string,expiresSeconds=60,conditions:{issuedAt?:string;ifMatch?:string}={}) {
+      const valid=z.object({issuedAt:z.iso.datetime().optional(),ifMatch:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/).optional()}).strict().safeParse(conditions);
+      if(!valid.success)throw new ApiError(400,'INVALID_FILE_DOWNLOAD_CONDITION');
+      const objectKey=key('clean',fileId),time=expiry(expiresSeconds,60,valid.data.issuedAt);
       try {
-        const url=await getSignedUrl(client,new GetObjectCommand({Bucket:c.bucket,Key:objectKey,ResponseContentType:'application/octet-stream',ResponseContentDisposition:'attachment',ResponseCacheControl:'private, no-store'}),{expiresIn:time.expiresIn,signingDate:time.signingDate});
-        return {url,method:'GET' as const,expiresAt:time.expiresAt};
+        const url=await getSignedUrl(client,new GetObjectCommand({Bucket:c.bucket,Key:objectKey,ResponseContentType:'application/octet-stream',ResponseContentDisposition:'attachment',ResponseCacheControl:'private, no-store',...(valid.data.ifMatch?{IfMatch:valid.data.ifMatch}:{})}),{expiresIn:time.expiresIn,signingDate:time.signingDate,...(valid.data.ifMatch?{signableHeaders:new Set(['if-match'])}:{})});
+        return {url,method:'GET' as const,expiresAt:time.expiresAt,...(valid.data.ifMatch?{headers:{'if-match':valid.data.ifMatch}}:{})};
       }catch{throw new ApiError(502,'R2_LINK_UNAVAILABLE');}
     },
     close(){if(!closed){closed=true;client.destroy();}}

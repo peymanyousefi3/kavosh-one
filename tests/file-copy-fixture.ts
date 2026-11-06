@@ -10,10 +10,10 @@ import type { Database } from '../src/core/database.ts';
 
 export const config={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-copy-intentions',accessKeyId:'synthetic-id',secretAccessKey:'synthetic-not-real-secret',maximumUploadBytes:100000};
 export const hash=(b:Buffer)=>createHash('sha256').update(b).digest('hex'),target=hash(Buffer.from(JSON.stringify([config.accountId,config.jurisdiction,config.bucket]))),python=process.env.TEST_PDF_PYTHON_BINARY;
-export async function fixture(base?:Awaited<ReturnType<typeof operationsFixture>>){
+export async function fixture(base?:Awaited<ReturnType<typeof operationsFixture>>,destinationTargetId='b'.repeat(64)){
  const f=base??await operationsFixture({connections:()=>config});for(const cap of ['files.view','files.edit','files.upload'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.managerRole,cap]);await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'files.view','allow') ON CONFLICT DO NOTHING",[f.a,f.staffRole]);
  assert.equal((await f.request('storage-policy',{expectedVersion:0,uploadsEnabled:true,maximumFileBytes:100000,maximumReservedBytes:2000000,maximumFiles:100,allowedMimeTypes:['image/png','application/pdf','text/plain'],reason:'Synthetic copy source uploads'})).response.status,200);
- const route=(await f.request('storage/routes',{definition:{name:'Approved staging destination',enabled:true,sourceTargetId:target,destinationTargetId:'b'.repeat(64)},reason:'Synthetic metadata-only approved route'})).body.data;
+ const route=(await f.request('storage/routes',{definition:{name:'Approved staging destination',enabled:true,sourceTargetId:target,destinationTargetId},reason:'Synthetic metadata-only approved route'})).body.data;
  const bytes=await sharp({create:{width:8,height:4,channels:3,background:'red'}}).png().toBuffer();
  const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{async query<Row>(sql:string,params?:unknown[]){return f.pg.query<Row>(sql,params);},release(){}};await c.query('SET ROLE kavosh_file_worker');return c;}};
  const expire=(id:string)=>f.pg.query("UPDATE public.file_upload_grants SET issued_at=date_trunc('second',clock_timestamp())-interval '10 minutes',expires_at=date_trunc('second',clock_timestamp())-interval '5 minutes' WHERE file_id=$1",[id]);

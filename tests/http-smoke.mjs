@@ -9,6 +9,7 @@ const env={...process.env};
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
 delete env.IDENTITY_DATABASE_URL;delete env.AUTH_SECRET;delete env.EDGE_AUTH_SECRET;
 delete env.R2_UPLOAD_CONNECTIONS;delete env.R2_UPLOAD_LINKS_ENABLED;
+delete env.R2_DOWNLOAD_CONNECTIONS;delete env.R2_DOWNLOAD_LINKS_ENABLED;
 delete env.BOLDSIGN_WEBHOOK_CONNECTIONS;delete env.BOLDSIGN_WEBHOOK_ENABLED;delete env.SIGNATURE_INGEST_DATABASE_URL;
 const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
 let output='';
@@ -21,6 +22,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/download-link',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/X-Amz|downloadUrl|sourceFingerprint|stack/);}
   for(const suffix of ['', '/00000000-0000-4000-8000-000000000003']){const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/copies/00000000-0000-4000-8000-000000000002/reconciliations'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceFingerprint|leaseToken|workerId|stack/);}
   {const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/copies/00000000-0000-4000-8000-000000000002/reconciliations',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   {const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/copies/00000000-0000-4000-8000-000000000002');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceFingerprint|leaseToken|workerId|stack/);}
