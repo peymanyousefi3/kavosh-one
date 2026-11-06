@@ -6,8 +6,8 @@ import { operationsFixture } from './operations-fixture.ts';
 import { businessContract } from '../src/modules/business.ts';
 import { reportSchedulesContract } from '../src/modules/report-schedules.ts';
 
-test('all eight schedule operations are in the main public bot API',async()=>{
- const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportSchedulesContract.length,8);for(const endpoint of reportSchedulesContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
+test('all ten schedule operations are in the main public bot API',async()=>{
+ const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportSchedulesContract.length,10);for(const endpoint of reportSchedulesContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
 });
 
 async function fixture(){const f=await operationsFixture();try{
