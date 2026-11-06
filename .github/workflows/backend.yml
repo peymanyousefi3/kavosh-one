@@ -56,6 +56,8 @@ jobs:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Compile the isolated notification daemon without a TypeScript runtime
         run: pnpm notifications:build
+      - name: Compile the separate financial-report daemon without a TypeScript runtime
+        run: pnpm reports:build
       - name: API contract matches the implemented schemas
         run: pnpm api:generate && git diff --exit-code -- public/openapi.json
       # Routine native logic runs in isolated jobs below. Run42108232836
@@ -134,6 +136,7 @@ jobs:
       NEXT_TELEMETRY_DISABLED: '1'
       TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       NOTIFICATION_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-notifications.js
+      REPORT_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-reports.js
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -144,6 +147,7 @@ jobs:
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm notifications:build
+      - run: pnpm reports:build
       - name: Complete assigned quick-logic group without dropping or duplicating files
         run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
   learning:

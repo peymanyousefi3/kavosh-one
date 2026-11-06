@@ -45,7 +45,7 @@ export const financialStatementSQL=`WITH selected AS MATERIALIZED (${financialAc
 )
 SELECT statement_timestamp()::text AS "snapshotAt",(SELECT coalesce(sum(unclassified_lines),0)::text FROM movements) AS "unclassifiedLineCount",(SELECT count(DISTINCT id)::integer FROM shown) AS "accountCount",(SELECT count(*)::integer FROM shown) AS "rowCount",
  coalesce((SELECT jsonb_agg(to_jsonb(totals) ORDER BY "currencyCode","currencyId") FROM totals),'[]'::jsonb) AS currencies,
- coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY sort,code,"accountId") FROM page),'[]'::jsonb) AS entries`;
+ coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY sort,code,"accountId") FROM page),'[]'::jsonb) AS entries,coalesce((SELECT jsonb_agg(DISTINCT hub_id) FROM selected),'[]'::jsonb) AS "authorizationHubs"`;
 function exact(value:bigint,scale:number){return {minor:value.toString(),amount:formatMoneyTotal(value,scale)};}
 export async function financialStatements(ctx:ApiContext,exportEntryLimit?:number):Promise<Reply|null>{
   const match=/^reports\/finance\/(profit-loss|balance-sheet)$/.exec(ctx.path);if(!match)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
@@ -53,7 +53,7 @@ export async function financialStatements(ctx:ApiContext,exportEntryLimit?:numbe
   if(exportEntryLimit!==undefined){if(!Number.isInteger(exportEntryLimit)||exportEntryLimit<1||exportEntryLimit>10000)throw new Error('INVALID_REPORT_EXPORT_LIMIT');q.limit=exportEntryLimit;}
   // Classify using each line's immutable account revision, not today's chart
   // kind. One account can legitimately have multiple as-posted kind groups.
-  const result=(await ctx.db.query<{snapshotAt:string;unclassifiedLineCount:string;accountCount:number;rowCount:number;currencies:Total[];entries:Entry[]}>(financialStatementSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,from,sheet,q.afterKind===undefined?null:financialKinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
+  const result=(await ctx.db.query<{snapshotAt:string;authorizationHubs:(string|null)[];unclassifiedLineCount:string;accountCount:number;rowCount:number;currencies:Total[];entries:Entry[]}>(financialStatementSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,from,sheet,q.afterKind===undefined?null:financialKinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
   const currencies=result.currencies.map(c=>{
     const income=readMinorUnits(c.incomeMinor),expenses=readMinorUnits(c.expenseMinor),net=income-expenses,base={currencyId:c.currencyId,currencyCode:c.currencyCode,unitScale:c.unitScale};
     if(!sheet)return {...base,income:exact(income,c.unitScale),expenses:exact(expenses,c.unitScale),netResult:exact(net,c.unitScale)};
@@ -62,7 +62,7 @@ export async function financialStatements(ctx:ApiContext,exportEntryLimit?:numbe
   });
   const next=result.entries.length>q.limit?result.entries[q.limit-1]:null,complete=access.global&&!q.hubIds&&!q.accountIds;
   return {status:200,body:{data:{report:sheet?'posted_balance_sheet':'posted_profit_loss',from,through:q.through,snapshotAt:result.snapshotAt,postingBasis:sheet?'all_posted_account_lines':'posted_operating_activity',journalPurposeTreatment:sheet?'all_posted_purposes':'activity_and_legacy_excluding_opening_closing',unclassifiedLineCount:result.unclassifiedLineCount,requiresPurposeReview:result.unclassifiedLineCount!=='0',classificationBasis:'as_posted_account_revision',labelBasis:'current_account_metadata',currencyConversion:'none',
-    coverage:complete?'complete_selected_currencies':'scoped_selected_accounts',scopeMayOmitCounterparties:!complete,accountCount:result.accountCount,rowCount:result.rowCount,currencies,
+    coverage:complete?'complete_selected_currencies':'scoped_selected_accounts',scopeMayOmitCounterparties:!complete,...(exportEntryLimit===undefined?{}:{authorizationContext:{hubIds:result.authorizationHubs.filter((h):h is string=>h!==null),includesGlobal:result.authorizationHubs.includes(null)}}),accountCount:result.accountCount,rowCount:result.rowCount,currencies,
     entries:result.entries.slice(0,q.limit).map(({sort,debitNetMinor,...a})=>{const net=readMinorUnits(debitNetMinor),section=sheet?(a.kind==='asset'?'assets':a.kind==='liability'?'liabilities':a.kind==='equity'?'equity':'unclosed_result'):(a.kind==='income'?'income':'expenses');
       const value=sheet?(a.kind==='asset'?net:-net):(a.kind==='income'?-net:net);return {...a,section,debitNet:exact(net,a.unitScale),amount:exact(value,a.unitScale)};})},
     nextCursor:next?{afterKind:next.kind,afterCode:next.code,afterId:next.accountId}:null}};

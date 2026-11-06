@@ -52,7 +52,7 @@ export const trialBalanceSQL=`WITH selected AS MATERIALIZED (${financialAccountS
 )
 SELECT statement_timestamp()::text AS "snapshotAt",(SELECT count(*)::integer FROM shown) AS "accountCount",
  coalesce((SELECT jsonb_agg(to_jsonb(currency_totals) ORDER BY "currencyCode","currencyId") FROM currency_totals),'[]'::jsonb) AS currencies,
- coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY sort,code,"accountId") FROM page),'[]'::jsonb) AS entries`;
+ coalesce((SELECT jsonb_agg(to_jsonb(page) ORDER BY sort,code,"accountId") FROM page),'[]'::jsonb) AS entries,coalesce((SELECT jsonb_agg(DISTINCT hub_id) FROM selected),'[]'::jsonb) AS "authorizationHubs"`;
 function exact(minor:bigint,scale:number){return {minor:minor.toString(),amount:formatMoneyTotal(minor,scale)};}
 export async function financialReports(ctx:ApiContext,exportEntryLimit?:number):Promise<Reply|null>{
   if(ctx.path!=='reports/finance/trial-balance')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
@@ -60,11 +60,11 @@ export async function financialReports(ctx:ApiContext,exportEntryLimit?:number):
   if(exportEntryLimit!==undefined){if(!Number.isInteger(exportEntryLimit)||exportEntryLimit<1||exportEntryLimit>10000)throw new Error('INVALID_REPORT_EXPORT_LIMIT');q.limit=exportEntryLimit;}
   // Account rights intersect report and ledger rights before both totals and
   // pagination. Never infer a whole-school balance from a narrower hub view.
-  const result=(await ctx.db.query<{snapshotAt:string;accountCount:number;currencies:CurrencyTotal[];entries:Entry[]}>(trialBalanceSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,q.includeZero,q.afterKind===undefined?null:kinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
+  const result=(await ctx.db.query<{snapshotAt:string;authorizationHubs:(string|null)[];accountCount:number;currencies:CurrencyTotal[];entries:Entry[]}>(trialBalanceSQL,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,q.includeZero,q.afterKind===undefined?null:kinds.indexOf(q.afterKind),q.afterCode??null,q.afterId??null,q.limit+1])).rows[0];
   const currencies=result.currencies.map(c=>{const debit=readMinorUnits(c.debitMinor),credit=readMinorUnits(c.creditMinor);return {currencyId:c.currencyId,currencyCode:c.currencyCode,unitScale:c.unitScale,debit:exact(debit,c.unitScale),credit:exact(credit,c.unitScale),difference:exact(debit-credit,c.unitScale),balanced:debit===credit};});
   const next=result.entries.length>q.limit?result.entries[q.limit-1]:null,complete=access.global&&!q.hubIds&&!q.accountIds;
   return {status:200,body:{data:{report:'posted_trial_balance',through:q.through,snapshotAt:result.snapshotAt,postingBasis:'all_posted_account_lines',chartBasis:'current_account_metadata',currencyConversion:'none',
-    coverage:complete?'complete_selected_currencies':'scoped_selected_accounts',scopeMayOmitCounterparties:!complete,accountCount:result.accountCount,currencies,
+    coverage:complete?'complete_selected_currencies':'scoped_selected_accounts',scopeMayOmitCounterparties:!complete,...(exportEntryLimit===undefined?{}:{authorizationContext:{hubIds:result.authorizationHubs.filter((h):h is string=>h!==null),includesGlobal:result.authorizationHubs.includes(null)}}),accountCount:result.accountCount,currencies,
     entries:result.entries.slice(0,q.limit).map(({sort,closingMinor,...a})=>{const minor=readMinorUnits(closingMinor);return {...a,closing:exact(minor,a.unitScale),debit:exact(minor>0n?minor:0n,a.unitScale),credit:exact(minor<0n?-minor:0n,a.unitScale)};})},
     nextCursor:next?{afterKind:next.kind,afterCode:next.code,afterId:next.accountId}:null}};
 }
