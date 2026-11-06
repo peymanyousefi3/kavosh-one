@@ -14,6 +14,17 @@ const columns='id,file_id AS "fileId",file_version AS "fileVersion",inspection_i
 function output(r:Record<string,unknown>){return {...r,downloadAuthorized:false,signatureReady:false};}
 async function source(ctx:ApiContext,id:string,i:z.infer<typeof input>){return(await ctx.db.query<{source:Record<string,unknown>|null}>('SELECT public.file_copy_source($1,$2,$3,$4,$5,$6) source',[id,i.fileVersion,i.inspectionId,i.attemptNo,i.routeId,i.routeVersion])).rows[0].source;}
 export async function fileCopies(ctx:ApiContext):Promise<Reply|null>{
+ const detail=/^files\/([^/]+)\/copies\/([^/]+)$/.exec(ctx.path);
+ if(detail){
+  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+  empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const fileId=uuid.parse(detail[1]),copyId=uuid.parse(detail[2]);
+  await lockApprovalWrites(ctx);await lockAcademyTopology(ctx);await permittedFile(ctx,fileId);
+  const request=(await ctx.db.query('SELECT '+columns+' FROM public.file_copy_requests WHERE file_id=$1 AND id=$2',[fileId,copyId])).rows[0];if(!request)throw new ApiError(404,'NOT_FOUND');
+  const job=(await ctx.db.query('SELECT state,attempt_no AS "attemptCount",last_outcome AS "lastOutcome",CASE WHEN state=\'queued\' THEN available_at::text END AS "retryNotBefore" FROM public.file_copy_jobs WHERE copy_id=$1',[copyId])).rows[0];
+  if(!job)throw new ApiError(503,'FILE_COPY_JOB_MISSING');
+  const attempts=(await ctx.db.query('SELECT attempt_no AS "attemptNo",outcome,sources_current AS "sourcesCurrentAtFinish",started_at::text AS "startedAt",finished_at::text AS "finishedAt",measured_bytes::float8 AS "measuredBytes" FROM public.file_copy_attempts WHERE copy_id=$1 ORDER BY attempt_no',[copyId])).rows;
+  return {status:200,body:{data:{...output(request),...job,attempts,reconciliationRequired:job.state==='uncertain',automaticRetryScheduled:job.state==='queued'&&Number(job.attemptCount)>0,workerLiveness:'not_observed',downloadAuthorized:false,signatureReady:false}}};
+ }
  const m=/^files\/([^/]+)\/(copies|copy-destinations)$/.exec(ctx.path);if(!m)return null;const id=uuid.parse(m[1]),section=m[2],params=new URL(ctx.request.url).searchParams;
  if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
  if(ctx.request.method==='POST'){
@@ -43,6 +54,7 @@ export async function fileCopies(ctx:ApiContext):Promise<Reply|null>{
  return {status:200,body:{data:rows.slice(0,q.limit).map(output),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
 }
 export const fileCopiesContract=[
+ {path:'/api/v1/files/{id}/copies/{copyId}',method:'get',summary:'Current file/domain-authorized durable copy state and at most five recorded attempts;opaque worker leases,credentials,private owner details and provider diagnostics are excluded;uncertain does not imply failure or permission to retry'},
  {path:'/api/v1/files/{id}/copy-destinations',method:'get',summary:'Current upload/domain-permitted compatible destination labels only,not school-wide settings or credentials;default only when exactly one eligible destination exists',querySchema:selection},
  {path:'/api/v1/files/{id}/copies',method:'post',summary:'Request one deduplicated exact-file byte copy under an already reviewed enabled destination and current upload/domain rights;no additional per-file approval;durable background job,not immediate physical transfer or download clearance',schema:input,acceptedDescription:'Durable job queued;no immediate physical transfer or download authority is established'},
  {path:'/api/v1/files/{id}/copies',method:'get',summary:'Current-file/domain-permitted copy history with actual job state and recorded physical receipts,never serving authority',querySchema:paging}
