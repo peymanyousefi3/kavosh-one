@@ -5,8 +5,10 @@ import { ApiError } from '../core/policy.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { permittedSignatureSend } from './signature-sends.ts';
 import { boldSignSendDraftSchema } from '../integrations/boldsign-send-request.ts';
+import { boldSignStoredOriginalSchema } from '../integrations/boldsign-stored-request.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
+const sourceQuery=z.object({copyId:uuid.optional()}).strict();
 const manifest=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash}).strict();
 const observation=z.discriminatedUnion('state',[
  z.object({state:z.literal('not_attempted')}).strict(),z.object({state:z.literal('outcome_unknown')}).strict(),
@@ -26,7 +28,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
  const sourcePath=/^signature-send-requests\/([^/]+)\/dispatch-source$/.exec(ctx.path);
  if(sourcePath){
   if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
-  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+  const query=sourceQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
   const requestId=uuid.parse(sourcePath[1]);await lockAcademyTopology(ctx);
   const {r,p}=await permittedSignatureSend(ctx,requestId,'signature-dispatch.execute');
   if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
@@ -38,11 +40,21 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
    document:{sha256:binding.source.sha256,sizeBytes:binding.source.sizeBytes},routing:binding.routing,
    signer:{personId:contact.person_id,legalName:contact.legal_name,email:contact.email,phoneE164:contact.phone_e164,emailVerified:true,phoneVerified:true,contactFingerprint:contact.contact_fingerprint}});
   if(!prepared.success)throw new ApiError(503,'SIGNATURE_DISPATCH_SOURCE_INVALID');
+  let original:null|z.infer<typeof boldSignStoredOriginalSchema>=null;
+  if(query.copyId){
+   const copy=(await ctx.db.query('SELECT route_id FROM public.file_copy_requests WHERE id=$1 AND file_id=$2',[query.copyId,binding.file_id])).rows[0];if(!copy)throw new ApiError(404,'NOT_FOUND');
+   await ctx.db.query('SELECT id FROM public.file_records WHERE id=$1 FOR SHARE',[binding.file_id]);
+   await ctx.db.query('SELECT id FROM public.file_storage_routes WHERE id=$1 FOR SHARE',[copy.route_id]);
+   const artifact=(await ctx.db.query<{source:Record<string,unknown>|null}>('SELECT public.file_download_source($1,$2,$3) source',[binding.file_id,binding.file_version,query.copyId])).rows[0].source;
+   if(!artifact||artifact.mime!=='application/pdf'||artifact.sha256!==prepared.data.document.sha256||artifact.bytes!==prepared.data.document.sizeBytes)throw new ApiError(409,'BOLDSIGN_ORIGINAL_NOT_READY');
+   const verified=boldSignStoredOriginalSchema.safeParse({academyId:ctx.credential.academy_id,fileId:artifact.fileId,fileVersion:artifact.fileVersion,copyId:artifact.copyId,storageTargetId:artifact.destinationTargetId,etag:artifact.destinationEtag,bytes:artifact.bytes,sha256:artifact.sha256});
+   if(!verified.success)throw new ApiError(503,'SIGNATURE_DISPATCH_SOURCE_INVALID');original=verified.data;
+  }
   // The final source comparison catches a concurrent contact/profile change.
   // Actual sending must reauthorize AGAIN after original-byte retrieval.
   if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
   await record(ctx.db,ctx.credential,ctx.requestId,'signature.dispatch.source.read',requestId,p.hub_id,{privateContactRead:true,externalRequestMade:false});
-  return {status:200,body:{data:{draft:prepared.data,file:{id:binding.file_id,version:binding.file_version,inspectionId:binding.inspection_id,attemptNo:binding.attempt_no},...markers,originalBytesRetrieved:false,fileSafetyCleared:false,externalRequestMade:false}}};
+  return {status:200,body:{data:{draft:prepared.data,file:{id:binding.file_id,version:binding.file_version,inspectionId:binding.inspection_id,attemptNo:binding.attempt_no},original,originalEvidenceAvailable:Boolean(original),...markers,originalBytesRetrieved:false,fileSafetyCleared:false,externalRequestMade:false}}};
  }
  const path=/^signature-send-requests\/([^/]+)\/attempts\/([^/]+)\/dispatch(?:\/(outcome))?$/.exec(ctx.path);if(!path)return null;
  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
@@ -82,7 +94,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
  });
 }
 export const signatureDispatchContract=[
- {path:'/api/v1/signature-send-requests/{id}/dispatch-source',method:'get',summary:'Audited private signing draft hydrated from verified account contacts and exact reviewed source; distinct dispatch rights required, no bytes, safety clearance or provider call'},
+ {path:'/api/v1/signature-send-requests/{id}/dispatch-source',method:'get',summary:'Audited private signing draft and optional exact verified-copy descriptor under current reviewed serving policy; no bytes, safety clearance or provider call',querySchema:sourceQuery},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'post',summary:'Consume one durable reservation exactly once; replay is conflict, no provider call or file clearance',schema:manifest},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'get',summary:'Read private send-once start and bounded unverified transport observation'},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch/outcome',method:'post',summary:'Record one immutable transport observation by starter, including after source expiry; never signature/admission proof',schema:observation}

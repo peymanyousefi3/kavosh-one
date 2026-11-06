@@ -16,6 +16,7 @@ const workDraft=boldSignRequestOptions.extend({preparationId:uuid,bindingId:uuid
 export type BoldSignSendDraft=z.infer<typeof draft>;
 export const boldSignSendDraftSchema=draft;
 export type BoldSignWorkSendDraft=z.infer<typeof workDraft>;
+export const boldSignWorkSendDraftSchema=workDraft;
 const executableTypes={signature:'Signature',initial:'Initial',checkbox:'CheckBox',datesigned:'DateSigned'} as const;
 const digest=(value:Uint8Array|string)=>createHash('sha256').update(value).digest('hex');
 

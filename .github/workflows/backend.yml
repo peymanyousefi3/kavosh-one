@@ -43,7 +43,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - name: Focused signing transport and original-byte verification
-        run: node --import tsx --test --test-concurrency=1 tests/boldsign.test.ts tests/boldsign-template.test.ts tests/boldsign-template-pdf.test.ts tests/boldsign-send-request.test.ts tests/boldsign-work-send-request.test.ts tests/boldsign-dispatch.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/boldsign.test.ts tests/boldsign-template.test.ts tests/boldsign-template-pdf.test.ts tests/boldsign-send-request.test.ts tests/boldsign-work-send-request.test.ts tests/boldsign-dispatch.test.ts tests/boldsign-stored-request.test.ts
       - name: Conditional separate-target storage promotion and original-byte verification
         run: node --import tsx --test --test-concurrency=1 tests/r2.test.ts tests/r2-inspection.test.ts tests/r2-promotion.test.ts
       - name: Focused agreement-content persistence and private source approvals
@@ -241,7 +241,7 @@ jobs:
           python -m pip install --disable-pip-version-check pip-audit==2.10.1
           python -m pip_audit --require-hashes --progress-spinner off --strict -r workers/pdf-validator/requirements.txt
       - name: Required actual native PDF parser and short process-failure checks
-        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts tests/file-pdf-evidence.test.ts tests/file-copies.test.ts tests/file-copy-worker.test.ts tests/file-copy-reconciliation.test.ts tests/copy-check-adapter.test.ts tests/file-downloads.test.ts tests/download-config.test.ts
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 tests/pdf-validation.test.ts tests/pdf-service.test.ts tests/file-pdf-evidence.test.ts tests/file-copies.test.ts tests/file-copy-worker.test.ts tests/file-copy-reconciliation.test.ts tests/copy-check-adapter.test.ts tests/file-downloads.test.ts tests/download-config.test.ts tests/signing-original-flow.test.ts
         env:
           PDF_VALIDATION_TEST_REQUIRED: 'true'
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres

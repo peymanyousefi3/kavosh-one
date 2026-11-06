@@ -9,7 +9,7 @@ import { r2Connection as connection,type R2Connection } from './r2-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const uploadMetadata=z.object({contentType:z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/),bytes:z.number().int().positive().safe()}).strict();
-const inspectionClaims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional()}).strict();
+const inspectionClaims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional(),ifMatch:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/).optional()}).strict();
 
 // Official SDK, fixed R2 endpoint, explicit credentials (no metadata-service or
 // environment credential fallback). No network is needed to sign a link.
@@ -39,17 +39,18 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     if(end<=Date.now())throw new ApiError(410,'FILE_LINK_EXPIRED');
     return {expiresIn:value,signingDate,expiresAt:new Date(end).toISOString()};
   }
-  async function inspectStored<T>(stage:'quarantine'|'clean',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal) {
+  async function inspectStored<T>(stage:'quarantine'|'clean',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
       const objectKey=key(stage,fileId),input=inspectionClaims.safeParse(claims);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
       if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>600000)throw new ApiError(400,'INVALID_INSPECTION_TIMEOUT');
       if(signal?.aborted)throw new ApiError(502,'R2_INSPECTION_CANCELLED');
-      const expected=input.data,controller=new AbortController();let body:Readable|undefined,meter:Transform|undefined,timedOut=false;
+      const expected=input.data,controller=new AbortController();let body:Readable|undefined,meter:Transform|undefined,timedOut=false;const pendingOperations:Promise<unknown>[]=[];
       let expire!:(reason:ApiError)=>void;const expired=new Promise<never>((_resolve,reject)=>{expire=reject;});
       const cancel=()=>{controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_CANCELLED'));};signal?.addEventListener('abort',cancel,{once:true});
       const deadline=setTimeout(()=>{timedOut=true;controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_TIMEOUT'));},timeoutMs);
       try {
-        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
+        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey,...expected.ifMatch?{IfMatch:expected.ifMatch}:{}}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
+        pendingOperations.push(request);
         const response=await Promise.race([request,expired]);
         if(!(response.Body instanceof Readable))throw new ApiError(502,'R2_INVALID_OBJECT');body=response.Body;
         if(!Number.isSafeInteger(response.ContentLength)||response.ContentLength!==expected.bytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
@@ -57,10 +58,12 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
         // independently verified hash. No complete content buffer is retained.
         const provider=z.object({etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),contentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/)}).safeParse({etag:response.ETag,contentType:response.ContentType});
         if(!provider.success)throw new ApiError(502,'R2_INVALID_OBJECT');
+        if(expected.ifMatch&&provider.data.etag!==expected.ifMatch)throw new ApiError(409,'FILE_ETAG_MISMATCH');
         const hash=createHash('sha256');let bytes=0,ended=false;
         meter=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;if(bytes>expected.bytes){callback(new ApiError(409,'FILE_SIZE_MISMATCH'));return;}hash.update(chunk);callback(null,chunk);}});
         meter.once('end',()=>{ended=true;});const source=meter;
         const transfer=pipeline(body,meter),inspection=(async()=>{const result=await inspect(source,controller.signal);if(!ended)throw new ApiError(502,'R2_INCOMPLETE_INSPECTION');return result;})();
+        pendingOperations.push(transfer,inspection);
         const [,result]=await Promise.race([Promise.all([transfer,inspection]),expired]);
         if(bytes!==expected.bytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
         const sha256=hash.digest('hex');if(expected.sha256&&sha256!==expected.sha256)throw new ApiError(409,'FILE_HASH_MISMATCH');
@@ -68,15 +71,17 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
       }catch(error){
         if(signal?.aborted)throw new ApiError(502,'R2_INSPECTION_CANCELLED');
         if(timedOut)throw new ApiError(502,'R2_INSPECTION_TIMEOUT');
-        if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH','R2_INVALID_OBJECT','R2_INCOMPLETE_INSPECTION'].includes(error.code))throw error;
+        if(error instanceof ApiError&&['FILE_SIZE_MISMATCH','FILE_HASH_MISMATCH','FILE_ETAG_MISMATCH','R2_INVALID_OBJECT','R2_INCOMPLETE_INSPECTION'].includes(error.code))throw error;
         throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');
-      }finally{clearTimeout(deadline);signal?.removeEventListener('abort',cancel);controller.abort();body?.destroy();meter?.destroy();}
+      }finally{clearTimeout(deadline);signal?.removeEventListener('abort',cancel);controller.abort();body?.destroy();meter?.destroy();observeResources?.(Promise.allSettled(pendingOperations));}
   }
   return {
     storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),
     maximumUploadBytes:c.maximumUploadBytes,
     inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal){return inspectStored('quarantine',fileId,claims,inspect,timeoutMs,signal);},
-    inspectClean<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal){return inspectStored('clean',fileId,claims,inspect,timeoutMs,signal);},
+    // Optional lifecycle observer lets buffering callers retain admission until
+    // actual IO/inspection settlement,not merely a timeout's early rejection.
+    inspectClean<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('clean',fileId,claims,inspect,timeoutMs,signal,observeResources);},
     async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300,issuedAt?:string) {
       const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300,issuedAt);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_UPLOAD_METADATA');

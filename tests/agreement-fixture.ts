@@ -27,11 +27,12 @@ export async function agreementFixture(throughSchema?:number) {
  const prepare=(body:unknown=input,as='master',key?:string)=>f.request(path,body,as,key?{key}:{});
  return {...f,student,signer,connection:connectionId,c:c.body.data,e:e.body.data,t:t.body.data,relationship:relationship.body.data,input,path,prepare};
 }
-export async function reviewedAgreementContent(f:Awaited<ReturnType<typeof agreementFixture>>,templateId=f.t.id) {
- // Synthetic storage/scanner results: actual database evidence, not a real PDF
- // parse, physical object upload, live provider or current malware clearance.
- const bytes=Buffer.from('%PDF-1.7\nPRIVATE synthetic package agreement\n'),sha256=createHash('sha256').update(bytes).digest('hex');
- const result={outcome:'no_detection',bytes:bytes.length,sha256,etag:'"synthetic-etag"',providerContentType:'application/pdf',signature:{detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:'application/pdf',extension:'pdf'}} satisfies InspectionResult;
+export async function reviewedAgreementContent(f:Awaited<ReturnType<typeof agreementFixture>>,templateId=f.t.id,options:{bytes?:Buffer;inspect?:(bytes:Buffer)=>Promise<InspectionResult>}={}) {
+ // Default storage/scanner results are synthetic,not a real PDF parse. An
+ // explicit inspect callback can run the real parser without claiming cloud
+ // upload,live provider verification or current malware clearance.
+ const bytes=options.bytes??Buffer.from('%PDF-1.7\nPRIVATE synthetic package agreement\n'),sha256=createHash('sha256').update(bytes).digest('hex');
+ const result=options.inspect?await options.inspect(bytes):{outcome:'no_detection',bytes:bytes.length,sha256,etag:'"synthetic-etag"',providerContentType:'application/pdf',signature:{detector:'file-type@22.3.0',sampleBytes:bytes.length,sampleSha256:sha256,mime:'application/pdf',extension:'pdf'}} satisfies InspectionResult;
  if(!(await f.pg.query('SELECT 1 FROM public.file_storage_policies WHERE academy_id=$1',[f.a])).rows.length)assert.equal((await f.request('storage-policy',{expectedVersion:0,uploadsEnabled:true,maximumFileBytes:100000,maximumReservedBytes:1000000,maximumFiles:100,allowedMimeTypes:['application/pdf'],reason:'Synthetic agreement content'})).response.status,200);
  const file=await f.request('files',{anchor:{kind:'hub',id:f.hub},domain:'agreement_definition',name:'PRIVATE exact agreement.pdf',claimedMimeType:'application/pdf',expectedBytes:bytes.length,expectedSha256:sha256});assert.equal(file.response.status,201,JSON.stringify(file.body));
  const fileId=file.body.data.id,grant=await f.request('files/'+fileId+'/upload-link',{expectedMetadataVersion:1});assert.equal(grant.response.status,201,JSON.stringify(grant.body));
