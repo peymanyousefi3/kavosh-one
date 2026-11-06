@@ -23,8 +23,17 @@ async function fixture(throughSchema?:number){
  const send=await f.request('agreement-packages/'+pkg.body.data.id+'/send-requests',{attachmentId:linked.body.data.id,options:{title:'Test agreement',message:'Review',expiryDays:30},dispatchWithinMinutes:60,reason:'Test approved intention'});assert.equal(send.response.status,201);
  // Synthetic attested manifest only; no real agreement or provider invocation.
  const manifest={requestSha256:'a'.repeat(64),requestBytes:1000,documentSha256:binding.sha256},requestId=send.body.data.id;
- const reserved=await f.request('signature-send-requests/'+requestId+'/attempts',manifest);assert.equal(reserved.response.status,201);
- const attemptId=reserved.body.data.id,path='signature-send-requests/'+requestId+'/attempts/'+attemptId+'/dispatch';
+ let attemptId:string;
+ if(throughSchema===120){
+  // Retain the actual120 reservation protocol,not a current handler querying
+  // tables that did not exist historically and not a spoofed schema version.
+  attemptId=randomUUID();const auditId=randomUUID();await f.pg.exec('BEGIN');try{
+   await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);
+   await f.pg.query(`INSERT INTO public.audit_events(academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes) VALUES($1,$2,$3,$4,'human',$5,'signature.send.attempt_reserved',$6,$7,$8::jsonb)`,[f.a,auditId,f.actors.master.person,f.actors.master.session,randomUUID(),attemptId,f.hub,JSON.stringify({requestId,severity:'critical',externalRequestMade:false})]);
+   await f.pg.query('INSERT INTO public.signature_send_attempts(academy_id,id,request_id,actor_id,audit_id,request_sha256,request_bytes,document_sha256) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[f.a,attemptId,requestId,f.actors.master.person,auditId,manifest.requestSha256,manifest.requestBytes,manifest.documentSha256]);await f.pg.exec('COMMIT');
+  }catch(error){await f.pg.exec('ROLLBACK');throw error;}
+ }else{const reserved=await f.request('signature-send-requests/'+requestId+'/attempts',manifest);assert.equal(reserved.response.status,201);attemptId=reserved.body.data.id;}
+ const path='signature-send-requests/'+requestId+'/attempts/'+attemptId+'/dispatch';
  return {...f,binding,manifest,requestId,attemptId,path,start:(as='master',key?:string,input:unknown=manifest)=>f.request(path,input,as,key?{key}:{}),outcome:(input:unknown,as='master',key?:string)=>f.request(path+'/outcome',input,as,key?{key}:{})};
  }catch(error){await f.pg.close();throw error;}
 }
