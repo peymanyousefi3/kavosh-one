@@ -1,0 +1,66 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
+import { ApiError } from '../core/policy.ts';
+import { lockAcademyTopology } from './academy.ts';
+import { permittedSignatureSend } from './signature-sends.ts';
+
+const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
+const manifest=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash}).strict();
+const observation=z.discriminatedUnion('state',[
+ z.object({state:z.literal('not_attempted')}).strict(),z.object({state:z.literal('outcome_unknown')}).strict(),
+ z.object({state:z.literal('accepted_for_processing'),documentId:uuid}).strict()
+]);
+const markers={automaticRetryAllowed:false,deliveryVerified:false,admissionCleared:false,providerVerified:false,readyToSend:false} as const;
+type Attempt={id:string;request_id:string;request_sha256:string;request_bytes:number;document_sha256:string};
+type Start={id:string;actor_id:string};
+async function selected(ctx:ApiContext,requestId:string,attemptId:string,write:boolean) {
+ const permitted=await permittedSignatureSend(ctx,requestId,write?'signature-dispatch.execute':'signature-sends.view');
+ const attempt=(await ctx.db.query<Attempt>('SELECT id,request_id,request_sha256,request_bytes,document_sha256 FROM public.signature_send_attempts WHERE id=$1 AND request_id=$2',[attemptId,requestId])).rows[0];
+ if(!attempt)throw new ApiError(404,'NOT_FOUND');return {...permitted,attempt};
+}
+// Coordination only, NOT provider IO, original-file clearance or admission.
+// The eventual sender must hydrate/rebuild/validate BEFORE consuming the start.
+export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
+ const path=/^signature-send-requests\/([^/]+)\/attempts\/([^/]+)\/dispatch(?:\/(outcome))?$/.exec(ctx.path);if(!path)return null;
+ z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+ const requestId=uuid.parse(path[1]),attemptId=uuid.parse(path[2]),outcome=Boolean(path[3]);
+ if(ctx.request.method==='GET'&&!outcome){
+  await selected(ctx,requestId,attemptId,false);
+  const start=(await ctx.db.query('SELECT id,attempt_id,actor_id,created_at FROM public.signature_dispatch_starts WHERE attempt_id=$1',[attemptId])).rows[0];
+  const observed=start?(await ctx.db.query('SELECT id,state,document_id,source_current,created_at FROM public.signature_dispatch_outcomes WHERE start_id=$1',[start.id])).rows[0]??null:null;
+  return {status:200,body:{data:{start:start??null,observation:observed,state:observed?.state??(start?'started_outcome_unrecorded':'not_started'),reconciliationRequired:Boolean(start)&&observed?.state!=='not_attempted',...markers}}};
+ }
+ if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+ const input=outcome?observation.parse(await jsonBody(ctx.request)):manifest.parse(await jsonBody(ctx.request));
+ await lockAcademyTopology(ctx);await selected(ctx,requestId,attemptId,true);
+ await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,25))',[ctx.credential.academy_id+':'+requestId]);
+ const {p,attempt}=await selected(ctx,requestId,attemptId,true);
+ const start=(await ctx.db.query<Start>('SELECT id,actor_id FROM public.signature_dispatch_starts WHERE attempt_id=$1',[attemptId])).rows[0];
+ if(outcome&&(!start||start.actor_id!==ctx.credential.person_id))throw new ApiError(404,'NOT_FOUND');
+ return mutation(ctx,input,async()=>{
+  if(!outcome){
+   if(start)throw new ApiError(409,'SIGNATURE_DISPATCH_ALREADY_STARTED');
+   const i=manifest.parse(input);
+   if(i.requestSha256!==attempt.request_sha256||i.requestBytes!==attempt.request_bytes||i.documentSha256!==attempt.document_sha256)throw new ApiError(409,'SIGNATURE_DISPATCH_MANIFEST_MISMATCH');
+   if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
+  }else if((await ctx.db.query('SELECT 1 FROM public.signature_dispatch_outcomes WHERE start_id=$1',[start.id])).rows.length)throw new ApiError(409,'SIGNATURE_DISPATCH_OUTCOME_ALREADY_RECORDED');
+  const id=randomUUID(),action=outcome?'signature.dispatch.observed':'signature.dispatch.started';
+  await record(ctx.db,ctx.credential,ctx.requestId,action,id,p.hub_id,{requestId,attemptId,severity:'critical',...(outcome?{state:observation.parse(input).state}:{}),providerVerified:false});
+  const audit=(await ctx.db.query<{id:string}>('SELECT id FROM public.audit_events WHERE request_id=$1 AND entity_id=$2 AND action=$3 AND actor_id=$4 AND created_at=transaction_timestamp()',[ctx.requestId,id,action,ctx.credential.person_id])).rows[0];
+  let result:Record<string,unknown>;
+  try{
+   if(outcome){const i=observation.parse(input);result=(await ctx.db.query(`INSERT INTO public.signature_dispatch_outcomes(academy_id,id,start_id,actor_id,audit_id,state,document_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,start_id,state,document_id,source_current,created_at`,[ctx.credential.academy_id,id,start.id,ctx.credential.person_id,audit.id,i.state,i.state==='accepted_for_processing'?i.documentId:null])).rows[0];}
+   else result=(await ctx.db.query(`INSERT INTO public.signature_dispatch_starts(academy_id,id,attempt_id,actor_id,audit_id) VALUES($1,$2,$3,$4,$5) RETURNING id,attempt_id,created_at`,[ctx.credential.academy_id,id,attemptId,ctx.credential.person_id,audit.id])).rows[0];
+  }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23514')throw new ApiError(409,'SIGNATURE_DISPATCH_SOURCE_CHANGED');throw error;}
+  return {status:201,body:{data:{...result,...markers,reconciliationRequired:!outcome||observation.parse(input).state!=='not_attempted',...outcome?{}:{state:'started',externalRequestMade:false}}}};
+ },async()=>{
+  // Cached start responses never grant permission for another external POST.
+  if(!outcome)throw new ApiError(409,'SIGNATURE_DISPATCH_ALREADY_STARTED');
+ });
+}
+export const signatureDispatchContract=[
+ {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'post',summary:'Consume one durable reservation exactly once; replay is conflict, no provider call or file clearance',schema:manifest},
+ {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'get',summary:'Read private send-once start and bounded unverified transport observation'},
+ {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch/outcome',method:'post',summary:'Record one immutable transport observation by starter, including after source expiry; never signature/admission proof',schema:observation}
+] as const;

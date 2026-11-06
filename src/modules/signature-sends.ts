@@ -14,9 +14,9 @@ const requestPayload=input.extend({packageId:uuid}),cancelInput=z.object({reason
 const attemptInput=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional()}).strict(),empty=z.object({}).strict();
 type SendRow={id:string;package_id:string;attachment_id:string;prior_id:string|null;options:unknown;context:unknown;approval_id:string;cancellation_id:string|null;attempt_id:string|null;successor_id:string|null;expired:boolean}&Record<string,unknown>;
-const fields=`r.*,c.id AS cancellation_id,a.id AS attempt_id,s.id AS successor_id,r.authorization_until<=clock_timestamp() AS expired`;
-const from=`public.signature_send_requests r LEFT JOIN public.signature_send_cancellations c ON c.academy_id=r.academy_id AND c.request_id=r.id LEFT JOIN public.signature_send_attempts a ON a.academy_id=r.academy_id AND a.request_id=r.id LEFT JOIN public.signature_send_requests s ON s.academy_id=r.academy_id AND s.prior_id=r.id`;
-function view(r:SendRow){return {...r,state:r.successor_id?'superseded':r.cancellation_id?'cancelled':r.attempt_id?'attempt_reserved':r.expired?'expired':'approved',readyToSend:false,deliveryVerified:false,admissionCleared:false};}
+const fields=`r.*,c.id AS cancellation_id,a.id AS attempt_id,s.id AS successor_id,d.id AS dispatch_id,o.state AS dispatch_observation,r.authorization_until<=clock_timestamp() AS expired`;
+const from=`public.signature_send_requests r LEFT JOIN public.signature_send_cancellations c ON c.academy_id=r.academy_id AND c.request_id=r.id LEFT JOIN public.signature_send_attempts a ON a.academy_id=r.academy_id AND a.request_id=r.id LEFT JOIN public.signature_send_requests s ON s.academy_id=r.academy_id AND s.prior_id=r.id LEFT JOIN public.signature_dispatch_starts d ON d.academy_id=a.academy_id AND d.attempt_id=a.id LEFT JOIN public.signature_dispatch_outcomes o ON o.academy_id=d.academy_id AND o.start_id=d.id`;
+function view(r:SendRow){return {...r,state:r.successor_id?'superseded':r.cancellation_id?'cancelled':r.dispatch_id?r.dispatch_observation??'started_outcome_unrecorded':r.attempt_id?'attempt_reserved':r.expired?'expired':'approved',readyToSend:false,deliveryVerified:false,admissionCleared:false};}
 async function authority(ctx:ApiContext,id:string,cap:Capability='signature-sends.view') {
  const p=await permittedAgreementPackage(ctx,id,cap!=='signature-sends.view');
  const people=(await ctx.db.query<{id:string;hub_id:string|null}>('SELECT id,hub_id FROM public.people WHERE id=ANY($1::uuid[]) ORDER BY id',[[p.student_id,p.signer_id]])).rows;
@@ -24,10 +24,11 @@ async function authority(ctx:ApiContext,id:string,cap:Capability='signature-send
  for(const selected of ['signature-sends.view',cap] as Capability[])if(!scopeContains(permissionScope(ctx,selected),scope))throw new ApiError(404,'NOT_FOUND');
  return {p,scope};
 }
-async function row(ctx:ApiContext,id:string,cap:Capability='signature-sends.view') {
+export async function permittedSignatureSend(ctx:ApiContext,id:string,cap:Capability='signature-sends.view') {
  const r=(await ctx.db.query<SendRow>('SELECT '+fields+' FROM '+from+' WHERE r.id=$1',[id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');
  const allowed=await authority(ctx,r.package_id,cap);return {r,...allowed};
 }
+const row=permittedSignatureSend;
 async function requestBasis(ctx:ApiContext,i:z.infer<typeof requestPayload>) {
  await authority(ctx,i.packageId,'signature-sends.edit');const {row:p}=await currentAgreementPackage(ctx,i.packageId);
  const l=(await ctx.db.query<{binding_id:string}>('SELECT binding_id FROM public.agreement_package_contents WHERE id=$1 AND package_id=$2',[i.attachmentId,p.id])).rows[0];if(!l)throw new ApiError(404,'NOT_FOUND');
@@ -83,7 +84,7 @@ export async function signatureSends(ctx:ApiContext,registry:ApprovalRegistry=si
   });
  }
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const {r}=await row(ctx,id);
- if(section==='attempts'){const rows=(await ctx.db.query('SELECT id,request_id,actor_id,request_sha256,request_bytes,document_sha256,created_at FROM public.signature_send_attempts WHERE request_id=$1',[id])).rows;return {status:200,body:{data:rows,externalRequestMade:false,deliveryVerified:false}};}
+ if(section==='attempts'){const rows=(await ctx.db.query('SELECT id,request_id,actor_id,request_sha256,request_bytes,document_sha256,created_at FROM public.signature_send_attempts WHERE request_id=$1',[id])).rows;return {status:200,body:{data:rows,externalRequestMade:r.dispatch_id&&r.dispatch_observation!=='not_attempted'?null:false,deliveryVerified:false}};}
  return {status:200,body:{data:{...view(r),recordedSourcesCurrent:(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[id])).rows[0].valid}}};
 }
 export const signatureSendsContract=[

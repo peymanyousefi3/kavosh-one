@@ -47,7 +47,7 @@ jobs:
       - name: Conditional separate-target storage promotion and original-byte verification
         run: node --import tsx --test --test-concurrency=1 tests/r2.test.ts tests/r2-inspection.test.ts tests/r2-promotion.test.ts
       - name: Focused agreement-content persistence and private source approvals
-        run: node --import tsx --test --test-concurrency=1 --test-skip-pattern='one hundred simultaneous' tests/agreement-content.test.ts tests/agreement-package-content.test.ts tests/agreement-packages.test.ts tests/signature-sends.test.ts
+        run: node --import tsx --test --test-concurrency=1 --test-skip-pattern='one hundred simultaneous' tests/agreement-content.test.ts tests/agreement-package-content.test.ts tests/agreement-packages.test.ts tests/signature-sends.test.ts tests/signature-dispatch.test.ts
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Focused loaded-scanner-database failure persistence
