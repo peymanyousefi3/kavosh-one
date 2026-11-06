@@ -9,7 +9,8 @@ import { boldSignStoredOriginalSchema } from '../integrations/boldsign-stored-re
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const sourceQuery=z.object({copyId:uuid.optional()}).strict();
-const manifest=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash}).strict();
+const manifest=z.object({requestSha256:hash,requestBytes:z.number().int().min(1).max(16_777_216),documentSha256:hash,
+ original:z.object({copyId:uuid,sourceFingerprint:hash}).strict().optional()}).strict();
 const observation=z.discriminatedUnion('state',[
  z.object({state:z.literal('not_attempted')}).strict(),z.object({state:z.literal('outcome_unknown')}).strict(),
  z.object({state:z.literal('accepted_for_processing'),documentId:uuid}).strict()
@@ -45,9 +46,9 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
    const copy=(await ctx.db.query('SELECT route_id FROM public.file_copy_requests WHERE id=$1 AND file_id=$2',[query.copyId,binding.file_id])).rows[0];if(!copy)throw new ApiError(404,'NOT_FOUND');
    await ctx.db.query('SELECT id FROM public.file_records WHERE id=$1 FOR SHARE',[binding.file_id]);
    await ctx.db.query('SELECT id FROM public.file_storage_routes WHERE id=$1 FOR SHARE',[copy.route_id]);
-   const artifact=(await ctx.db.query<{source:Record<string,unknown>|null}>('SELECT public.file_download_source($1,$2,$3) source',[binding.file_id,binding.file_version,query.copyId])).rows[0].source;
+   const evidence=(await ctx.db.query<{source:Record<string,unknown>|null;fingerprint:string|null}>('WITH selected AS MATERIALIZED(SELECT public.file_download_source($1,$2,$3) source) SELECT source,encode(sha256(convert_to(source::text,\'UTF8\')),\'hex\') fingerprint FROM selected',[binding.file_id,binding.file_version,query.copyId])).rows[0],artifact=evidence.source;
    if(!artifact||artifact.mime!=='application/pdf'||artifact.sha256!==prepared.data.document.sha256||artifact.bytes!==prepared.data.document.sizeBytes)throw new ApiError(409,'BOLDSIGN_ORIGINAL_NOT_READY');
-   const verified=boldSignStoredOriginalSchema.safeParse({academyId:ctx.credential.academy_id,fileId:artifact.fileId,fileVersion:artifact.fileVersion,copyId:artifact.copyId,storageTargetId:artifact.destinationTargetId,etag:artifact.destinationEtag,bytes:artifact.bytes,sha256:artifact.sha256});
+   const verified=boldSignStoredOriginalSchema.safeParse({academyId:ctx.credential.academy_id,fileId:artifact.fileId,fileVersion:artifact.fileVersion,copyId:artifact.copyId,sourceFingerprint:evidence.fingerprint,storageTargetId:artifact.destinationTargetId,etag:artifact.destinationEtag,bytes:artifact.bytes,sha256:artifact.sha256});
    if(!verified.success)throw new ApiError(503,'SIGNATURE_DISPATCH_SOURCE_INVALID');original=verified.data;
   }
   // The final source comparison catches a concurrent contact/profile change.
@@ -61,7 +62,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
  const requestId=uuid.parse(path[1]),attemptId=uuid.parse(path[2]),outcome=Boolean(path[3]);
  if(ctx.request.method==='GET'&&!outcome){
   await selected(ctx,requestId,attemptId,false);
-  const start=(await ctx.db.query('SELECT id,attempt_id,actor_id,created_at FROM public.signature_dispatch_starts WHERE attempt_id=$1',[attemptId])).rows[0];
+  const start=(await ctx.db.query(`SELECT id,attempt_id,actor_id,created_at,original_copy_id,original_source_fingerprint,original_copy_id IS NOT NULL AS "originalCopyBound",CASE WHEN original_copy_id IS NULL THEN NULL ELSE coalesce(original_source IS NOT DISTINCT FROM public.signature_dispatch_original_source(attempt_id,original_copy_id),false) END AS "originalCopyCurrent" FROM public.signature_dispatch_starts WHERE attempt_id=$1`,[attemptId])).rows[0];
   const observed=start?(await ctx.db.query('SELECT id,state,document_id,source_current,created_at FROM public.signature_dispatch_outcomes WHERE start_id=$1',[start.id])).rows[0]??null:null;
   return {status:200,body:{data:{start:start??null,observation:observed,state:observed?.state??(start?'started_outcome_unrecorded':'not_started'),reconciliationRequired:Boolean(start)&&observed?.state!=='not_attempted',...markers}}};
  }
@@ -80,13 +81,14 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
    if(!(await ctx.db.query<{valid:boolean}>('SELECT public.signature_send_current($1) valid',[requestId])).rows[0].valid)throw new ApiError(409,'SIGNATURE_SEND_NOT_CURRENT');
   }else if((await ctx.db.query('SELECT 1 FROM public.signature_dispatch_outcomes WHERE start_id=$1',[start.id])).rows.length)throw new ApiError(409,'SIGNATURE_DISPATCH_OUTCOME_ALREADY_RECORDED');
   const id=randomUUID(),action=outcome?'signature.dispatch.observed':'signature.dispatch.started';
-  await record(ctx.db,ctx.credential,ctx.requestId,action,id,p.hub_id,{requestId,attemptId,severity:'critical',...(outcome?{state:observation.parse(input).state}:{}),providerVerified:false});
+  const original=outcome?undefined:manifest.parse(input).original;
+  await record(ctx.db,ctx.credential,ctx.requestId,action,id,p.hub_id,{requestId,attemptId,severity:'critical',...(outcome?{state:observation.parse(input).state}:{}),...original?{originalCopyId:original.copyId,originalSourceFingerprint:original.sourceFingerprint}:{},providerVerified:false});
   const audit=(await ctx.db.query<{id:string}>('SELECT id FROM public.audit_events WHERE request_id=$1 AND entity_id=$2 AND action=$3 AND actor_id=$4 AND created_at=transaction_timestamp()',[ctx.requestId,id,action,ctx.credential.person_id])).rows[0];
   let result:Record<string,unknown>;
   try{
    if(outcome){const i=observation.parse(input);result=(await ctx.db.query(`INSERT INTO public.signature_dispatch_outcomes(academy_id,id,start_id,actor_id,audit_id,state,document_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,start_id,state,document_id,source_current,created_at`,[ctx.credential.academy_id,id,start.id,ctx.credential.person_id,audit.id,i.state,i.state==='accepted_for_processing'?i.documentId:null])).rows[0];}
-   else result=(await ctx.db.query(`INSERT INTO public.signature_dispatch_starts(academy_id,id,attempt_id,actor_id,audit_id) VALUES($1,$2,$3,$4,$5) RETURNING id,attempt_id,created_at`,[ctx.credential.academy_id,id,attemptId,ctx.credential.person_id,audit.id])).rows[0];
-  }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23514')throw new ApiError(409,'SIGNATURE_DISPATCH_SOURCE_CHANGED');throw error;}
+   else result=(await ctx.db.query(`INSERT INTO public.signature_dispatch_starts(academy_id,id,attempt_id,actor_id,audit_id,original_copy_id,original_source_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,attempt_id,created_at,original_copy_id,original_source_fingerprint,original_copy_id IS NOT NULL AS "originalCopyBound"`,[ctx.credential.academy_id,id,attemptId,ctx.credential.person_id,audit.id,original?.copyId??null,original?.sourceFingerprint??null])).rows[0];
+  }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23514'){if('message' in error&&error.message==='SIGNATURE_DISPATCH_ORIGINAL_CHANGED')throw new ApiError(409,'SIGNATURE_DISPATCH_ORIGINAL_CHANGED');throw new ApiError(409,'SIGNATURE_DISPATCH_SOURCE_CHANGED');}throw error;}
   return {status:201,body:{data:{...result,...markers,reconciliationRequired:!outcome||observation.parse(input).state!=='not_attempted',...outcome?{}:{state:'started',externalRequestMade:false}}}};
  },async()=>{
   // Cached start responses never grant permission for another external POST.
@@ -95,7 +97,7 @@ export async function signatureDispatch(ctx:ApiContext):Promise<Reply|null> {
 }
 export const signatureDispatchContract=[
  {path:'/api/v1/signature-send-requests/{id}/dispatch-source',method:'get',summary:'Audited private signing draft and optional exact verified-copy descriptor under current reviewed serving policy; no bytes, safety clearance or provider call',querySchema:sourceQuery},
- {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'post',summary:'Consume one durable reservation exactly once; replay is conflict, no provider call or file clearance',schema:manifest},
+ {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'post',summary:'Consume one durable reservation once; optional original binds current verified-copy/policy fingerprint natively. Unbound coordination is not provider authority; no provider call or file clearance',schema:manifest},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch',method:'get',summary:'Read private send-once start and bounded unverified transport observation'},
  {path:'/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch/outcome',method:'post',summary:'Record one immutable transport observation by starter, including after source expiry; never signature/admission proof',schema:observation}
 ] as const;

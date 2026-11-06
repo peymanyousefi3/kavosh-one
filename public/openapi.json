@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.125.0",
+    "version": "0.126.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -40515,7 +40515,7 @@
     },
     "/api/v1/signature-send-requests/{id}/attempts/{attemptId}/dispatch": {
       "post": {
-        "summary": "Consume one durable reservation exactly once; replay is conflict, no provider call or file clearance",
+        "summary": "Consume one durable reservation once; optional original binds current verified-copy/policy fingerprint natively. Unbound coordination is not provider authority; no provider call or file clearance",
         "parameters": [
           {
             "name": "id",
@@ -40560,6 +40560,25 @@
                   "documentSha256": {
                     "type": "string",
                     "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "original": {
+                    "type": "object",
+                    "properties": {
+                      "copyId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "sourceFingerprint": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      }
+                    },
+                    "required": [
+                      "copyId",
+                      "sourceFingerprint"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [

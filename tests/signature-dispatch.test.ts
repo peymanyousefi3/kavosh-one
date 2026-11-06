@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { agreementFixture,reviewedAgreementContent } from './agreement-fixture.ts';
 import { buildBoldSignSendRequest } from '../src/integrations/boldsign-send-request.ts';
 
-async function fixture(){
- const f=await agreementFixture();
+async function fixture(throughSchema?:number){
+ const f=await agreementFixture(throughSchema);
+ try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['signature-sends.view','signature-sends.edit','signature-sends.execute','signature-dispatch.execute'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
- const binding=await reviewedAgreementContent(f),pkg=await f.prepare();assert.equal(pkg.response.status,201);
+ const binding=await reviewedAgreementContent(f,f.t.id,throughSchema===120?{async recordInspection(database,academy,result){
+  // Seed actual historical120 records using its native worker protocol. The
+  // CURRENT worker correctly refuses120;never spoof schema_revision for it.
+  assert.equal(result.outcome,'no_detection');if(result.outcome!=='no_detection')throw new Error('INVALID_LEGACY_FIXTURE');const c=await database.connect();try{
+   const task=(await c.query<{inspection_id:string;lease_token:string}>('SELECT inspection_id,lease_token FROM public.claim_file_inspection($1,$2,150)',[[academy],randomUUID()])).rows[0];assert.ok(task);
+   const recorded=(await c.query<{recorded:boolean}>('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb) recorded',[academy,task.inspection_id,task.lease_token,result.outcome,'MEASURED_NO_DETECTION',result.bytes,result.sha256,result.etag,result.providerContentType,JSON.stringify(result.signature),null,null,null])).rows[0];assert.equal(recorded.recorded,true);
+  }finally{c.release();}
+ }}:{}),pkg=await f.prepare();assert.equal(pkg.response.status,201);
  const linked=await f.request('agreement-packages/'+pkg.body.data.id+'/content',{bindingId:binding.id,reason:'Reviewed exact test source'});assert.equal(linked.response.status,201);
  const send=await f.request('agreement-packages/'+pkg.body.data.id+'/send-requests',{attachmentId:linked.body.data.id,options:{title:'Test agreement',message:'Review',expiryDays:30},dispatchWithinMinutes:60,reason:'Test approved intention'});assert.equal(send.response.status,201);
  // Synthetic attested manifest only; no real agreement or provider invocation.
@@ -15,6 +24,7 @@ async function fixture(){
  const reserved=await f.request('signature-send-requests/'+requestId+'/attempts',manifest);assert.equal(reserved.response.status,201);
  const attemptId=reserved.body.data.id,path='signature-send-requests/'+requestId+'/attempts/'+attemptId+'/dispatch';
  return {...f,binding,manifest,requestId,attemptId,path,start:(as='master',key?:string,input:unknown=manifest)=>f.request(path,input,as,key?{key}:{}),outcome:(input:unknown,as='master',key?:string)=>f.request(path+'/outcome',input,as,key?{key}:{})};
+ }catch(error){await f.pg.close();throw error;}
 }
 function check(name:string,run:(f:Awaited<ReturnType<typeof fixture>>)=>Promise<void>,native=false){test(name,{skip:native&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 check('durable start is consumed once across retry keys and outcome observations never claim delivery or admission',async f=>{
@@ -115,4 +125,16 @@ check('send-only bot uses explicit execution plus private viewing rights without
  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability IN('signatures.edit','signature-sends.edit')",[f.managerRole]);
  assert.equal((await f.request('signature-send-requests/'+f.requestId+'/dispatch-source',undefined,'bot')).response.status,200);assert.equal((await f.start('bot')).response.status,201);assert.equal((await f.outcome({state:'outcome_unknown'},'bot')).response.status,201);
  const stopped=await f.request('signature-send-requests/'+f.requestId+'/cancel',{reason:'Execution must not grant editing'},'bot');assert.ok([403,404].includes(stopped.response.status));
+});
+test('schema121 preserves a real schema120 coordination start without fabricating original-copy evidence',async()=>{
+ const f=await fixture(120);try{
+  const startId=randomUUID(),auditId=randomUUID();await f.pg.exec('BEGIN');try{
+   await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);
+   await f.pg.query(`INSERT INTO public.audit_events(academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes) VALUES($1,$2,$3,$4,'human',$5,'signature.dispatch.started',$6,$7,$8::jsonb)`,[f.a,auditId,f.actors.master.person,f.actors.master.session,randomUUID(),startId,f.hub,JSON.stringify({requestId:f.requestId,attemptId:f.attemptId,severity:'critical',providerVerified:false})]);
+   await f.pg.query('INSERT INTO public.signature_dispatch_starts(academy_id,id,attempt_id,actor_id,audit_id) VALUES($1,$2,$3,$4,$5)',[f.a,startId,f.attemptId,f.actors.master.person,auditId]);await f.pg.exec('COMMIT');
+  }catch(error){await f.pg.exec('ROLLBACK');throw error;}
+  const before=(await f.pg.query('SELECT * FROM public.signature_dispatch_starts WHERE id=$1',[startId])).rows[0];await f.pg.exec(await readFile(new URL('../db/migrations/121_signature_original_binding.sql',import.meta.url),'utf8'));
+  const {original_copy_id,original_source,original_source_fingerprint,...unchanged}=(await f.pg.query('SELECT * FROM public.signature_dispatch_starts WHERE id=$1',[startId])).rows[0];assert.deepEqual(unchanged,before);assert.equal(original_copy_id,null);assert.equal(original_source,null);assert.equal(original_source_fingerprint,null);
+  const history=await f.request(f.path);assert.equal(history.response.status,200);assert.equal(history.body.data.start.originalCopyBound,false);assert.equal(history.body.data.start.originalCopyCurrent,null);
+ }finally{await f.pg.close();}
 });

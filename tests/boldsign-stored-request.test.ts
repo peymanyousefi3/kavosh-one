@@ -10,7 +10,7 @@ import { r2TargetId } from '../src/integrations/r2-config.ts';
 // legal clearance. This component measures bytes;it does NOT parse/scan them.
 const bytes=Buffer.from('%PDF-1.7\nPRIVATE original fixture\n'),sha256=createHash('sha256').update(bytes).digest('hex');
 const config={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-signing-originals',accessKeyId:'synthetic-read-only-id',secretAccessKey:'synthetic-PRIVATE-not-a-real-key',maximumUploadBytes:10_485_760};
-const source={academyId:randomUUID(),fileId:randomUUID(),fileVersion:1,copyId:randomUUID(),storageTargetId:r2TargetId(config),bytes:bytes.length,sha256,etag:'"verified-original-etag"'};
+const source={academyId:randomUUID(),fileId:randomUUID(),fileVersion:1,copyId:randomUUID(),sourceFingerprint:'d'.repeat(64),storageTargetId:r2TargetId(config),bytes:bytes.length,sha256,etag:'"verified-original-etag"'};
 const field={id:'Signature1',fieldType:'Signature',isRequired:true as const,pageNumber:1,bounds:{x:10,y:10,width:100,height:30}};
 const signer={personId:randomUUID(),legalName:'PRIVATE Legal signer',email:'signer@example.test',phoneE164:'+16475550101',emailVerified:true as const,phoneVerified:true as const,contactFingerprint:'c'.repeat(64)};
 const draft:BoldSignSendDraft={packageId:randomUUID(),attachmentId:randomUUID(),bindingId:randomUUID(),locale:'en',title:'PRIVATE Agreement',message:'PRIVATE review',expiryDays:30,document:{sha256,sizeBytes:bytes.length},signer,routing:{version:1,role:'legal_signer',fields:[field]}};

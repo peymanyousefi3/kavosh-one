@@ -272,7 +272,9 @@ jobs:
         run: docker rm --force kavosh-pdf-ci || true
   scanner-engine:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Run42267995981 spent4m46s installing the engine;all27 assertions passed
+    # before the5m job limit cancelled the job. Keep runtime/test limits intact.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

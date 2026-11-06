@@ -6,7 +6,7 @@ import { privateR2 } from './r2.ts';
 import { boldSignSendDraftSchema,boldSignWorkSendDraftSchema,buildBoldSignSendRequest,buildBoldSignWorkSendRequest } from './boldsign-send-request.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),digest=z.string().regex(/^[a-f0-9]{64}$/);
-const original=z.object({academyId:uuid,fileId:uuid,fileVersion:z.number().int().positive().max(2147483647),copyId:uuid,storageTargetId:digest,bytes:z.number().int().min(9).max(10_485_760),sha256:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict();
+const original=z.object({academyId:uuid,fileId:uuid,fileVersion:z.number().int().positive().max(2147483647),copyId:uuid,sourceFingerprint:digest,storageTargetId:digest,bytes:z.number().int().min(9).max(10_485_760),sha256:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict();
 export const boldSignStoredOriginalSchema=original;
 const request=z.discriminatedUnion('purpose',[
  z.object({purpose:z.literal('unified_enrollment'),draft:boldSignSendDraftSchema}).strict(),
