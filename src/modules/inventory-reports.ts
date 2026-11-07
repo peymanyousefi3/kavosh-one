@@ -53,9 +53,10 @@ SELECT statement_timestamp() AS "snapshotAt",(SELECT count(*)::integer FROM bala
  coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY "locationId",unit) FROM(SELECT * FROM location_series ORDER BY "locationId",unit LIMIT 1001) s),'[]'::jsonb) AS "locationSeries",
  coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY unit) FROM(SELECT * FROM unit_series ORDER BY unit LIMIT 1001) s),'[]'::jsonb) AS "unitSeries"`;
 function value(numerator:bigint,denominator:bigint,scale:number){const rounded=roundRatio(numerator,denominator,'half_away');return {minorNumerator:numerator.toString(),minorDenominator:denominator.toString(),roundedMinor:rounded.toString(),roundedAmount:formatMoneyTotal(rounded,scale)};}
-export async function inventoryReports(ctx:ApiContext):Promise<Reply|null>{
+export async function inventoryReports(ctx:ApiContext,exportEntryLimit?:number):Promise<Reply|null>{
  if(ctx.path!=='reports/inventory/stock')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const access=hubReportAccess(ctx,['inventory-reports.view','inventory.view']),q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+ if(exportEntryLimit!==undefined){if(!Number.isInteger(exportEntryLimit)||exportEntryLimit<1||exportEntryLimit>2000)throw new Error('INVALID_REPORT_EXPORT_LIMIT');q.limit=exportEntryLimit;}
  const day=Temporal.PlainDate.from(q.on),start=day.toZonedDateTime(q.timeZone),end=day.add({days:1}).toZonedDateTime(q.timeZone);
  if(start.toPlainDate().toString()!==q.on)throw new ApiError(400,'REPORT_DAY_DOES_NOT_EXIST');
  // Temporal uses ISO expanded years; PostgreSQL requires the ordinary
@@ -70,7 +71,8 @@ export async function inventoryReports(ctx:ApiContext):Promise<Reply|null>{
  const currencies=result.currencies.map(c=>{const total=sumInventoryValueRatios(terms.get(c.currencyId)??[]),knownSubtotal=value(total.numerator,total.denominator,c.unitScale);return {...c,knownSubtotal,managementValue:c.unpricedRows?null:knownSubtotal,valueComplete:c.unpricedRows===0};});
  const entries=result.entries.slice(0,q.limit).map(({costMinor,originalQuantity,sourceInvalid,...r})=>({...r,valuationReviewRequired:sourceInvalid,managementValue:sourceInvalid?null:value(readMinorUnits(costMinor)*BigInt(r.quantity),BigInt(originalQuantity),r.unitScale)}));
  const next=result.entries.length>q.limit?result.entries[q.limit-1]:null,complete=access.global&&!q.hubIds&&!q.countryIds&&!q.regionIds&&!q.cityIds&&!q.locationIds&&!q.itemIds&&!q.tracking;
- return {status:200,body:{data:{report:'inventory_purchase_cost_stock',on:q.on,timeZone:q.timeZone,timeZoneDatabaseVersion:process.versions.tz??null,cutoffExclusive:end.toInstant().toString(),dayLengthHours:(end.epochMilliseconds-start.epochMilliseconds)/3600000,snapshotAt:result.snapshotAt,
+ const {limit:_pageSize,afterLocationId:_afterLocation,afterLotId:_afterLot,...filters}=q;
+ return {status:200,body:{data:{report:'inventory_purchase_cost_stock',on:q.on,timeZone:q.timeZone,filters,timeZoneDatabaseVersion:process.versions.tz??null,cutoffExclusive:end.toInstant().toString(),dayLengthHours:(end.epochMilliseconds-start.epochMilliseconds)/3600000,snapshotAt:result.snapshotAt,
   coverage:complete?'complete_selected_currencies':'scoped_selected_inventory',currencyConversion:'none',rounding:'half_away_once_after_scope_and_filtering',entryRounding:'per_row_display_only_not_additive',sourceBasis:'currently_recorded_effective_movement_times',paginationSnapshot:'per_request_not_frozen_across_pages',accountingSourceThrough:q.on,catalogueBasis:'pinned_item_revision_current_location_and_geography',formalBalanceSheetAsset:false,additionalLedgerPosting:false,forecast:false,
   cutoffIsFuture:end.epochMilliseconds>new Date(result.snapshotAt).getTime(),rowCount:result.rowCount,locationCount:result.locationCount,itemCount:result.itemCount,currencies,entries,chartData:{locations:result.locationSeries,units:result.unitSeries}},nextCursor:next?{afterLocationId:next.locationId,afterLotId:next.lotId}:null}};
 }

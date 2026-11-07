@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.172.0",
+    "version": "0.173.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -41841,6 +41841,160 @@
         }
       }
     },
+    "/api/v1/reports/inventory/stock/export": {
+      "get": {
+        "summary": "Complete same-snapshot stock CSV with current intersected inventory/report scopes,exact rational purchase costs,currency totals and all location/unit charts; unknown costs remain blank,not zero; no formal asset capitalization or extra expense;2,000stock rows/4MiB refuses incomplete output,no page parameters",
+        "parameters": [
+          {
+            "name": "on",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "countryIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "regionIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "cityIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "locationIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "itemIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "tracking",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "bulk",
+                "individual"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterLocationId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterLotId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/jobs": {
       "post": {
         "summary": "Queue a complete financial,gross-payroll,net-settlement,liability-remittance or achievement CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10,000parent/20,000remittance-bucket maxima and4MiB result ceiling and separate opt-in worker; larger outputs fail without truncation; no message or payment",
@@ -44051,7 +44205,7 @@
     },
     "/api/v1/reports/presets/{id}/export": {
       "get": {
-        "summary": "Download complete current permitted trial-balance/profit-loss/balance-sheet/gross-payroll CSV from an active saved configuration; original source permissions and export limits apply,no page cursor or limit override,other report formats unavailable",
+        "summary": "Download a complete current permitted CSV from an active saved configuration for a registered CSV-capable report; current original source permissions and family-specific export limits apply,no page cursor or limit override; directory lists supported formats",
         "parameters": [
           {
             "name": "id",
