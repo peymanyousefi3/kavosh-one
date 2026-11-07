@@ -8,6 +8,7 @@ import { authorizedNetPayRun } from './payrun-net.ts';
 import { accountRow } from './finance.ts';
 import { accountingDate } from './finance-periods.ts';
 import { prepareJournal,applyJournal } from './finance-journals.ts';
+import { requirePayrunRemittanceHistory } from './payrun-remittances.ts';
 export { row as authorizedNetPosting,accounts as payrunPostingAccounts };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),ref=z.object({id:uuid,version}).strict(),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0')),code=z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/);
@@ -15,7 +16,7 @@ const create=z.object({netVersion:version,allocationPolicy:z.literal('gross_weig
 const postingInput=create.safeExtend({runId:uuid}),reverse=z.object({period:ref,postedOn:accountingDate,reason}).strict(),reverseInput=reverse.extend({postingId:uuid}),empty=z.object({}).strict();
 type Line={key:string;accountId:string;accountVersion:number;side:'debit'|'credit';amountMinor:string;unitScale:number};
 type Plan={source:{personId:string;scope:Scope;currencyId:string;unitScale:number};accounts:{id:string;hubId:string|null}[];lines:Line[];unavailable:string|null;net:{version:number;amounts:Record<string,string>};postedOn:string};
-type ReverseSource={posting:{id:string;runId:string;reversalId:string|null;journalId:string|null;postedOn:string;planSha256:string};source:Plan['source'];accounts:Plan['accounts'];period:{state:string;version:number;startsOn:string;endsOn:string;closedThrough:string|null}|null;paymentState?:{active:number;latestDate:string|null}};
+type ReverseSource={posting:{id:string;runId:string;reversalId:string|null;journalId:string|null;postedOn:string;planSha256:string};source:Plan['source'];accounts:Plan['accounts'];period:{state:string;version:number;startsOn:string;endsOn:string;closedThrough:string|null}|null;paymentState?:{active:number;latestDate:string|null};remittanceState?:{active:number;latestDate:string|null}};
 type Posting={id:string;run_id:string;net_version:number;input:z.infer<typeof create>;plan:Plan;journal_id:string|null;reversal_id:string|null;approval_id:string;created_by:string;created_at:string};
 function allowed(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
 async function run(ctx:ApiContext,id:string,edit=false){const r=await authorizedNetPayRun(ctx,id);for(const cap of ['payrun-postings.view',...edit?['payrun-postings.edit']:[]] as Capability[])if(!(await ctx.db.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,$2::jsonb) ok',[JSON.stringify(allowed(ctx,cap)),JSON.stringify(r.scope)])).rows[0].ok)throw new ApiError(404,'NOT_FOUND');return r;}
@@ -26,6 +27,7 @@ async function basis(ctx:ApiContext,reversing:boolean,raw:unknown){
  if(reversing){const i=reverseInput.parse(raw),p=await row(ctx,i.postingId,true);await ctx.db.query('SELECT public.lock_hourly_worker($1)',[p.plan.source.personId]);const b=(await ctx.db.query<{source:ReverseSource|null}>('SELECT public.payrun_posting_reverse_source($1,$2::jsonb) source',[p.id,JSON.stringify(i)])).rows[0].source;
   if(!b||b.posting.reversalId)throw new ApiError(409,'PAYRUN_POSTING_ALREADY_REVERSED');const t=b.period;if(!t||t.state!=='open'||t.version!==i.period.version||i.postedOn<t.startsOn||i.postedOn>t.endsOn||t.closedThrough&&i.postedOn<=t.closedThrough||i.postedOn<b.posting.postedOn)throw new ApiError(409,'PAYRUN_POSTING_REVERSAL_PERIOD_INVALID');
   if(b.paymentState?.active)throw new ApiError(409,'PAYRUN_PAYMENT_REVERSALS_REQUIRED');if(b.paymentState?.latestDate&&i.postedOn<b.paymentState.latestDate)throw new ApiError(409,'PAYRUN_POSTING_REVERSAL_PRECEDES_PAYMENT_HISTORY');
+  if(b.remittanceState?.latestDate)await requirePayrunRemittanceHistory(ctx,p.id);if(b.remittanceState?.active)throw new ApiError(409,'PAYRUN_REMITTANCE_REVERSALS_REQUIRED');if(b.remittanceState?.latestDate&&i.postedOn<b.remittanceState.latestDate)throw new ApiError(409,'PAYRUN_POSTING_REVERSAL_PRECEDES_REMITTANCE_HISTORY');
   if(p.journal_id)await prepareJournal(ctx,true,{periodId:i.period.id,periodVersion:i.period.version,postedOn:i.postedOn,reversesId:p.journal_id,description:'Correction of payroll deductions and employer costs',reference:'PAYRUN-NET-REVERSAL',reason:i.reason},true);return b;
  }
  const {runId,...i}=postingInput.parse(raw),r=await run(ctx,runId,true);await ctx.db.query('SELECT public.lock_hourly_worker($1)',[r.person_id]);
