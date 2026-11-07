@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
-import { permissionScope } from '../core/approvals.ts';
+import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Scope } from '../core/policy.ts';
 import { parseMoney,formatMoneyTotal,allocateMoney } from '../core/money.ts';
 import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type HourlyInterval } from '../core/work-compensation.ts';
@@ -58,8 +58,7 @@ function selected(terms:Terms[],on:(t:Terms)=>string){let winner:Terms|undefined
 
 export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
  if(ctx.path!=='reports/payroll/scheduled-costs')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
- const work=permissionScope(ctx,'work-pay.view'),reports=permissionScope(ctx,'financial-reports.view');if(!scopeNonempty(work)||!scopeNonempty(reports))throw new ApiError(403,'FORBIDDEN');
- const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),source=payrollForecastSource(ctx,q);
+ const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params));await lockApprovalWrites(ctx);const source=payrollForecastSource(ctx,q);
  const result=(await ctx.db.query<PayrollForecastSources>(source.sql,source.params)).rows[0];return scheduledPayrollForecast(q,result);
 }
 export type PayrollForecastSources={snapshot_at:string;engagement_count:number;terms:Terms[];assignments:Assignment[];sessions:Session[]};
