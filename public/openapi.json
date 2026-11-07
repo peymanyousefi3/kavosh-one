@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.164.0",
+    "version": "0.165.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -42184,6 +42184,111 @@
         }
       }
     },
+    "/api/v1/reports/payroll/settlements": {
+      "get": {
+        "summary": "Complete bounded multi-worker net-pay settlement report with worker/currency/status/hub/geography selectors,exact currency totals and status chart series at a ledger-date cutoff. Whole source bundles and all funding history authorized in one statement before aggregation;hub filters select whole bundles,not attributed hub amounts. Excludes unposted earnings,statutory remittances,bank verification and paystub certification.",
+        "parameters": [
+          {
+            "name": "on",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "personIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "countryIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "regionIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "cityIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unsettled",
+                "partially_settled",
+                "settled",
+                "zero_net"
+              ]
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/presets": {
       "get": {
         "summary": "Central saved-report configurations scoped by academy,hub,class or fixed person record ownership before paging; definitions contain filters,not results or data grants",
@@ -42260,7 +42365,8 @@
                 "learning.sessions.by-id.evidence",
                 "payroll.gross-accruals",
                 "payroll.recorded-time",
-                "payroll.scheduled-costs"
+                "payroll.scheduled-costs",
+                "payroll.settlements"
               ]
             }
           },
@@ -42440,7 +42546,8 @@
                           "learning.sessions.by-id.evidence",
                           "payroll.gross-accruals",
                           "payroll.recorded-time",
-                          "payroll.scheduled-costs"
+                          "payroll.scheduled-costs",
+                          "payroll.settlements"
                         ]
                       },
                       "queryContractVersion": {
@@ -42677,7 +42784,8 @@
                           "learning.sessions.by-id.evidence",
                           "payroll.gross-accruals",
                           "payroll.recorded-time",
-                          "payroll.scheduled-costs"
+                          "payroll.scheduled-costs",
+                          "payroll.settlements"
                         ]
                       },
                       "queryContractVersion": {
