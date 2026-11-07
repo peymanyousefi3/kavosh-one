@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.174.0",
+    "version": "0.175.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -40608,7 +40608,7 @@
     },
     "/api/v1/reports/finance/bank-reconciliation/export": {
       "get": {
-        "summary": "Download a complete current reconciliation review as UTF-8 CSV, all statuses and prior outstanding, same source snapshot and rights; 1,000 rows per side/4 MiB maximum, larger reports fail explicitly, not finalized or externally verified",
+        "summary": "Complete selected reconciliation rows as UTF-8 CSV;defaults to all statuses/prior outstanding,optional status/period-only filters change rows not whole-context summaries/comparisons;current source rights and one snapshot,1,000whole source rows per side/4MiB bound even filtered output;not finalized or externally verified",
         "parameters": [
           {
             "name": "accountId",
@@ -40665,6 +40665,34 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "type": "string",
+              "enum": [
+                "unresolved",
+                "all",
+                "matched",
+                "non_activity"
+              ]
+            }
+          },
+          {
+            "name": "periodOnly",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           }
         ],
