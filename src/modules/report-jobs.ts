@@ -23,7 +23,7 @@ export function requireReportResultAccess(ctx:ApiContext,raw:unknown){
  if((proof.includesGlobal&&!access.global)||proof.hubIds.some(h=>!(access.all||access.hubs.includes(h))||access.excluded.includes(h)))throw new ApiError(403,'REPORT_SOURCE_ACCESS_CHANGED');
 }
 export async function enqueueReport(ctx:ApiContext,configuration:ReportConfiguration,overrides:Record<string,string>={},preset?:{id:string;version:number},scheduledAt?:string,retry?:{id:string;reason:string;window:unknown}){
- if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');
+ if(!catalogueReport(configuration.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');
  if(preset)financialExportParameters(new Request('https://internal.invalid/?'+new URLSearchParams(overrides)));
  await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,130))',[ctx.credential.academy_id+':'+ctx.credential.person_id]);
  // Preserve the original static-direct fingerprint. Relative/preset retries

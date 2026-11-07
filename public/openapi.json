@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.150.0",
+    "version": "0.151.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -38607,6 +38607,153 @@
         }
       }
     },
+    "/api/v1/reports/payroll/gross-accruals/export": {
+      "get": {
+        "summary": "Complete same-snapshot permitted gross-earning CSV with exact currency totals,chart series,all selected allocations,source-review warnings and all original worker/hub/geography rights. No cursor/page limit;2,000allocations/4MiB ceiling rejects partial files. Not net pay,paystub,unpaid balance,withholding or payment approval.",
+        "parameters": [
+          {
+            "name": "on",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "personIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "countryIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "regionIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "cityIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "hourly",
+                "manual_bonus",
+                "project",
+                "salary",
+                "tuition_course",
+                "tuition_session",
+                "tuition_collection"
+              ]
+            }
+          },
+          {
+            "name": "afterKind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterAllocationId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/payroll/recorded-time": {
       "get": {
         "summary": "Same-snapshot saved teacher-hour costs with authorized captured-date enrollment or current complete observed-present-and-late attendance headcounts; missing/stale/unsigned eligibility remains unpriced, actual/configured rounding and highest overlap once. Never payroll approval, signed admission clearance or payment.",
@@ -39534,7 +39681,7 @@
     },
     "/api/v1/reports/presets/{id}/export": {
       "get": {
-        "summary": "Download complete current permitted trial-balance/profit-loss/balance-sheet CSV from an active saved configuration; original source permissions and export limits apply,no page cursor or limit override,other report formats unavailable",
+        "summary": "Download complete current permitted trial-balance/profit-loss/balance-sheet/gross-payroll CSV from an active saved configuration; original source permissions and export limits apply,no page cursor or limit override,other report formats unavailable",
         "parameters": [
           {
             "name": "id",

@@ -19,10 +19,10 @@ import { sessionFollowUp,sessionFollowUpContract } from './session-follow-up.ts'
 import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowParameters,type ReportDateWindow } from '../core/report-window.ts';
 
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
-type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean};
-const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean}[]=[
- {contracts:financialReportsContract,handler:financialReports,capability:'financial-reports.view',csv:true},
- {contracts:financialStatementsContract,handler:financialStatements,capability:'financial-reports.view',csv:true},
+type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
+const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
+ {contracts:financialReportsContract,handler:financialReports,capability:'financial-reports.view',csv:true,backgroundCsv:true},
+ {contracts:financialStatementsContract,handler:financialStatements,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:financialOutlookContract,handler:financialOutlook,capability:'financial-outlook.view'},
  {contracts:receivablesAgingContract,handler:receivablesAging,capability:'receivables-reports.view'},
  {contracts:payablesAgingContract,handler:payablesAging,capability:'payables-reports.view'},
@@ -30,12 +30,12 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:inventoryReportsContract,handler:inventoryReports,capability:'inventory-reports.view'},
  {contracts:payrollForecastContract,handler:payrollForecast,capability:'work-pay.view'},
  {contracts:recordedWorkReportContract,handler:recordedWorkReport,capability:'session-time.view'},
- {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view'},
+ {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view',csv:true,backgroundCsv:false},
  {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view'},
  {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view'},
  {contracts:sessionFollowUpContract,handler:sessionFollowUp,capability:'session-evidence.view'}
 ];
-export const reportCatalogue:readonly Entry[]=groups.flatMap(g=>g.contracts.map(c=>({id:c.path.slice('/api/v1/reports/'.length).replaceAll('/','.').replace('{id}','by-id'),path:c.path.slice('/api/v1/'.length),summary:c.summary,schema:c.querySchema??z.object({}).strict(),handler:g.handler,capability:g.capability,csv:g.csv??false}))).sort((a,b)=>a.id.localeCompare(b.id));
+export const reportCatalogue:readonly Entry[]=groups.flatMap(g=>g.contracts.map(c=>({id:c.path.slice('/api/v1/reports/'.length).replaceAll('/','.').replace('{id}','by-id'),path:c.path.slice('/api/v1/'.length),summary:c.summary,schema:c.querySchema??z.object({}).strict(),handler:g.handler,capability:g.capability,csv:g.csv??false,backgroundCsv:g.backgroundCsv??false}))).sort((a,b)=>a.id.localeCompare(b.id));
 export const reportId=z.enum(reportCatalogue.map(r=>r.id));
 export function catalogueReport(id:string){const r=reportCatalogue.find(r=>r.id===id);if(!r)throw new ApiError(400,'UNKNOWN_REPORT');return r;}
 export const reportParameters=z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/).refine(k=>!['constructor','prototype','__proto__'].includes(k)),z.string().max(8000).refine(v=>v.isWellFormed()&&!v.includes('\0'))).refine(v=>Object.keys(v).length<=48&&Buffer.byteLength(JSON.stringify(v),'utf8')<=65536);
@@ -74,6 +74,6 @@ export async function runConfiguredReport(ctx:ApiContext,configuration:ReportCon
 }
 export async function reportDirectory(ctx:ApiContext):Promise<Reply|null>{
  if(ctx.path!=='reports/catalogue')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
- const canDesign=['report-presets.view','report-presets.edit'].every(cap=>scopeNonempty(permissionScope(ctx,cap as Capability))),entries=reportCatalogue.filter(e=>canDesign||scopeNonempty(permissionScope(ctx,e.capability)));if(!entries.length)throw new ApiError(403,'FORBIDDEN');return {status:200,body:{data:entries.map(e=>({id:e.id,path:'/api/v1/'+e.path,summary:e.summary,queryContractVersion:1,formats:e.csv?['json','csv']:['json'],backgroundJobFormats:e.csv?['csv']:[],relativeDateFields:reportWindowSupported(e.id)?reportWindowInputs(e.id).fields:[],sourcePermissionsRecheckedAtExecution:true,parametersSchema:z.toJSONSchema(e.schema,{io:'input',unrepresentable:'any'})})),savedConfigurationsSupported:true,arbitraryQueriesSupported:false,backgroundJobsIncluded:true,dateWindows:{schema:z.toJSONSchema(reportDateWindow,{io:'input',unrepresentable:'any'}),clock:'database',basis:'ISO_civil_calendar_not_fiscal',weekStartsOn:'1_Monday_through_7_Sunday'}}};
+ const canDesign=['report-presets.view','report-presets.edit'].every(cap=>scopeNonempty(permissionScope(ctx,cap as Capability))),entries=reportCatalogue.filter(e=>canDesign||scopeNonempty(permissionScope(ctx,e.capability)));if(!entries.length)throw new ApiError(403,'FORBIDDEN');return {status:200,body:{data:entries.map(e=>({id:e.id,path:'/api/v1/'+e.path,summary:e.summary,queryContractVersion:1,formats:e.csv?['json','csv']:['json'],backgroundJobFormats:e.backgroundCsv?['csv']:[],relativeDateFields:reportWindowSupported(e.id)?reportWindowInputs(e.id).fields:[],sourcePermissionsRecheckedAtExecution:true,parametersSchema:z.toJSONSchema(e.schema,{io:'input',unrepresentable:'any'})})),savedConfigurationsSupported:true,arbitraryQueriesSupported:false,backgroundJobsIncluded:true,dateWindows:{schema:z.toJSONSchema(reportDateWindow,{io:'input',unrepresentable:'any'}),clock:'database',basis:'ISO_civil_calendar_not_fiscal',weekStartsOn:'1_Monday_through_7_Sunday'}}};
 }
 export const reportDirectoryContract=[{path:'/api/v1/reports/catalogue',method:'get',summary:'Central directory of registered financial,payroll,inventory and learning inputs; baseline scopes filter readers,preset designers may discover schemas without data rights; current source authorization remains mandatory; registered JSON,bounded financial CSV and opt-in requester-bound financial CSV jobs,never arbitrary SQL'}] as const;
