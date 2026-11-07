@@ -15,6 +15,7 @@ const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_mo
 let output='';
 child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
 try {
+  // Settlement files must not bypass the normal authenticated API boundary.
   let ready=false;
   for (let i=0;i<80;i++) {
     if(child && child.exitCode!==null) throw new Error('Production server exited before smoke test');
@@ -22,6 +23,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['','/export']){const r=await fetch(base+'/api/v1/payroll/net-postings/00000000-0000-4000-8000-000000000001/settlement-report'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);}
   for(const path of ['community/profiles','community/profiles/00000000-0000-4000-8000-000000000001','community/profiles/00000000-0000-4000-8000-000000000001/history']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/bio|displayName|owner_snapshot|stack/);}
   for(const path of ['community/profiles','community/profiles/00000000-0000-4000-8000-000000000001/change']){const r=await fetch(base+'/api/v1/'+path,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   {const r=await fetch(base+'/api/v1/reports/community/achievements/export?from=2026-01-01&through=2026-01-31');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);}
