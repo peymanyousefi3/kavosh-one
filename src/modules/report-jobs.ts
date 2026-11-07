@@ -61,13 +61,13 @@ export async function reportJobs(ctx:ApiContext):Promise<Reply|null>{
   // an initial BOM; a bytea result preserves the exact retained attachment/hash.
   const r=(await ctx.db.query<{body:Uint8Array;filename:string}>("SELECT convert_to(body,'UTF8') body,filename FROM public.report_job_results WHERE job_id=$1",[id])).rows[0];if(!r)throw new ApiError(409,'REPORT_RESULT_NOT_READY');return {status:200,body:Buffer.from(r.body).toString('utf8'),csv:{filename:r.filename}};
  }
- const result=stored?{sha256:stored.sha256,bytes:stored.bytes,created_at:stored.created_at}:null;return {status:200,body:{data:j,result}};
+ const result=stored?{sha256:stored.sha256,bytes:stored.bytes,created_at:stored.created_at}:null,failureIssue=(await ctx.db.query('SELECT id,kind,created_at "observedAt" FROM public.report_job_issues WHERE job_id=$1',[id])).rows[0]??null;return {status:200,body:{data:j,result,failureIssue}};
 }
 export const reportJobsContract=[
  {path:'/api/v1/reports/presets/{id}/queue',method:'post',summary:'Queue an exact reviewed active financial CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings',schema:presetQueueInput,acceptedDescription:'Requester-bound report queued with frozen date filters,not generated or sent.'},
  {path:'/api/v1/reports/jobs',method:'post',summary:'Queue a complete financial CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10000entry/4MiB result ceiling and separate opt-in worker; larger outputs fail without truncation; no message or payment',schema:financialJobInput,acceptedDescription:'Report queued,not generated. Current source access is rechecked at execution and download.'},
  {path:'/api/v1/reports/jobs',method:'get',summary:'Own report-job configurations and states,or school master oversight; tenant/owner filtering precedes bounded paging',querySchema:paging},
- {path:'/api/v1/reports/jobs/{id}',method:'get',summary:'Own or school-master report-job state and current-source-authorized hash/byte metadata without credentials,leases,SQL errors or report content'},
+ {path:'/api/v1/reports/jobs/{id}',method:'get',summary:'Own or school-master report-job state,current-source-authorized hash/byte metadata and native failure-observation link without credentials,leases,SQL errors or report content; reading is not retry or repair'},
  {path:'/api/v1/reports/jobs/{id}/cancel',method:'post',summary:'Owner or school master cancels queued/running report; final native lease fence prevents a result from a cancelled generation',schema:empty},
  {path:'/api/v1/reports/jobs/{id}/download',method:'get',summary:'Download retained complete CSV only while every captured source-hub/global context remains within current intersected account,ledger and report authority; never lends requester permissions',responseContentType:'text/csv' as const}
 ] as const;

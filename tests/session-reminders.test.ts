@@ -5,6 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 import { sessionNotificationFixture } from './session-notification-fixture.ts';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
 import { processOneNotification } from '../src/automations/notification-worker.ts';
@@ -50,7 +51,8 @@ test('timer migration preserves real old rule,event,run and portal records witho
    await f.pg.query("INSERT INTO public.portal_notifications(academy_id,id,run_id,rule_id,event_id,person_id,action_index,severity,title,body,locale) VALUES($1,$2,$3,$4,$5,$6,0,'normal','Historical session change','Preserve original notice','en')",[f.a,randomUUID(),run,f.rule.id,event.event_id,f.guardian]);await f.pg.exec('COMMIT');
   }catch(error){await f.pg.exec('ROLLBACK');throw error;}
   const tables=['automation_rule_revisions','automation_event_sources','automation_runs','portal_notifications'],before:Record<string,unknown>[][]=[];for(const t of tables)before.push((await f.pg.query('SELECT * FROM public.'+t+' ORDER BY 1,2')).rows);await f.pg.exec(await readFile(new URL('../db/migrations/128_session_reminders.sql',import.meta.url),'utf8'));
-  for(let i=0;i<tables.length;i++)assert.deepEqual((await f.pg.query('SELECT * FROM public.'+tables[i]+' ORDER BY 1,2')).rows,before[i],tables[i]);assert.equal((await f.pg.query('SELECT * FROM public.session_reminder_occurrences')).rows.length,0);assert.equal((await f.request('notifications?origin=automation',undefined,'staff')).body.data.length,1);
+  for(let i=0;i<tables.length;i++)assert.deepEqual((await f.pg.query('SELECT * FROM public.'+tables[i]+' ORDER BY 1,2')).rows,before[i],tables[i]);assert.equal((await f.pg.query('SELECT * FROM public.session_reminder_occurrences')).rows.length,0);
+  await upgradeToCurrent(f.pg);const inbox=await f.request('notifications?origin=automation',undefined,'staff');assert.equal(inbox.response.status,200,JSON.stringify(inbox.body));assert.equal(inbox.body.data.length,1);
  }finally{await f.pg.close();}
 });
 test('24-hour parent and one-hour teacher reminders use exact elapsed offsets and real class-specific access',async()=>{
