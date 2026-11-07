@@ -22,6 +22,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/reports/jobs/00000000-0000-4000-8000-000000000001/retry',{method:'POST',headers:{'content-type':'application/json'},body:'{"reason":"Recover report"}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/configuration|credential|lease|stack/);}
   {const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/download-link',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/X-Amz|downloadUrl|sourceFingerprint|stack/);}
   for(const suffix of ['', '/00000000-0000-4000-8000-000000000003']){const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/copies/00000000-0000-4000-8000-000000000002/reconciliations'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceFingerprint|leaseToken|workerId|stack/);}
   {const r=await fetch(base+'/api/v1/files/00000000-0000-4000-8000-000000000001/copies/00000000-0000-4000-8000-000000000002/reconciliations',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
