@@ -9,6 +9,7 @@ export const frozenReportWindow=z.object({window:reportDateWindow,resolvedAt:z.i
 type Inputs={fields:readonly string[];timeZone?:true};
 const inputs:Record<string,Inputs>={
  'finance.trial-balance':{fields:['through']},'finance.balance-sheet':{fields:['through']},
+ 'community.achievements':{fields:['from','through']},
  'finance.profit-loss':{fields:['from','through']},'finance.bank-reconciliation':{fields:['from','through']},
  'finance.outlook':{fields:['on','through'],timeZone:true},
  'finance.receivables-aging':{fields:['on']},'finance.payables-aging':{fields:['on']},'payroll.gross-accruals':{fields:['on']},
