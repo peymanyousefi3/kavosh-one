@@ -7,6 +7,7 @@ import { financialReports,financialReportsContract } from './financial-reports.t
 import { financialStatements,financialStatementsContract } from './financial-statements.ts';
 import { catalogueReport,configuredReportContext,resolveConfiguredReportContext } from './report-catalogue.ts';
 import type { ResolvedReportWindow } from '../core/report-window.ts';
+import { completeAchievementExport } from './achievement-export.ts';
 import { completePayrollGrossExport } from './payroll-gross-export.ts';
 
 // ponytail: complete synchronous export is bounded at2,000 entries/4MiB.
@@ -45,6 +46,6 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
 }
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
- const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');const context={...source,request:new Request(url,{method:'GET'})},origin={...provenance,dateWindow:resolvedDateWindow};if(configuration.reportId==='payroll.gross-accruals')return completePayrollGrossExport(context,origin);return financialReportCsv(await completeFinancialReport(context),origin);
+ const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');const context={...source,request:new Request(url,{method:'GET'})},origin={...provenance,dateWindow:resolvedDateWindow};if(configuration.reportId==='community.achievements')return completeAchievementExport(context,origin);if(configuration.reportId==='payroll.gross-accruals')return completePayrollGrossExport(context,origin);return financialReportCsv(await completeFinancialReport(context),origin);
 }
 export const financialReportExportContract=[financialReportsContract[0],...financialStatementsContract].map(c=>({path:c.path+'/export',method:'get' as const,summary:'Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating',querySchema:(c.querySchema as z.ZodObject).safeExtend({limit:z.never().optional(),afterKind:z.never().optional(),afterCode:z.never().optional(),afterId:z.never().optional()}),responseContentType:'text/csv' as const}));

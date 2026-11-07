@@ -9,7 +9,9 @@ const uuid=z.string().uuid().transform(value=>value.toLowerCase());
 const version=z.number().int().min(1);
 const capability=z.string().regex(/^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/).max(100);
 const permission=z.object({capability,effect:z.enum(['allow','deny'])}).strict();
-const roleInput=z.object({name:z.string().trim().min(1).max(150),description:z.string().trim().max(1000).default(''),permissions:z.array(permission).max(200)}).strict();
+// One entry per installed capability is enforced below. Bound incoming bytes,
+// not an obsolete feature count that prevents complete roles as modules grow.
+const roleInput=z.object({name:z.string().trim().min(1).max(150),description:z.string().trim().max(1000).default(''),permissions:z.array(permission)}).strict();
 const roleUpdate=roleInput.extend({expectedVersion:version});
 const ids=z.array(uuid).max(1000).default([]);
 const assignment=z.object({roleId:uuid,allHubs:z.boolean(),hubIds:ids,classIds:ids,personIds:ids,countryIds:ids,regionIds:ids,cityIds:ids}).strict().superRefine((value,ctx)=>{
@@ -69,10 +71,10 @@ async function role(ctx:ApiContext,id:string) {
 }
 async function validatePermissions(ctx:ApiContext,permissions:Permission[]) {
   if(new Set(permissions.map(p=>p.capability)).size!==permissions.length)throw new ApiError(400,'DUPLICATE_PERMISSION');
-  const registered=(await ctx.db.query<{name:string}>('SELECT name FROM public.capability_catalog')).rows.map(p=>p.name);
+  const registered=new Set((await ctx.db.query<{name:string}>('SELECT name FROM public.capability_catalog')).rows.map(p=>p.name)),isMaster=await master(ctx);
   for(const p of permissions) {
-    if(!registered.includes(p.capability))throw new ApiError(400,'UNKNOWN_CAPABILITY');
-    if(!await master(ctx)&&!nonempty(permissionScope(ctx,p.capability as Capability)))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
+    if(!registered.has(p.capability))throw new ApiError(400,'UNKNOWN_CAPABILITY');
+    if(!isMaster&&!nonempty(permissionScope(ctx,p.capability as Capability)))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
   }
 }
 async function assignments(ctx:ApiContext,personId:string) {
@@ -193,7 +195,7 @@ async function applyAction(ctx:ApiContext,p:Proposal):Promise<unknown> {
       if(!updated.rows.length)throw new ApiError(409,'TARGET_CHANGED');
       await ctx.db.query('DELETE FROM public.role_permissions WHERE role_id=$1',[p.target_id]);
     } else await ctx.db.query('INSERT INTO public.roles(academy_id,id,name,description) VALUES($1,$2,$3,$4)',[ctx.credential.academy_id,p.target_id,input.name,input.description]);
-    for(const permission of input.permissions)await ctx.db.query('INSERT INTO public.role_permissions(academy_id,role_id,capability,effect) VALUES($1,$2,$3,$4)',[ctx.credential.academy_id,p.target_id,permission.capability,permission.effect]);
+    await ctx.db.query('INSERT INTO public.role_permissions(academy_id,role_id,capability,effect) SELECT $1,$2,p.capability,p.effect FROM jsonb_to_recordset($3::jsonb) AS p(capability text,effect text)',[ctx.credential.academy_id,p.target_id,JSON.stringify(input.permissions)]);
     const result=await role(ctx,p.target_id);
     await record(ctx.db,ctx.credential,ctx.requestId,p.action,p.target_id,null,{before:existing,after:result,approvalId:p.id});
     return result;
@@ -247,13 +249,13 @@ export async function administration(ctx:ApiContext,registry:ApprovalRegistry=ad
       WHERE ($1::uuid IS NULL OR r.id>$1) GROUP BY r.academy_id,r.id ORDER BY r.id LIMIT $2`,[after??null,limit+1])).rows;
     return {status:200,body:{data:rows.slice(0,limit),nextCursor:rows.length>limit?rows[limit-1].id:null}};
   }
-  if(path==='roles'&&request.method==='POST')return propose(ctx,registry,'role.create',null,0,roleInput.parse(await jsonBody(request)));
+  if(path==='roles'&&request.method==='POST')return propose(ctx,registry,'role.create',null,0,roleInput.parse(await jsonBody(request,128*1024)));
   const rolePath=/^roles\/([^/]+)(?:\/(update|duplicate))?$/.exec(path);
   if(rolePath) {
     const id=uuid.parse(rolePath[1]);
     if(request.method==='GET'&&!rolePath[2]){requireScope(permissionScope(ctx,'roles.view'));return {status:200,body:{data:await role(ctx,id)}};}
     if(request.method==='POST'&&rolePath[2]==='update') {
-      const input=roleUpdate.parse(await jsonBody(request)),{expectedVersion,...body}=input;
+      const input=roleUpdate.parse(await jsonBody(request,128*1024)),{expectedVersion,...body}=input;
       return propose(ctx,registry,'role.update',id,expectedVersion,body);
     }
     if(request.method==='POST'&&rolePath[2]==='duplicate') {
