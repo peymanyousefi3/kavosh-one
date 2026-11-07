@@ -40,7 +40,7 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
    }
    await record(ctx.db,ctx.credential,ctx.requestId,'notification.batch_queued',eventId,event.projection.hubId,{rulesScanned:Math.min(rows.length,input.limit),jobs:queued.length,severity:'critical',externalRequestMade:false});
    const pending=queued.some(j=>j.jobStatus==='queued'||j.jobStatus==='running');
-   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['approval','audit','session'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
+   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['approval','audit','session','report_schedule'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
   });
  }
  const queue=/^automations\/rules\/([^/]+)\/queue$/.exec(ctx.path),list=/^automations\/rules\/([^/]+)\/jobs$/.exec(ctx.path),detail=/^automations\/jobs\/([^/]+)(?:\/(cancel))?$/.exec(ctx.path);
@@ -68,7 +68,7 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await visible(ctx,id)}};
 }
 export const notificationJobsContract=[
- {path:'/api/v1/automations/events/{id}/queue',method:'post',summary:'Queue matching enabled automatic rules for one currently authorized approval or audit-backed event,in bounded permission-filtered pages; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon',schema:fanoutInput,acceptedDescription:'Matching automatic-rule jobs queued; a separately enabled worker rechecks current source,actor,rule and recipient rights.'},
+ {path:'/api/v1/automations/events/{id}/queue',method:'post',summary:'Queue matching enabled automatic rules for one currently authorized bound event,in bounded permission-filtered pages; session and report-issue sources must still be current; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon',schema:fanoutInput,acceptedDescription:'Matching automatic-rule jobs queued; a separately enabled worker rechecks current source,actor,rule and recipient rights.'},
  {path:'/api/v1/automations/rules/{id}/queue',method:'post',summary:'Persist an immediate notification job bound to the authenticated requester; current actor/source/rule rights are rechecked by the worker. An explicitly resubmitted failed/cancelled job creates a fresh linked generation; history is never rewritten',schema:notificationJobInput,acceptedDescription:'Durable notification job queued, not delivered and not a pending upper-approval case. A separately enabled worker is required.'},
  {path:'/api/v1/automations/rules/{id}/jobs',method:'get',summary:'Current-rule and source-authorized job metadata, filtered before pagination; never credential IDs, user IDs, lease tokens or raw errors',querySchema:paging},
  {path:'/api/v1/automations/jobs/{id}',method:'get',summary:'Current-authorized job state and redacted outcome without private execution credentials'},

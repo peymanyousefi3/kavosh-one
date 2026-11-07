@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.144.0",
+    "version": "0.145.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -3099,7 +3099,7 @@
     },
     "/api/v1/automations/events": {
       "get": {
-        "summary": "Read bound approval events under case privacy or new audit-backed metadata under current audit scope,plus automation rights before pagination; no private audit changes,unbound events or delivery claims",
+        "summary": "Read bound approval,audit,session and report-schedule issue events under current source rights plus automation rights before paging; operational sources are native system observations,not owner actions; no private audit changes or delivery claims",
         "parameters": [
           {
             "name": "limit",
@@ -3161,7 +3161,8 @@
               "enum": [
                 "approval",
                 "audit",
-                "session"
+                "session",
+                "report_schedule"
               ]
             }
           }
@@ -3216,7 +3217,7 @@
     },
     "/api/v1/automations/events/{id}/queue": {
       "post": {
-        "summary": "Queue matching enabled automatic rules for one currently authorized approval or audit-backed event,in bounded permission-filtered pages; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon",
+        "summary": "Queue matching enabled automatic rules for one currently authorized bound event,in bounded permission-filtered pages; session and report-issue sources must still be current; retains requester identity,current rule versions and existing durable deduplication. Does not deliver messages or activate a daemon",
         "parameters": [
           {
             "name": "id",
@@ -26315,7 +26316,7 @@
     },
     "/api/v1/notifications/{id}": {
       "get": {
-        "summary": "Read own portal notification and linked approval or audit ID only while its underlying source remains authorized",
+        "summary": "Read own portal notification and linked approval,audit or report-schedule ID only while its underlying source remains authorized",
         "parameters": [
           {
             "name": "id",
