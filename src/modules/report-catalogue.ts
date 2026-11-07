@@ -26,7 +26,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:payrollSettlementReportContract,handler:payrollSettlementReport,capability:'payrun-payments.view',csv:true,backgroundCsv:true},
  {contracts:financialReportsContract,handler:financialReports,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:financialStatementsContract,handler:financialStatements,capability:'financial-reports.view',csv:true,backgroundCsv:true},
- {contracts:financialOutlookContract,handler:financialOutlook,capability:'financial-outlook.view'},
+ {contracts:financialOutlookContract,handler:financialOutlook,capability:'financial-outlook.view',csv:true},
  {contracts:receivablesAgingContract,handler:receivablesAging,capability:'receivables-reports.view'},
  {contracts:payablesAgingContract,handler:payablesAging,capability:'payables-reports.view'},
  {contracts:bankReconciliationReportContract,handler:bankReconciliationReport,capability:'financial-reports.view'},

@@ -1,6 +1,6 @@
 import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
-import type { ApiContext,Reply } from '../core/api.ts';
+import type { ApiContext } from '../core/api.ts';
 import { permissionScope } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { exactReportMoney as exact } from '../core/aging.ts';
@@ -59,7 +59,7 @@ const plannedSQL=`WITH plans AS MATERIALIZED(
 )
 SELECT(SELECT count(*)::integer FROM plans) plans,(SELECT count(*)::integer FROM occurrences) occurrences,(SELECT count(*)::integer FROM links) links,coalesce((SELECT jsonb_agg(to_jsonb(rows) ORDER BY "on",id) FROM rows),'[]'::jsonb) entries`;
 
-export async function financialOutlook(ctx:ApiContext):Promise<Reply|null>{
+export async function financialOutlook(ctx:ApiContext){
  if(ctx.path!=='reports/finance/outlook')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const p=new URL(ctx.request.url).searchParams;if(new Set(p.keys()).size!==[...p.keys()].length)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(p));await lockAcademyTopology(ctx);
  const scope=(cap:Capability)=>{const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;},arScopes=arCaps.map(scope),apScopes=apCaps.map(scope),outlook=scope('financial-outlook.view'),reports=scope('financial-reports.view'),plans=scope('expense-commitments.view'),links=scope('expense-commitment-links.view');
