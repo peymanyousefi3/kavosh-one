@@ -12,6 +12,7 @@ import { lockAcademyTopology } from '../modules/academy.ts';
 import { achievementReport } from '../modules/achievement-report.ts';
 import { achievementReportCsv } from '../modules/achievement-export.ts';
 import { completePayrollGrossReport,payrollGrossCsv } from '../modules/payroll-gross-export.ts';
+import { settlementReportData,payrollSettlementCsv } from '../modules/payroll-settlement-report.ts';
 
 export const backgroundFinancialEntryLimit=10000;
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(a=>new Set(a).size===a.length);
@@ -37,6 +38,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const provenance={id:job.preset_id??undefined,version:job.preset_version??undefined,dateWindow:window,scheduledOccurrence,retryOfJobId:job.retry_of_job_id??undefined};let file:Reply,proof:z.infer<typeof reportAuthorizationContext>;
    if(job.configuration.reportId==='community.achievements'){const reply=await achievementReport(source,true);if(!reply?.body||typeof reply.body!=='object'||!('data'in reply.body))throw new Error('ACHIEVEMENT_REPORT_INVALID');const data=reply.body.data as {authorizationContext:unknown};proof=reportAuthorizationContext.parse(data.authorizationContext);file=achievementReportCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.gross-accruals'){const data=await completePayrollGrossReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollGrossCsv(data,provenance,backgroundFinancialEntryLimit);}
+   else if(job.configuration.reportId==='payroll.settlements'){const data=await settlementReportData(source,true,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollSettlementCsv(data,provenance,backgroundFinancialEntryLimit);}
    else{const data=await completeFinancialReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=financialReportCsv(data,provenance,backgroundFinancialEntryLimit);}
    await requireReportResultAccess(source,proof);
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
@@ -46,7 +48,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    const saved=(await db.query<{ok:boolean}>('SELECT public.finish_report_job($1,$2,\'succeeded\',NULL,$3,$4,$5::jsonb) ok',[lease.id,lease.lease_token,file.body,file.csv!.filename,JSON.stringify(proof)])).rows[0]?.ok;
    if(!saved)throw new ApiError(409,'REPORT_LEASE_LOST');if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
    await db.query('COMMIT');transaction=false;return {claimed:true,recorded:true,outcome:'succeeded' as const};
-  }catch(error){if(transaction){await db.query('ROLLBACK');transaction=false;}if(error instanceof ApiError){problem=['REPORT_REQUIRES_BACKGROUND_JOB','ACHIEVEMENT_REPORT_REQUIRES_BACKGROUND_JOB'].includes(error.code)?'REPORT_OUTPUT_LIMIT_EXCEEDED':error.code;outcome=[400,401,403,404,409,422].includes(error.status)?'cancelled':'retry';}}
+  }catch(error){if(transaction){await db.query('ROLLBACK');transaction=false;}if(error instanceof ApiError){problem=['REPORT_REQUIRES_BACKGROUND_JOB','ACHIEVEMENT_REPORT_REQUIRES_BACKGROUND_JOB','PAYROLL_SETTLEMENT_REPORT_REQUIRES_BACKGROUND_JOB'].includes(error.code)?'REPORT_OUTPUT_LIMIT_EXCEEDED':error.code;outcome=[400,401,403,404,409,422].includes(error.status)?'cancelled':'retry';}}
   await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('app.academy_id',$1,true)",[lease.academy_id]);const recorded=(await db.query<{ok:boolean}>('SELECT public.finish_report_job($1,$2,$3,$4,NULL,NULL,NULL) ok',[lease.id,lease.lease_token,outcome,problem])).rows[0]?.ok===true;await db.query('COMMIT');transaction=false;return {claimed:true,recorded,outcome};
  }catch(error){if(transaction)try{await db.query('ROLLBACK');}catch{broken=true;}throw error;}finally{db.release(broken);}
 }
