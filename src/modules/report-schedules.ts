@@ -7,7 +7,7 @@ import { ApiError,scopeContains,type Capability,type Scope,type Credential } fro
 import { reportTiming,nextReportOccurrence } from '../core/report-timing.ts';
 import { executionReportPreset,reviewedReportPreset } from './report-presets.ts';
 import { catalogueReport } from './report-catalogue.ts';
-import { financialReportAccess } from './financial-reports.ts';
+import { reportJobAccess,reportPresetJobAccess } from './report-job-access.ts';
 import { lockAcademyTopology } from './academy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000),empty=z.object({}).strict();
@@ -24,7 +24,7 @@ async function output(ctx:ApiContext,h:Header){const r=await revision(ctx,h),cur
  return {id:h.id,presetId:h.preset_id,ownerId:h.owner_id,ownerKind:h.owner_kind,version:h.version,controlVersion:h.control_version,status:h.status,nextPlannedOccurrence:h.next_due_at,createdAt:h.created_at,stoppedAt:h.stopped_at,definition:r.definition,presetSourceCurrent:current,authorityBoundToOwner:true,creationCredentialRetained:true,credentialRenewalSupported:true,workerLiveness:'not_observed',definitionManagementOnly:false,automaticExecutionImplemented:true,execution,executionRequiresOptInWorker:true,deliveryImplemented:false,backfillPolicy:'none'};}
 async function basis(ctx:ApiContext,creating:boolean,id:string,raw:unknown){
  const i=creating?create.parse(raw):change.parse(raw),h=creating?null:await header(ctx,id,true);if(h&&'expectedVersion'in i&&h.version!==i.expectedVersion)throw new ApiError(409,'REPORT_SCHEDULE_CHANGED');
- const p=await(i.definition.enabled?executionReportPreset:reviewedReportPreset)(ctx,'presetId'in i?i.presetId:h!.preset_id,i.definition.presetVersion);if(!catalogueReport(p.definition.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');authorize(ctx,p.owner.scope,true);financialReportAccess(ctx);
+ const p=await(i.definition.enabled?executionReportPreset:reviewedReportPreset)(ctx,'presetId'in i?i.presetId:h!.preset_id,i.definition.presetVersion);if(!catalogueReport(p.definition.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');authorize(ctx,p.owner.scope,true);reportJobAccess(ctx,p.definition.reportId);
  if(i.definition.enabled&&(!h||h.status!=='active')&&(await ctx.db.query<{n:number}>("SELECT count(*)::integer n FROM public.report_schedules WHERE status='active'")).rows[0].n>=200)throw new ApiError(429,'REPORT_SCHEDULE_LIMIT');
  if(i.definition.enabled&&!nextReportOccurrence(i.definition.timing,await clock(ctx)))throw new ApiError(409,'REPORT_SCHEDULE_HAS_NO_FUTURE_OCCURRENCE');
  const b=(await ctx.db.query<{basis:{owner:Scope;before:unknown}}>('SELECT public.report_schedule_basis($1,$2,$3) basis',[id,p.id,i.definition.presetVersion])).rows[0].basis;if(!b)throw new ApiError(404,'NOT_FOUND');return b;
@@ -44,12 +44,12 @@ const configurationActions:ApprovalRegistry=Object.fromEntries(['report.schedule
  async authorizeReviewer(ctx:ApiContext,p:Proposal){
   // Review authorization runs BEFORE the engine chooses its policy-lock mode.
   // Only inspect permissions here;basis/validation do the locked source checks.
-  const creating=p.action.endsWith('create'),i=creating?create.parse(p.payload):change.parse(p.payload),h=creating?null:await header(ctx,p.target_id,true),presetId='presetId'in i?i.presetId:h!.preset_id,owner=(await ctx.db.query<{scope:Scope}>("SELECT owner->'scope' scope FROM public.report_presets WHERE id=$1",[presetId])).rows[0]?.scope;if(!owner)throw new ApiError(404,'NOT_FOUND');authorize(ctx,owner,true);financialReportAccess(ctx);
+  const creating=p.action.endsWith('create'),i=creating?create.parse(p.payload):change.parse(p.payload),h=creating?null:await header(ctx,p.target_id,true),presetId='presetId'in i?i.presetId:h!.preset_id,owner=(await ctx.db.query<{scope:Scope}>("SELECT owner->'scope' scope FROM public.report_presets WHERE id=$1",[presetId])).rows[0]?.scope;if(!owner)throw new ApiError(404,'NOT_FOUND');authorize(ctx,owner,true);await reportPresetJobAccess(ctx,presetId,i.definition.presetVersion);
  },apply
 }])) as ApprovalRegistry;
 async function renewalBasis(ctx:ApiContext,id:string,raw:unknown,owner=false){
  const i=renew.parse(raw),h=await header(ctx,id,true);if(owner&&(h.owner_id!==ctx.credential.person_id||h.owner_kind!==(ctx.credential.kind??'bot')))throw new ApiError(403,'SCHEDULE_OWNER_REQUIRED');
- if(h.version!==i.expectedVersion||h.control_version!==i.expectedControlVersion)throw new ApiError(409,'REPORT_SCHEDULE_CHANGED');const r=await revision(ctx,h);await executionReportPreset(ctx,h.preset_id,r.definition.presetVersion);financialReportAccess(ctx);
+ if(h.version!==i.expectedVersion||h.control_version!==i.expectedControlVersion)throw new ApiError(409,'REPORT_SCHEDULE_CHANGED');const r=await revision(ctx,h);await executionReportPreset(ctx,h.preset_id,r.definition.presetVersion);await reportPresetJobAccess(ctx,h.preset_id,r.definition.presetVersion);
  const b=(await ctx.db.query<Record<string,unknown>>('SELECT public.report_schedule_renewal_basis($1) basis',[id])).rows[0]?.basis;if(!b)throw new ApiError(404,'NOT_FOUND');return {h,b};
 }
 async function liveRenewal(ctx:ApiContext,h:Header,c:Credential){const valid=c.kind==='human'?await ctx.db.query<{valid:boolean}>('SELECT public.lock_human($1,(SELECT auth_user_id FROM public.people WHERE id=$2)) valid',[c.token_id,h.owner_id]):await ctx.db.query<{valid:boolean}>('SELECT public.lock_bot($1) valid',[c.token_id]);if(!valid.rows[0]?.valid)throw new ApiError(409,'SCHEDULE_RENEWAL_CREDENTIAL_EXPIRED');}
@@ -57,7 +57,7 @@ export const reportScheduleActions:ApprovalRegistry={...configurationActions,'re
  requestCapability:'report-schedules.edit',privacyCapability:'report-schedules.view',policyChange:true,
  async validate(ctx,id,raw,purpose){await lockAcademyTopology(ctx);const {h}=await renewalBasis(ctx,id,raw,purpose==='request');if(purpose==='request')await liveRenewal(ctx,h,ctx.credential);return h.owner_scope;},
  async dependencies(ctx,id,raw,purpose){try{return (await renewalBasis(ctx,id,raw)).b as Record<string,unknown>;}catch(error){if(purpose==='review'&&error instanceof ApiError&&[403,404,409].includes(error.status))return {unavailable:error.code};throw error;}},
- async authorizeReviewer(ctx,p){await header(ctx,p.target_id,true);financialReportAccess(ctx);},
+ async authorizeReviewer(ctx,p){const h=await header(ctx,p.target_id,true),r=await revision(ctx,h);await reportPresetJobAccess(ctx,h.preset_id,r.definition.presetVersion);},
  async apply(ctx,p){if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');const i=renew.parse(p.payload),{h,b}=await renewalBasis(ctx,p.target_id,i),c=p.credential_snapshot as Credential;if(c.person_id!==h.owner_id||(c.kind??'bot')!==h.owner_kind||!isDeepStrictEqual(b,p.review_context))throw new ApiError(409,'REPORT_SCHEDULE_CHANGED');await liveRenewal(ctx,h,c);
   const changed=await ctx.db.query('UPDATE public.report_schedules SET execution_credential_id=$4,control_version=control_version+1 WHERE id=$1 AND version=$2 AND control_version=$3 RETURNING id',[h.id,i.expectedVersion,i.expectedControlVersion,c.token_id]);if(!changed.rows.length)throw new ApiError(409,'REPORT_SCHEDULE_CHANGED');
   await ctx.db.query('INSERT INTO public.report_schedule_renewals(academy_id,schedule_id,control_version,credential_id,changed_by,approval_id,source_snapshot,reason) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)',[ctx.credential.academy_id,h.id,h.control_version+1,c.token_id,ctx.credential.person_id,p.id,JSON.stringify(b),i.reason]);await record(ctx.db,ctx.credential,ctx.requestId,'report.schedule.renewed',h.id,null,{severity:'critical',controlVersion:h.control_version+1,ownerUnchanged:true,statusUnchanged:true,externalRequestMade:false});return output(ctx,await header(ctx,h.id));
@@ -83,7 +83,7 @@ export async function reportSchedules(ctx:ApiContext,registry:ApprovalRegistry=r
 export const reportSchedulesContract=[
  {path:'/api/v1/reports/schedules/{id}/renew',method:'post',summary:'Only the same owner may request renewed execution authority from their currently verified login or scoped bot token; upper human review required except master self-approval; exact configuration/control versions,stopped state and creation identity preserved; stale worker leases invalidated',schema:renew},
  {path:'/api/v1/reports/schedules/{id}/renewals',method:'get',summary:'Editor-only immutable authorization renewal history without current or previous credential/session identifiers',querySchema:history},
- {path:'/api/v1/reports/presets/{id}/schedules',method:'post',summary:'Upper-reviewed recurring financial CSV schedule with original credential,civil recurrence and DST policies; separate opt-in worker queues one occurrence atomically,never external delivery or historical backfill',schema:input},
+ {path:'/api/v1/reports/presets/{id}/schedules',method:'post',summary:'Upper-reviewed recurring financial or gross-payroll CSV schedule with original credential,civil recurrence and DST policies; separate opt-in worker queues one occurrence atomically,never external delivery or historical backfill',schema:input},
  {path:'/api/v1/reports/presets/{id}/schedules',method:'get',summary:'Source/schedule-scoped persistent configuration list before paging,including stopped records needing management',querySchema:paging},
  {path:'/api/v1/reports/schedules/{id}',method:'get',summary:'Current-authorized configuration,lifecycle and paused/retry state without credentials or leases; automatic generation requires an opt-in worker and is not delivery or worker-liveness proof'},
  {path:'/api/v1/reports/schedules/{id}/change',method:'post',summary:'Upper-reviewed exact-version recurrence/name/preset-revision/activation change; owner and original credential remain fixed; stop invalidates older pending changes',schema:change},

@@ -7,7 +7,7 @@ import { ApiError,scopeContains,type Capability,type Credential,type Scope } fro
 import { permissionScope } from '../core/approvals.ts';
 import { reportTiming,nextReportOccurrence } from '../core/report-timing.ts';
 import { executionReportPreset } from '../modules/report-presets.ts';
-import { financialReportAccess } from '../modules/financial-reports.ts';
+import { reportJobAccess } from '../modules/report-job-access.ts';
 import { enqueueReport } from '../modules/report-jobs.ts';
 import { lockAcademyTopology } from '../modules/academy.ts';
 
@@ -27,7 +27,7 @@ export async function processOneReportSchedule(database:Database,allowedAcademie
    if((await db.query<{status:string}>('SELECT status FROM public.academies WHERE id=$1',[lease.academy_id])).rows[0]?.status!=='active')throw new ApiError(403,'ACADEMY_UNAVAILABLE');
    const s=(await db.query<{preset_id:string;owner_scope:Scope;version:number;control_version:number;due_at:string;definition:{presetVersion:number;timing:z.infer<typeof reportTiming>}}>(`SELECT s.preset_id,s.owner_scope,s.version,s.control_version,to_char(s.next_due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') due_at,r.definition FROM public.report_schedules s JOIN public.report_schedule_revisions r ON r.academy_id=s.academy_id AND r.schedule_id=s.id AND r.version=s.version WHERE s.id=$1`,[lease.id])).rows[0];if(!s)throw new ApiError(404,'SCHEDULE_UNAVAILABLE');
    const path='reports/presets/'+s.preset_id+'/queue',request=new Request('https://internal.invalid/api/v1/'+path,{method:'POST',headers:{'idempotency-key':randomUUID()}}),ctx:ApiContext={db,credential:c,grants:await loadGrants(db,c),request,path,requestId:randomUUID()};await lockAcademyTopology(ctx);
-   const p=await executionReportPreset(ctx,s.preset_id,s.definition.presetVersion);for(const cap of ['report-schedules.view','report-schedules.edit'] as Capability[])if(!scopeContains(permissionScope(ctx,cap),s.owner_scope))throw new ApiError(403,'SCHEDULE_ACCESS_CHANGED');financialReportAccess(ctx);
+   const p=await executionReportPreset(ctx,s.preset_id,s.definition.presetVersion);for(const cap of ['report-schedules.view','report-schedules.edit'] as Capability[])if(!scopeContains(permissionScope(ctx,cap),s.owner_scope))throw new ApiError(403,'SCHEDULE_ACCESS_CHANGED');reportJobAccess(ctx,p.definition.reportId);
    const now=(await db.query<{instant:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') instant`)).rows[0].instant,timing=reportTiming.parse(s.definition.timing),due=Temporal.Instant.from(s.due_at),at=Temporal.Instant.from(now),late=Temporal.Instant.compare(at,due.add({minutes:timing.maxDelayMinutes}))>0;
    const next=nextReportOccurrence(timing,at.add({nanoseconds:1}).toString()),nextDue=next?Temporal.Instant.from(next.dueAt).toString({fractionalSecondDigits:6}):null;let jobId:string|null=null;
    if(!late){const reply=await enqueueReport(ctx,p.definition,{}, {id:p.id,version:p.version},s.due_at);if(reply.status!==202)throw new Error('SCHEDULE_QUEUE_FAILED');jobId=(reply.body as {data:{id:string}}).data.id;}

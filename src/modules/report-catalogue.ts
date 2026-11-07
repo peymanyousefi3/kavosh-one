@@ -30,7 +30,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:inventoryReportsContract,handler:inventoryReports,capability:'inventory-reports.view'},
  {contracts:payrollForecastContract,handler:payrollForecast,capability:'work-pay.view'},
  {contracts:recordedWorkReportContract,handler:recordedWorkReport,capability:'session-time.view'},
- {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view',csv:true,backgroundCsv:false},
+ {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view'},
  {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view'},
  {contracts:sessionFollowUpContract,handler:sessionFollowUp,capability:'session-evidence.view'}

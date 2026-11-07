@@ -1,11 +1,12 @@
 import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
-import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
-import { ApiError,scopeNonempty } from '../core/policy.ts';
+import { lockApprovalWrites } from '../core/approvals.ts';
+import { ApiError } from '../core/policy.ts';
 import { readMinorUnits } from '../core/money.ts';
 import { exactReportMoney as exact } from '../core/aging.ts';
 import { accountingDate } from './finance-periods.ts';
 import { financialIds } from './financial-reports.ts';
+import { payrollReportScopes } from './payroll-report-access.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),kind=z.enum(['hourly','manual_bonus','project','salary','tuition_course','tuition_session','tuition_collection']);
 const query=z.object({on:accountingDate,hubIds:financialIds.optional(),personIds:financialIds.optional(),currencyIds:financialIds.optional(),countryIds:financialIds.optional(),regionIds:financialIds.optional(),cityIds:financialIds.optional(),kind:kind.optional(),afterKind:kind.optional(),afterId:uuid.optional(),afterAllocationId:uuid.optional(),limit:z.coerce.number().int().min(1).max(100).default(50)}).strict().refine(q=>[q.afterKind,q.afterId,q.afterAllocationId].filter(v=>v!==undefined).length%3===0,'Provide all three cursor fields together.');
@@ -47,17 +48,17 @@ const sql=`WITH source AS NOT MATERIALIZED(
  SELECT statement_timestamp()::text "snapshotAt",b.allocations,(SELECT count(*)::integer FROM totals) "currencyGroups",(SELECT count(*)::integer FROM charts) "chartGroups",(SELECT count(DISTINCT(kind,id))::integer FROM usable) "sourceCount",
  coalesce((SELECT jsonb_agg(to_jsonb(t) ORDER BY currency_code,currency_id) FROM(SELECT * FROM totals ORDER BY currency_code,currency_id LIMIT ${chartLimit+1}) t),'[]'::jsonb) currencies,
  coalesce((SELECT jsonb_agg(to_jsonb(c) ORDER BY hub_id,kind,currency_id) FROM(SELECT * FROM charts ORDER BY hub_id,kind,currency_id LIMIT ${chartLimit+1}) c),'[]'::jsonb) charts,
- coalesce((SELECT jsonb_agg(to_jsonb(p) ORDER BY kind,"sourceId","allocationId") FROM page p),'[]'::jsonb) entries FROM bounds b`;
+ CASE WHEN $18::boolean THEN jsonb_build_object('kind','payroll_gross','sources',coalesce((SELECT jsonb_agg(v ORDER BY v->>'kind',v->>'sourceId',v->>'hubId') FROM(SELECT DISTINCT jsonb_build_object('kind',kind,'sourceId',id,'personId',person_id,'hubId',hub_id) v FROM usable) p),'[]'::jsonb)) END "authorizationContext",coalesce((SELECT jsonb_agg(to_jsonb(p) ORDER BY kind,"sourceId","allocationId") FROM page p),'[]'::jsonb) entries FROM bounds b`;
 type Currency={currency_id:string;currency_code:string;scale:number;source_count:number;legacy_date_sources:number;allocation_count:number;gross:string;past_due:string};
 type Chart={hub_id:string|null;kind:z.infer<typeof kind>;currency_id:string;currency_code:string;scale:number;allocation_count:number;gross:string};
 type Entry={kind:z.infer<typeof kind>;sourceId:string;allocationId:string;personId:string;hubId:string|null;currencyId:string;currencyCode:string;unitScale:number;minor:string;postedOn:string;dueOn:string;daysPastConfiguredDue:number;legacyDateReviewRequired:boolean};
 export async function payrollGrossReport(ctx:ApiContext,exportEntryLimit?:number):Promise<Reply|null>{
  if(ctx.path!=='reports/payroll/gross-accruals')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params));await lockApprovalWrites(ctx);
  if(exportEntryLimit!==undefined){if(!Number.isInteger(exportEntryLimit)||exportEntryLimit<1||exportEntryLimit>10000)throw new Error('INVALID_REPORT_EXPORT_LIMIT');q.limit=exportEntryLimit;}
- const reports=permissionScope(ctx,'financial-reports.view'),gross=permissionScope(ctx,'payroll-accruals.view'),manual=permissionScope(ctx,'payroll-adjustments.view');if(!scopeNonempty(reports)||!scopeNonempty(gross)&&!scopeNonempty(manual))throw new ApiError(403,'FORBIDDEN');
- const r=(await ctx.db.query<{snapshotAt:string;allocations:number;currencyGroups:number;chartGroups:number;sourceCount:number;currencies:Currency[];charts:Chart[];entries:Entry[]}>(sql,[q.on,JSON.stringify(reports),JSON.stringify(gross),JSON.stringify(manual),ctx.credential.all_hubs,ctx.credential.hub_ids,q.hubIds??null,q.personIds??null,q.currencyIds??null,q.kind??null,q.countryIds??null,q.regionIds??null,q.cityIds??null,q.afterKind??null,q.afterId??null,q.afterAllocationId??null,q.limit+1])).rows[0];
+ const {reports,gross,manual}=payrollReportScopes(ctx);
+ const r=(await ctx.db.query<{snapshotAt:string;allocations:number;currencyGroups:number;chartGroups:number;sourceCount:number;authorizationContext:unknown;currencies:Currency[];charts:Chart[];entries:Entry[]}>(sql,[q.on,JSON.stringify(reports),JSON.stringify(gross),JSON.stringify(manual),ctx.credential.all_hubs,ctx.credential.hub_ids,q.hubIds??null,q.personIds??null,q.currencyIds??null,q.kind??null,q.countryIds??null,q.regionIds??null,q.cityIds??null,q.afterKind??null,q.afterId??null,q.afterAllocationId??null,q.limit+1,exportEntryLimit!==undefined])).rows[0];
  assertPayrollGrossBounds(r);const page=r.entries.slice(0,q.limit),last=page.at(-1);
- return {status:200,body:{data:{report:'recorded_gross_earning_sources',on:q.on,snapshotAt:r.snapshotAt,filters:q,sourceCount:r.sourceCount,allocationCount:r.allocations,
+ return {status:200,body:{data:{report:'recorded_gross_earning_sources',on:q.on,snapshotAt:r.snapshotAt,filters:q,sourceCount:r.sourceCount,allocationCount:r.allocations,...(exportEntryLimit===undefined?{}:{authorizationContext:r.authorizationContext}),
  currencies:r.currencies.map(c=>({currencyId:c.currency_id,currencyCode:c.currency_code,unitScale:c.scale,sourceCount:c.source_count,legacyDateReviewSources:c.legacy_date_sources,allocationCount:c.allocation_count,recordedGross:exact(c.gross,c.scale),pastConfiguredDueGross:exact(c.past_due,c.scale)})),
  chartData:r.charts.map(c=>({hubId:c.hub_id,kind:c.kind,currencyId:c.currency_id,currencyCode:c.currency_code,unitScale:c.scale,allocationCount:c.allocation_count,recordedGross:exact(c.gross,c.scale)})),
  entries:page.map(({minor,...e})=>({...e,recordedGross:exact(readMinorUnits(minor),e.unitScale)})),

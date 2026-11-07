@@ -1,7 +1,7 @@
 import { randomUUID,createHash } from 'node:crypto';
 import { z } from 'zod';
 import { assertRuntimeRole,assertSchemaReady,type Database } from '../core/database.ts';
-import { loadGrants,record,type ApiContext } from '../core/api.ts';
+import { loadGrants,record,type ApiContext,type Reply } from '../core/api.ts';
 import { ApiError,type Credential } from '../core/policy.ts';
 import { configuredReportContext,reportConfiguration } from '../modules/report-catalogue.ts';
 import { completeFinancialReport,financialReportCsv } from '../modules/financial-report-export.ts';
@@ -9,6 +9,7 @@ import { requireReportResultAccess,reportAuthorizationContext } from '../modules
 import { executionReportPreset } from '../modules/report-presets.ts';
 import { frozenReportWindow } from '../core/report-window.ts';
 import { lockAcademyTopology } from '../modules/academy.ts';
+import { completePayrollGrossReport,payrollGrossCsv } from '../modules/payroll-gross-export.ts';
 
 export const backgroundFinancialEntryLimit=10000;
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(a=>new Set(a).size===a.length);
@@ -31,7 +32,10 @@ export async function processOneReport(database:Database,allowedAcademies:string
    if(job.preset_id)await executionReportPreset(ctx,job.preset_id,job.preset_version!);
    const window=job.window_resolution?frozenReportWindow.parse(job.window_resolution):undefined,source=configuredReportContext(ctx,job.configuration),url=new URL(source.request.url);url.searchParams.delete('limit');source.request=new Request(url);
    const scheduledOccurrence=(await db.query<{scheduleId:string;dueAt:string;recordedAt:string}>(`SELECT schedule_id "scheduleId",to_char(due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') "dueAt",to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') "recordedAt" FROM public.report_schedule_occurrences WHERE job_id=$1`,[lease.id])).rows[0];
-   if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const data=await completeFinancialReport(source,backgroundFinancialEntryLimit),proof=reportAuthorizationContext.parse(data.authorizationContext);requireReportResultAccess(source,proof);const file=financialReportCsv(data,{id:job.preset_id??undefined,version:job.preset_version??undefined,dateWindow:window,scheduledOccurrence,retryOfJobId:job.retry_of_job_id??undefined},backgroundFinancialEntryLimit);
+   if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const provenance={id:job.preset_id??undefined,version:job.preset_version??undefined,dateWindow:window,scheduledOccurrence,retryOfJobId:job.retry_of_job_id??undefined};let file:Reply,proof:z.infer<typeof reportAuthorizationContext>;
+   if(job.configuration.reportId==='payroll.gross-accruals'){const data=await completePayrollGrossReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollGrossCsv(data,provenance,backgroundFinancialEntryLimit);}
+   else{const data=await completeFinancialReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=financialReportCsv(data,provenance,backgroundFinancialEntryLimit);}
+   await requireReportResultAccess(source,proof);
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
    await record(db,c,ctx.requestId,'report.generated',lease.id,null,{reportId:job.configuration.reportId,sha256:createHash('sha256').update(file.body as string).digest('hex'),bytes:Buffer.byteLength(file.body as string),externalRequestMade:false});
    // Final source-policy locks remain held;cancel/replacement/expiry must still
