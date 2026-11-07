@@ -6,13 +6,14 @@ import { ApiError,scopeNonempty,type Capability,type Scope } from '../core/polic
 import { calculateNetPay,netPayDefinition,type NetPayDefinition } from '../core/net-pay-plan.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { authorizedPayrun,authorizePayrunSources } from './payruns.ts';
+export { run as authorizedNetPayRun };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().min(0).max(2147483646);
 const change=z.object({expectedVersion:version,state:z.enum(['prepared','withdrawn']).default('prepared'),definition:netPayDefinition,reason:z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'))}).strict();
 const read=z.object({version:z.coerce.number().int().positive().max(2147483647).optional()}).strict(),history=z.object({limit:z.coerce.number().int().min(1).max(10).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
 const directory=z.object({personId:uuid.optional(),hubId:uuid.optional(),currencyId:uuid.optional(),state:z.enum(['prepared','withdrawn']).optional(),runStatus:z.enum(['gross_grouped','cancelled']).optional(),limit:z.coerce.number().int().min(1).max(100).default(25),after:uuid.optional()}).strict();
 type Source={runId:string;personId:string;currencyId:string;unitScale:number;grossMinor:string;scope:Scope;cancellationId:string|null;recordedSourcesCurrent:boolean;runSourceSha256:string};
-type Basis={source:Source;before:{version:number;state:string;definition:NetPayDefinition;amounts:Record<string,string>}|null};
+type Basis={source:Source;before:{version:number;state:string;definition:NetPayDefinition;amounts:Record<string,string>}|null;activePosting?:boolean};
 type Revision={version:number;latest_version:number;state:'prepared'|'withdrawn';definition:NetPayDefinition;amounts:Record<string,string>;source_snapshot:Basis;changed_by:string;approval_id:string;reason:string;created_at:string};
 async function run(ctx:ApiContext,id:string,edit=false){
  const r=await authorizedPayrun(ctx,id);for(const cap of ['payrun-net.view',...edit?['payrun-net.edit']:[]] as Capability[]){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');if(!(await ctx.db.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,$2::jsonb) ok',[JSON.stringify(s),JSON.stringify(r.scope)])).rows[0].ok)throw new ApiError(404,'NOT_FOUND');}
@@ -21,6 +22,7 @@ async function run(ctx:ApiContext,id:string,edit=false){
 async function basis(ctx:ApiContext,id:string,raw:unknown){
  const i=change.parse(raw);await run(ctx,id,true);const h=(await ctx.db.query<{version:number}>('SELECT version FROM public.payrun_net_statements WHERE run_id=$1',[id])).rows[0];if((h?.version??0)!==i.expectedVersion)throw new ApiError(409,'PAYRUN_NET_VERSION_CHANGED');
  const b=(await ctx.db.query<{basis:Basis|null}>('SELECT public.payrun_net_basis($1,$2) basis',[id,i.expectedVersion])).rows[0].basis;if(!b)throw new ApiError(404,'NOT_FOUND');
+ if(b.activePosting)throw new ApiError(409,'PAYRUN_NET_POSTING_REVERSAL_REQUIRED');
  if(i.expectedVersion===0&&i.state!=='prepared')throw new ApiError(400,'INITIAL_NET_STATEMENT_MUST_BE_PREPARED');
  if(i.state==='prepared'&&(b.source.cancellationId||!b.source.recordedSourcesCurrent))throw new ApiError(409,'PAYRUN_NET_SOURCE_UNAVAILABLE');
  calculateNetPay(readMinorUnits(b.source.grossMinor),b.source.unitScale,i.definition);return b;
