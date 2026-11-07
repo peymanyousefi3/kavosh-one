@@ -7,6 +7,7 @@ import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
 import { payrunReadiness,payrunRecordedSources } from './payrun-readiness.ts';
 import { calculateNetPay,netPayDefinition } from '../core/net-pay-plan.ts';
+export { row as authorizedPayrun,sourceAuthority as authorizePayrunSources };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const kind=z.enum(['hourly','salary','project','manual_bonus','tuition_course','tuition_session','tuition_collection']);
