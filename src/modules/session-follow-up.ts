@@ -6,7 +6,7 @@ import { sessionEvidenceCapabilities,sessionEvidenceChecks,type EvidenceSnapshot
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),instant=z.iso.datetime({offset:true});
 export const sessionFollowUpQuery=z.object({from:instant,through:instant,hubId:uuid.optional(),classId:uuid.optional(),status:z.enum(['scheduled','cancelled','all']).default('scheduled'),graceMinutes:z.coerce.number().int().min(0).max(43200).default(1440),limit:z.coerce.number().int().min(1).max(50).default(25),afterStartsAt:instant.optional(),afterId:uuid.optional()}).strict().refine(q=>(q.afterStartsAt===undefined)===(q.afterId===undefined)).refine(q=>Date.parse(q.through)>=Date.parse(q.from)&&Date.parse(q.through)-Date.parse(q.from)<=366*86400000,'Select an inclusive start-time range of at most366days.');
-type Row={snapshot:EvidenceSnapshot;starts_at:string;due_at:string;past_due:boolean;review_version:number|null;decision:'accepted'|'needs_changes'|'rejected'|null;review_current:boolean;waive_report:boolean|null;waive_media:boolean|null};
+type Row={snapshot:EvidenceSnapshot;starts_at:string;due_at:string;past_due:boolean;needs_attention:boolean;review_version:number|null;decision:'accepted'|'needs_changes'|'rejected'|null;review_current:boolean;waive_report:boolean|null;waive_media:boolean|null};
 const sql=`WITH selected AS MATERIALIZED(
  SELECT s.academy_id,s.id,s.starts_at FROM public.class_sessions s WHERE s.starts_at BETWEEN $1::timestamptz AND $2::timestamptz
  AND($3::uuid IS NULL OR s.hub_id=$3) AND($4::uuid IS NULL OR s.class_id=$4) AND($5='all' OR s.status=$5)
@@ -17,7 +17,7 @@ const sql=`WITH selected AS MATERIALIZED(
  SELECT p.snapshot,to_char(p.starts_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') starts_at,
  to_char(((p.snapshot->>'endsAt')::timestamptz+$10::integer*interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') due_at,
  (p.snapshot->>'endsAt')::timestamptz+$10::integer*interval '1 minute'<=statement_timestamp() past_due,
- r.version review_version,r.decision,r.source IS NOT DISTINCT FROM(p.snapshot-ARRAY['snapshotAt','sessionStarted','sessionEnded']) review_current,r.waive_report,r.waive_media
+ public.session_follow_up_attention(p.snapshot,r.source,r.decision) needs_attention,r.version review_version,r.decision,r.source IS NOT DISTINCT FROM(p.snapshot-ARRAY['snapshotAt','sessionStarted','sessionEnded']) review_current,r.waive_report,r.waive_media
  FROM snapshots p LEFT JOIN public.session_evidence_reviews r ON r.academy_id=p.academy_id AND r.session_id=p.id ORDER BY p.starts_at,p.id`;
 
 function view(row:Row){
@@ -25,7 +25,7 @@ function view(row:Row){
  const evidence=oversized?null:sessionEvidenceChecks(r),checks=evidence?.checks.map(c=>({...c,state:waiversEffective&&((c.id==='report_text'&&review.waiveReport)||(c.id==='media'&&review.waiveMedia))?'waived':c.state}))??[];
  // A current exact human decision is authoritative for this input review.
  // Keep its warning flags;do not reopen it merely for warnings it reviewed.
- const state=r.status==='cancelled'?'cancelled':!r.sessionEnded?'not_due':oversized?'requires_background':review?.sourceCurrent?review.decision:checks.some(c=>c.state==='invalid')?'invalid_source':checks.some(c=>c.state==='missing')?'inputs_missing':checks.some(c=>c.state==='stale')?'inputs_stale':review?'review_stale':'awaiting_review',needsAttention=!['cancelled','not_due','accepted'].includes(state??'');
+ const state=r.status==='cancelled'?'cancelled':!r.sessionEnded?'not_due':oversized?'requires_background':review?.sourceCurrent?review.decision:checks.some(c=>c.state==='invalid')?'invalid_source':checks.some(c=>c.state==='missing')?'inputs_missing':checks.some(c=>c.state==='stale')?'inputs_stale':review?'review_stale':'awaiting_review',needsAttention=row.needs_attention;
  return {sessionId:r.sessionId,classId:r.classId,hubId:r.hubId,sessionVersion:r.sessionVersion,status:r.status,startsAt:r.startsAt,endsAt:r.endsAt,on:r.on,timeZone:r.timeZone,snapshotAt:r.snapshotAt,state,needsAttention,dueAt:row.due_at,overdue:needsAttention&&row.past_due,checks,summary:evidence?.summary??null,review,waiversEffective:Boolean(waiversEffective),mediaBasis:'metadata_references_not_verified_uploads',payrollApproved:false,earnedLiabilityDetermined:false};
 }
 export async function sessionFollowUp(ctx:ApiContext):Promise<Reply|null>{
