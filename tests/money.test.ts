@@ -1,6 +1,47 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseMoney,formatMoney,roundRatio,roundingModes,allocateMoney,maximumMinorUnits,readMinorUnits,taxAmounts } from '../src/core/money.ts';
+import { calculateNetPay } from '../src/core/net-pay-plan.ts';
+
+const netDefinition=()=>({employeeDeductions:[{code:'EMPLOYEE',label:'Recorded employee deduction',amount:'350.25',authorityKind:'statute',authorityReference:'Review record 1'}],employerContributions:[{code:'EMPLOYER',label:'Recorded employer obligation',amount:'120.30',obligationReference:'Review record 2'}],taxReview:'Manual amount review; statutory calculation is separate.'});
+test('net-pay arithmetic separates employee deductions and employer cost without posting or claiming statutory clearance',()=>{
+ const r=calculateNetPay(335025n,2,netDefinition());
+ assert.deepEqual(r.amounts,{gross:'3350.25',employeeDeductions:'350.25',employerContributions:'120.30',net:'3000.00',employerCost:'3470.55'});
+ assert.equal(r.netMinor,300000n);assert.equal(r.employerCostMinor,347055n);assert.equal(r.definition.calculationBasis,'manual_reviewed');
+ for(const flag of ['statutoryRulesCalculated','authorityDocumentsVerified','approvalDetermined','additionalLedgerPosting','isOfficialPaystub','paymentExecuted'] as const)assert.equal(r[flag],false);
+ const d=netDefinition();d.employeeDeductions[0].amount='000350.2500';assert.equal(calculateNetPay(335025n,2,d).definition.employeeDeductions[0].amount,'350.25');assert.equal(d.employeeDeductions[0].amount,'000350.2500');
+});
+test('net-pay amounts conserve every minor unit across all supported currency scales without floating-point conversion',()=>{
+ for(let scale=0;scale<=18;scale++){
+  const unit=10n**BigInt(scale),gross=9007199254740993n*unit+7n;
+  const d=netDefinition();d.employeeDeductions[0].amount=formatMoney(3n,scale);d.employerContributions[0].amount=formatMoney(9n,scale);
+  const r=calculateNetPay(gross,scale,d);assert.equal(r.netMinor+ r.employeeDeductionMinor,gross);assert.equal(r.netMinor,gross-3n);assert.equal(r.employerCostMinor,gross+9n);
+ }
+ const empty={employeeDeductions:[],employerContributions:[],taxReview:'Explicit no deductions review, not an exemption determination.'};
+ assert.equal(calculateNetPay(0n,2,empty).amounts.net,'0.00');assert.equal(calculateNetPay(10n,2,empty).netMinor,10n);
+ for(const scale of [-1,19,0.5,NaN])assert.throws(()=>calculateNetPay(0n,scale,empty),/INVALID_CURRENCY_PRECISION/);
+});
+test('net-pay rejects over-deductions, bad money, unreviewed authority, duplicates and unbounded or unexpected input',()=>{
+ assert.throws(()=>calculateNetPay(35024n,2,netDefinition()),/DEDUCTIONS_EXCEED_GROSS_PAY/);assert.equal(calculateNetPay(35025n,2,netDefinition()).netMinor,0n);
+ for(const gross of [-1n,1 as unknown as bigint])assert.throws(()=>calculateNetPay(gross,2,netDefinition()),/INVALID_GROSS_PAY/);
+ for(const amount of ['-1','1e2','NaN','1,000',' 1','1.001',1 as unknown as string,(maximumMinorUnits+1n).toString()]){const d=netDefinition();d.employeeDeductions[0].amount=amount;assert.throws(()=>calculateNetPay(maximumMinorUnits,2,d));d.employeeDeductions=[];d.employerContributions[0].amount=amount;assert.throws(()=>calculateNetPay(maximumMinorUnits,2,d));}
+ for(const change of [
+  (d:ReturnType<typeof netDefinition>)=>{d.taxReview=' ';},
+  (d:ReturnType<typeof netDefinition>)=>{d.employeeDeductions[0].authorityKind='unknown';},
+  (d:ReturnType<typeof netDefinition>)=>{d.employeeDeductions[0].authorityReference='';},
+  (d:ReturnType<typeof netDefinition>)=>{d.employerContributions[0].obligationReference='';},
+  (d:ReturnType<typeof netDefinition>)=>{d.employeeDeductions.push({...d.employeeDeductions[0]});},
+  (d:ReturnType<typeof netDefinition>)=>{d.employerContributions.push({...d.employerContributions[0]});},
+  (d:ReturnType<typeof netDefinition>)=>{d.employeeDeductions[0].label='unsafe\u0000text';},
+  (d:ReturnType<typeof netDefinition>)=>{d.taxReview='unpaired\ud800';},
+  (d:ReturnType<typeof netDefinition>)=>{d.employeeDeductions=Array.from({length:101},(_,i)=>({...d.employeeDeductions[0],code:'D'+i}));}
+ ]){const d=netDefinition();change(d);assert.throws(()=>calculateNetPay(maximumMinorUnits,2,d));}
+ assert.throws(()=>calculateNetPay(1n,2,{...netDefinition(),approved:true}));assert.throws(()=>calculateNetPay(1n,2,{...netDefinition(),calculationBasis:'automatic'}));
+});
+test('net-pay aggregate totals may exceed posting bounds but every individual line remains bounded and codes are unique per side',()=>{
+ const d=netDefinition(),amount=maximumMinorUnits.toString();d.employeeDeductions=[{...d.employeeDeductions[0],code:'SAME',amount},{...d.employeeDeductions[0],code:'OTHER',amount}];d.employerContributions=[{...d.employerContributions[0],code:'SAME',amount},{...d.employerContributions[0],code:'OTHER',amount}];
+ const r=calculateNetPay(maximumMinorUnits*3n,0,d);assert.equal(r.employeeDeductionMinor,maximumMinorUnits*2n);assert.equal(r.netMinor,maximumMinorUnits);assert.equal(r.employerCostMinor,maximumMinorUnits*5n);assert.equal(r.amounts.employerContributions,(maximumMinorUnits*2n).toString());
+});
 
 test('shared tax arithmetic conserves signed units, ties and posting bounds without guessing a legal classification',()=>{
  assert.deepEqual(taxAmounts(11300n,130000n,'tax_inclusive'),{net:10000n,tax:1300n,gross:11300n});

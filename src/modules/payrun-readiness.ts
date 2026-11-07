@@ -28,14 +28,17 @@ const refsSQL=`WITH items AS MATERIALIZED(SELECT * FROM jsonb_to_recordset($1::j
  CASE WHEN a.allowed AND b.sessions<=200 AND b.entries<=2000 THEN coalesce((SELECT jsonb_agg(jsonb_build_object('sourceId',r.source_id,'kind',r.kind,'sessionId',r.session_id,'classId',r.class_id,'hubId',r.hub_id,'entryId',r.entry_id,'entryVersion',r.entry_version,'currentEntryVersion',t.version,'currentPersonId',t.person_id,'currentSessionId',t.session_id) ORDER BY r.session_id,r.source_id,r.entry_id) FROM refs r LEFT JOIN public.session_time_entries t ON t.id=r.entry_id),'[]'::jsonb) ELSE '[]'::jsonb END refs
  FROM authority a CROSS JOIN bounds b`;
 
+export async function payrunRecordedSources(ctx:ApiContext,run:{id:string;source_snapshot:{items:Earning[]}}){
+ return(await ctx.db.query<{kind:string;sourceId:string;allocationId:string;sourceCurrent:boolean;claimCurrent:boolean}>(`SELECT v->>'kind' kind,v->>'sourceId' "sourceId",v->>'allocationId' "allocationId",
+ coalesce(c.void_id IS NULL AND c.person_id::text=v->>'personId' AND c.hub_id::text IS NOT DISTINCT FROM v->>'hubId' AND c.currency_id::text=v->>'currencyId' AND c.unit_scale=(v->>'unitScale')::integer AND c.amount_minor=(v->>'minor')::numeric AND c.posted_on=(v->>'postedOn')::date AND c.due_on=(v->>'dueOn')::date AND c.from_on=(v->>'from')::date AND c.through_on=(v->>'through')::date,false) "sourceCurrent",
+ EXISTS(SELECT 1 FROM public.payrun_earning_claims q WHERE q.run_id=$2 AND q.kind=v->>'kind' AND q.source_id=(v->>'sourceId')::uuid AND q.allocation_id=(v->>'allocationId')::uuid AND q.released_by IS NULL) "claimCurrent"
+ FROM jsonb_array_elements($1::jsonb) v LEFT JOIN public.payrun_earning_catalogue c ON c.kind=v->>'kind' AND c.source_id=(v->>'sourceId')::uuid AND c.allocation_id=(v->>'allocationId')::uuid ORDER BY v->>'kind',v->>'sourceId',v->>'allocationId'`,[JSON.stringify(run.source_snapshot.items),run.id])).rows;
+}
 export async function payrunReadiness(ctx:ApiContext,run:{id:string;person_id:string;cancellation_id:string|null;source_snapshot:{items:Earning[]}}){
  const items=run.source_snapshot.items,scopes=[...sessionEvidenceCapabilities,'session-evidence.view' as const].map(c=>permissionScope(ctx,c)),ceiling={all:ctx.credential.all_hubs,hubs:ctx.credential.hub_ids};
  const refs=(await ctx.db.query<{allowed:boolean;entries:number;sessions:number;unmappedHourlyParents:number;refs:Ref[]}>(refsSQL,[JSON.stringify(items),JSON.stringify([...scopes,ceiling])])).rows[0];
  if(!refs.allowed)throw new ApiError(404,'NOT_FOUND');assertPayrunReadinessBounds(refs.sessions,refs.entries);
- const sources=(await ctx.db.query<{kind:string;sourceId:string;allocationId:string;sourceCurrent:boolean;claimCurrent:boolean}>(`SELECT v->>'kind' kind,v->>'sourceId' "sourceId",v->>'allocationId' "allocationId",
- coalesce(c.void_id IS NULL AND c.person_id::text=v->>'personId' AND c.hub_id::text IS NOT DISTINCT FROM v->>'hubId' AND c.currency_id::text=v->>'currencyId' AND c.unit_scale=(v->>'unitScale')::integer AND c.amount_minor=(v->>'minor')::numeric AND c.posted_on=(v->>'postedOn')::date AND c.due_on=(v->>'dueOn')::date AND c.from_on=(v->>'from')::date AND c.through_on=(v->>'through')::date,false) "sourceCurrent",
- EXISTS(SELECT 1 FROM public.payrun_earning_claims q WHERE q.run_id=$2 AND q.kind=v->>'kind' AND q.source_id=(v->>'sourceId')::uuid AND q.allocation_id=(v->>'allocationId')::uuid AND q.released_by IS NULL) "claimCurrent"
- FROM jsonb_array_elements($1::jsonb) v LEFT JOIN public.payrun_earning_catalogue c ON c.kind=v->>'kind' AND c.source_id=(v->>'sourceId')::uuid AND c.allocation_id=(v->>'allocationId')::uuid ORDER BY v->>'kind',v->>'sourceId',v->>'allocationId'`,[JSON.stringify(items),run.id])).rows;
+ const sources=await payrunRecordedSources(ctx,run);
  const ids=[...new Set(refs.refs.map(r=>r.sessionId))].sort();
  const rows=(await ctx.db.query<Session>(`WITH snapshots AS MATERIALIZED(SELECT id,public.session_evidence_snapshot(id) snapshot FROM public.class_sessions WHERE id=ANY($1::uuid[]))
  SELECT s.snapshot,r.version "reviewVersion",r.decision,r.waive_report "waiveReport",r.waive_media "waiveMedia",coalesce(r.source=s.snapshot-ARRAY['snapshotAt','sessionStarted','sessionEnded'],false) "reviewCurrent" FROM snapshots s LEFT JOIN public.session_evidence_reviews r ON r.session_id=s.id ORDER BY s.id`,[ids])).rows;

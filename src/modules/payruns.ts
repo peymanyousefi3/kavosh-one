@@ -5,7 +5,8 @@ import { permissionScope,propose,master,lockApprovalWrites,type ApprovalRegistry
 import { ApiError,scopeNonempty,type Capability,type Scope } from '../core/policy.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { accountingDate } from './finance-periods.ts';
-import { payrunReadiness } from './payrun-readiness.ts';
+import { payrunReadiness,payrunRecordedSources } from './payrun-readiness.ts';
+import { calculateNetPay,netPayDefinition } from '../core/net-pay-plan.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const kind=z.enum(['hourly','salary','project','manual_bonus','tuition_course','tuition_session','tuition_collection']);
@@ -60,7 +61,7 @@ export const payrunActions:ApprovalRegistry=Object.fromEntries([false,true].map(
  async authorizeReviewer(ctx:ApiContext,p:Proposal){if(await master(ctx))return;const id=cancelling?(await row(ctx,cancelInput.parse(p.payload).runId,true)).person_id:create.parse(p.payload).personId;if(id===ctx.credential.person_id)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');if(!cancelling)await sourceAuthority(ctx,(p.review_context as Source).items);},apply
 }])) as ApprovalRegistry;
 export async function payruns(ctx:ApiContext,registry:ApprovalRegistry=payrunActions):Promise<Reply|null>{
- const match=/^payroll\/payruns(?:\/([^/]+)(?:\/(cancel|readiness))?)?$/.exec(ctx.path);if(!match)return null;
+ const match=/^payroll\/payruns(?:\/([^/]+)(?:\/(cancel|readiness|net-preview))?)?$/.exec(ctx.path);if(!match)return null;
  const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=Object.fromEntries(params);
  if(match[1]==='candidates'){
   if(ctx.request.method!=='GET'||match[2])throw new ApiError(405,'METHOD_NOT_ALLOWED');const i=candidates.parse(q);await lockApprovalWrites(ctx);const s=scopes(ctx,true),required=[permissionScope(ctx,'work-pay.view'),permissionScope(ctx,'payroll-accruals.view')],manual=permissionScope(ctx,'payroll-adjustments.view');
@@ -74,12 +75,26 @@ export async function payruns(ctx:ApiContext,registry:ApprovalRegistry=payrunAct
   const page=rows.slice(0,i.limit),last=page.at(-1);return {status:200,body:{data:page.map(({minor,...v})=>({...v,grossAmount:formatMoneyTotal(readMinorUnits(minor),v.unitScale)})),nextCursor:rows.length>i.limit&&last?{afterKind:last.kind,afterId:last.sourceId,afterAllocationId:last.allocationId}:null,coverage:'permitted_unclaimed_recorded_allocations_only',payoutReadinessDetermined:false}};
  }
  const id=match[1]?uuid.parse(match[1]):null;
+ if(match[2]==='net-preview'){
+  if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(q);await lockApprovalWrites(ctx);
+  let r=await row(ctx,id!);await sourceAuthority(ctx,r.source_snapshot.items,false);
+  const definition=netPayDefinition.parse(await jsonBody(ctx.request,65536));
+  // Use the same worker lock as cancellation/source corrections, then re-read.
+  // This is a current preview, never a retained clearance to release payment.
+  await ctx.db.query('SELECT public.lock_hourly_worker($1)',[r.person_id]);r=await row(ctx,id!);
+  if(r.cancellation_id)throw new ApiError(409,'PAYRUN_ALREADY_CANCELLED');
+  const checks=await payrunRecordedSources(ctx,r);
+  if(!checks.length||checks.length!==r.source_snapshot.items.length||checks.some(v=>!v.sourceCurrent||!v.claimCurrent))throw new ApiError(409,'PAYRUN_SOURCES_CHANGED');
+  const result=calculateNetPay(readMinorUnits(r.gross_minor),r.unit_scale,definition);
+  return {status:200,body:{data:{runId:r.id,personId:r.person_id,currencyId:r.currency_id,unitScale:r.unit_scale,definition:result.definition,amounts:result.amounts,calculationBasis:result.calculationBasis,exactArithmetic:true,recordedSourcesCurrent:true,retained:false,approved:false,statutoryRulesCalculated:false,authorityDocumentsVerified:false,additionalLedgerPosting:false,isOfficialPaystub:false,paymentExecuted:false,payoutReady:false,scope:'current_recorded_gross_and_submitted_manual_amounts_only'}}};
+ }
  if(ctx.request.method==='POST'){empty.parse(q);if(!id)return propose(ctx,registry,'work.payrun.group',null,0,create.parse(await jsonBody(ctx.request,65536)));if(match[2]!=='cancel')throw new ApiError(405,'METHOD_NOT_ALLOWED');await row(ctx,id,true);return propose(ctx,registry,'work.payrun.cancel',null,0,{...cancel.parse(await jsonBody(ctx.request)),runId:id});}
  if(ctx.request.method!=='GET'||match[2]==='cancel')throw new ApiError(405,'METHOD_NOT_ALLOWED');await lockApprovalWrites(ctx);if(id){empty.parse(q);const r=await row(ctx,id);if(match[2]==='readiness'){await sourceAuthority(ctx,r.source_snapshot.items,false);return {status:200,body:{data:await payrunReadiness(ctx,r)}};}return {status:200,body:{data:output(r)}};}
  const i=paging.parse(q),s=[...scopes(ctx),ceiling(ctx)],rows=(await ctx.db.query<Run>(`SELECT ${columns} FROM public.payrun_groups x WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements($1::jsonb) p WHERE public.scope_contains(p,x.scope) IS NOT TRUE) AND($2::uuid IS NULL OR x.person_id=$2) AND($3::uuid IS NULL OR x.currency_id=$3) AND($4::text IS NULL OR(x.cancellation_id IS NULL)=($4='gross_grouped')) AND($5::uuid IS NULL OR x.id>$5) AND($7::text IS NULL OR EXISTS(SELECT 1 FROM public.payrun_earning_claims c WHERE c.academy_id=x.academy_id AND c.run_id=x.id AND c.kind=$7 AND c.source_id=$8)) ORDER BY x.id LIMIT $6`,[JSON.stringify(s),i.personId??null,i.currencyId??null,i.status??null,i.after??null,i.limit+1,i.sourceKind??null,i.sourceId??null])).rows;
  return {status:200,body:{data:rows.slice(0,i.limit).map(output),nextCursor:rows.length>i.limit?rows[i.limit-1].id:null}};
 }
 export const payrunContract=[
+ {path:'/api/v1/payroll/payruns/{id}/net-preview',method:'post',readOnly:true,summary:'Private read-only exact net-pay preview from a current gross run and explicit manual deductions/employer contributions. Rechecks whole-run/source permissions and live claims under worker lock;no retained approval,statutory calculation,authority-document verification,ledger posting,paystub or payment. Submitted review content is not retained.',schema:netPayDefinition},
  {path:'/api/v1/payroll/payruns/candidates',method:'get',summary:'Permitted unclaimed recorded gross earning allocations, before pagination; not payout readiness or complete-period certification',querySchema:candidates},
  {path:'/api/v1/payroll/payruns',method:'get',summary:'Worker-private retained gross payrun groups with full-bundle scopes and currency/status filters',querySchema:paging},
  {path:'/api/v1/payroll/payruns',method:'post',summary:'Upper-human-reviewed grouping of real salary/hourly/project/manual/course/session/collection gross allocations for one worker,currency and immutable declared legal context. Exact native source ownership and conserved amounts; no duplicate expense,net calculation,payment or paystub.',schema:create},

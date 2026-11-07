@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.159.0",
+    "version": "0.160.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -32180,6 +32180,147 @@
                 },
                 "required": [
                   "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/payruns/{id}/net-preview": {
+      "post": {
+        "summary": "Private read-only exact net-pay preview from a current gross run and explicit manual deductions/employer contributions. Rechecks whole-run/source permissions and live claims under worker lock;no retained approval,statutory calculation,authority-document verification,ledger posting,paystub or payment. Submitted review content is not retained.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "calculationBasis": {
+                    "default": "manual_reviewed",
+                    "type": "string",
+                    "const": "manual_reviewed"
+                  },
+                  "employeeDeductions": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 150
+                        },
+                        "amount": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^\\d+(?:\\.\\d+)?$"
+                        },
+                        "authorityKind": {
+                          "type": "string",
+                          "enum": [
+                            "statute",
+                            "court_order",
+                            "written_authorization"
+                          ]
+                        },
+                        "authorityReference": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "label",
+                        "amount",
+                        "authorityKind",
+                        "authorityReference"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "employerContributions": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "minLength": 1,
+                          "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 150
+                        },
+                        "amount": {
+                          "type": "string",
+                          "maxLength": 80,
+                          "pattern": "^\\d+(?:\\.\\d+)?$"
+                        },
+                        "obligationReference": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1000
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "label",
+                        "amount",
+                        "obligationReference"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "taxReview": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "employeeDeductions",
+                  "employerContributions",
+                  "taxReview"
                 ],
                 "additionalProperties": false
               }
