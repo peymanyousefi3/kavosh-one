@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { readFile,mkdtemp,mkdir,writeFile,symlink,rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname,join } from 'node:path';
+import { createRequire } from 'node:module';
 import { spawn,spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { notificationFixture } from './notification-fixture.ts';
@@ -101,6 +104,14 @@ test('actual isolated notification daemon processes a stored job with its own no
   let done=false;for(let n=0;n<100;n++){const row=(await f.pg.query<{status:string}>('SELECT status FROM public.notification_jobs WHERE id=$1',[q.body.data.id])).rows[0];if(row.status==='succeeded'){done=true;break;}if(child.exitCode!==null)break;await delay(25);}assert.ok(done,'Isolated daemon did not complete the stored job: '+output);assert.equal((await f.pg.query('SELECT * FROM public.portal_notifications WHERE origin=$$automation$$')).rows.length,2);assert.equal((await f.pg.query<{summary:{executionDriver:string;backgroundJobId:string}}>('SELECT summary FROM public.automation_runs')).rows[0].summary.executionDriver,'background_job');
   child.kill('SIGTERM');assert.equal(await Promise.race([exited,delay(2000,undefined,{ref:false}).then(()=>-1)]),0,'Daemon did not stop gracefully');assert.doesNotMatch(output,/postgresql:|synthetic_only_|token_hash|password/i);
  }finally{if(child&&child.exitCode===null){child.kill('SIGKILL');await new Promise(resolve=>child!.once('exit',resolve));}if(login)await f.pg.exec('DROP ROLE '+login);await f.pg.close();}
+});
+test('compiled notification daemon starts with only its declared isolated runtime dependencies',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'kavosh-notification-runtime-')),require=createRequire(import.meta.url);
+ try{
+  const compiled=spawnSync(process.execPath,['node_modules/typescript/bin/tsc','--ignoreConfig','--target','es2022','--lib','esnext,dom','--module','nodenext','--moduleResolution','nodenext','--strict','--skipLibCheck','--rewriteRelativeImportExtensions','--types','node','--rootDir','.','--outDir',directory,'scripts/process-notifications.ts'],{encoding:'utf8',timeout:30000});assert.equal(compiled.status,0,compiled.stdout+compiled.stderr);
+  const manifest=await readFile(new URL('../workers/notification-worker/package.json',import.meta.url),'utf8');await writeFile(join(directory,'package.json'),manifest);await mkdir(join(directory,'node_modules'));for(const name of Object.keys(JSON.parse(manifest).dependencies))await symlink(dirname(require.resolve(name+'/package.json')),join(directory,'node_modules',name),'dir');
+  const child=spawnSync(process.execPath,['scripts/process-notifications.js'],{cwd:directory,env:{PATH:process.env.PATH,NODE_ENV:'production'},encoding:'utf8',timeout:3000});assert.equal(child.status,1,child.stderr);assert.equal(child.stdout,'');assert.equal(child.stderr.trim(),'Notification worker stopped; check isolated configuration without logging credentials.');
+ }finally{await rm(directory,{recursive:true,force:true});}
 });
 test('notification daemon refuses disabled or shared-credential environments before any database connection',()=>{
  for(const extra of [{},{NOTIFICATION_WORKER_ENABLED:'true',MIGRATION_DATABASE_URL:'postgresql://not_used:synthetic_secret@127.0.0.1:1/not_used'}]){const child=spawnSync(process.execPath,['--import','tsx','scripts/process-notifications.ts'],{cwd:process.cwd(),env:{PATH:process.env.PATH,NODE_ENV:'test',...extra},encoding:'utf8',timeout:3000});assert.equal(child.status,1,child.stderr);assert.match(child.stderr,/Notification worker stopped/);assert.doesNotMatch(child.stderr,/synthetic_secret|postgresql:|not_used|password/);}
