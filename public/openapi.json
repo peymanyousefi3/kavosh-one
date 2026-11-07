@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.157.0",
+    "version": "0.158.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39273,7 +39273,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue a complete financial or gross-payroll CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10000entry/4MiB result ceiling and separate opt-in worker; larger outputs fail without truncation; no message or payment",
+        "summary": "Queue a complete financial,gross-payroll or achievement CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10000entry/4MiB result ceiling and separate opt-in worker; larger outputs fail without truncation; no message or payment",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -39294,7 +39294,8 @@
                       "finance.trial-balance",
                       "finance.profit-loss",
                       "finance.balance-sheet",
-                      "payroll.gross-accruals"
+                      "payroll.gross-accruals",
+                      "community.achievements"
                     ]
                   },
                   "parameters": {
@@ -39498,7 +39499,7 @@
     },
     "/api/v1/reports/jobs/{id}/download": {
       "get": {
-        "summary": "Download retained complete CSV only under current source rights: account/ledger/report hub-global manifests for financial files,or captured person/hub/earning-kind and whole-hourly-source manifests for gross payroll; authorize metadata before bytes and never lend requester permissions",
+        "summary": "Download retained complete CSV only under current source rights: account/ledger/report hub-global manifests for financial files,captured person/hub/earning-kind and whole-hourly-source manifests for gross payroll,or exact award/student/class/hub manifests for achievements; authorize metadata before bytes and never lend requester permissions",
         "parameters": [
           {
             "name": "id",
@@ -41131,7 +41132,7 @@
     },
     "/api/v1/reports/presets/{id}/queue": {
       "post": {
-        "summary": "Queue an exact reviewed active financial or gross-payroll CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings",
+        "summary": "Queue an exact reviewed active financial,gross-payroll or achievement CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings",
         "parameters": [
           {
             "name": "id",
@@ -41230,7 +41231,7 @@
     },
     "/api/v1/reports/presets/{id}/schedules": {
       "post": {
-        "summary": "Upper-reviewed recurring financial or gross-payroll CSV schedule with original credential,civil recurrence and DST policies; separate opt-in worker queues one occurrence atomically,never external delivery or historical backfill",
+        "summary": "Upper-reviewed recurring financial,gross-payroll or achievement CSV schedule with original credential,civil recurrence and DST policies; separate opt-in worker queues one occurrence atomically,never external delivery or historical backfill",
         "parameters": [
           {
             "name": "id",
