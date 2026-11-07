@@ -15,6 +15,7 @@ import { recordedWorkReport,recordedWorkReportContract } from './recorded-work-r
 import { payrollGrossReport,payrollGrossReportContract } from './payroll-gross-report.ts';
 import { pollResults,pollResultsContract } from './poll-results.ts';
 import { sessionEvidenceReport,sessionEvidenceReportContract } from './session-evidence-report.ts';
+import { sessionFollowUp,sessionFollowUpContract } from './session-follow-up.ts';
 import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowParameters,type ReportDateWindow } from '../core/report-window.ts';
 
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
@@ -31,7 +32,8 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:recordedWorkReportContract,handler:recordedWorkReport,capability:'session-time.view'},
  {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view'},
  {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view'},
- {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view'}
+ {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view'},
+ {contracts:sessionFollowUpContract,handler:sessionFollowUp,capability:'session-evidence.view'}
 ];
 export const reportCatalogue:readonly Entry[]=groups.flatMap(g=>g.contracts.map(c=>({id:c.path.slice('/api/v1/reports/'.length).replaceAll('/','.').replace('{id}','by-id'),path:c.path.slice('/api/v1/'.length),summary:c.summary,schema:c.querySchema??z.object({}).strict(),handler:g.handler,capability:g.capability,csv:g.csv??false}))).sort((a,b)=>a.id.localeCompare(b.id));
 export const reportId=z.enum(reportCatalogue.map(r=>r.id));
