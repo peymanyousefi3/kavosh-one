@@ -22,6 +22,9 @@ async function fixture(){
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>,nativeOnly=false){test(name,{skip:nativeOnly&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+check('future scheduling preserves a pending student assessment source and its upper approval',async f=>{
+ const p=await f.save();assert.equal(p.response.status,202);const next=await f.request('classes/'+f.c.id+'/schedules',{expectedVersion:1,schedule:{oneOff:[{start:'2027-01-09T23:30',end:'2027-01-10T00:30'}]}});assert.equal(next.response.status,201,JSON.stringify(next.body));const approved=await f.approve(p.body.approval.id,'manager');assert.equal(approved.response.status,200,JSON.stringify(approved.body));assert.equal(approved.body.approval.status,'applied');assert.equal(approved.body.data.context.source.session.classVersion,1);
+});
 check('assigned class-scoped staff select contextual criteria without catalogue access and require upper review',async f=>{
  assert.equal((await f.request('assessment-rubrics/'+f.rubric.id,undefined,'staff')).response.status,403);
  const options=await f.request(f.path+'/options?enrollmentId='+f.enrollment.id,undefined,'staff');assert.equal(options.response.status,200,JSON.stringify(options.body));assert.equal(options.body.assignment.id,f.assignment.id);assert.deepEqual(options.body.data[0].definition,standardAssessmentRubric);assert.doesNotMatch(JSON.stringify(options.body),/PRIVATE administrative rubric reason/);

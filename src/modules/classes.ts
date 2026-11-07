@@ -25,7 +25,7 @@ const listQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(
 const sessionQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),
   from:z.iso.datetime({offset:true}).optional(),through:z.iso.datetime({offset:true}).optional(),status:z.enum(['scheduled','cancelled']).optional()}).strict();
 const scheduleQuery=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterVersion:z.coerce.number().int().min(0).default(0)}).strict();
-interface ClassRow {id:string;hub_id:string;course_id:string;course_version:number;name:string;code:string;time_zone:string;mode:'online'|'in_person';online_url:string|null;active:boolean;version:number}
+interface ClassRow {id:string;hub_id:string;course_id:string;course_version:number;name:string;code:string;time_zone:string;mode:'online'|'in_person';online_url:string|null;active:boolean;version:number;evidence_version:number|null}
 interface SessionRow {id:string;class_id:string;hub_id:string;starts_at:Date|string;ends_at:Date|string;time_info:Record<string,unknown>;mode:'online'|'in_person';online_url:string|null;status:'scheduled'|'cancelled';version:number}
 
 export function sessionLocalDate(s:SessionRow,timeZone:string){
@@ -195,10 +195,10 @@ export async function classes(ctx:ApiContext,registry:ApprovalRegistry=sessionAc
 export const classesContract=[
   {path:'/api/v1/classes',method:'get',summary:'List permitted classes',querySchema:listQuery},
   {path:'/api/v1/classes',method:'post',summary:'Create class with pinned curriculum and atomic first schedule',schema:createInput},
-  {path:'/api/v1/classes/{id}',method:'get',summary:'Read permitted class and its exact pinned curriculum'},
+  {path:'/api/v1/classes/{id}',method:'get',summary:'Read permitted class and pinned curriculum; version is the general header revision,evidence_version is the server-owned active/time-zone evidence revision,legacy NULL falls back to version; opaque evidence contexts use the latter as classVersion'},
   {path:'/api/v1/classes/{id}/update',method:'post',summary:'Update class metadata/default delivery mode without rewriting existing sessions',schema:updateInput},
   {path:'/api/v1/classes/{id}/schedules',method:'get',summary:'Read immutable schedule batches and holiday evidence',querySchema:scheduleQuery},
-  {path:'/api/v1/classes/{id}/schedules',method:'post',summary:'Append version-checked weekly or irregular sessions; conflicts roll back the entire batch',schema:appendInput},
+  {path:'/api/v1/classes/{id}/schedules',method:'post',summary:'Append version-checked weekly or irregular sessions atomically; advance the class header revision without staling unchanged past session evidence,approvals or attendance-based calculations',schema:appendInput},
   {path:'/api/v1/classes/{id}/sessions',method:'get',summary:'Read class sessions in chronological order with time-range filters',querySchema:sessionQuery},
   {path:'/api/v1/sessions/{id}',method:'get',summary:'Read permitted session and its original time-zone evidence'},
   {path:'/api/v1/sessions/{id}/change',method:'post',summary:'Request exact cancellation, restoration, reschedule or delivery change; upper human review required except master self-approval',schema:changeInput}

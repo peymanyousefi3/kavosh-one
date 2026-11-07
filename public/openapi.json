@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.149.0",
+    "version": "0.150.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5744,7 +5744,7 @@
     },
     "/api/v1/classes/{id}": {
       "get": {
-        "summary": "Read permitted class and its exact pinned curriculum",
+        "summary": "Read permitted class and pinned curriculum; version is the general header revision,evidence_version is the server-owned active/time-zone evidence revision,legacy NULL falls back to version; opaque evidence contexts use the latter as classVersion",
         "parameters": [
           {
             "name": "id",
@@ -6061,7 +6061,7 @@
         }
       },
       "post": {
-        "summary": "Append version-checked weekly or irregular sessions; conflicts roll back the entire batch",
+        "summary": "Append version-checked weekly or irregular sessions atomically; advance the class header revision without staling unchanged past session evidence,approvals or attendance-based calculations",
         "parameters": [
           {
             "name": "id",
