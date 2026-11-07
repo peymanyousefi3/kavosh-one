@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { receiptFixture } from './receipt-fixture.ts';
-import { assertReceivableAgingBounds,receivableAgingLimits } from '../src/modules/receivables-aging.ts';
+import { assertReceivableAgingBounds,receivableAgingLimits,receivableAgingSQL } from '../src/modules/receivables-aging.ts';
 import { parse } from 'csv-parse/sync';
 import { agingReportCsv } from '../src/modules/aging-report-export.ts';
 
@@ -12,7 +12,7 @@ const meta=(rows:Record<string,string>[])=>Object.fromEntries(rows.filter(r=>r.s
 const exported=(f:Fixture,on='2026-12-02',suffix='',as='master')=>f.request('reports/finance/receivables-aging/export?on='+on+suffix,undefined,as);
 
 type Fixture=Awaited<ReturnType<typeof receiptFixture>>;
-function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await receiptFixture();try{await run(f);}finally{await f.pg.close();}});}
+function check(name:string,run:(f:Fixture)=>Promise<void>,nativeOnly=false){test(name,{skip:nativeOnly&&!process.env.TEST_DATABASE_URL},async()=>{const f=await receiptFixture();try{await run(f);}finally{await f.pg.close();}});}
 async function report(f:Fixture,on='2026-12-02',suffix='',as='master'){
  const r=await f.request('reports/finance/receivables-aging?on='+on+suffix,undefined,as);assert.equal(r.response.status,200,JSON.stringify({body:r.body,failures:f.metrics.queryFailures}));return r.body.data;
 }
@@ -32,6 +32,11 @@ check('receivable CSV refuses page parameters incomplete money bands charts and 
 check('receivable saved CSV ignores stored page size and preserves current caller and relative date provenance',async f=>{
  const preset=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Tuition aging',reportId:'finance.receivables-aging',parameters:{on:'2026-12-02',limit:'1'}},reason:'Reusable complete aging export'}),r=await f.request('reports/presets/'+preset.id+'/export');assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(meta(csv(r.body)).presetId,preset.id);assert.equal((await f.request('reports/presets/'+preset.id+'/export?limit=1')).response.status,400);const relative=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Today AR',reportId:'finance.receivables-aging',parameters:{},dateWindow:{kind:'today',timeZone:'America/Toronto'}},reason:'Relative original report dates'}),dynamic=await f.request('reports/presets/'+relative.id+'/export?on=2026-12-02');assert.equal(dynamic.response.status,200,JSON.stringify(dynamic.body));assert.equal(JSON.parse(meta(csv(dynamic.body)).dateWindow).window.kind,'today');
 });
+check('native receivable CSV remains one source snapshot when a receipt commits before the attachment finishes',async f=>{
+ const runtime=f.pg.runtime!,connect=runtime.connect.bind(runtime);let release!:()=>void,reached!:()=>void;const gate=new Promise<void>(r=>{release=r;}),atSnapshot=new Promise<void>(r=>{reached=r;});let paused=false,queries=0;
+ runtime.connect=async()=>{const c=await connect(),query=c.query.bind(c);return {async query<Row=Record<string,unknown>>(sql:string,args?:unknown[]){const result=await query<Row>(sql,args);if(sql===receivableAgingSQL){queries++;if(!paused){paused=true;reached();await gate;}}return result;},release(destroy?:boolean){c.release(destroy);}};};let reader:ReturnType<typeof exported>|undefined;
+ try{reader=exported(f);await Promise.race([atSnapshot,reader.then(()=>{throw new Error('Export ended before source snapshot');})]);const p=await f.pay();assert.equal(p.response.status,201,JSON.stringify(p.body));release();const file=await reader;assert.equal(file.response.status,200,JSON.stringify(file.body));const totals=csv(file.body).filter(r=>r.section==='currency_total');assert.equal(totals.find(r=>r.field==='received')?.amount,'0.00');assert.equal(totals.find(r=>r.field==='positiveReceivable')?.amount,'113.00');assert.equal(queries,1);const next=await exported(f);assert.equal(next.response.status,200);assert.equal(csv(next.body).find(r=>r.section==='currency_total'&&r.field==='positiveReceivable')?.amount,'63.00');assert.equal(queries,2);}finally{release();await reader;runtime.connect=connect;}
+},true);
 check('receivables aging respects invoice dates, due-today and exact overdue bucket boundaries without writes',async f=>{
  const before=(await f.pg.query('SELECT count(*)::int n FROM public.finance_journals')).rows[0].n;
  assert.equal((await report(f,'2026-11-04')).invoiceCount,0);
@@ -95,6 +100,7 @@ check('independent permission scopes, explicit original-hub denials and bot cred
  const botRole=await f.made('roles',{name:'Bot aging observer',permissions:caps.map(capability=>({capability,effect:'allow'}))}),botPath='people/'+f.bot+'/access',old=await f.request(botPath);assert.equal((await f.request(botPath,{expectedVersion:old.body.data.version,assignments:[{roleId:botRole.id,allHubs:true}]})).response.status,200);
  assert.equal((await report(f,'2026-12-02','','bot')).invoiceCount,1);
  await f.pg.query('UPDATE auth_private.credentials SET all_hubs=false WHERE person_id=$1',[f.bot]);await f.pg.query('INSERT INTO auth_private.credential_hubs(academy_id,credential_id,hub_id) SELECT academy_id,id,$1 FROM auth_private.credentials WHERE person_id=$2',[f.otherHub,f.bot]);assert.equal((await report(f,'2026-12-02','','bot')).invoiceCount,0);
+ const file=await exported(f,undefined,'','bot');assert.equal(file.response.status,200,JSON.stringify(file.body));assert.equal(meta(csv(file.body)).recordCount,'0');assert.ok(csv(file.body).every(r=>r.record_id!==f.invoice.id));
 });
 check('changing an approved allocation restates aging explicitly but never changes the recorded cash balance',async f=>{
  const p=await f.pay({allocation:'oldest_due'});assert.equal(p.response.status,201);
