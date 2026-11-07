@@ -24,7 +24,7 @@ export function payrollSettlementScopes(ctx:ApiContext){const scopes=Object.from
 const hubScope=(column:string)=>`CASE WHEN ${column} IS NULL THEN '{"all":true,"hubs":[]}'::jsonb ELSE jsonb_build_object('all',false,'hubs',jsonb_build_array(${column})) END`;
 // All source rights, complete funding history and balances share ONE MVCC
 // statement. A concurrent payment is either wholly included or wholly absent.
-const settlementAuthoritySQL=`NOT EXISTS(SELECT 1 FROM jsonb_array_elements(jsonb_build_array(${bundleCaps.map(c=>`$1::jsonb->'${c}'`).join(',')},$2::jsonb)) s WHERE public.scope_contains(s,g.scope) IS NOT TRUE)
+export const settlementAuthoritySQL=`NOT EXISTS(SELECT 1 FROM jsonb_array_elements(jsonb_build_array(${bundleCaps.map(c=>`$1::jsonb->'${c}'`).join(',')},$2::jsonb)) s WHERE public.scope_contains(s,g.scope) IS NOT TRUE)
  AND public.payrun_net_source_allows(g.id,'work-pay.view',$1::jsonb->'work-pay.view') AND public.payrun_net_source_allows(g.id,'work-pay.view',$2::jsonb) AND public.payrun_net_source_allows(g.id,'work-pay.view',$1::jsonb->'financial-reports.view')
  AND(NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.source_snapshot->'items') i WHERE i->>'kind'<>'manual_bonus') OR public.payrun_net_source_allows(g.id,'payroll-accruals.view',$1::jsonb->'payroll-accruals.view'))
  AND(NOT EXISTS(SELECT 1 FROM jsonb_array_elements(g.source_snapshot->'items') i WHERE i->>'kind'='manual_bonus') OR public.payrun_net_source_allows(g.id,'payroll-adjustments.view',$1::jsonb->'payroll-adjustments.view'))

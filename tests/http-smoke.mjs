@@ -23,6 +23,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/reports/finance/outlook?on=2026-01-31&through=2026-02-28&timeZone=UTC&payrollCash=recorded_net');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/expectedNetPayrollPayments|work-pay|stack/);}
   {const r=await fetch(base+'/api/v1/reports/payroll/settlements/export?on=2026-02-15');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);}
   {const r=await fetch(base+'/api/v1/reports/payroll/settlements?on=2026-02-15');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/remaining|postingCount|stack/);}
   for(const suffix of ['','/export']){const r=await fetch(base+'/api/v1/payroll/net-postings/00000000-0000-4000-8000-000000000001/settlement-report'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);}

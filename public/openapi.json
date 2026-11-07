@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.167.0",
+    "version": "0.168.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -40160,7 +40160,7 @@
     },
     "/api/v1/reports/finance/outlook": {
       "get": {
-        "summary": "Single-source-snapshot financial outlook: baseline cash/AR/AP plus retained future cash journals, horizon-reserved tuition/bills and horizon-active unmatched cost occurrences and separate scheduled payroll estimates; exact per-currency chart scenario with reopened/pre-issue timing gaps, source access and changed terms explicit, not a complete cash/accrual forecast or bank verification",
+        "summary": "Single-statement financial outlook with baseline cash/AR/AP,future journals,horizon-reserved settlements and unmatched cost plans. Optional payrollCash=recorded_net adds exact permitted original wage-liability buckets at approved planned pay dates or explicit report-only payrollDates overrides(not before posting/reopening),after reserving all horizon payments/corrections. Potential same-person selected-currency bill/plan overlap is unscheduled unless payrollOverlap=separate_liabilities explicitly selects that scenario;not automatic matching. Payroll funding banks,unposted/scheduled gross and statutory remittances remain unassigned/excluded. Full source/current geographic rights;not complete cash/accrual forecasting,bank verification or payment authorization.",
         "parameters": [
           {
             "name": "on",
@@ -40208,6 +40208,36 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "payrollDates",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "payrollCash",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "const": "recorded_net"
+            }
+          },
+          {
+            "name": "payrollOverlap",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "review",
+                "separate_liabilities"
+              ]
             }
           }
         ],
