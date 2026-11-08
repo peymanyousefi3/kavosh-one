@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 import type { Identity, IdentityConfig } from './config.ts';
 import { IdentityStore } from './store.ts';
-import type { HumanSession } from '../core/api.ts';
+import { jsonBody,type HumanSession } from '../core/api.ts';
 
 const email=z.string().email().max(254).transform(s=>s.trim().toLowerCase());
 const password=z.string().min(15).max(128);
@@ -34,12 +34,10 @@ export const getPaths=new Set(['/get-session','/list-sessions','/verify-email','
 const publicPosts=new Set(['/sign-up/email','/sign-in/email','/request-password-reset','/reset-password','/send-verification-email','/two-factor/send-otp','/two-factor/verify-otp','/two-factor/verify-totp','/two-factor/verify-backup-code']);
 
 async function body(request:Request) {
-  if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')??'')) throw new ApiError(415,'JSON_REQUIRED');
-  const reader=request.body?.getReader();if(!reader)return {};
-  const chunks:Uint8Array[]=[];let length=0;
-  try {while(true){const item=await reader.read();if(item.done)break;length+=item.value.byteLength;if(length>16384){await reader.cancel();throw new ApiError(413,'BODY_TOO_LARGE');}chunks.push(item.value);}}
-  finally{reader.releaseLock();}
-  try{return JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw new ApiError(400,'INVALID_JSON');}
+  if(request.body)return jsonBody(request);
+  // Keep existing empty-object authentication actions compatible.
+  if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')??''))throw new ApiError(415,'JSON_REQUIRED');
+  return {};
 }
 function safeOutput(value:unknown):unknown {
   if(Array.isArray(value))return value.map(safeOutput);

@@ -20,18 +20,34 @@ export async function jsonBody(request: Request,maximumBytes=16_384) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
   const reader = request.body?.getReader();
   if (!reader) throw new ApiError(400, 'INVALID_JSON');
-  const chunks: Uint8Array[] = []; let size = 0;
-  try {
+  // One total budget,not a fresh timeout per chunk. Cancellation itself may
+  // never settle (including a cloned request);never wait on it to free work.
+  const chunks: Uint8Array[] = []; let size = 0,finished=false;
+  let reject!: (error:ApiError)=>void;
+  const stopped=new Promise<never>((_resolve,r)=>{reject=r;});
+  const abort=()=>reject(new ApiError(408,'JSON_BODY_ABORTED'));
+  const timer=setTimeout(()=>reject(new ApiError(408,'JSON_BODY_TIMEOUT')),10_000);
+  request.signal.addEventListener('abort',abort,{once:true});
+  const read=async()=>{
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {finished=true;break;}
+      if(!(value instanceof Uint8Array))throw new ApiError(400,'INVALID_JSON');
       size += value.byteLength;
-      if (size > maximumBytes) { await reader.cancel(); throw new ApiError(413, 'BODY_TOO_LARGE'); }
+      if (size > maximumBytes) throw new ApiError(413, 'BODY_TOO_LARGE');
       chunks.push(value);
     }
     try { return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks))) as unknown; }
     catch { throw new ApiError(400, 'INVALID_JSON'); }
-  } finally { reader.releaseLock(); }
+  };
+  try {
+    if(request.signal.aborted)throw new ApiError(408,'JSON_BODY_ABORTED');
+    return await Promise.race([read(),stopped]);
+  } finally {
+    clearTimeout(timer);request.signal.removeEventListener('abort',abort);
+    if(!finished)void reader.cancel().catch(()=>{});
+    reader.releaseLock();
+  }
 }
 
 export async function loadGrants(db: Connection, c:Credential): Promise<Grant[]> {

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.217.0",
+    "version": "0.218.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -79,7 +79,7 @@
       "post": {
         "security": [],
         "summary": "accept invitation",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -130,7 +130,7 @@
       "post": {
         "security": [],
         "summary": "change password",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -246,7 +246,7 @@
       "post": {
         "security": [],
         "summary": "phone number · send otp",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -297,7 +297,7 @@
       "post": {
         "security": [],
         "summary": "phone number · verify",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -353,7 +353,7 @@
       "post": {
         "security": [],
         "summary": "request password reset",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -406,7 +406,7 @@
       "post": {
         "security": [],
         "summary": "reset password",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -464,7 +464,7 @@
       "post": {
         "security": [],
         "summary": "revoke other sessions",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -507,7 +507,7 @@
       "post": {
         "security": [],
         "summary": "revoke session",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -559,7 +559,7 @@
       "post": {
         "security": [],
         "summary": "revoke sessions",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -602,7 +602,7 @@
       "post": {
         "security": [],
         "summary": "send verification email",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -655,7 +655,7 @@
       "post": {
         "security": [],
         "summary": "sign in · email",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -717,7 +717,7 @@
       "post": {
         "security": [],
         "summary": "sign out",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -760,7 +760,7 @@
       "post": {
         "security": [],
         "summary": "sign up · email",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -835,7 +835,7 @@
       "post": {
         "security": [],
         "summary": "two factor · disable",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -886,7 +886,7 @@
       "post": {
         "security": [],
         "summary": "two factor · enable",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -945,7 +945,7 @@
       "post": {
         "security": [],
         "summary": "two factor · generate backup codes",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -996,7 +996,7 @@
       "post": {
         "security": [],
         "summary": "two factor · send otp",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -1043,7 +1043,7 @@
       "post": {
         "security": [],
         "summary": "two factor · verify backup code",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -1098,7 +1098,7 @@
       "post": {
         "security": [],
         "summary": "two factor · verify otp",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
@@ -1152,7 +1152,7 @@
       "post": {
         "security": [],
         "summary": "two factor · verify totp",
-        "description": "Authentication gateway allowlist. Strict JSON, 16 KiB maximum. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
+        "description": "Authentication gateway allowlist. Strict UTF-8 JSON, 16 KiB maximum and a total 10-second body-read deadline. Interrupted or timed-out bodies return 408; oversized bodies return 413. Phone setup requires a fresh email-verified session; academy access also requires phone verification. Master MFA is mandatory on new devices; enabling/disabling MFA or changing password revokes sessions. Reset does not disable MFA. Session revocation uses sessionId, never raw token. See repository auth flow for sequencing.",
         "parameters": [
           {
             "name": "Origin",
