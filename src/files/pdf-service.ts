@@ -2,9 +2,10 @@ import { createServer,type IncomingMessage,type ServerResponse,request as httpRe
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
-import { pdfValidationSchema,pdfValidationMatches,maximumPdfInputBytes,validateUnsignedPdf,type PdfValidation } from './pdf-validation.ts';
+import { pdfValidationSchema,signedEvidencePdfValidationSchema,pdfValidationMatches,maximumPdfInputBytes,validateUnsignedPdf,validateSignedEvidencePdf,type PdfValidation,type SignedEvidencePdfValidation } from './pdf-validation.ts';
 
 const endpoint='/v1/validate-pdf',maximumReplyBytes=1_048_576;
+const signedEndpoint='/v1/validate-signed-evidence-pdf';
 const socketSchema=z.string().min(2).max(100).refine(v=>v.startsWith('/')&&Buffer.byteLength(v)<=100&&!/[\0\r\n]/.test(v)&&!v.split('/').some(p=>p==='.'||p==='..'));
 export const pdfServiceConfiguration=z.object({socketPath:socketSchema}).strict();
 const digest=/^[a-f0-9]{64}$/,lengthHeader=/^[1-9][0-9]{0,7}$/;
@@ -31,7 +32,7 @@ export function createPdfValidationServer(options:{pythonPath:string}) {
   const seen=new Set<string>();let invalid=false;
   for(let i=0;i<req.rawHeaders.length;i+=2){const key=req.rawHeaders[i].toLowerCase();if(seen.has(key)||!allowedHeaders.has(key))invalid=true;seen.add(key);}
   const rawLength=req.headers['content-length'],hash=req.headers['x-content-sha256'];
-  if(invalid||req.method!=='POST'||req.url!==endpoint||req.headers['content-type']!=='application/octet-stream'
+  if(invalid||req.method!=='POST'||(req.url!==endpoint&&req.url!==signedEndpoint)||req.headers['content-type']!=='application/octet-stream'
    ||typeof rawLength!=='string'||!lengthHeader.test(rawLength)||Number(rawLength)>maximumPdfInputBytes||typeof hash!=='string'||!digest.test(hash)) {
    reply(res,400,{error:'INVALID_PDF_REQUEST'});res.once('finish',()=>req.destroy());return;
   }
@@ -46,9 +47,10 @@ export function createPdfValidationServer(options:{pythonPath:string}) {
    for await(const chunk of req){if(stopping.signal.aborted||used+chunk.length>bytes.length)throw new Error('INVALID_BODY');used+=chunk.copy(bytes,used);}
    clearTimeout(timer);req.socket.setTimeout(0);if(used!==bytes.length||createHash('sha256').update(bytes).digest('hex')!==hash)throw new ApiError(400,'INVALID_PDF_REQUEST');
    // The parser has its own fixed ten-second wall deadline. Network input
-   // never chooses execution paths, limits or a replacement native binary.
+   // chooses only these two fixed profiles,never limits,a binary or arbitrary
+   // arguments. Signed evidence can never become unsigned upload clearance.
    timer=setTimeout(()=>{timedOut=true;abort();},10000);
-   const result=await validateUnsignedPdf(bytes,{pythonPath,signal:stopping.signal});
+   const result=await(req.url===signedEndpoint?validateSignedEvidencePdf(bytes,{pythonPath,signal:stopping.signal}):validateUnsignedPdf(bytes,{pythonPath,signal:stopping.signal}));
    if(stopping.signal.aborted)throw new Error('CANCELLED');reply(res,200,result);
   }catch(error){reply(res,error instanceof ApiError&&error.status===400?400:timedOut?504:503,{error:error instanceof ApiError&&error.status===400?'INVALID_PDF_REQUEST':'PDF_SERVICE_UNAVAILABLE'});}
   finally{clearTimeout(timer);req.removeListener('aborted',abort);stopping.abort();active--;}
@@ -59,17 +61,21 @@ export function createPdfValidationServer(options:{pythonPath:string}) {
 let activeClients=0;
 // Configuration is operator-only; socketPath cannot be an HTTP URL and there is
 // no TCP/DNS fallback, redirect, cookie jar or credentials to forward.
-export async function validatePdfViaService(input:Uint8Array,options:{socketPath:string;signal?:AbortSignal}):Promise<PdfValidation> {
+export function validatePdfViaService(input:Uint8Array,options:{socketPath:string;signal?:AbortSignal}):Promise<PdfValidation>{return validateViaService(input,options,false);}
+export function validateSignedEvidencePdfViaService(input:Uint8Array,options:{socketPath:string;signal?:AbortSignal}):Promise<SignedEvidencePdfValidation>{return validateViaService(input,options,true);}
+function validateViaService(input:Uint8Array,options:{socketPath:string;signal?:AbortSignal},signed:false):Promise<PdfValidation>;
+function validateViaService(input:Uint8Array,options:{socketPath:string;signal?:AbortSignal},signed:true):Promise<SignedEvidencePdfValidation>;
+async function validateViaService(input:Uint8Array,options:{socketPath:string;signal?:AbortSignal},signed:boolean):Promise<PdfValidation|SignedEvidencePdfValidation> {
  const config=z.object({socketPath:socketSchema,signal:z.instanceof(AbortSignal).optional()}).strict().safeParse(options);
  if(!config.success)throw new ApiError(400,'INVALID_PDF_SERVICE_CONFIGURATION');
  if(!(input instanceof Uint8Array)||input.byteLength<9||input.byteLength>maximumPdfInputBytes)throw new ApiError(400,'INVALID_PDF_VALIDATION_BYTES');
  if(config.data.signal?.aborted)throw new ApiError(503,'PDF_SERVICE_CANCELLED');
  if(activeClients>=2)throw new ApiError(503,'PDF_SERVICE_BUSY');
  const bytes=Buffer.from(input),hash=createHash('sha256').update(bytes).digest('hex');activeClients++;
- try{return await new Promise<PdfValidation>((resolve,reject)=>{
+ try{return await new Promise<PdfValidation|SignedEvidencePdfValidation>((resolve,reject)=>{
   let settled=false,response:IncomingMessage|undefined;
-  const req=httpRequest({socketPath:config.data.socketPath,path:endpoint,method:'POST',agent:false,maxHeaderSize:4096,headers:{host:'localhost',connection:'close','content-type':'application/octet-stream','content-length':bytes.length,'x-content-sha256':hash}});
-  const finish=(code?:string,value?:PdfValidation)=>{
+  const req=httpRequest({socketPath:config.data.socketPath,path:signed?signedEndpoint:endpoint,method:'POST',agent:false,maxHeaderSize:4096,headers:{host:'localhost',connection:'close','content-type':'application/octet-stream','content-length':bytes.length,'x-content-sha256':hash}});
+  const finish=(code?:string,value?:PdfValidation|SignedEvidencePdfValidation)=>{
    if(settled)return;settled=true;clearTimeout(timer);config.data.signal?.removeEventListener('abort',cancel);response?.destroy();req.destroy();
    if(code)reject(new ApiError(503,code));else resolve(value!);
   };
@@ -85,7 +91,7 @@ export async function validatePdfViaService(input:Uint8Array,options:{socketPath
    incoming.once('error',()=>finish('PDF_SERVICE_UNAVAILABLE'));incoming.once('aborted',()=>finish('PDF_SERVICE_UNAVAILABLE'));
    incoming.once('end',()=>{
     if(settled)return;
-    try{if(used!==out.length)throw new Error('INCOMPLETE_REPLY');const parsed=pdfValidationSchema.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(out)));
+    try{if(used!==out.length)throw new Error('INCOMPLETE_REPLY');const parsed=(signed?signedEvidencePdfValidationSchema:pdfValidationSchema).parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(out)));
      if(!pdfValidationMatches(parsed,bytes.length,hash))throw new Error('WRONG_RECEIPT');finish(undefined,parsed);
     }catch{finish('PDF_SERVICE_UNAVAILABLE');}
    });

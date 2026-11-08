@@ -6,8 +6,8 @@ import { mkdtemp,rmdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createPdfValidationServer,validatePdfViaService } from '../src/files/pdf-service.ts';
-import { validateUnsignedPdf } from '../src/files/pdf-validation.ts';
+import { createPdfValidationServer,validatePdfViaService,validateSignedEvidencePdfViaService } from '../src/files/pdf-service.ts';
+import { validateUnsignedPdf,validateSignedEvidencePdf } from '../src/files/pdf-validation.ts';
 import { assertPrivatePdfSocket } from '../src/files/pdf-runtime.ts';
 
 const pythonPath=process.env.TEST_PDF_PYTHON_BINARY;
@@ -24,6 +24,7 @@ async function fixture(server:Server=createPdfValidationServer({pythonPath:pytho
  await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(socketPath,()=>{server.removeListener('error',reject);resolve();});});
  async function close(){await new Promise<void>((resolve,reject)=>{server.close(e=>e?reject(e):resolve());server.closeAllConnections();});await rmdir(directory);}
  const validate=(b:Buffer,signal?:AbortSignal)=>validatePdfViaService(b,{socketPath,signal});
+ const validateSigned=(b:Buffer,signal?:AbortSignal)=>validateSignedEvidencePdfViaService(b,{socketPath,signal});
  async function raw(b:Buffer,headers:Record<string,string>={},method='POST',path='/v1/validate-pdf'){
   return new Promise<{status:number;body:string;headers:Record<string,unknown>}>((resolve,reject)=>{
    const req=request({socketPath,method,path,agent:false,headers:{host:'localhost',connection:'close','content-type':'application/octet-stream','content-length':b.length,'x-content-sha256':hash(b),...headers}},res=>{
@@ -31,8 +32,18 @@ async function fixture(server:Server=createPdfValidationServer({pythonPath:pytho
    });req.once('error',reject);req.end(b);
   });
  }
- return {server,socketPath,close,validate,raw};
+ return {server,socketPath,close,validate,validateSigned,raw};
 }
+check('private signed-evidence channel preserves the original unsigned rejection and never reports cryptographic validity',async()=>{
+ const f=await fixture(),b=bytes('signature_layout');try{const signed=await f.validateSigned(b),unsigned=await f.validate(b);assert.equal(signed.outcome,'screened');assert.equal(signed.policyVersion,2);assert.equal(signed.profile,'signed-evidence');assert.equal(signed.cryptographicValidityVerified,false);assert.equal(signed.inputSha256,hash(b));if(signed.outcome==='screened')assert.equal(signed.signatureCount,1);assert.equal(unsigned.outcome,'rejected');if(unsigned.outcome==='rejected')assert.equal(unsigned.reason,'EXISTING_SIGNATURE');assert.equal((await f.raw(b,{'x-profile':'signed-evidence'})).status,400);assert.equal((await f.raw(b,{},'POST','/v1/validate-signed-evidence-pdf?profile=unsigned')).status,400);}finally{await f.close();}
+});
+check('signed and unsigned Unix clients reject valid receipts from the other profile instead of weakening policy identity',async()=>{
+ const b=bytes(),unsigned=await validateUnsignedPdf(b,{pythonPath:pythonPath!}),signed=await validateSignedEvidencePdf(b,{pythonPath:pythonPath!});
+ for(const [receipt,wantSigned] of [[unsigned,true],[signed,false]] as const){const raw=Buffer.from(JSON.stringify(receipt)),f=await fixture(createServer((_req,res)=>{res.writeHead(200,{'content-type':'application/json','content-length':raw.length,connection:'close'});res.end(raw);}));try{await assert.rejects(wantSigned?f.validateSigned(b):f.validate(b),{code:'PDF_SERVICE_UNAVAILABLE'});}finally{await f.close();}}
+});
+check('signed and unsigned Unix requests share the same bounded native and client admission',async()=>{
+ const f=await fixture();try{const first=f.validateSigned(bytes('signature_layout')),second=f.validate(bytes());await assert.rejects(f.validateSigned(bytes()),{code:'PDF_SERVICE_BUSY'});assert.equal((await first).outcome,'screened');assert.equal((await second).outcome,'screened');assert.equal((await f.validateSigned(bytes())).outcome,'screened');}finally{await f.close();}
+});
 test('production PDF command refuses the non-isolated host before opening its socket with secret-free failure',()=>{
  const r=spawnSync(process.execPath,['--import','tsx','scripts/pdf-validator-service.ts'],{cwd:new URL('..',import.meta.url),env:{NODE_ENV:'production',TZ:'UTC',PATH:process.env.PATH},encoding:'utf8',timeout:5000});
  assert.equal(r.status,1);assert.equal(r.stdout,'');assert.equal(r.stderr.trim(),'PDF validator refused startup; isolated runtime controls are required.');

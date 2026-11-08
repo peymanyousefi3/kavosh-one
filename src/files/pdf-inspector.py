@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import math
+import re
 import resource
 import sys
 from decimal import Decimal
@@ -34,6 +35,9 @@ if pikepdf.__version__ != "10.17.0" or pikepdf.__libqpdf_version__ != "12.4.2":
     sys.exit(1)
 
 MAX_BYTES, MAX_PAGES, MAX_OBJECTS, MAX_DEPTH = 10485760, 1000, 50000, 64
+SIGNED_EVIDENCE = sys.argv[1:] == ["--signed-evidence"]
+if sys.argv[1:] and not SIGNED_EVIDENCE:
+    sys.exit(1)
 BLOCKED_ACTIONS = {
     "/JavaScript", "/Launch", "/GoToR", "/GoToE", "/SubmitForm", "/ImportData",
     "/ResetForm", "/Hide", "/SetOCGState", "/Rendition", "/Movie", "/Sound",
@@ -98,6 +102,34 @@ def link(value):
     reject("ACTIVE_CONTENT")
 
 
+def signature_layout(obj, data):
+    """Bounded four-integer layout only,NOT CMS/certificate/trust validation.
+
+    Never rewrite a signed document. A later unsigned revision is reported,
+    not silently treated as covered. Other range layouts fail this profile;
+    this is not a claim that those documents are cryptographically invalid.
+    """
+    ranges, contents = obj.get("/ByteRange"), obj.get("/Contents")
+    if not isinstance(ranges, pikepdf.Array) or len(ranges) != 4 or not isinstance(contents, pikepdf.String):
+        reject("SIGNATURE_LAYOUT_INVALID")
+    values = list(ranges)
+    if any(isinstance(v, bool) or not isinstance(v, int) or v < 0 or v > len(data) for v in values):
+        reject("SIGNATURE_LAYOUT_INVALID")
+    start, first, second, count = values
+    if start != 0 or first == 0 or second <= first or second + count > len(data):
+        reject("SIGNATURE_LAYOUT_INVALID")
+    gap = data[first:second]
+    if not re.fullmatch(rb"<[0-9A-Fa-f\x00\x09\x0a\x0c\x0d\x20]*>", gap):
+        reject("SIGNATURE_LAYOUT_INVALID")
+    encoded = re.sub(rb"[\x00\x09\x0a\x0c\x0d\x20]", b"", gap[1:-1])
+    if len(encoded) % 2:
+        encoded += b"0"
+    raw = bytes(contents)
+    if not raw or bytes.fromhex(encoded.decode("ascii")) != raw:
+        reject("SIGNATURE_LAYOUT_INVALID")
+    return {"byteRange": values, "contentsBytes": len(raw), "coversWholeFile": second + count == len(data)}
+
+
 def screen(pdf):
     if pdf.is_encrypted:
         reject("ENCRYPTED")
@@ -119,7 +151,7 @@ def screen(pdf):
     # ObjectSet tracks BOTH direct and indirect object identity correctly. Do not
     # deduplicate on objgen: all direct objects have the same (0,0) pair.
     # Scan unreferenced objects too; do not assume another viewer ignores them.
-    seen, stack, visited = pikepdf.ObjectSet(), [(pdf.trailer, 0)], 0
+    seen, stack, visited, signatures, signature_bytes = pikepdf.ObjectSet(), [(pdf.trailer, 0)], 0, [], 0
     for top in pdf.objects:
         stack.append((top, 0))
     while stack:
@@ -138,8 +170,16 @@ def screen(pdf):
                 stack.append((value, depth + 1))
             continue
         kind, action = name(obj, "/Type"), name(obj, "/S")
-        if kind == "/Sig" or ("/ByteRange" in obj and "/Contents" in obj):
-            reject("EXISTING_SIGNATURE")
+        if kind in ("/Sig", "/DocTimeStamp") or ("/ByteRange" in obj and "/Contents" in obj):
+            if not SIGNED_EVIDENCE:
+                reject("EXISTING_SIGNATURE")
+            if len(signatures) >= 100:
+                reject("SIGNATURE_LIMIT")
+            layout = signature_layout(obj, data)
+            signature_bytes += layout["contentsBytes"]
+            if signature_bytes > MAX_BYTES:
+                reject("SIGNATURE_LIMIT")
+            signatures.append(layout)
         if kind in ("/Filespec", "/EmbeddedFile") or "/EF" in obj or name(obj, "/Subtype") in BLOCKED_ANNOTATIONS:
             reject("EMBEDDED_FILE")
         if "/XFA" in obj:
@@ -167,8 +207,11 @@ def screen(pdf):
         pages.append({"mediaBox": media, "cropBox": crop, "rotation": int(rotation % 360), "userUnit": unit})
     if pdf.get_warnings() or pdf.check_pdf_syntax():
         reject("MALFORMED_PDF")
-    return {"outcome": "screened", "pageCount": count, "objectCount": visited, "pages": pages,
-            "interactiveForms": root.get("/AcroForm") is not None, "coordinateSpace": "pdf-default-user-space"}
+    result = {"outcome": "screened", "pageCount": count, "objectCount": visited, "pages": pages,
+              "interactiveForms": root.get("/AcroForm") is not None, "coordinateSpace": "pdf-default-user-space"}
+    if SIGNED_EVIDENCE:
+        result.update(signatureCount=len(signatures), signatures=signatures)
+    return result
 
 
 data = sys.stdin.buffer.read(MAX_BYTES + 1)
@@ -177,6 +220,8 @@ if not data or len(data) > MAX_BYTES:
 result = {"validator": "pikepdf@10.17.0", "qpdf": "12.4.2", "policyVersion": 1,
           "inputBytes": len(data), "inputSha256": hashlib.sha256(data).hexdigest(),
           "maximumPages": MAX_PAGES, "maximumObjects": MAX_OBJECTS, "maximumDepth": MAX_DEPTH}
+if SIGNED_EVIDENCE:
+    result.update(policyVersion=2, profile="signed-evidence", cryptographicValidityVerified=False)
 try:
     # No file paths, passwords, external resources or automatic recovery.
     with pikepdf.Pdf.open(io.BytesIO(data), attempt_recovery=False, suppress_warnings=True) as pdf:

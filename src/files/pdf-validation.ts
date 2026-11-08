@@ -16,7 +16,14 @@ export const pdfValidationSchema=z.discriminatedUnion('outcome',[
  z.object({...base,outcome:z.literal('rejected'),reason:z.enum(['ACTIVE_CONTENT','EMBEDDED_FILE','EXTERNAL_STREAM','XFA_FORM','ENCRYPTED','EXISTING_SIGNATURE','GEOMETRY_INVALID','STRUCTURE_LIMIT','PAGE_LIMIT','MALFORMED_PDF'])}).strict()
 ]);
 export type PdfValidation=z.infer<typeof pdfValidationSchema>;
-export function pdfValidationMatches(result:PdfValidation,bytes:number,sha256:string){return result.inputBytes===bytes&&result.inputSha256===sha256;}
+const signature=z.object({byteRange:z.tuple([z.literal(0),z.number().int().positive().max(maximumPdfInputBytes),z.number().int().positive().max(maximumPdfInputBytes),z.number().int().nonnegative().max(maximumPdfInputBytes)]),contentsBytes:z.number().int().positive().max(maximumPdfInputBytes),coversWholeFile:z.boolean()}).strict();
+const signedBase={...base,policyVersion:z.literal(2),profile:z.literal('signed-evidence'),cryptographicValidityVerified:z.literal(false)};
+export const signedEvidencePdfValidationSchema=z.discriminatedUnion('outcome',[
+ z.object({...pdfValidationSchema.options[0].shape,...signedBase,signatureCount:z.number().int().min(0).max(100),signatures:z.array(signature).max(100)}).strict().refine(v=>v.pageCount===v.pages.length&&v.signatureCount===v.signatures.length&&v.signatures.reduce((n,s)=>n+s.contentsBytes,0)<=v.inputBytes&&v.signatures.every(s=>{const [,a,b,c]=s.byteRange;return b-a>=3&&s.contentsBytes<=Math.ceil((b-a-2)/2)&&b+c<=v.inputBytes&&s.coversWholeFile===(b+c===v.inputBytes);})),
+ pdfValidationSchema.options[1].extend({...signedBase,reason:z.enum(['ACTIVE_CONTENT','EMBEDDED_FILE','EXTERNAL_STREAM','XFA_FORM','ENCRYPTED','EXISTING_SIGNATURE','GEOMETRY_INVALID','STRUCTURE_LIMIT','PAGE_LIMIT','MALFORMED_PDF','SIGNATURE_LAYOUT_INVALID','SIGNATURE_LIMIT'])}).strict()
+]);
+export type SignedEvidencePdfValidation=z.infer<typeof signedEvidencePdfValidationSchema>;
+export function pdfValidationMatches(result:PdfValidation|SignedEvidencePdfValidation,bytes:number,sha256:string){return result.inputBytes===bytes&&result.inputSha256===sha256;}
 const configuration=z.object({pythonPath:z.string().min(2).max(512).refine(v=>v.startsWith('/')&&!/[\0\r\n]/.test(v)&&!v.split('/').some(p=>p==='.'||p==='..')),signal:z.instanceof(AbortSignal).optional()}).strict();
 let active=0;
 
@@ -24,7 +31,14 @@ let active=0;
 // run this native parser with storage/identity credentials or enable it in the
 // web process. Production requires a separately verified isolated service.
 // This unsigned-source profile must not replace signed-artifact verification.
-export async function validateUnsignedPdf(input:Uint8Array,options:z.input<typeof configuration>):Promise<PdfValidation>{
+export function validateUnsignedPdf(input:Uint8Array,options:z.input<typeof configuration>):Promise<PdfValidation>{return validatePdf(input,options,false);}
+// Structure only; pikepdf does not validate CMS/certificates or legal validity.
+// https://pikepdf.readthedocs.io/en/latest/topics/security.html
+// A different strict profile,never accepted as unsigned upload evidence.
+export function validateSignedEvidencePdf(input:Uint8Array,options:z.input<typeof configuration>):Promise<SignedEvidencePdfValidation>{return validatePdf(input,options,true);}
+function validatePdf(input:Uint8Array,options:z.input<typeof configuration>,signed:false):Promise<PdfValidation>;
+function validatePdf(input:Uint8Array,options:z.input<typeof configuration>,signed:true):Promise<SignedEvidencePdfValidation>;
+async function validatePdf(input:Uint8Array,options:z.input<typeof configuration>,signed:boolean):Promise<PdfValidation|SignedEvidencePdfValidation>{
  const parsed=configuration.safeParse(options);if(!parsed.success)throw new ApiError(400,'INVALID_PDF_VALIDATION_CONFIGURATION');
  if(!(input instanceof Uint8Array)||input.byteLength<9||input.byteLength>maximumPdfInputBytes)throw new ApiError(400,'INVALID_PDF_VALIDATION_BYTES');
  if(!/^%PDF-(?:1\.[0-7]|2\.0)[\r\n]/.test(Buffer.from(input.buffer,input.byteOffset,9).toString('latin1')))throw new ApiError(400,'INVALID_PDF_VALIDATION_BYTES');
@@ -33,10 +47,10 @@ export async function validateUnsignedPdf(input:Uint8Array,options:z.input<typeo
  // and isolated replicas for throughput, never an unbounded process fanout.
  if(active>=2)throw new ApiError(503,'PDF_VALIDATOR_BUSY');
  const bytes=Buffer.from(input),sha256=createHash('sha256').update(bytes).digest('hex');active++;
- return new Promise((resolve,reject)=>{
+  return new Promise((resolve,reject)=>{
   let child:ReturnType<typeof spawn>;
-  try{child=spawn(parsed.data.pythonPath,['-I','-B',fileURLToPath(new URL('./pdf-inspector.py',import.meta.url))],{env:{NODE_ENV:'production',TZ:'UTC'},stdio:['pipe','pipe','pipe']});}
-  catch{active--;reject(new ApiError(503,'PDF_VALIDATION_UNAVAILABLE'));return;}
+  try{child=spawn(parsed.data.pythonPath,['-I','-B',fileURLToPath(new URL('./pdf-inspector.py',import.meta.url)),...(signed?['--signed-evidence']:[])],{env:{NODE_ENV:'production',TZ:'UTC'},stdio:['pipe','pipe','pipe']});}
+  catch{bytes.fill(0);active--;reject(new ApiError(503,'PDF_VALIDATION_UNAVAILABLE'));return;}
   let failure:ApiError|undefined,size=0;const chunks:Buffer[]=[];
   const stop=(code:string)=>{if(failure)return;failure=new ApiError(503,code);child.kill('SIGKILL');};
   const cancel=()=>stop('PDF_VALIDATION_CANCELLED'),timer=setTimeout(()=>stop('PDF_VALIDATION_TIMEOUT'),10000);
@@ -44,11 +58,11 @@ export async function validateUnsignedPdf(input:Uint8Array,options:z.input<typeo
   child.stdout?.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>1_048_576){stop('PDF_VALIDATION_UNAVAILABLE');return;}chunks.push(chunk);});
   child.stdout?.once('error',()=>stop('PDF_VALIDATION_UNAVAILABLE'));child.stdin?.once('error',()=>stop('PDF_VALIDATION_UNAVAILABLE'));
   child.once('close',code=>{
-   clearTimeout(timer);parsed.data.signal?.removeEventListener('abort',cancel);active--;
+   clearTimeout(timer);parsed.data.signal?.removeEventListener('abort',cancel);bytes.fill(0);active--;
    if(failure){reject(failure);return;}
    try{
     if(code!==0)throw new Error('INCOMPLETE_CHILD');
-    const result=pdfValidationSchema.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size))));
+    const result=(signed?signedEvidencePdfValidationSchema:pdfValidationSchema).parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size))));
     if(!pdfValidationMatches(result,bytes.length,sha256))throw new Error('WRONG_CONTENT');resolve(result);
    }catch{reject(new ApiError(503,'PDF_VALIDATION_UNAVAILABLE'));}
   });

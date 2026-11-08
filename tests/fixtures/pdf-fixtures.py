@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import re
 import pikepdf
 
 N, D, A, S = pikepdf.Name, pikepdf.Dictionary, pikepdf.Array, pikepdf.String
@@ -97,5 +98,57 @@ raw = base64.b64decode(results["ordinary"])
 assert b"/MediaBox" in raw
 results["missing_box"] = base64.b64encode(raw.replace(b"/MediaBox", b"/OtherBox")).decode("ascii")
 results["truncated"] = base64.b64encode(raw[:len(raw) // 2]).decode("ascii")
+
+
+def signature_vector(key, edit=lambda p: None, change=lambda r: r):
+    # Deliberate NON-CRYPTOGRAPHIC placeholder with a real bounded PDF layout.
+    # These bytes do not contain a valid certificate,CMS message or signature.
+    with pikepdf.Pdf.new() as pdf:
+        page = pdf.add_blank_page(page_size=(612, 792))
+        signature = pdf.make_indirect(D(Type=N.Sig, Filter=N("/Adobe.PPKLite"), SubFilter=N("/adbe.pkcs7.detached"),
+                                       ByteRange=A([0, 1111111111, 2222222222, 3333333333]), Contents=S(b"\x30\x82\x00\x04\x00\x00")))
+        field = pdf.make_indirect(D(Type=N.Annot, Subtype=N.Widget, FT=N.Sig, T=S("PRIVATE signature field"), V=signature, Rect=A([20, 20, 200, 50]), P=page.obj))
+        pdf.Root.AcroForm = D(Fields=A([field]))
+        page.Annots = A([field])
+        edit(pdf)
+        out = io.BytesIO()
+        pdf.save(out, static_id=True, object_stream_mode=pikepdf.ObjectStreamMode.disable)
+        data = out.getvalue()
+    changed = 0
+    # Trusted uncompressed fixture objects only,NOT a production PDF parser.
+    # Fixed-width replacement preserves all original object/xref positions.
+    for obj in reversed(list(re.finditer(rb"\n[0-9]+ [0-9]+ obj\n.*?\nendobj", data, re.DOTALL))):
+        content = re.search(rb"/Contents\s*(<308200040000>)", obj.group(), re.IGNORECASE)
+        ranges = re.search(rb"/ByteRange\s*\[\s*0\s+1111111111\s+2222222222\s+3333333333\s*\]", obj.group())
+        if not ranges:
+            continue
+        assert content
+        first, second = obj.start() + content.start(1), obj.start() + content.end(1)
+        values = change([0, first, second, len(data) - second])
+        replacement = ("/ByteRange [ %d %10d %10d %10d ]" % tuple(values)).encode("ascii")
+        assert len(replacement) == ranges.end() - ranges.start()
+        start, end = obj.start() + ranges.start(), obj.start() + ranges.end()
+        data = data[:start] + replacement + data[end:]
+        changed += 1
+    assert changed
+    results[key] = base64.b64encode(data).decode("ascii")
+
+
+signature_vector("signature_layout")
+signature_vector("signature_wrong_start", change=lambda r: [1, *r[1:]])
+signature_vector("signature_overlap", change=lambda r: [0, r[2], r[1], r[3]])
+signature_vector("signature_overflow", change=lambda r: [0, r[1], r[2], 9999999999])
+signature_vector("signature_wrong_gap", change=lambda r: [0, r[1] + 1, r[2], r[3]])
+signature_vector("signature_javascript", lambda p: p.Root.update(D(OpenAction=D(S=N.JavaScript, JS=S("PRIVATE hostile action")))))
+
+
+def signature_limit(pdf):
+    pdf.Root.PRIVATE = A([pdf.make_indirect(D(Type=N.Sig, ByteRange=A([0, 1111111111, 2222222222, 3333333333]),
+                                             Contents=S(b"\x30\x82\x00\x04\x00\x00"), PrivateIndex=i)) for i in range(100)])
+
+
+signature_vector("signature_limit", signature_limit)
+signed = base64.b64decode(results["signature_layout"])
+results["signature_later_bytes"] = base64.b64encode(signed + b"\n% PRIVATE later unsigned bytes\n").decode("ascii")
 sysout = json.dumps(results, separators=(",", ":"))
 print(sysout)
