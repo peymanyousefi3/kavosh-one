@@ -11,6 +11,7 @@ import { permittedPerson } from './students.ts';
 import { permittedFile } from './files.ts';
 import { accountingDate } from './finance-periods.ts';
 import { prepareJournal,applyJournal } from './finance-journals.ts';
+export { row as authorizedPayrollPayment,wholeHistory as requirePayrollFundingHistory };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),ref=z.object({id:uuid,version}).strict(),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000);
 const create=z.object({amount:text.min(1).max(80),fundingAccount:ref,method:ref,period:ref,postedOn:accountingDate,paidAt:z.iso.datetime({offset:true}).max(40).refine(v=>v.slice(0,10)>='1900-01-01'&&!/[.]\d{7}/.test(v)),reference:text.trim().max(200).default(''),evidence:ref.nullable().default(null),missingEvidenceReason:text.trim().max(2000).default(''),handledById:uuid.nullable().default(null),operationalReview:reason,taxTreatment:z.literal('settle_recorded_net_pay'),reason}).strict().refine(v=>v.evidence!==null||v.missingEvidenceReason.length>0);

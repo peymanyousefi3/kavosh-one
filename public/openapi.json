@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.188.0",
+    "version": "0.189.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -37664,6 +37664,350 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 10
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}": {
+      "post": {
+        "summary": "Upper-human-reviewed exact partial-payment gross/earnings/deduction recognition for one worker/employer/year;explicit line classifications and payment timezone,source/cumulative caps and immutable corrections. No proportional tax guess,statutory calculation,additional journal or external payment.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "paymentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "definition": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": "^[A-Za-z0-9_+./-]+$"
+                          },
+                          "taxableEarnings": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^\\d+(?:\\.\\d+)?$"
+                          },
+                          "pensionableEarnings": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^\\d+(?:\\.\\d+)?$"
+                          },
+                          "insurableEarnings": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^\\d+(?:\\.\\d+)?$"
+                          },
+                          "employeeDeductions": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "CPP",
+                                    "CPP2",
+                                    "QPP",
+                                    "QPP2",
+                                    "EI",
+                                    "QPIP",
+                                    "income_tax",
+                                    "other"
+                                  ]
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "kind",
+                                "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "employerContributions": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "CPP",
+                                    "CPP2",
+                                    "QPP",
+                                    "QPP2",
+                                    "EI",
+                                    "QPIP",
+                                    "other"
+                                  ]
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "kind",
+                                "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "review": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          }
+                        },
+                        "required": [
+                          "timeZone",
+                          "taxableEarnings",
+                          "pensionableEarnings",
+                          "insurableEarnings",
+                          "employeeDeductions",
+                          "employerContributions",
+                          "review"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "definition",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Private current reviewed payment tax recognition under both global worker-tax and original payment/source/funding rights;not a complete or bank-certified YTD return",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "paymentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}/history": {
+      "get": {
+        "summary": "Editor-only retained payment tax-recognition versions and review history without rewriting payment or financial journals",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "paymentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/tax-profiles/{id}/year-to-date": {
+      "get": {
+        "summary": "Exact same-worker/employer/calendar-year totals of reviewed actual recorded partial-payment allocations,explicit report timezone and attested-payment date cutoff. Missing,withdrawn,wrong-year/timezone and reversed-but-unwithdrawn recognition stays unresolved. Complete original earning/funding/method permissions required;no silently partial YTD,no noncash/zero-net/external inference,statutory certification or automatic calculation clearance.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
             }
           }
         ],

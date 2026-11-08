@@ -9,6 +9,7 @@ import { permittedPerson } from './students.ts';
 import { payeeSelection } from './payees.ts';
 import { formatMoney,parseMoney } from '../core/money.ts';
 import { authorizedNetPayRun } from './payrun-net.ts';
+export { header as authorizedPayrollTaxProfile,scope as payrollTaxScope };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483646),year=z.number().int().min(1900).max(9999),date=z.iso.date().refine(v=>v>='1900-01-01'&&v<='9999-12-31');
 const text=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)),money=z.string().max(80).regex(/^\d+(?:\.\d+)?$/).transform((v,ctx)=>{try{return formatMoney(parseMoney(v,2),2);}catch{ctx.addIssue({code:'custom',message:'Use a bounded non-negative CAD amount with exact cents.'});return z.NEVER;}});
