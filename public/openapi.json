@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.186.0",
+    "version": "0.187.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -35433,6 +35433,158 @@
                   "employeeDeductions",
                   "employerContributions",
                   "taxReview"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/payruns/{id}/net/contributions-preview": {
+      "post": {
+        "summary": "Source-authorized read-only 2026 CPP/CPP2 and standard EI salary/wage scenario outside Quebec: exact cents,explicit reviewed same-employer YTD and pensionable months,regular versus standalone non-periodic exemption;current CAD2 gross/year/source bound. No income tax,classification certification,persisted YTD,automatic statement,ledger posting or payment.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "taxYear": {
+                    "type": "number",
+                    "const": 2026
+                  },
+                  "currency": {
+                    "type": "string",
+                    "const": "CAD"
+                  },
+                  "provinceOfEmployment": {
+                    "type": "string",
+                    "enum": [
+                      "AB",
+                      "BC",
+                      "MB",
+                      "NB",
+                      "NL",
+                      "NS",
+                      "NT",
+                      "NU",
+                      "ON",
+                      "PE",
+                      "SK",
+                      "YT"
+                    ]
+                  },
+                  "paymentKind": {
+                    "type": "string",
+                    "enum": [
+                      "regular_salary_or_wages",
+                      "standalone_non_periodic"
+                    ]
+                  },
+                  "payPeriodsPerYear": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "cppPensionableMonths": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 12
+                  },
+                  "pensionableEarnings": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "pensionableEarningsYtd": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "employeeCppYtd": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "employeeCpp2Ytd": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "insurableEarnings": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "employeeEiYtd": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "employerEiPlan": {
+                    "type": "string",
+                    "const": "standard_1_4"
+                  },
+                  "noQuebecTransfer": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "sameEmployerYtdConfirmed": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "eligibilityReview": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "taxYear",
+                  "currency",
+                  "provinceOfEmployment",
+                  "paymentKind",
+                  "payPeriodsPerYear",
+                  "cppPensionableMonths",
+                  "pensionableEarnings",
+                  "pensionableEarningsYtd",
+                  "employeeCppYtd",
+                  "employeeCpp2Ytd",
+                  "insurableEarnings",
+                  "employeeEiYtd",
+                  "employerEiPlan",
+                  "noQuebecTransfer",
+                  "sameEmployerYtdConfirmed",
+                  "eligibilityReview"
                 ],
                 "additionalProperties": false
               }

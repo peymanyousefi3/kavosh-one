@@ -4,7 +4,8 @@ import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { permissionScope,propose,master,lockApprovalWrites,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Capability,type Scope } from '../core/policy.ts';
 import { calculateNetPay,netPayDefinition,type NetPayDefinition } from '../core/net-pay-plan.ts';
-import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
+import { formatMoneyTotal,readMinorUnits,parseMoney } from '../core/money.ts';
+import { canadianContributionsInput,calculateCanadianContributions } from '../core/canadian-payroll-contributions.ts';
 import { authorizedPayrun,authorizePayrunSources } from './payruns.ts';
 export { run as authorizedNetPayRun };
 
@@ -47,7 +48,14 @@ export const payrunNetActions:ApprovalRegistry={'work.payrun-net.change':{
 }};
 export async function payrunNet(ctx:ApiContext,registry:ApprovalRegistry=payrunNetActions):Promise<Reply|null>{
  if(ctx.path==='payroll/net-statements')return netDirectory(ctx);
- const m=/^payroll\/payruns\/([^/]+)\/net(?:\/(history))?$/.exec(ctx.path);if(!m)return null;const id=uuid.parse(m[1]),params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=Object.fromEntries(params);
+ const m=/^payroll\/payruns\/([^/]+)\/net(?:\/(history|contributions-preview))?$/.exec(ctx.path);if(!m)return null;const id=uuid.parse(m[1]),params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=Object.fromEntries(params);
+ if(m[2]==='contributions-preview'){
+  if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(q);const input=canadianContributionsInput.parse(await jsonBody(ctx.request,16384));await lockApprovalWrites(ctx);const r=await run(ctx,id);await ctx.db.query('SELECT public.lock_hourly_worker($1)',[r.person_id]);
+  const s=(await ctx.db.query<{source:Source}>('SELECT public.payrun_net_source($1) source',[id])).rows[0].source;if(!s||s.cancellationId||!s.recordedSourcesCurrent)throw new ApiError(409,'PAYRUN_CONTRIBUTION_SOURCE_UNAVAILABLE');
+  const currency=(await ctx.db.query<{code:string}>('SELECT code FROM public.finance_currencies WHERE id=$1',[s.currencyId])).rows[0];if(currency?.code!=='CAD'||s.unitScale!==2)throw new ApiError(409,'CAD_PAYRUN_REQUIRED');if(!r.planned_pay_on.startsWith('2026-'))throw new ApiError(409,'PAYRUN_CONTRIBUTION_YEAR_UNSUPPORTED');
+  const gross=readMinorUnits(s.grossMinor);if(parseMoney(input.pensionableEarnings,2)>gross||parseMoney(input.insurableEarnings,2)>gross)throw new ApiError(400,'CONTRIBUTION_EARNINGS_EXCEED_RECORDED_GROSS');
+  return {status:200,body:{data:{runId:id,sourceSha256:s.runSourceSha256,plannedPayOn:r.planned_pay_on,gross:formatMoneyTotal(gross,2),...calculateCanadianContributions(input),employmentClassificationVerified:false,periodCompletenessVerified:false,cppExemptionAlreadyUsedThisPayPeriodChecked:false,nonCashBenefitsSupported:false,actualPaymentDateVerified:false,inputBasis:'explicit_reviewed_scenario_not_persisted_ytd_or_tax_profile',netStatementPrepared:false}}};
+ }
  if(ctx.request.method==='POST'){if(m[2])throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(q);const i=change.parse(await jsonBody(ctx.request,65536));return propose(ctx,registry,'work.payrun-net.change',id,i.expectedVersion,i);}
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');await lockApprovalWrites(ctx);await run(ctx,id,!!m[2]);
  if(m[2]){const i=history.parse(q),rows=(await ctx.db.query<Revision>('SELECT version,state,definition,amounts,changed_by,approval_id,reason,created_at::text FROM public.payrun_net_revisions WHERE run_id=$1 AND version>$2 ORDER BY version LIMIT $3',[id,i.afterVersion,i.limit+1])).rows;return {status:200,body:{data:rows.slice(0,i.limit),nextVersion:rows.length>i.limit?rows[i.limit-1].version:null}};}
@@ -67,6 +75,7 @@ async function netDirectory(ctx:ApiContext):Promise<Reply>{
  return {status:200,body:{data:rows.slice(0,i.limit).map(({amounts,...r})=>({...r,amounts:displayAmounts(amounts,r.unitScale),retained:true,statementReviewed:true,payoutReady:false,paymentExecuted:false,isOfficialPaystub:false})),nextCursor:rows.length>i.limit?rows[i.limit-1].runId:null,coverage:'permitted_current_manual_statement_revisions_only',statutoryRulesCalculated:false,additionalLedgerPosting:false}};
 }
 export const payrunNetContract=[
+ {path:'/api/v1/payroll/payruns/{id}/net/contributions-preview',method:'post',summary:'Source-authorized read-only 2026 CPP/CPP2 and standard EI salary/wage scenario outside Quebec: exact cents,explicit reviewed same-employer YTD and pensionable months,regular versus standalone non-periodic exemption;current CAD2 gross/year/source bound. No income tax,classification certification,persisted YTD,automatic statement,ledger posting or payment.',schema:canadianContributionsInput,readOnly:true},
  {path:'/api/v1/payroll/net-statements',method:'get',summary:'Current private net-statement directory with worker/hub/currency/state/run-status filters and whole-source permissions applied before pagination. Summaries exclude review definitions and legal authority references;not a payment register or statutory/paystub certification.',querySchema:directory},
  {path:'/api/v1/payroll/payruns/{id}/net',method:'get',summary:'Private current or historical reviewed manual net-pay statement;source-current status is not statutory validation,paystub or payment clearance',querySchema:read},
  {path:'/api/v1/payroll/payruns/{id}/net',method:'post',summary:'Upper-human-reviewed manual net statement preparation,correction or withdrawal;exact source pins and immutable history without additional ledger posting or payment execution',schema:change},
