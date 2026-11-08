@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('signing evidence decisions require human attestations and grant references,not client actor admission or cryptographic-verification fields',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/signature-send-requests/{id}/completion-evidence/{evidenceId}/review',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);assert.equal(s.additionalProperties,false);for(const key of ['requestedBy','evidenceId','requestId','source','admissionCleared','cryptographicValidityVerified'])assert.equal(s.properties[key],undefined);assert.ok(s.properties.signedAt);assert.ok(s.properties.documentGrantId);assert.ok(s.properties.auditGrantId);assert.ok(api.paths[path].get);assert.ok(api.paths[path+'/history'].get);assert.equal(api.paths[path+'/history'].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,20);
+});
 test('private signing document and audit attachment APIs are human-only with no artifact hash credential or admission override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const kind of ['document','audit']){const op=api.paths['/api/v1/signature-send-requests/{id}/completion-evidence/{evidenceId}/'+kind+'/download-link'].post;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);const schema=op.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(schema.properties),['routeId']);assert.equal(schema.additionalProperties,false);assert.match(op.summary,/explicitly upper-reviewed signedEvidence/);assert.match(op.summary,/not admission/);}
 });
