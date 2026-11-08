@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.185.0",
+    "version": "0.186.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -8178,7 +8178,7 @@
     },
     "/api/v1/community/profiles": {
       "get": {
-        "summary": "Scoped private administrative person/hub profile drafts before paging; names are explicitly authored content,not copied legal data; no bios,links or edit reasons in summaries,no community/public publication",
+        "summary": "Scoped private administrative school/person/hub identity and branding drafts before paging; school scope requires full profile authority; names are authored content,not copied legal data; no bios,links or edit reasons in summaries,no community/public publication",
         "parameters": [
           {
             "name": "limit",
@@ -8208,6 +8208,7 @@
             "schema": {
               "type": "string",
               "enum": [
+                "academy",
                 "person",
                 "hub"
               ]
@@ -8273,7 +8274,7 @@
         }
       },
       "post": {
-        "summary": "Create one private person/hub content draft with explicit EN/FR/zh-CN text and normalized HTTPS GitHub/LinkedIn profile links; no external request,public URL,verified resume,consent or school achievement authority",
+        "summary": "Create one private school/person/hub identity draft with EN/FR/zh-CN text,existing same-owner private image references and normalized HTTPS GitHub/LinkedIn links; school anchor always means current academy,never a supplied tenant; canonical hub contact/location data stay in hubs; no external request,public URL,legal-name change,consent or automatic visual rebranding",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -8290,6 +8291,19 @@
                 "properties": {
                   "anchor": {
                     "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "academy"
+                          }
+                        },
+                        "required": [
+                          "kind"
+                        ],
+                        "additionalProperties": false
+                      },
                       {
                         "type": "object",
                         "properties": {
