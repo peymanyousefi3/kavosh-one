@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.241.0",
+    "version": "0.242.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -47321,7 +47321,7 @@
     },
     "/api/v1/received-sessions/{id}": {
       "get": {
-        "summary": "Read current session timing/delivery under class-view rights or approved own/guardian relationship plus effective enrollment and received-calendar permission; no peer roster or private profiles; canceled/inactive sessions do not expose meeting links",
+        "summary": "Read session timing under class-view rights or verified own/guardian relationship,effective enrollment and received-calendar scope. Family meeting links additionally require current accepted Live agreement evidence,not retrospective attendance recognition;unsigned families retain calendar/reminders but no meeting link. Authorized class managers remain independent of student paperwork. Canceled/inactive sessions hide links;no peer roster or private profiles.",
         "parameters": [
           {
             "name": "id",

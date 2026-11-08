@@ -35,3 +35,12 @@ test('actual210to211 preserves observations reviews grants and the previous priv
   for(const role of ['kavosh_signature_evidence_worker','kavosh_signature_completion_worker','kavosh_file_worker','kavosh_identity','kavosh_delivery']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.enrollment_agreement_clearance($1,$2::timestamptz)',[randomUUID(),'2027-01-01T15:00:00Z']),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
  }finally{await f.pg.close();}
 });
+
+test('actual211to212 preserves recognition history and calendar metadata policy while adding only a private meeting gate',async()=>{
+ const f=await operationsFixture({throughSchema:211});try{
+  const snapshot="SELECT jsonb_build_object('permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY role_id,capability) FROM public.role_permissions p),'reviews',(SELECT jsonb_agg(to_jsonb(p) ORDER BY evidence_id) FROM public.signature_completion_reviews p),'attendance',(SELECT jsonb_agg(to_jsonb(p) ORDER BY session_id) FROM public.session_attendance p)) snapshot",before=(await f.pg.query(snapshot)).rows,functions="SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid IN('public.enrollment_agreement_clearance(uuid,timestamptz)'::regprocedure,'public.session_calendar_person(uuid,uuid,jsonb)'::regprocedure) ORDER BY oid",original=(await f.pg.query(functions)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/212_private_session_meeting_clearance.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,212);assert.deepEqual((await f.pg.query(snapshot)).rows,before);assert.deepEqual((await f.pg.query(functions)).rows,original);
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);await f.pg.exec('SET ROLE kavosh_runtime');assert.equal((await f.pg.query('SELECT public.session_calendar_meeting_allowed($1,$2,$3::jsonb) allowed',[randomUUID(),f.actors.staff.person,JSON.stringify({all:true,hubs:[]})])).rows[0].allowed,false);await f.pg.exec('RESET ROLE');
+  for(const role of ['kavosh_identity','kavosh_delivery','kavosh_file_worker','kavosh_signature_evidence_worker']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.session_calendar_meeting_allowed($1,$2,$3::jsonb)',[randomUUID(),f.actors.staff.person,'{}']),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
+ }finally{await f.pg.close();}
+});
