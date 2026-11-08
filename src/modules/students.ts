@@ -42,14 +42,9 @@ async function validateRecruiter(ctx:ApiContext,value:z.infer<typeof recruiter>)
   const scope=permissionScope(ctx,'hubs.view');requireScope(scope,value.id);
   if(!(await ctx.db.query('SELECT 1 FROM public.hubs WHERE id=$1 FOR SHARE',[value.id])).rows.length)throw new ApiError(400,'INVALID_REFERENCE');
 }
-async function save(ctx:ApiContext,id?:string):Promise<Reply> {
-  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
-  const input=id?updateInput.parse(await jsonBody(ctx.request)):createInput.parse(await jsonBody(ctx.request));
-  const target=id??('personId' in input?input.personId:'');
-  await lockAcademyTopology(ctx);const person=await permittedPerson(ctx,target,'students.edit',true);
-  return mutation(ctx,input,async()=>{
-    const before=id?await profile(ctx,target,true):null;
-    if(before&&before.version!==('expectedVersion' in input?input.expectedVersion:0))throw new ApiError(409,'TARGET_CHANGED');
+export const studentCorrectionFields=z.object({legalName:updateInput.shape.legalName,preferredName:updateInput.shape.preferredName,dateOfBirth:updateInput.shape.dateOfBirth,shirtSize:updateInput.shape.shirtSize}).strict().refine(v=>Object.keys(v).length>0).refine(v=>Object.values(v).every(x=>x===null||x===undefined||x.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(x)));
+export { profile as studentProfileRecord };
+export async function writeStudentProfile(ctx:ApiContext,target:string,before:Profile|null,input:z.infer<typeof createInput>|z.infer<typeof updateInput>,person:{hub_id:string|null}):Promise<Reply>{
     const recruited=input.recruiter??{kind:before!.recruiter_kind,...before?.recruiter_kind==='hub'?{id:before.recruiter_hub_id!}:before?.recruiter_kind==='person'?{id:before.recruiter_person_id!}:{}} as z.infer<typeof recruiter>;
     if(input.recruiter)await validateRecruiter(ctx,input.recruiter);
     const body={legalName:input.legalName??before!.legal_name,preferredName:input.preferredName===undefined?before!.preferred_name:input.preferredName,
@@ -64,6 +59,17 @@ async function save(ctx:ApiContext,id?:string):Promise<Reply> {
     await record(ctx.db,ctx.credential,ctx.requestId,before?'student.profile.updated':'student.profile.created',target,person.hub_id,
       {beforeVersion:before?.version??null,afterVersion:after.version,fields:Object.keys(input).filter(k=>!['personId','expectedVersion','reason'].includes(k)),hasReason:Boolean(input.reason)});
     return {status:before?200:201,body:{data:{personId:target,version:after.version}}};
+}
+
+async function save(ctx:ApiContext,id?:string):Promise<Reply> {
+  z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
+  const input=id?updateInput.parse(await jsonBody(ctx.request)):createInput.parse(await jsonBody(ctx.request));
+  const target=id??('personId' in input?input.personId:'');
+  await lockAcademyTopology(ctx);const person=await permittedPerson(ctx,target,'students.edit',true);
+  return mutation(ctx,input,async()=>{
+    const before=id?await profile(ctx,target,true):null;
+    if(before&&before.version!==('expectedVersion' in input?input.expectedVersion:0))throw new ApiError(409,'TARGET_CHANGED');
+    return writeStudentProfile(ctx,target,before,input,person);
   });
 }
 export async function students(ctx:ApiContext):Promise<Reply|null> {

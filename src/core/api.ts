@@ -202,6 +202,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
       if(request.method==='POST'&&/^bots\/[0-9a-f-]{36}\/credentials\/[0-9a-f-]{36}\/revoke$/i.test(path))securityRevocation=true;
+      if(request.method==='POST'&&/^students\/[0-9a-f-]{36}\/registration-data\/corrections\/[0-9a-f-]{36}\/withdraw$/i.test(path))securityRevocation=true;
       if(status==='read_only'&&request.method==='POST'&&/^community\/profiles\/[0-9a-f-]{36}\/moderation$/i.test(path))securityRevocation=z.object({restricted:z.literal(true)}).passthrough().safeParse(await jsonBody(request.clone())).success;
       if(status==='read_only'&&request.method==='POST'&&/^people\/[0-9a-f-]{36}\/status$/i.test(path))securityRevocation=z.object({enabled:z.literal(false)}).passthrough().safeParse(await jsonBody(request.clone())).success;
       // Read-only schools may cancel access secrets,not issue new invitations

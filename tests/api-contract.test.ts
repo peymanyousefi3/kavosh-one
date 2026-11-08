@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family registration API is human-only and cannot submit recruiter care finance identity flags or another actor',()=>{
+ const reference=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),withdraw=reference.paths['/api/v1/students/{id}/registration-data/corrections/{correctionId}/withdraw'].post;assert.deepEqual(withdraw.security,[{humanSession:[],academySelection:[]}]);assert.deepEqual(Object.keys(withdraw.requestBody.content['application/json'].schema.properties).sort(),['expectedVersion','reason']);
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/registration-data';for(const [p,method] of [[path,'get'],[path+'/corrections','post'],[path+'/corrections','get']])assert.deepEqual(api.paths[p][method].security,[{humanSession:[],academySelection:[]}]);const s=api.paths[path+'/corrections'].post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(s.properties).sort(),['changes','expectedVersion','reason']);assert.equal(s.additionalProperties,false);assert.equal(s.properties.expectedVersion.maximum,2147483646);assert.deepEqual(Object.keys(s.properties.changes.properties).sort(),['dateOfBirth','legalName','preferredName','shirtSize']);assert.equal(s.properties.changes.additionalProperties,false);
+});
+
 test('central profile moderation filters are explicit optional choices without default publication or status inference',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),parameters=api.paths['/api/v1/community/profiles'].get.parameters;for(const name of ['includeModeration','restricted']){const p=parameters.find((v:any)=>v.name===name);assert.equal(p.required,false);assert.deepEqual(p.schema.enum,['true','false']);assert.equal(Object.hasOwn(p.schema,'default'),false);}
 });

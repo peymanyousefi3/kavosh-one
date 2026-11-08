@@ -174,6 +174,15 @@ function proposalView(p:Proposal) {
 }
 
 
+// Callers must authorize the currently visible record;ownership is also in SQL.
+export async function withdrawOwnProposal(ctx:ApiContext,p:Proposal,input:z.infer<typeof withdrawInput>,protectedReason?:{stored:string;public:string;commitment:string}):Promise<Reply>{
+ const {db,credential:c}=ctx,id=p.id;if(p.requester_id!==c.person_id)throw new ApiError(403,'REQUESTER_REQUIRED');
+ return mutation(ctx,protectedReason?{...input,reason:protectedReason.commitment}:input,async()=>{
+  const updated=await db.query("UPDATE public.approval_requests SET status='withdrawn',version=version+1,reason=$3,decided_at=now() WHERE id=$1 AND version=$2 AND status='pending' AND requester_id=$4 AND academy_id=$5 RETURNING id",[id,input.expectedVersion,protectedReason?.stored??input.reason,c.person_id,c.academy_id]);if(!updated.rows.length)throw new ApiError(409,'APPROVAL_CHANGED');
+  await record(db,c,ctx.requestId,'approval.withdrawn',id,null,p.privacy_capability?{hasReason:true}:{reason:input.reason});return {status:200,body:{approval:{id,status:'withdrawn',version:input.expectedVersion+1}}};
+ });
+}
+
 export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):Promise<Reply|null> {
   const {request,path,db,credential:c}=ctx;
   if(path!=='approvals'&&!path.startsWith('approvals/'))return null;
@@ -207,12 +216,7 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
       if(p.requester_id!==c.person_id)throw new ApiError(403,'REQUESTER_REQUIRED');
       const input=withdrawInput.parse(await jsonBody(request));
       const protectedReason=Object.hasOwn(registry,p.action)?await registry[p.action].protectReason?.(ctx,p,input.reason,'withdraw'):undefined;
-      return mutation(ctx,protectedReason?{...input,reason:protectedReason.commitment}:input,async()=>{
-        const updated=await db.query("UPDATE public.approval_requests SET status='withdrawn',version=version+1,reason=$3,decided_at=now() WHERE id=$1 AND version=$2 AND status='pending' RETURNING id",[id,input.expectedVersion,protectedReason?.stored??input.reason]);
-        if(!updated.rows.length)throw new ApiError(409,'APPROVAL_CHANGED');
-        await record(db,c,ctx.requestId,'approval.withdrawn',id,null,p.privacy_capability?{hasReason:true}:{reason:input.reason});
-        return {status:200,body:{approval:{id,status:'withdrawn',version:input.expectedVersion+1}}};
-      });
+      return withdrawOwnProposal(ctx,p,input,protectedReason);
     }
   }
 
