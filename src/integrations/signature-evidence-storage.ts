@@ -4,21 +4,21 @@ import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 import { r2Connection,r2TargetId,type R2Connection } from './r2-config.ts';
 import { privateR2 } from './r2.ts';
-import { signatureCompletionSourceSchema,type SignatureCompletionArtifacts } from './boldsign-completion.ts';
+import { signatureCompletionSourceSchema,workSignatureCompletionSourceSchema,type SignatureCompletionArtifacts } from './boldsign-completion.ts';
 
 const kinds=['document','audit','properties'] as const,hash=(value:Uint8Array|string)=>createHash('sha256').update(value).digest('hex');
 const options=z.object({targetId:z.string().regex(/^[a-f0-9]{64}$/),timeoutMs:z.number().int().min(1).max(30000).default(30000),signal:z.instanceof(AbortSignal).optional()}).strict();
 let active=0;
-function artifactId(academy:string,start:string,source:string,kind:string,sha256:string){
- const hex=hash(JSON.stringify(['kavosh-signature-evidence-v1',academy,start,source,kind,sha256])).slice(0,32).split('');hex[12]='8';hex[16]=((Number.parseInt(hex[16],16)&3)|8).toString(16);const s=hex.join('');return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;
+function artifactId(purpose:'unified_enrollment'|'worker_services',academy:string,start:string,source:string,kind:string,sha256:string){
+ const hex=hash(JSON.stringify([purpose==='worker_services'?'kavosh-work-signature-evidence-v1':'kavosh-signature-evidence-v1',academy,start,source,kind,sha256])).slice(0,32).split('');hex[12]='8';hex[16]=((Number.parseInt(hex[16],16)&3)|8).toString(16);const s=hex.join('');return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;
 }
 // Internal opt-in IO,not an authorization/admission/legal/malware boundary.
 // Operator must provide a separately scoped NON-PUBLIC evidence bucket/key;
 // real IAM/public-access/retention settings require deployment verification.
 // Never infer this configuration from browser input or normal upload readers.
 // Partial/unknown writes remain protected artifacts for recovery,not deletion.
-export async function retainSignatureEvidence(configuration:R2Connection,rawSource:unknown,evidence:SignatureCompletionArtifacts,rawOptions:z.input<typeof options>,handler?:S3ClientConfig['requestHandler']){
- const config=r2Connection.safeParse(configuration),source=signatureCompletionSourceSchema.safeParse(rawSource),settings=options.safeParse(rawOptions);
+async function retainEvidence(purpose:'unified_enrollment'|'worker_services',configuration:R2Connection,rawSource:unknown,evidence:SignatureCompletionArtifacts,rawOptions:z.input<typeof options>,handler?:S3ClientConfig['requestHandler']){
+ const config=r2Connection.safeParse(configuration),source=(purpose==='worker_services'?workSignatureCompletionSourceSchema:signatureCompletionSourceSchema).safeParse(rawSource),settings=options.safeParse(rawOptions);
  if(!config.success||!source.success||!settings.success)throw new ApiError(400,'INVALID_SIGNATURE_EVIDENCE_STORAGE');
  const c=config.data,s=source.data,o=settings.data;if(r2TargetId(c)!==o.targetId)throw new ApiError(400,'SIGNATURE_EVIDENCE_TARGET_MISMATCH');
  if(o.signal?.aborted)throw new ApiError(503,'SIGNATURE_EVIDENCE_INTERRUPTED');if(active>=2)throw new ApiError(503,'SIGNATURE_EVIDENCE_BUSY');
@@ -34,7 +34,7 @@ export async function retainSignatureEvidence(configuration:R2Connection,rawSour
  const run=async()=>{
   const receipt={sourceFingerprint:s.sourceFingerprint} as {sourceFingerprint:string}&Record<typeof kinds[number],{id:string;sha256:string;sizeBytes:number}>,etags={} as Record<typeof kinds[number],string>;
   for(const kind of kinds){
-   if(abort.signal.aborted)throw Error();const a=snapshots[kind],id=artifactId(s.academyId,s.startId,s.sourceFingerprint,kind,a.sha256);
+   if(abort.signal.aborted)throw Error();const a=snapshots[kind],id=artifactId(purpose,s.academyId,s.startId,s.sourceFingerprint,kind,a.sha256);
    try{
     writeAttempted=true;
     // Atomic create-once,including concurrent recovery attempts. No overwrite,
@@ -58,3 +58,5 @@ export async function retainSignatureEvidence(configuration:R2Connection,rawSour
  catch(e){if(e instanceof ApiError&&['FILE_HASH_MISMATCH','FILE_SIZE_MISMATCH'].includes(e.code))throw new ApiError(409,'SIGNATURE_EVIDENCE_STORED_BYTES_MISMATCH');throw new ApiError(503,writeAttempted?'SIGNATURE_EVIDENCE_OUTCOME_UNKNOWN':'SIGNATURE_EVIDENCE_INTERRUPTED');}
  finally{clearTimeout(timer);o.signal?.removeEventListener('abort',cancel);abort.abort();reader.close();writer.destroy();}
 }
+export const retainSignatureEvidence=(configuration:R2Connection,source:unknown,evidence:SignatureCompletionArtifacts,settings:z.input<typeof options>,handler?:S3ClientConfig['requestHandler'])=>retainEvidence('unified_enrollment',configuration,source,evidence,settings,handler);
+export const retainWorkSignatureEvidence=(configuration:R2Connection,source:unknown,evidence:SignatureCompletionArtifacts,settings:z.input<typeof options>,handler?:S3ClientConfig['requestHandler'])=>retainEvidence('worker_services',configuration,source,evidence,settings,handler);
