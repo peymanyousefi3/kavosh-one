@@ -7,6 +7,7 @@ import { ApiError } from './policy.ts';
 const code=z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/),money=t4PaymentAllocation.shape.taxableEarnings;
 export const t4SupplementalDeclaration=z.object({
  provinceOfEmployment:t4PaymentAllocation.shape.provinceOfEmployment,
+ reportingAccountId:z.string().uuid().transform(v=>v.toLowerCase()).optional(),
  deductionAllocations:z.array(z.object({sourceCode:code,reportingBox:z.enum(['20','44','46']),amount:money}).strict()).max(100).refine(a=>new Set(a.map(v=>v.sourceCode+':'+v.reportingBox)).size===a.length),
  unionReceiptAgreementConfirmed:z.boolean(),pensionAdjustmentDollars:z.string().max(38).regex(/^(0|[1-9][0-9]*)$/),
  planRegistrationNumber:z.string().regex(/^[0-9]{7}$/).nullable(),pensionAdjustmentEligibilityReviewed:z.boolean(),sourceReference:paidTaxDefinition.shape.review
