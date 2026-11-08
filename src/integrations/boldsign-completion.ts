@@ -15,6 +15,7 @@ export type SignatureCompletionSource=z.infer<typeof expected>;
 type Expected=SignatureCompletionSource;
 type Projection=Awaited<ReturnType<typeof getBoldSignCompletionDocument>>['properties'];
 type Artifact={bytes:Buffer;sha256:string;sizeBytes:number};
+export type SignatureCompletionArtifacts={document:Artifact;audit:Artifact;properties:Artifact};
 type Services={
  fetch?:typeof fetch;
  // Must compare to ORIGINAL private dispatch history,not current contacts or
@@ -22,7 +23,7 @@ type Services={
  matchSigner:(source:Expected,observed:{name:string;email:string;phone:string|null})=>Promise<{nameMatches:boolean;emailMatches:boolean;phoneMatches:boolean}|null>;
  // Required separately configured PRIVATE durable evidence storage. Merely
  // returning PDF hashes is not retention. No public URLs in its receipt.
- retain:(source:Expected,evidence:{document:Artifact;audit:Artifact;properties:Artifact},signal:AbortSignal)=>Promise<z.input<typeof retained>>;
+ retain:(source:Expected,evidence:SignatureCompletionArtifacts,signal:AbortSignal)=>Promise<z.input<typeof retained>>;
 };
 let active=0;
 function phone(value:Projection['signerDetails'][number]['phoneNumber']){

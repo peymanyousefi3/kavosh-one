@@ -25,7 +25,7 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     credentials:{accessKeyId:c.accessKeyId,secretAccessKey:c.secretAccessKey},requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED',
     ...(handler?{requestHandler:handler}:{})});
   let closed=false;
-  function key(stage:'quarantine'|'clean',fileId:string) {
+  function key(stage:'quarantine'|'clean'|'signature-evidence',fileId:string) {
     if(closed)throw new ApiError(503,'R2_CONNECTION_CLOSED');
     const id=uuid.safeParse(fileId);if(!id.success)throw new ApiError(400,'INVALID_FILE_ID');
     return `academies/${academy.data}/${stage}/${id.data}`;
@@ -39,7 +39,7 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     if(end<=Date.now())throw new ApiError(410,'FILE_LINK_EXPIRED');
     return {expiresIn:value,signingDate,expiresAt:new Date(end).toISOString()};
   }
-  async function inspectStored<T>(stage:'quarantine'|'clean',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
+  async function inspectStored<T>(stage:'quarantine'|'clean'|'signature-evidence',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
       const objectKey=key(stage,fileId),input=inspectionClaims.safeParse(claims);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
       if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>600000)throw new ApiError(400,'INVALID_INSPECTION_TIMEOUT');
@@ -82,6 +82,9 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     // Optional lifecycle observer lets buffering callers retain admission until
     // actual IO/inspection settlement,not merely a timeout's early rejection.
     inspectClean<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('clean',fileId,claims,inspect,timeoutMs,signal,observeResources);},
+    // Internal evidence worker only. There is deliberately no evidence upload
+    // link/download-link method and no route grants access to this namespace.
+    inspectSignatureEvidence<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=30000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('signature-evidence',fileId,claims,inspect,timeoutMs,signal,observeResources);},
     async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300,issuedAt?:string) {
       const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300,issuedAt);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_UPLOAD_METADATA');
