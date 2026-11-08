@@ -99,7 +99,7 @@ async function fixture() {
   }
   const database:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
     async query<Row>(sql:string,params?:unknown[]){const result=await pg.query<Row>(sql,params);return {rows:result.rows,rowCount:result.affectedRows};},release(){}};}};
-  const api=createApi(database,humanResolver(auth,store,config),businessRoutes);
+  const api=createApi(database,humanResolver(auth,store,config),ctx=>businessRoutes(ctx,undefined,undefined,{invitationSecret:config.secret}));
   const platformDatabase:Database={async connect(){
     if(pg.runtime){const c=await pg.runtime.connect();await c.query('SET ROLE kavosh_platform_service');return c;}
     await pg.exec('SET ROLE kavosh_platform_service');return{query:async<Row>(sql:string,params?:unknown[])=>pg.query<Row>(sql,params),release(){}};
@@ -203,6 +203,24 @@ test('human identity: real library authentication and protected business access'
       assert.equal((await f.platform(master,path,input,key)).response.status,409,'completed onboarding must not reissue a cached secret');
       const ordinaryJar=new Map<string,string>();await f.signin(regular,ordinaryJar);assert.equal((await f.platform({jar:ordinaryJar},'academies')).response.status,403);
       assert.equal((await f.request('/sign-out',{},ordinaryJar)).response.status,200);
+    });
+    await t.test('school invitation completes real ordinary-account verification and preserves preapproved hub-only role access',async()=>{
+      const email='school-invited@example.test',hub=(await(await f.business(master,'hubs',{name:'Invited hub',city:'Toronto',countryCode:'CA'})).json()).data.id;
+      await f.business(master,'hubs',{name:'Other hub',city:'Toronto',countryCode:'CA'});
+      const person=(await(await f.business(master,'people',{name:'Invited ordinary person',email,hubId:hub})).json()).data.id;
+      const role=await f.business(master,'roles',{name:'Invited hub reader',description:'Scoped invitation fixture',permissions:[{capability:'hubs.view',effect:'allow'}]});assert.equal(role.status,201);const roleId=(await role.json()).data.id;
+      const priorAccess=(await(await f.business(master,'people/'+person+'/access')).json()).data;
+      const access=await f.business(master,'people/'+person+'/access',{expectedVersion:priorAccess.version,assignments:[{roleId,allHubs:false,hubIds:[hub]}]});assert.equal(access.status,200);
+      const eligible=await f.business(master,'invitations/people/'+person);assert.equal(eligible.status,200);const detail=(await eligible.json()).data;
+      const prepared=await f.business(master,'invitations',{personId:person,expectedPersonVersion:detail.version,reason:'Invite preapproved hub reader'});assert.equal(prepared.status,201);const id=(await prepared.json()).data.id;
+      const issued=await f.business(master,'invitations/'+id+'/token',{});assert.equal(issued.status,201,await issued.clone().text());const token=(await issued.json()).data.privateInvitation;
+      const newcomer={id:'',email,person,academy:master.academy,token,phone:'+16475550998',jar:new Map<string,string>()};
+      await f.signup(newcomer);await f.verifyEmail(newcomer);await f.signin(newcomer);assert.equal((await f.business(newcomer)).status,401);
+      await f.phone(newcomer);assert.equal((await f.signin(newcomer)).body.twoFactorRedirect,undefined);
+      assert.equal((await f.request('/accept-invitation',{invitation:token},newcomer.jar)).response.status,200);
+      const hubs=await f.business(newcomer);assert.equal(hubs.status,200);assert.deepEqual((await hubs.json()).data.map((h:{id:string})=>h.id),[hub]);
+      assert.equal((await f.business(newcomer,'invitations/'+id+'/token',{})).status,404);
+      const completed=(await(await f.business(master,'invitations/'+id)).json()).data;assert.equal(completed.issue.status,'consumed');assert.equal(completed.source_current,false);
     });
     await t.test('human API reuses tenant scope, role denial and audit; master identity cannot transfer',async()=>{
       const created=await f.business(master,'hubs',{name:'Synthetic hub',city:'Toronto',countryCode:'CA'});

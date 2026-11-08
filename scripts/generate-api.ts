@@ -6,7 +6,7 @@ import { boldSignWebhookBody } from '../src/integrations/boldsign-inbox.ts';
 import { platformContract } from '../src/platform/api.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.178.0';
+api.info.version='0.179.0';
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
 api.components.securitySchemes.humanSession={type:'apiKey',in:'cookie',name:'__Secure-kavosh.session_token',description:'Opaque HttpOnly signed cookie set by login/MFA, never read or stored by frontend JavaScript. Local HTTP development uses kavosh.session_token.'};
@@ -32,7 +32,7 @@ for(const endpoint of businessContract) {
     const query=z.toJSONSchema(endpoint.querySchema,{io:'input'});
     for(const [name,schema] of Object.entries(query.properties??{}))parameters.push({name,in:'query',required:query.required?.includes(name)??false,schema});
   }
-  const operation={summary:endpoint.summary,parameters,
+  const operation={summary:endpoint.summary,parameters,...('humanOnly'in endpoint&&endpoint.humanOnly?{security:[{humanSession:[],academySelection:[]}]}:{}),
     description:'Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.',
     ...('schema' in endpoint&&endpoint.schema?{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(endpoint.schema,{io:'input'})}}}}:{}),
     responses:{'200':{description:'Current data or applied change',...('responseContentType' in endpoint?{content:{[endpoint.responseContentType]:{schema:{type:'string'}}}}:{})},'201':{description:'Created within granted rights or master self-approval'},'202':{description:'acceptedDescription' in endpoint?endpoint.acceptedDescription:'Pending upper approval; domain change NOT applied'},default:{$ref:'#/components/responses/error'}}};

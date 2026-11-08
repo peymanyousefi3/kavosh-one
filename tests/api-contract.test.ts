@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('private invitation handoff documents human-only academy authentication,not bot credentials',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
+ assert.deepEqual(api.paths['/api/v1/invitations/{id}/token'].post.security,[{humanSession:[],academySelection:[]}]);
+ assert.ok(api.paths['/api/v1/invitations'].post.requestBody.required);
+});
+
 test('committed API reference is byte-exact generator output with sorted paths,without rewriting files',()=>{
  const target=new URL('../public/openapi.json',import.meta.url),generator=new URL('../scripts/generate-api.ts',import.meta.url);
  // Observe the real generator output;do not turn a stale checked-in artifact
