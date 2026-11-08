@@ -10,7 +10,9 @@ const signatureField=z.object({id:z.string().min(1).max(200),pageNumber:z.number
 const expected=z.object({academyId:uuid,startId:uuid,signerId:uuid,documentId:uuid,packageId:uuid,attachmentId:uuid,bindingId:uuid,documentSha256:hash,sourceFingerprint:hash,region:z.enum(['US','CA','EU','AU']),signatureFields:z.array(signatureField).min(1).max(100).refine(v=>new Set(v.map(f=>f.id)).size===v.length)}).strict();
 const artifact=z.object({id:uuid,sha256:hash,sizeBytes:z.number().int().min(1).max(10485760)}).strict();
 const retained=z.object({sourceFingerprint:hash,document:artifact,audit:artifact,properties:artifact}).strict();
-type Expected=z.infer<typeof expected>;
+export const signatureCompletionSourceSchema=expected;
+export type SignatureCompletionSource=z.infer<typeof expected>;
+type Expected=SignatureCompletionSource;
 type Projection=Awaited<ReturnType<typeof getBoldSignCompletionDocument>>['properties'];
 type Artifact={bytes:Buffer;sha256:string;sizeBytes:number};
 type Services={
