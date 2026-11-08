@@ -12,6 +12,9 @@ test('private invitation handoff documents human-only academy authentication,not
 test('worker pay statement archive documents human-only academy authentication,not administrative bot access',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/{id}','/{id}/history'])assert.deepEqual(api.paths['/api/v1/me/pay-statements'+suffix].get.security,[{humanSession:[],academySelection:[]}]);
 });
+test('bot private key handoff and revocation document human-only authentication while preparations remain scoped API operations',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/bot-credential-requests/{id}/token','/api/v1/bots/{id}/credentials/{credentialId}/revoke']){assert.deepEqual(api.paths[path].post.security,[{humanSession:[],academySelection:[]}]);assert.deepEqual(api.paths[path].post.requestBody.content['application/json'].schema.additionalProperties,false);}assert.equal(api.paths['/api/v1/bots/{id}/credentials'].post.requestBody.content['application/json'].schema.properties.capabilities.maxItems,1000);assert.equal(api.paths['/api/v1/bots/{id}/credentials/issued'].get.parameters.find((p:{name:string})=>p.name==='limit').schema.maximum,100);
+});
 
 test('committed API reference is byte-exact generator output with sorted paths,without rewriting files',()=>{
  const target=new URL('../public/openapi.json',import.meta.url),generator=new URL('../scripts/generate-api.ts',import.meta.url);

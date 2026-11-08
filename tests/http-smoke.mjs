@@ -8,6 +8,7 @@ const env={...process.env};
 // This check deliberately runs with no live credentials or database.
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
 delete env.IDENTITY_DATABASE_URL;delete env.AUTH_SECRET;delete env.EDGE_AUTH_SECRET;
+delete env.BOT_CREDENTIAL_HANDOFF_SECRET;
 delete env.PLATFORM_ENABLED;delete env.PLATFORM_DATABASE_URL;
 delete env.R2_UPLOAD_CONNECTIONS;delete env.R2_UPLOAD_LINKS_ENABLED;
 delete env.R2_DOWNLOAD_CONNECTIONS;delete env.R2_DOWNLOAD_LINKS_ENABLED;
@@ -24,6 +25,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const [path,method] of [['bots/00000000-0000-4000-8000-000000000001/credentials','GET'],['bots/00000000-0000-4000-8000-000000000001/credentials','POST'],['bots/00000000-0000-4000-8000-000000000001/credentials/issued','GET'],['bots/00000000-0000-4000-8000-000000000001/credentials/issued/00000000-0000-4000-8000-000000000002','GET'],['bots/00000000-0000-4000-8000-000000000001/credentials/00000000-0000-4000-8000-000000000002/revoke','POST'],['bot-credential-requests/00000000-0000-4000-8000-000000000001','GET'],['bot-credential-requests/00000000-0000-4000-8000-000000000001/token','POST']]){const r=await fetch(base+'/api/v1/'+path,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{})});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/privateToken|token_hash|kvo_|stack/);}
   for(const [path,method] of [['bots','GET'],['bots','POST'],['bots/00000000-0000-4000-8000-000000000001','GET'],['bots/00000000-0000-4000-8000-000000000001/registration','GET']]){const r=await fetch(base+'/api/v1/'+path,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{})});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/token_hash|source_basis|stack/);}
   for(const [suffix,method] of [['','GET'],['/history','GET'],['','POST']]){const r=await fetch(base+'/api/v1/people/00000000-0000-4000-8000-000000000001/status'+suffix,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{})});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/credentials_valid_after|source_snapshot|stack/);}
   for(const [suffix,method] of [['','GET'],['/history','GET'],['','POST'],['/reveal','POST'],['/proposal-reveal','POST']]){const r=await fetch(base+'/api/v1/payroll/private-identities/00000000-0000-4000-8000-000000000001'+suffix,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{})});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/givenNames|familyName|ciphertext|commitment|stack/);}
