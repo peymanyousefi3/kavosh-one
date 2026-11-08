@@ -16,6 +16,7 @@ import { payrollGrossReport,payrollGrossReportContract } from './payroll-gross-r
 import { payrollSettlementReport,payrollSettlementReportContract } from './payroll-settlement-report.ts';
 import { payrollRegister,payrollRegisterContract } from './payroll-register.ts';
 import { paidTaxYtd,paidTaxYearReportContract } from './paid-tax-ytd.ts';
+import { t4WorkingPaper,t4WorkingPaperContract } from './t4-working-paper.ts';
 import { payrollRemittanceReport,payrollRemittanceReportContract } from './payroll-remittance-report.ts';
 import { pollResults,pollResultsContract } from './poll-results.ts';
 import { sessionEvidenceReport,sessionEvidenceReportContract } from './session-evidence-report.ts';
@@ -26,6 +27,7 @@ import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowP
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
 type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
 const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
+ {contracts:t4WorkingPaperContract,handler:t4WorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:paidTaxYearReportContract,handler:paidTaxYtd,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:payrollRegisterContract,handler:payrollRegister,capability:'payrun-postings.view',csv:true},
  {contracts:payrollRemittanceReportContract,handler:payrollRemittanceReport,capability:'payrun-remittances.view',csv:true,backgroundCsv:true},

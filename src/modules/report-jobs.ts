@@ -17,7 +17,7 @@ import { reportJobAccess,permittedJobReportIds } from './report-job-access.ts';
 import { lockAcademyTopology } from './academy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),empty=z.object({}).strict();
-export const financialJobInput=z.object({reportId:z.enum(['finance.trial-balance','finance.profit-loss','finance.balance-sheet','payroll.gross-accruals','community.achievements','payroll.settlements','payroll.remittances','payroll.paid-tax-year-to-date']),parameters:reportParameters,dateWindow:reportDateWindow.optional()}).strict();
+export const financialJobInput=z.object({reportId:z.enum(['finance.trial-balance','finance.profit-loss','finance.balance-sheet','payroll.gross-accruals','community.achievements','payroll.settlements','payroll.remittances','payroll.paid-tax-year-to-date','payroll.t4-working-paper']),parameters:reportParameters,dateWindow:reportDateWindow.optional()}).strict();
 const presetQueueInput=z.object({expectedVersion:z.number().int().positive().max(2147483647),overrides:reportParameters.default({})}).strict();
 const retryInput=z.object({reason:z.string().trim().min(3).max(2000)}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional()}).strict();
@@ -69,7 +69,7 @@ export async function reportJobs(ctx:ApiContext):Promise<Reply|null>{
  }
  if(ctx.request.method!=='GET'||section==='cancel'||section==='retry')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  if(!id){const p=paging.parse(q),allowed=permittedJobReportIds(ctx),rows=(await ctx.db.query<Job>(`SELECT ${fields} FROM public.report_jobs WHERE configuration->>'reportId'=ANY($5::text[]) AND(requester_id=$1 OR($4::boolean AND EXISTS(SELECT 1 FROM public.academies WHERE master_person_id=$1)))
- AND(configuration->>'reportId'<>'payroll.paid-tax-year-to-date' OR($6::boolean AND EXISTS(SELECT 1 FROM public.payroll_tax_profiles t WHERE t.id::text=configuration#>>'{parameters,profileId}' AND public.work_scope_allows($7::jsonb,NULL,t.person_id))))
+ AND(configuration->>'reportId' NOT IN('payroll.paid-tax-year-to-date','payroll.t4-working-paper') OR($6::boolean AND EXISTS(SELECT 1 FROM public.payroll_tax_profiles t WHERE t.id::text=configuration#>>'{parameters,profileId}' AND public.work_scope_allows($7::jsonb,NULL,t.person_id))))
  AND($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3`,[ctx.credential.person_id,p.after??null,p.limit+1,ctx.credential.kind==='human',allowed,ctx.credential.all_hubs,JSON.stringify(permissionScope(ctx,'payroll-tax.view'))])).rows;return {status:200,body:{data:rows.slice(0,p.limit),nextCursor:rows.length>p.limit?rows[p.limit-1].id:null}};}
  empty.parse(q);const j=await owned(ctx,id),stored=(await ctx.db.query<{sha256:string;bytes:number;created_at:string;authorization_context:unknown}>('SELECT sha256,octet_length(body) bytes,created_at,authorization_context FROM public.report_job_results WHERE job_id=$1',[id])).rows[0];
  if(stored)await requireReportResultAccess(ctx,stored.authorization_context);

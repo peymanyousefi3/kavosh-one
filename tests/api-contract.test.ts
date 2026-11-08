@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('T4 working-paper contract accepts only a source profile and explicit timezone,not caller monetary or partial-year overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
+ for(const suffix of ['','/export']){const op=api.paths['/api/v1/reports/payroll/t4-working-paper'+suffix].get;assert.deepEqual(op.parameters.map((p:{name:string})=>p.name).sort(),['profileId','timeZone']);assert.match(op.summary,/working.paper/i);}
+ assert.ok(api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema.properties.reportId.enum.includes('payroll.t4-working-paper'));
+});
+
 test('bot name editing documents independent name versions and bounded history',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),operation=api.paths['/api/v1/bots/{id}/name'].post,body=operation.requestBody.content['application/json'].schema;
  assert.equal(body.additionalProperties,false);assert.equal(body.properties.expectedNameVersion.minimum,0);assert.equal(body.properties.name.maxLength,200);assert.equal(api.paths['/api/v1/bots/{id}/name/history'].get.parameters.find((p:{name:string})=>p.name==='limit').schema.maximum,50);

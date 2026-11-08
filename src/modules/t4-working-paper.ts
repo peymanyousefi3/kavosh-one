@@ -1,0 +1,57 @@
+import { z } from 'zod';
+import type { ApiContext,Reply } from '../core/api.ts';
+import { ApiError } from '../core/policy.ts';
+import { parseMoney,readMinorUnits } from '../core/money.ts';
+import { exactReportMoney as exact } from '../core/aging.ts';
+import { csvRow,csvText } from '../core/csv.ts';
+import { reportDateWindow } from '../core/report-window.ts';
+import { authorizedPayrollTaxProfile } from './payroll-tax-profiles.ts';
+import { paidTaxYtdData,paidTaxYtdCsv,assertPaidTaxYtdBounds } from './paid-tax-ytd.ts';
+
+const uuid=z.string().uuid().transform(v=>v.toLowerCase()),query=z.object({profileId:uuid,timeZone:reportDateWindow.shape.timeZone}).strict();
+const province=z.enum(['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','SK','YT']),money=z.string().max(80).regex(/^\d+\.\d{2}$/);
+const mappingInput=z.object({taxYear:z.literal(2026),provinceOfEmployment:province,taxableEarnings:money,pensionableEarnings:money,insurableEarnings:money,cpp:money,cpp2:money,ei:money,incomeTax:money}).strict();
+// CRA box24 uses the annual EI ceiling;box26 uses AYMPE,NOT YMPE.
+// Keep actual deductions,including unreimbursed excess,not a clamped formula.
+// Sources rechecked2026-11-08;this projection is not a deduction calculator.
+export const t4WorkingPaperSources={
+ fields:'https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/completing-filing-information-returns/t4-information-employers/t4-slip.html',
+ pensionableCeiling:'https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/calculating-deductions/making-deductions/second-additional-cpp-contribution-rates-maximums.html',
+ insurableCeiling:'https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/payroll/payroll-deductions-contributions/employment-insurance-ei/ei-premium-rates-maximums.html'
+} as const;
+export function mapT4WorkingPaper2026(raw:unknown){
+ const i=mappingInput.parse(raw),values={taxableEarnings:parseMoney(i.taxableEarnings,2),pensionableEarnings:parseMoney(i.pensionableEarnings,2),insurableEarnings:parseMoney(i.insurableEarnings,2),cpp:parseMoney(i.cpp,2),cpp2:parseMoney(i.cpp2,2),ei:parseMoney(i.ei,2),incomeTax:parseMoney(i.incomeTax,2)},cap=(n:bigint,max:bigint)=>n<max?n:max;
+ const definitions=[['14','recorded_taxable_earnings',values.taxableEarnings,false],['16','recorded_employee_cpp',values.cpp,false],['16A','recorded_employee_cpp2',values.cpp2,false],['18','recorded_employee_ei',values.ei,false],['22','recorded_employee_income_tax',values.incomeTax,false],['24','recorded_insurable_earnings_capped',cap(values.insurableEarnings,6890000n),true],['26','recorded_pensionable_earnings_capped',cap(values.pensionableEarnings,8500000n),true]] as const;
+ return {mappingVersion:'t4-2026-recorded-cash-working-paper-v1',taxYear:2026,provinceOfEmployment:i.provinceOfEmployment,currency:'CAD',fields:definitions.map(([box,basis,minor,printZero])=>({box,basis,amount:exact(minor,2),printBlank:minor===0n&&!printZero})),earningsCeilings:{box24:exact(6890000n,2),box26:exact(8500000n,2)},sources:t4WorkingPaperSources};
+}
+type ProvinceSource={paymentId:string;profileVersion:number|null;province:string|null};
+export async function t4WorkingPaperData(ctx:ApiContext,captureAuthorization=false){
+ if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params)),h=await authorizedPayrollTaxProfile(ctx,q.profileId);
+ if(h.tax_year!==2026)throw new ApiError(409,'T4_WORKING_PAPER_YEAR_UNSUPPORTED');
+ // Reuse complete original worker/payment/funding rights and the worker lock.
+ // Never derive T4 amounts from planned pay or accounting posting dates.
+ const d=await paidTaxYtdData(ctx,h.id,{through:'2026-12-31',timeZone:q.timeZone},captureAuthorization);if(!d.completeWithinRecordedPositiveNetPayments)throw new ApiError(409,'T4_PAYMENT_RECOGNITION_REVIEW_REQUIRED');
+ const sources=(await ctx.db.query<ProvinceSource>(`SELECT pay.id "paymentId",r.version "profileVersion",r.definition->>'provinceOfEmployment' province FROM public.payrun_payments pay LEFT JOIN LATERAL(SELECT version,definition FROM public.payroll_tax_profile_revisions WHERE profile_id=$1 AND effective_on<=((pay.input->>'paidAt')::timestamptz AT TIME ZONE $3)::date ORDER BY effective_on DESC,version DESC LIMIT 1) r ON true WHERE pay.id=ANY($2::uuid[]) ORDER BY pay.id`,[h.id,d.recognizedPayments.map(p=>p.paymentId),q.timeZone])).rows;
+ if(sources.length!==d.recognizedPaymentCount||sources.some(s=>s.profileVersion===null||s.province===null))throw new ApiError(409,'T4_PAYMENT_PROVINCE_REVIEW_REQUIRED');
+ const provinces=[...new Set(sources.map(s=>s.province!))].sort();if(provinces.length===0)throw new ApiError(409,'T4_RECORDED_PAYMENTS_REQUIRED');if(provinces.length!==1)throw new ApiError(409,'T4_MULTIPLE_PROVINCES_REVIEW_REQUIRED');
+ if(!province.safeParse(provinces[0]).success||['QPP','QPP2','QPIP'].some(k=>readMinorUnits(d.totals.employeeByKind[k].minor)!==0n))throw new ApiError(409,'T4_QUEBEC_HISTORY_REVIEW_REQUIRED');
+ const t=d.totals,paper=mapT4WorkingPaper2026({taxYear:2026,provinceOfEmployment:provinces[0],taxableEarnings:t.taxableEarnings.amount,pensionableEarnings:t.pensionableEarnings.amount,insurableEarnings:t.insurableEarnings.amount,cpp:t.employeeByKind.CPP.amount,cpp2:t.employeeByKind.CPP2.amount,ei:t.employeeByKind.EI.amount,incomeTax:t.employeeByKind.income_tax.amount});
+ const sourceVersions=new Map(sources.map(s=>[s.paymentId,s.profileVersion]));
+ const data={...(captureAuthorization?{authorizationContext:d.authorizationContext}:{}),report:'recorded_t4_working_paper',profileId:h.id,personId:h.person_id,employerId:h.employer_id,from:d.from,through:d.through,timeZone:q.timeZone,snapshotAt:d.snapshotAt,...paper,paymentCount:d.recognizedPaymentCount,candidatePaymentCount:d.paymentCount,correctedPaymentCount:d.correctedPaymentCount,paymentSources:d.recognizedPayments.map(p=>({...p,profileVersion:sourceVersions.get(p.paymentId)!})),recordedTotals:t,chartData:d.chartData,
+  notAssessedInputs:['legal_worker_identity_and_address','employer_legal_address_and_payroll_account','employment_and_reporting_form_classification','dental_access_at_december_31_box45','exemption_codes_box28','pension_adjustment_and_registered_plan_boxes','union_dues_charity_and_other_information','refunds_repayments_and_prior_year_corrections','external_non_cash_zero_net_and_unrecorded_earnings','source_eligibility_and_statutory_deduction_correctness'],
+  unmappedEmployeeDeductions:t.employeeByKind.other,unmappedEmployerContributions:t.employerByKind.other,coverage:'reviewed_recorded_positive_net_payments_single_non_quebec_province_only',provinceBasis:'currently_recorded_effective_tax_profile_at_each_attested_payment_date',sourceConsistency:'same_worker_lock_across_complete_ytd_and_province_selection',completeWithinRecordedPositiveNetPayments:true,externalPaymentsIncluded:false,zeroNetAndNonCashPaymentsIncluded:false,identityIncluded:false,reviewedSlipPrepared:false,isOfficialT4:false,isT4A:false,pdfGenerated:false,readyToIssue:false,craFilingPerformed:false,paymentExecuted:false,additionalLedgerPosting:false};
+ assertPaidTaxYtdBounds(d.paymentCount,0,Buffer.byteLength(JSON.stringify(data)));return data;
+}
+export function t4WorkingPaperCsv(d:Awaited<ReturnType<typeof t4WorkingPaperData>>,provenance?:Parameters<typeof paidTaxYtdCsv>[1]){
+ const rows:(string|number|boolean|null|undefined)[][]=[['section','field','value','box','minor','amount','print_blank','payment_id','posting_id','recognition_version','profile_version','paid_on']];
+ for(const [k,v]of Object.entries(d))if(!['fields','recordedTotals','chartData','paymentSources','authorizationContext'].includes(k))rows.push(['metadata',k,csvText(typeof v==='string'?v:JSON.stringify(v))]);
+ rows.push(['metadata','coverageWarning','Working paper only;not an issued T4,T4A,official form or verified annual return. Required separate inputs are not assessed. No private legal identity or payroll account is included.']);if(provenance){rows.push(['metadata','presetId',provenance.id]);rows.push(['metadata','presetVersion',provenance.version]);}
+ for(const f of d.fields)rows.push(['mapped_field',f.basis,'',f.box,f.amount.minor,f.amount.amount,f.printBlank]);for(const p of d.paymentSources)rows.push(['payment_source','','','','','','',p.paymentId,p.postingId,p.version,p.profileVersion,p.paidOn]);
+ const totals=(section:string,t:typeof d.recordedTotals,on='')=>{for(const k of ['gross','net','taxableEarnings','pensionableEarnings','insurableEarnings','employeeDeductions','employerContributions'] as const)rows.push([section,k,on,'',t[k].minor,t[k].amount]);for(const [group,values]of [['employee',t.employeeByKind],['employer',t.employerByKind]] as const)for(const [kind,m]of Object.entries(values))rows.push([section,group+'.'+kind,on,'',m.minor,m.amount]);};totals('recorded_total',d.recordedTotals);for(const t of d.chartData)totals('daily_chart',t,t.on);
+ if(provenance){if(provenance.retryOfJobId)rows.push(['metadata','retryOfJobId',provenance.retryOfJobId]);if(provenance.scheduledOccurrence){const s=provenance.scheduledOccurrence;rows.push(['metadata','scheduleId',s.scheduleId],['metadata','scheduledFor',s.dueAt],['metadata','scheduleOccurrenceRecordedAt',s.recordedAt],['metadata','dateWindowClockBasis','fixed_tax_year_not_worker_restart']);}}
+ const body='\uFEFF'+rows.map(r=>csvRow(Array.from({length:12},(_,i)=>r[i]))).join('\r\n')+'\r\n';assertPaidTaxYtdBounds(d.paymentCount,0,Buffer.byteLength(body));return {status:200,body,csv:{filename:`t4-working-paper-${d.taxYear}.csv`}} satisfies Reply;
+}
+export async function completeT4WorkingPaperExport(ctx:ApiContext,provenance?:Parameters<typeof paidTaxYtdCsv>[1]){return t4WorkingPaperCsv(await t4WorkingPaperData(ctx),provenance);}
+export async function t4WorkingPaper(ctx:ApiContext):Promise<Reply|null>{if(!['reports/payroll/t4-working-paper','reports/payroll/t4-working-paper/export'].includes(ctx.path))return null;return ctx.path.endsWith('/export')?completeT4WorkingPaperExport(ctx):{status:200,body:{data:await t4WorkingPaperData(ctx)}};}
+export const t4WorkingPaperContract=[{path:'/api/v1/reports/payroll/t4-working-paper',method:'get',summary:'Private2026 single-non-Quebec-province T4 working paper from complete reviewed recorded payment recognition,not ledger/planned wages. Source-linked boxes14/16/16A/18/22/24/26;annual earnings caps retain actual deductions. Missing recognition/province,mixed provinces or Quebec history refuse mapping. Separate legal/dental/exemption/other-information/external/noncash/zero-net eligibility remains unassessed;never an issued or ready-to-file form.',querySchema:query}] as const;
+export const t4WorkingPaperExportContract=[{path:'/api/v1/reports/payroll/t4-working-paper/export',method:'get',summary:'Complete private formula-safe T4 working-paper CSV with exact mapped field values,print-blank rules,source payment/recognition/profile versions,coverage limits and unassessed-input checklist;no names,SIN,payroll account,official form or CRA filing. Same500payment/4MiB safety limits and original source permissions.',querySchema:query,responseContentType:'text/csv'}] as const;

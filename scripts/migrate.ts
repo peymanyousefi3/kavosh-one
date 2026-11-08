@@ -12,7 +12,11 @@ try {
   await client.query('SELECT pg_advisory_xact_lock(742061)');
   await client.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`);
   const directory = new URL('../db/migrations/', import.meta.url);
-  for (const name of (await readdir(directory)).filter(n => /^\d+_[a-z_]+\.sql$/.test(n)).sort()) {
+  const names=(await readdir(directory)).filter(n=>n.endsWith('.sql')).sort();
+  // A misnamed SQL file must fail installation,not silently disappear while
+  // test fixtures that load all SQL files appear to pass.
+  if(names.some(n=>!/^\d+_[a-z_]+\.sql$/.test(n)))throw new Error('Invalid migration filename');
+  for (const name of names) {
     const sql = await readFile(new URL(name, directory), 'utf8');
     const checksum = createHash('sha256').update(sql).digest('hex');
     const previous = await client.query<{ checksum: string }>('SELECT checksum FROM public.schema_migrations WHERE name=$1', [name]);

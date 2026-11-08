@@ -8,6 +8,11 @@ import { capabilities, scopeFor, type Credential } from '../src/core/policy.ts';
 import { mintToken, hashToken } from '../src/core/tokens.ts';
 import type { Database } from '../src/core/database.ts';
 import { postgresOptions } from '../src/core/postgres-config.ts';
+import { expectedSchemaRevision } from '../src/core/database.ts';
+
+test('every SQL migration is discoverable by the real installer and the numbered sequence matches the runtime revision',async()=>{
+ const names=(await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort();for(const name of names)assert.match(name,/^\d+_[a-z_]+\.sql$/);assert.deepEqual(names.map(n=>Number.parseInt(n,10)),Array.from({length:expectedSchemaRevision},(_,i)=>i+1));
+});
 
 async function fixture() {
   const pg = await testDatabase();

@@ -15,6 +15,7 @@ import { completePayrollGrossReport,payrollGrossCsv } from '../modules/payroll-g
 import { settlementReportData,payrollSettlementCsv } from '../modules/payroll-settlement-report.ts';
 import { payrollRemittanceData,payrollRemittanceCsv } from '../modules/payroll-remittance-report.ts';
 import { paidTaxYearReportData,paidTaxYtdCsv } from '../modules/paid-tax-ytd.ts';
+import { t4WorkingPaperData,t4WorkingPaperCsv } from '../modules/t4-working-paper.ts';
 
 export const backgroundFinancialEntryLimit=10000;
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(a=>new Set(a).size===a.length);
@@ -43,6 +44,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    else if(job.configuration.reportId==='payroll.settlements'){const data=await settlementReportData(source,true,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollSettlementCsv(data,provenance,backgroundFinancialEntryLimit);}
    else if(job.configuration.reportId==='payroll.remittances'){const data=await payrollRemittanceData(source,true,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollRemittanceCsv(data,provenance,backgroundFinancialEntryLimit);}
    else if(job.configuration.reportId==='payroll.paid-tax-year-to-date'){const data=await paidTaxYearReportData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=paidTaxYtdCsv(data,provenance);}
+   else if(job.configuration.reportId==='payroll.t4-working-paper'){const data=await t4WorkingPaperData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=t4WorkingPaperCsv(data,provenance);}
    else{const data=await completeFinancialReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=financialReportCsv(data,provenance,backgroundFinancialEntryLimit);}
    await requireReportResultAccess(source,proof);
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');

@@ -12,6 +12,7 @@ import { completePayrollGrossExport } from './payroll-gross-export.ts';
 import { completePayrollSettlementExport } from './payroll-settlement-report.ts';
 import { completePayrollRegisterExport } from './payroll-register.ts';
 import { completePaidTaxYtdExport } from './paid-tax-ytd.ts';
+import { completeT4WorkingPaperExport } from './t4-working-paper.ts';
 import { completeFinancialOutlookExport } from './financial-outlook-export.ts';
 import { completePayrollRemittanceExport } from './payroll-remittance-report.ts';
 import { completeInventoryExport } from './inventory-report-export.ts';
@@ -54,6 +55,7 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
 }
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
+ if(configuration.reportId==='payroll.t4-working-paper'){const {context}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeT4WorkingPaperExport(context,provenance);}
  if(configuration.reportId==='payroll.paid-tax-year-to-date'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePaidTaxYtdExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');const context={...source,request:new Request(url,{method:'GET'})},origin={...provenance,dateWindow:resolvedDateWindow};if(configuration.reportId==='payroll.register')return completePayrollRegisterExport(context,origin);if(configuration.reportId==='finance.bank-reconciliation')return completeBankReconciliationExport(context,origin);if(['finance.receivables-aging','finance.payables-aging'].includes(configuration.reportId))return completeAgingExport(context,origin);if(configuration.reportId==='inventory.stock')return completeInventoryExport(context,origin);if(configuration.reportId==='payroll.remittances')return completePayrollRemittanceExport(context,origin);if(configuration.reportId==='finance.outlook')return completeFinancialOutlookExport(context,origin);if(configuration.reportId==='community.achievements')return completeAchievementExport(context,origin);if(configuration.reportId==='payroll.gross-accruals')return completePayrollGrossExport(context,origin);if(configuration.reportId==='payroll.settlements')return completePayrollSettlementExport(context,origin);return financialReportCsv(await completeFinancialReport(context),origin);
 }

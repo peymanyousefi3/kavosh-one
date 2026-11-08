@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.203.0",
+    "version": "0.204.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -47835,7 +47835,8 @@
                       "community.achievements",
                       "payroll.settlements",
                       "payroll.remittances",
-                      "payroll.paid-tax-year-to-date"
+                      "payroll.paid-tax-year-to-date",
+                      "payroll.t4-working-paper"
                     ]
                   },
                   "parameters": {
@@ -49575,6 +49576,97 @@
         }
       }
     },
+    "/api/v1/reports/payroll/t4-working-paper": {
+      "get": {
+        "summary": "Private2026 single-non-Quebec-province T4 working paper from complete reviewed recorded payment recognition,not ledger/planned wages. Source-linked boxes14/16/16A/18/22/24/26;annual earnings caps retain actual deductions. Missing recognition/province,mixed provinces or Quebec history refuse mapping. Separate legal/dental/exemption/other-information/external/noncash/zero-net eligibility remains unassessed;never an issued or ready-to-file form.",
+        "parameters": [
+          {
+            "name": "profileId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/payroll/t4-working-paper/export": {
+      "get": {
+        "summary": "Complete private formula-safe T4 working-paper CSV with exact mapped field values,print-blank rules,source payment/recognition/profile versions,coverage limits and unassessed-input checklist;no names,SIN,payroll account,official form or CRA filing. Same500payment/4MiB safety limits and original source permissions.",
+        "parameters": [
+          {
+            "name": "profileId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/presets": {
       "get": {
         "summary": "Central saved-report configurations scoped by academy,hub,class or fixed person record ownership before paging; definitions contain filters,not results or data grants",
@@ -49655,7 +49747,8 @@
                 "payroll.register",
                 "payroll.remittances",
                 "payroll.scheduled-costs",
-                "payroll.settlements"
+                "payroll.settlements",
+                "payroll.t4-working-paper"
               ]
             }
           },
@@ -49839,7 +49932,8 @@
                           "payroll.register",
                           "payroll.remittances",
                           "payroll.scheduled-costs",
-                          "payroll.settlements"
+                          "payroll.settlements",
+                          "payroll.t4-working-paper"
                         ]
                       },
                       "queryContractVersion": {
@@ -50080,7 +50174,8 @@
                           "payroll.register",
                           "payroll.remittances",
                           "payroll.scheduled-costs",
-                          "payroll.settlements"
+                          "payroll.settlements",
+                          "payroll.t4-working-paper"
                         ]
                       },
                       "queryContractVersion": {
