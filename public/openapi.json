@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.189.0",
+    "version": "0.190.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -35644,6 +35644,112 @@
           }
         ],
         "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/payruns/{id}/net/source-contributions-preview": {
+      "post": {
+        "summary": "Read-only standard2026 CPP/CPP2/EI calculation from current effective worker/employer tax settings and permission-complete reviewed payment-linked YTD,not manually retyped past amounts. Strict declared subject/standard-plan eligibility;refuses current-run payment history,incomplete YTD,missing past declarations,Quebec amounts or effective past Quebec employment,zero-net history and known overlapping paid-service windows for regular exemption scenarios. No exemption reservation,statutory-period proof,external-history verification,income-tax/net statement or payment.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedTaxProfileVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "timeZone": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "paymentKind": {
+                    "type": "string",
+                    "enum": [
+                      "regular_salary_or_wages",
+                      "standalone_non_periodic"
+                    ]
+                  },
+                  "payPeriodsPerYear": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2000
+                  },
+                  "pensionableEarnings": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "insurableEarnings": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "pattern": "^\\d+(?:\\.\\d+)?$"
+                  },
+                  "noQuebecTransfer": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "noOtherSameEmployerPayments": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "noNonCashOrZeroNetPayments": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "eligibilityReview": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedTaxProfileVersion",
+                  "timeZone",
+                  "paymentKind",
+                  "payPeriodsPerYear",
+                  "pensionableEarnings",
+                  "insurableEarnings",
+                  "noQuebecTransfer",
+                  "noOtherSameEmployerPayments",
+                  "noNonCashOrZeroNetPayments",
+                  "eligibilityReview"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Current data or applied change"
