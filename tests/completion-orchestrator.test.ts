@@ -3,14 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import type { Database } from '../src/core/database.ts';
 import { expectedSchemaRevision } from '../src/core/database.ts';
-import { processEnrollmentCompletion } from '../src/integrations/completion-orchestrator.ts';
+import { processEnrollmentCompletion,processWorkCompletion } from '../src/integrations/completion-orchestrator.ts';
 import { r2TargetId } from '../src/integrations/r2-config.ts';
 
 // Isolated orchestration checks,NOT native authority/provider/storage evidence.
 function fixture(){
  const task={academyId:randomUUID(),startId:randomUUID()},source={...task,signerId:randomUUID(),documentId:randomUUID(),packageId:randomUUID(),attachmentId:randomUUID(),bindingId:randomUUID(),connectionId:randomUUID(),connectionTargetId:'c'.repeat(64),documentSha256:'a'.repeat(64),sourceFingerprint:'b'.repeat(64),region:'CA',signatureFields:[{id:'Signature1',pageNumber:1,bounds:{x:20,y:40,width:180,height:35}}]};
  const config={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-private-evidence',accessKeyId:'synthetic-evidence-writer',secretAccessKey:'PRIVATE-synthetic-evidence-key',maximumUploadBytes:10485760};let connections=0,queries=0,providerReads=0,selected=0,missing=false;
- const database:Database={async connect(){connections++;return {async query<Row>(sql:string){queries++;let row:unknown;if(sql.includes('schema_revision()'))row={revision:expectedSchemaRevision};else if(sql.startsWith('SELECT public.signature_completion_source('))row={source:missing?null:structuredClone(source)};else row={safe:true};return {rows:[row] as Row[]};},release(){connections--;}};}};
+ const database:Database={async connect(){connections++;return {async query<Row>(sql:string){queries++;let row:unknown;if(sql.includes('schema_revision()'))row={revision:expectedSchemaRevision};else if((sql.startsWith('SELECT public.signature_completion_source(')||sql.startsWith('SELECT public.work_signature_completion_source(')))row={source:missing?null:structuredClone(source)};else row={safe:true};return {rows:[row] as Row[]};},release(){connections--;}};}};
  const services={database,providers:(academy:string,connection:string,target:string)=>{selected++;assert.equal(connections,0);assert.deepEqual([academy,connection,target],[task.academyId,source.connectionId,source.connectionTargetId]);return {region:'CA' as const,apiKey:'PRIVATE-synthetic-key'};},evidenceStores:(academy:string)=>{assert.equal(connections,0);assert.equal(academy,task.academyId);return {configuration:config,targetId:r2TargetId(config)};},providerFetch:(async(_url,options)=>{providerReads++;assert.equal(connections,0);assert.equal(options?.method,'GET');return Response.json({documentId:source.documentId,status:'Sent',metaData:{kavoshPackageId:source.packageId,kavoshContentAttachmentId:source.attachmentId,kavoshContentBindingId:source.bindingId,kavoshDocumentSha256:source.documentSha256},signerDetails:[]});}) as typeof fetch};
  return {task,source,services,missing:()=>{missing=true;},counts:()=>({connections,queries,providerReads,selected})};
 }
@@ -23,4 +23,10 @@ test('unavailable native authority selects no provider and a pending bound docum
 });
 test('provider/storage configuration failures are redacted and invalid evidence targets cause zero provider IO',async()=>{
  const f=fixture();for(const services of [{...f.services,providers:()=>null},{...f.services,evidenceStores:()=>null},{...f.services,providers:()=>{throw Error('PRIVATE operator credentials');}},{...f.services,evidenceStores:()=>{throw Error('PRIVATE operator credentials');}},{...f.services,evidenceStores:()=>({...f.services.evidenceStores(f.task.academyId),targetId:'0'.repeat(64)})}])await assert.rejects(processEnrollmentCompletion(f.task,services,{enabled:true}),e=>{assert.equal((e as {code:string}).code,'SIGNATURE_COMPLETION_NOT_CONFIGURED');assert.doesNotMatch(String(e),/PRIVATE|credentials/);return true;});assert.equal(f.counts().providerReads,0);assert.equal(f.counts().connections,0);
+});
+test('work completion is disabled by default,refuses caller authority overrides,and never selects providers without native source',async()=>{
+ const f=fixture(),disabled=await processWorkCompletion(f.task,f.services);assert.equal(disabled.state,'disabled');assert.equal(disabled.evidenceRecorded,false);assert.equal(disabled.signedByBothPartiesVerified,false);assert.equal(disabled.paymentCleared,false);assert.equal(disabled.legallyEffective,false);
+ for(const raw of [{...f.task,documentId:randomUUID()},{...f.task,signedByBothPartiesVerified:true},{...f.task,sourceFingerprint:'a'.repeat(64)},{...f.task,providerSigners:[]}])await assert.rejects(processWorkCompletion(raw,f.services,{enabled:true}),{code:'INVALID_SIGNATURE_COMPLETION_TARGET'});
+ await assert.rejects(processWorkCompletion(f.task,f.services,{enabled:true,signal:AbortSignal.abort()}),{code:'SIGNATURE_COMPLETION_INTERRUPTED'});assert.deepEqual(f.counts(),{connections:0,queries:0,providerReads:0,selected:0});
+ const absent=fixture();absent.missing();const unavailable=await processWorkCompletion(absent.task,absent.services,{enabled:true});assert.equal(unavailable.state,'source_unavailable');assert.equal(unavailable.evidenceRecorded,false);assert.equal(unavailable.paymentCleared,false);assert.equal(absent.counts().connections,0);assert.equal(absent.counts().selected,0);assert.equal(absent.counts().providerReads,0);
 });
