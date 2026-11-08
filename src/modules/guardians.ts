@@ -30,13 +30,7 @@ async function save(ctx:ApiContext,id?:string):Promise<Reply> {
   return mutation(ctx,input,async()=>{
     const before=id?await profile(ctx,target,true):null;
     if(before&&before.version!==('expectedVersion' in input?input.expectedVersion:0))throw new ApiError(409,'TARGET_CHANGED');
-    const name=input.legalName??before!.legal_name,wechat=input.wechatId===undefined?before!.wechat_id:input.wechatId;
-    const after=before?(await ctx.db.query<Guardian>('UPDATE public.guardian_profiles SET legal_name=$2,wechat_id=$3,version=version+1 WHERE person_id=$1 RETURNING '+fields,[target,name,wechat])).rows[0]:
-      (await ctx.db.query<Guardian>('INSERT INTO public.guardian_profiles(academy_id,person_id,legal_name,wechat_id) VALUES($1,$2,$3,$4) RETURNING '+fields,[ctx.credential.academy_id,target,name,wechat])).rows[0];
-    await ctx.db.query('INSERT INTO public.guardian_profile_revisions(academy_id,person_id,version,definition,changed_by,reason) VALUES($1,$2,$3,$4::jsonb,$5,$6)',[ctx.credential.academy_id,target,after.version,JSON.stringify(after),ctx.credential.person_id,input.reason]);
-    await record(ctx.db,ctx.credential,ctx.requestId,before?'guardian.profile.updated':'guardian.profile.created',target,person.hub_id,
-      {beforeVersion:before?.version??null,afterVersion:after.version,fields:Object.keys(input).filter(k=>!['personId','expectedVersion','reason'].includes(k)),hasReason:Boolean(input.reason)});
-    return {status:before?200:201,body:{data:{personId:target,version:after.version}}};
+    return writeGuardianProfile(ctx,target,before,input,person);
   });
 }
 export async function guardians(ctx:ApiContext):Promise<Reply|null> {
@@ -71,3 +65,16 @@ export const guardiansContract=[
   {path:'/api/v1/guardians/{id}/update',method:'post',summary:'Versioned guardian detail correction; cannot set identity verification or contact fields',schema:updateInput},
   {path:'/api/v1/guardians/{id}/history',method:'get',summary:'Private immutable guardian profile revisions',querySchema:historyQuery}
 ] as const;
+
+export { profile as guardianProfileRecord,guardianContacts };
+export const guardianCorrectionFields=z.object({legalName:updateInput.shape.legalName,wechatId:updateInput.shape.wechatId}).strict().refine(v=>Object.keys(v).length>0).refine(v=>Object.values(v).every(x=>x===null||x===undefined||x.isWellFormed()&&!/[\u0000-\u001f\u007f-\u009f]/.test(x)));
+// Original administrative persistence is shared,not copied into a new profile.
+export async function writeGuardianProfile(ctx:ApiContext,target:string,before:Guardian|null,input:z.infer<typeof createInput>|z.infer<typeof updateInput>,person:{hub_id:string|null}):Promise<Reply>{
+    const name=input.legalName??before!.legal_name,wechat=input.wechatId===undefined?before!.wechat_id:input.wechatId;
+    const after=before?(await ctx.db.query<Guardian>('UPDATE public.guardian_profiles SET legal_name=$2,wechat_id=$3,version=version+1 WHERE person_id=$1 RETURNING '+fields,[target,name,wechat])).rows[0]:
+      (await ctx.db.query<Guardian>('INSERT INTO public.guardian_profiles(academy_id,person_id,legal_name,wechat_id) VALUES($1,$2,$3,$4) RETURNING '+fields,[ctx.credential.academy_id,target,name,wechat])).rows[0];
+    await ctx.db.query('INSERT INTO public.guardian_profile_revisions(academy_id,person_id,version,definition,changed_by,reason) VALUES($1,$2,$3,$4::jsonb,$5,$6)',[ctx.credential.academy_id,target,after.version,JSON.stringify(after),ctx.credential.person_id,input.reason]);
+    await record(ctx.db,ctx.credential,ctx.requestId,before?'guardian.profile.updated':'guardian.profile.created',target,person.hub_id,
+      {beforeVersion:before?.version??null,afterVersion:after.version,fields:Object.keys(input).filter(k=>!['personId','expectedVersion','reason'].includes(k)),hasReason:Boolean(input.reason)});
+    return {status:before?200:201,body:{data:{personId:target,version:after.version}}};
+}
