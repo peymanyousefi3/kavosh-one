@@ -82,8 +82,8 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     // Optional lifecycle observer lets buffering callers retain admission until
     // actual IO/inspection settlement,not merely a timeout's early rejection.
     inspectClean<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('clean',fileId,claims,inspect,timeoutMs,signal,observeResources);},
-    // Internal evidence worker only. There is deliberately no evidence upload
-    // link/download-link method and no route grants access to this namespace.
+    // Worker-only full-byte inspection. Attachment signing below is separate
+    // and requires its own native audited grant and explicit reviewed policy.
     inspectSignatureEvidence<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=30000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('signature-evidence',fileId,claims,inspect,timeoutMs,signal,observeResources);},
     async quarantineUpload(fileId:string,metadata:z.input<typeof uploadMetadata>,expiresSeconds=300,issuedAt?:string) {
       const objectKey=key('quarantine',fileId),input=uploadMetadata.safeParse(metadata),time=expiry(expiresSeconds,300,issuedAt);
@@ -97,15 +97,18 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
         return {url,method:'PUT' as const,headers:{'content-type':input.data.contentType,'content-length':String(input.data.bytes),'if-none-match':'*'},expiresAt:time.expiresAt};
       }catch{throw new ApiError(502,'R2_LINK_UNAVAILABLE');}
     },
-    async cleanDownload(fileId:string,expiresSeconds=60,conditions:{issuedAt?:string;ifMatch?:string}={}) {
+    cleanDownload(fileId:string,expiresSeconds=60,conditions:{issuedAt?:string;ifMatch?:string}={}) {return attachmentDownload('clean',fileId,expiresSeconds,conditions);},
+    signatureEvidenceDownload(fileId:string,expiresSeconds:number,conditions:{issuedAt:string;ifMatch:string}) {return attachmentDownload('signature-evidence',fileId,expiresSeconds,conditions);},
+    close(){if(!closed){closed=true;client.destroy();}}
+  };
+  async function attachmentDownload(stage:'clean'|'signature-evidence',fileId:string,expiresSeconds:number,conditions:{issuedAt?:string;ifMatch?:string}) {
       const valid=z.object({issuedAt:z.iso.datetime().optional(),ifMatch:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/).optional()}).strict().safeParse(conditions);
       if(!valid.success)throw new ApiError(400,'INVALID_FILE_DOWNLOAD_CONDITION');
-      const objectKey=key('clean',fileId),time=expiry(expiresSeconds,60,valid.data.issuedAt);
+      if(stage==='signature-evidence'&&(!valid.data.issuedAt||!valid.data.ifMatch))throw new ApiError(400,'INVALID_FILE_DOWNLOAD_CONDITION');
+      const objectKey=key(stage,fileId),time=expiry(expiresSeconds,60,valid.data.issuedAt);
       try {
         const url=await getSignedUrl(client,new GetObjectCommand({Bucket:c.bucket,Key:objectKey,ResponseContentType:'application/octet-stream',ResponseContentDisposition:'attachment',ResponseCacheControl:'private, no-store',...(valid.data.ifMatch?{IfMatch:valid.data.ifMatch}:{})}),{expiresIn:time.expiresIn,signingDate:time.signingDate,...(valid.data.ifMatch?{signableHeaders:new Set(['if-match'])}:{})});
         return {url,method:'GET' as const,expiresAt:time.expiresAt,...(valid.data.ifMatch?{headers:{'if-match':valid.data.ifMatch}}:{})};
       }catch{throw new ApiError(502,'R2_LINK_UNAVAILABLE');}
-    },
-    close(){if(!closed){closed=true;client.destroy();}}
-  };
+    }
 }

@@ -60,6 +60,11 @@ test('conditional private downloads bind the measured object identity and origin
   for(const bad of [{ifMatch:'*'},{ifMatch:'"bad\r\netag"'},{url:'https://localhost'},{issuedAt:'yesterday'}])await assert.rejects(f.store.cleanDownload(file,30,bad),{code:'INVALID_FILE_DOWNLOAD_CONDITION'});
  }finally{f.store.close();}
 });
+test('retained signing attachments require exact issue time and ETag and reuse independently verifiable conditional binary attachment signing',async()=>{
+ const f=fixture();try{const issuedAt=new Date(Math.floor(Date.now()/1000)*1000).toISOString(),link=await f.store.signatureEvidenceDownload(file,30,{issuedAt,ifMatch:'"retained-evidence"'}),u=new URL(link.url);assert.equal(u.pathname,`/${config.bucket}/academies/${academy}/signature-evidence/${file}`);assert.equal(signature(link.url,'GET',link.headers!),u.searchParams.get('X-Amz-Signature'));assert.equal(u.searchParams.get('response-content-disposition'),'attachment');assert.equal(u.searchParams.get('response-content-type'),'application/octet-stream');assert.equal(u.searchParams.get('response-cache-control'),'private, no-store');assert.equal(u.searchParams.get('X-Amz-Expires'),'30');assert.notEqual(signature(link.url,'GET',{'if-match':'"changed"'}),u.searchParams.get('X-Amz-Signature'));assert.equal(f.requests(),0);
+  for(const conditions of [{issuedAt},{ifMatch:'"retained-evidence"'},{issuedAt,ifMatch:'*'},{issuedAt,ifMatch:'"retained-evidence"',key:'another-object'}])await assert.rejects(f.store.signatureEvidenceDownload(file,30,conditions as {issuedAt:string;ifMatch:string}),{code:'INVALID_FILE_DOWNLOAD_CONDITION'});
+ }finally{f.store.close();}
+});
 test('R2 config rejects missing credentials, untrusted endpoints and malformed account/bucket/tenant fields without leaking secrets',()=>{
   for(const c of [{...config,accountId:'localhost'},{...config,endpoint:'http://localhost'},{...config,jurisdiction:'unknown'},{...config,bucket:'../unsafe'},
     {...config,accessKeyId:''},{...config,accessKeyId:'bad\r\nkey'},{...config,secretAccessKey:''},{...config,maximumUploadBytes:0},{...config,maximumUploadBytes:4_294_967_297}])

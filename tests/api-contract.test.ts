@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('private signing document and audit attachment APIs are human-only with no artifact hash credential or admission override',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const kind of ['document','audit']){const op=api.paths['/api/v1/signature-send-requests/{id}/completion-evidence/{evidenceId}/'+kind+'/download-link'].post;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);const schema=op.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(schema.properties),['routeId']);assert.equal(schema.additionalProperties,false);assert.match(op.summary,/explicitly upper-reviewed signedEvidence/);assert.match(op.summary,/not admission/);}
+});
 test('completion directory contract is bounded read-only metadata without archive or admission overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/signature-send-requests/{id}/completion-evidence';for(const p of [path,path+'/{evidenceId}']){assert.ok(api.paths[p].get);assert.equal(api.paths[p].post,undefined);assert.match(api.paths[p].get.summary,/metadata/);}const query=api.paths[path].get.parameters.filter((p:any)=>p.in==='query');assert.equal(query.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(query.find((p:any)=>p.name==='state').schema.enum,['evidence_recorded','review_required']);assert.equal(query.some((p:any)=>['fileId','storageTargetId','admissionCleared','approved','signerId'].includes(p.name)),false);
 });

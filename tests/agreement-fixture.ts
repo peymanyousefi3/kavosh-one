@@ -3,10 +3,11 @@ import { createHash,randomUUID } from 'node:crypto';
 import { operationsFixture } from './operations-fixture.ts';
 import { processOneInspection,type InspectionResult } from '../src/files/inspection-worker.ts';
 import type { Database } from '../src/core/database.ts';
+import type { R2DownloadConnections } from '../src/integrations/r2-config.ts';
 
 const connection={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-package-content',accessKeyId:'synthetic-id',secretAccessKey:'synthetic-not-real-secret',maximumUploadBytes:100000};
-export async function agreementFixture(throughSchema?:number) {
- const f=await operationsFixture({connections:()=>connection,throughSchema}),country=randomUUID(),region=randomUUID(),city=randomUUID(),connectionId=randomUUID();
+export async function agreementFixture(throughSchema?:number,downloadConnections?:R2DownloadConnections) {
+ const f=await operationsFixture({connections:()=>connection,throughSchema,downloadConnections}),country=randomUUID(),region=randomUUID(),city=randomUUID(),connectionId=randomUUID();
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['signatures.view','signatures.edit','enrollments.view','students.view','guardians.view','families.view','agreements.view','files.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
  await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);
  await f.pg.query("INSERT INTO public.regions(academy_id,id,country_id,code,name) VALUES($1,$2,$3,'ON','Ontario')",[f.a,region,country]);
