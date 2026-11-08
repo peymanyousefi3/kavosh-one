@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('self profile API is human-only strictly self-targeted and separately versioned without publication inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path=api.paths['/api/v1/me/community-profile'];for(const method of ['get','post'])assert.deepEqual(path[method].security,[{humanSession:[],academySelection:[]}]);const schema=path.post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(schema.properties).sort(),['definition','expectedVersion']);assert.equal(schema.additionalProperties,false);assert.equal(schema.properties.expectedVersion.minimum,0);assert.equal(schema.properties.expectedVersion.maximum,2147483646);assert.equal(schema.properties.definition.additionalProperties,false);assert.equal(Object.hasOwn(schema.properties.definition.properties,'visibility'),false);assert.equal(path.get.parameters.length,0);
+});
+
 test('paid tax reporting partitions document complete bounded inputs and explicit source-prefill opt-in without changing legacy defaults',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),schema=api.paths['/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}'].post.requestBody.content['application/json'].schema.properties.definition.anyOf.find((s:any)=>s.type==='object'),allocations=schema.properties.t4Allocations;
  assert.equal(schema.required.includes('t4Allocations'),false);assert.equal(allocations.minItems,1);assert.equal(allocations.maxItems,15);assert.equal(allocations.items.additionalProperties,false);assert.ok(allocations.items.properties.provinceOfEmployment.enum.includes('ON'));assert.equal(schema.properties.t4Order.maximum,1000000);const flag=api.paths['/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}/calculated-draft'].get.parameters.find((p:any)=>p.name==='includeT4Allocations');assert.equal(flag.required,false);assert.deepEqual(flag.schema.enum,['true','false']);assert.equal(Object.hasOwn(flag.schema,'default'),false);
