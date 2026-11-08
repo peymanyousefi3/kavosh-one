@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family receipt attachment contract is human-only and accepts no file copy source or recipient selection',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/students/{id}/tuition-invoices/{invoiceId}/receipts/{receiptId}/attachment-download-link'].post;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);const s=op.requestBody.content['application/json'].schema;assert.deepEqual(s.properties,{});assert.equal(s.additionalProperties,false);assert.match(op.summary,/original upper-approved receipt attachment/);
+});
+
 test('family installment status documents only a bounded comparison date,not money or historical source overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/tuition-invoices/{invoiceId}/installment-status',op=api.paths[path].get;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[path].post,undefined);assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name),['overdueOn']);assert.match(op.summary,/NOT a historical/);
 });

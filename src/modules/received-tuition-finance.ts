@@ -39,7 +39,7 @@ export async function receivedTuitionFinance(ctx:ApiContext):Promise<Reply|null>
  // Only the original invoice's recorded payments;never expose holding
  // accounts,bank mappings,private review reasons or raw evidence pointers.
  const payments=(await ctx.db.query<{id:string;amountMinor:string;[key:string]:unknown}>(`SELECT r.id,r.received_at "receivedAt",r.received_on::text "receivedOn",r.reference,r.amount_minor::text "amountMinor",r.reversal_id IS NULL active,
- CASE WHEN r.reversal_id IS NULL THEN 'recorded' ELSE 'reversed' END status,m.name "methodName",c.name "collectorName"
+ CASE WHEN r.reversal_id IS NULL THEN 'recorded' ELSE 'reversed' END status,m.name "methodName",c.name "collectorName",r.evidence_file IS NOT NULL "hasRecordedAttachment"
  FROM public.tuition_receipts r JOIN public.finance_payment_method_revisions m ON m.academy_id=r.academy_id AND m.method_id=r.method_id AND m.version=r.method_version
  JOIN public.finance_collector_revisions c ON c.academy_id=r.academy_id AND c.collector_id=r.collector_id AND c.version=r.collector_version
  WHERE r.invoice_id=$1 AND($2::uuid IS NULL OR r.id>$2) AND($3::text IS NULL OR CASE WHEN r.reversal_id IS NULL THEN 'recorded' ELSE 'reversed' END=$3) ORDER BY r.id LIMIT $4`,[id,rq!.after??null,rq!.status??null,rq!.limit+1])).rows;
