@@ -66,7 +66,10 @@ async function basis(ctx:ApiContext,input:Input) {
  if(!t.definition.languages.some(l=>l.locale===input.locale))throw new ApiError(409,'AGREEMENT_LANGUAGE_UNAVAILABLE');
  const profile=(await ctx.db.query<{version:number;date_of_birth:string}>('SELECT version,date_of_birth::text FROM public.student_profiles WHERE person_id=$1',[e.student_id])).rows[0];
  if(!profile||profile.version!==e.student_profile_version)throw new ApiError(409,'STUDENT_PROFILE_CHANGED');
- if(student.status!=='active'||signer.status!=='active')throw new ApiError(409,'ACTIVE_PARTIES_REQUIRED');
+ // A child profile need not have a login before its verified legal guardian
+ // signs. The signer remains active/verified;age and relationship checks below
+ // still forbid an adult substitute,minor self-signing or disabled child.
+ if(!['active','pending'].includes(student.status)||signer.status!=='active')throw new ApiError(409,'ACTIVE_PARTIES_REQUIRED');
  const now=(await ctx.db.query<{at:Date|string}>('SELECT clock_timestamp() AS at')).rows[0].at;
  const on=Temporal.Instant.from(now instanceof Date?now.toISOString():now).toZonedDateTimeISO(c.time_zone).toPlainDate().toString();
  if(e.leaves_on!==null&&e.leaves_on<on)throw new ApiError(409,'ENROLLMENT_ENDED');
@@ -139,6 +142,6 @@ export async function agreementPackages(ctx:ApiContext,registry:ApprovalRegistry
  return {status:200,body:{data:{...row,state:'prepared',admissionCleared:false}}};
 }
 export const packagesContract=[
- {path:'/api/v1/enrollments/{id}/agreement-packages',method:'post',summary:'Prepare an immutable reviewed agreement package for a verified adult student or current legal guardian; no provider send or admission clearance',schema:inputSchema},
+ {path:'/api/v1/enrollments/{id}/agreement-packages',method:'post',summary:'Prepare an immutable reviewed agreement package for an active verified adult student or current active verified legal guardian. A pending minor profile needs no child login;this never activates that child,weakens signer verification,allows a disabled party or grants provider send/admission clearance.',schema:inputSchema},
  {path:'/api/v1/agreement-packages/{id}',method:'get',summary:'Read a private preparation receipt under current enrollment, signature, student, guardian/family and agreement permissions; not completed signature evidence'}
 ] as const;
