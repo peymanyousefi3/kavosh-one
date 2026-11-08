@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { operationsFixture } from './operations-fixture.ts';
 import { scopeContains } from '../src/core/policy.ts';
 
-async function fixture(){
- const f=await operationsFixture(),country=randomUUID(),region=randomUUID(),city=randomUUID();
+async function fixture(options:{throughSchema?:number}={}){
+ const f=await operationsFixture(options),country=randomUUID(),region=randomUUID(),city=randomUUID();
  await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);
  await f.pg.query("INSERT INTO public.regions(academy_id,id,country_id,code,name) VALUES($1,$2,$3,'ON','Ontario')",[f.a,region,country]);
  await f.pg.query("INSERT INTO public.cities(academy_id,id,region_id,name) VALUES($1,$2,$3,'Toronto')",[f.a,city,region]);
@@ -28,7 +29,73 @@ async function fixture(){
  return {...f,student,createEnrollment,one,two,own,peer,other,currency:currency.body.data.id,tax:tax.body.data.id,method:method.body.data.id,base,create,setAccess};
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
-function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+async function familyAccess(f:Fixture,as='staff',selection:Record<string,unknown>={allHubs:true}){
+ const r=await f.request('roles',{name:'Private family tuition '+randomUUID(),permissions:[{capability:'received-tuition.view',effect:'allow'}]});assert.equal(r.response.status,201,JSON.stringify(r.body));await f.setAccess(as,[{roleId:r.body.data.id,...selection}]);return r.body.data.id as string;
+}
+async function familyLink(f:Fixture,studentId=f.one,as='staff',patch:Record<string,unknown>={}){
+ assert.equal((await f.request('guardians',{personId:f.actors[as].person,legalName:'Private guardian '+as})).response.status,201);
+ const r=await f.request('students/'+studentId+'/guardians',{guardianId:f.actors[as].person,relationship:'parent',reason:'Reviewed synthetic family',...patch});assert.equal(r.response.status,201,JSON.stringify(r.body));return r.body.data.id as string;
+}
+function check(name:string,run:(f:Fixture)=>Promise<void>,nativeOnly=false){test(name,{skip:nativeOnly&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+
+test('family tuition: actual schema200 upgrade preserves original plans,approvals,installments and assignments without auto-grants',async()=>{
+ const f=await fixture({throughSchema:200});try{const p=await f.create();assert.equal(p.response.status,201);const sql="SELECT jsonb_build_object('plans',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM public.tuition_plans x),'revisions',(SELECT jsonb_agg(to_jsonb(x) ORDER BY plan_id,version) FROM public.tuition_plan_revisions x),'installments',(SELECT jsonb_agg(to_jsonb(x) ORDER BY plan_id,version,ordinal) FROM public.tuition_installments x),'permissions',(SELECT jsonb_agg(to_jsonb(x) ORDER BY role_id,capability) FROM public.role_permissions x),'assignments',(SELECT jsonb_agg(to_jsonb(x) ORDER BY id) FROM public.role_assignments x)) snapshot",before=(await f.pg.query(sql)).rows;await f.pg.exec(await readFile(new URL('../db/migrations/201_received_tuition.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query(sql)).rows,before);assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,201);assert.equal((await f.pg.query("SELECT 1 FROM public.role_permissions WHERE capability='received-tuition.view'")).rows.length,0);await familyLink(f);assert.equal((await f.request('students/'+f.one+'/tuition-plans',undefined,'staff')).response.status,403);await familyAccess(f);assert.equal((await f.request('students/'+f.one+'/tuition-plans/'+p.body.data.id,undefined,'staff')).response.status,200);}finally{await f.pg.close();}
+});
+
+check('family tuition: concurrent family suspension and reads leave no access after the approved revocation commits',async f=>{
+ const p=await f.create();assert.equal(p.response.status,201);const relationship=await familyLink(f);await familyAccess(f);const path='students/'+f.one+'/tuition-plans/'+p.body.data.id,t=performance.now();
+ const [read,revoked]=await Promise.all([f.request(path,undefined,'staff'),f.request('family-relationships/'+relationship+'/suspend',{expectedVersion:1,reason:'Synthetic revoke during a family read'})]);assert.ok([200,404].includes(read.response.status),JSON.stringify(read.body));assert.equal(revoked.response.status,200,JSON.stringify(revoked.body));assert.equal((await f.request(path,undefined,'staff')).response.status,404);assert.equal((await f.request('students/'+f.one+'/tuition-plans',undefined,'staff')).response.status,404);console.log(JSON.stringify({case:'two-request-family-tuition-revocation',elapsedMs:Math.round(performance.now()-t),capacityClaim:false}));
+},true);
+
+check('family tuition: current verified parent reads approved pre-admission terms without administrative finance or peer data',async f=>{
+ const own=await f.create(),peer=await f.create({},'master',f.peer);assert.equal(own.response.status,201);assert.equal(peer.response.status,201);await familyLink(f);
+ const path='students/'+f.one+'/tuition-plans';assert.equal((await f.request(path,undefined,'staff')).response.status,403);await familyAccess(f);
+ const list=await f.request(path,undefined,'staff');assert.equal(list.response.status,200,JSON.stringify(list.body));assert.deepEqual(list.body.data.map((r:{id:string})=>r.id),[own.body.data.id]);assert.equal(list.response.headers.get('cache-control'),'no-store');
+ const detail=await f.request(path+'/'+own.body.data.id,undefined,'staff');assert.equal(detail.response.status,200,JSON.stringify(detail.body));assert.equal(detail.body.data.plannedGross,'113.00');assert.equal(detail.body.data.installments[0].amount,'50.00');assert.equal(detail.body.data.admissionGranted,false);assert.equal(detail.body.data.paymentStatus,'not_tracked_here');assert.equal(detail.body.data.joinsOn,'2030-01-01');
+ assert.doesNotMatch(JSON.stringify(detail.body),/Private tuition terms|sourceSnapshot|reason|approvalId|changedBy|recruiter|dateOfBirth|Private Student/);
+ assert.equal((await f.request('finance/tuition-plans/'+own.body.data.id,undefined,'staff')).response.status,403);assert.equal((await f.request('classes/'+f.own.class_id+'/roster',undefined,'staff')).response.status,403);
+ assert.equal((await f.request('students/'+f.two+'/tuition-plans',undefined,'staff')).response.status,404);assert.equal((await f.request(path+'/'+peer.body.data.id,undefined,'staff')).response.status,404);assert.equal((await f.request(path+'/'+own.body.data.id,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ const before=(await f.pg.query('SELECT count(*) n FROM public.finance_journals')).rows[0];await f.request(path,undefined,'staff');assert.deepEqual((await f.pg.query('SELECT count(*) n FROM public.finance_journals')).rows[0],before);
+});
+check('family tuition: separate grants cannot be delegated beyond a primary hub or shed class denials',async f=>{
+ const viewer=await f.request('roles',{name:'Family tuition delegation',permissions:[{capability:'received-tuition.view',effect:'allow'}]}),deny=await f.request('roles',{name:'Family tuition excluded class',permissions:[{capability:'received-tuition.view',effect:'deny'}]}),access=await f.request('roles',{name:'Family delegation administrator',permissions:[{capability:'access.edit',effect:'allow'}]});
+ const path='people/'+f.actors.staff.person+'/access',old=(await f.request(path)).body.data.version,selected={roleId:viewer.body.data.id,allHubs:false,personIds:[f.one]},blocked={roleId:deny.body.data.id,allHubs:false,classIds:[f.own.class_id]};
+ // Existing administrative tuition authority is not family-feature authority.
+ assert.equal((await f.request(path,{expectedVersion:old,assignments:[selected]},'manager')).response.status,403);
+ await f.setAccess('manager',[{roleId:viewer.body.data.id,allHubs:false,hubIds:[f.hub]},{roleId:access.body.data.id,allHubs:true},{roleId:f.managerRole,allHubs:false,hubIds:[f.hub]}]);assert.equal((await f.request(path,{expectedVersion:old,assignments:[selected]},'manager')).body.error.code,'DELEGATION_EXCEEDS_AUTHORITY');
+ await f.setAccess('manager',[selected,blocked,{roleId:access.body.data.id,allHubs:true},{roleId:f.managerRole,allHubs:false,hubIds:[f.hub]}]);assert.equal((await f.request(path,{expectedVersion:old,assignments:[selected]},'manager')).body.error.code,'DELEGATION_EXCEEDS_AUTHORITY');
+ const safe=await f.request(path,{expectedVersion:old,assignments:[selected,blocked]},'manager');assert.equal(safe.response.status,202,JSON.stringify(safe.body));assert.equal((await f.approve(safe.body.approval.id)).response.status,200);
+});
+check('family tuition: own student is separately configurable and a fully permitted machine still cannot impersonate family',async f=>{
+ const studentId=f.actors.manager.person;assert.equal((await f.request('students',{personId:studentId,legalName:'Private own student',dateOfBirth:'2014-01-01',recruiter:{kind:'academy'}})).response.status,201);const e=await f.createEnrollment(studentId),p=await f.create({},'master',e);assert.equal(p.response.status,201);await familyAccess(f,'manager',{allHubs:false,personIds:[studentId]});
+ const path='students/'+studentId+'/tuition-plans';assert.equal((await f.request(path+'/'+p.body.data.id,undefined,'manager')).response.status,200);assert.equal((await f.request('students/'+f.one+'/tuition-plans',undefined,'manager')).response.status,404);
+ await familyAccess(f,'bot');assert.equal((await f.request(path,undefined,'bot')).response.status,403);assert.equal((await f.request(path,undefined,'bot')).body.error.code,'HUMAN_RECIPIENT_REQUIRED');
+ await f.pg.query('UPDATE identity."user" SET "phoneNumberVerified"=false WHERE id=$1',[f.actors.manager.user]);assert.notEqual((await f.request(path,undefined,'manager')).response.status,200);
+});
+check('family tuition: live legal relationship,expiry,student status and grants are rechecked on every read',async f=>{
+ const p=await f.create();assert.equal(p.response.status,201);const relationship=await familyLink(f);await familyAccess(f);const path='students/'+f.one+'/tuition-plans/'+p.body.data.id;
+ assert.equal((await f.request(path,undefined,'staff')).response.status,200);
+ for(const change of [{relationship:'authorized_contact'},{relationship:'parent',state:'suspended'},{state:'approved',validFrom:'2090-01-01T00:00:00Z'},{validFrom:'2000-01-01T00:00:00Z',validUntil:'2001-01-01T00:00:00Z'}]){
+  const v=(await f.pg.query<{version:number}>('SELECT version FROM public.family_relationships WHERE id=$1',[relationship])).rows[0].version;const changed=await f.request('family-relationships/'+relationship+'/change',{expectedVersion:v,...change,reason:'Synthetic current authority change'});assert.equal(changed.response.status,200,JSON.stringify(changed.body));assert.equal((await f.request(path,undefined,'staff')).response.status,404);
+ }
+ const v=(await f.pg.query<{version:number}>('SELECT version FROM public.family_relationships WHERE id=$1',[relationship])).rows[0].version;assert.equal((await f.request('family-relationships/'+relationship+'/change',{expectedVersion:v,validFrom:'2000-01-01T00:00:00Z',validUntil:null,reason:'Synthetic restored guardian'})).response.status,200);
+ assert.equal((await f.request(path,undefined,'staff')).response.status,200);await f.pg.query("UPDATE public.people SET status='disabled' WHERE id=$1",[f.one]);assert.equal((await f.request(path,undefined,'staff')).response.status,404);await f.pg.query("UPDATE public.people SET status='active' WHERE id=$1",[f.one]);await f.setAccess('staff',[]);assert.equal((await f.request(path,undefined,'staff')).response.status,403);
+});
+check('family tuition: actual record hub and class denials apply before paging despite a selected-student grant',async f=>{
+ const a=await f.create(),b=await f.create({...f.base,taxCodeId:f.tax},'master',f.other);assert.equal(a.response.status,201);assert.equal(b.response.status,409,'Hub-specific tax cannot fund another hub');
+ const tax=await f.request('finance/tax-codes',{code:'GLOBAL',name:'Synthetic global tax',countryCode:'CA',classification:'taxable',ratePercent:'13',startsOn:'2026-01-01',legalBasis:'Synthetic reviewed classification',reason:'Synthetic setup'}),method=await f.request('finance/payment-methods',{code:'GLOBAL',name:'Synthetic global method',category:'e_transfer',reason:'Synthetic setup'});assert.equal(tax.response.status,201);assert.equal(method.response.status,201);
+ const other=await f.create({taxCodeId:tax.body.data.id,installments:f.base.installments.map(i=>({...i,methodId:method.body.data.id}))},'master',f.other);assert.equal(other.response.status,201,JSON.stringify(other.body));await familyLink(f);const allow=await familyAccess(f,'staff',{allHubs:false,personIds:[f.one]}),deny=await f.request('roles',{name:'Family forbidden record hub',permissions:[{capability:'received-tuition.view',effect:'deny'}]});assert.equal(deny.response.status,201);await f.setAccess('staff',[{roleId:allow,allHubs:false,personIds:[f.one]},{roleId:deny.body.data.id,allHubs:false,hubIds:[f.otherHub]}]);
+ const path='students/'+f.one+'/tuition-plans',list=await f.request(path+'?limit=1',undefined,'staff');assert.equal(list.response.status,200,JSON.stringify(list.body));assert.deepEqual(list.body.data.map((r:{id:string})=>r.id),[a.body.data.id]);assert.equal(list.body.nextCursor,null);assert.equal((await f.request(path+'/'+other.body.data.id,undefined,'staff')).response.status,404);
+ await f.setAccess('staff',[{roleId:allow,allHubs:false,personIds:[f.one]},{roleId:deny.body.data.id,allHubs:false,classIds:[f.own.class_id]}]);const second=await f.request(path+'?limit=1',undefined,'staff');assert.equal(second.response.status,200,JSON.stringify(second.body));assert.deepEqual(second.body.data.map((r:{id:string})=>r.id),[other.body.data.id]);assert.equal(second.body.nextCursor,null);assert.equal((await f.request(path+'/'+a.body.data.id,undefined,'staff')).response.status,404);
+});
+check('family tuition: canonical replacement,cancellation,pinned method labels and strict pagination never invent paid status',async f=>{
+ const p=await f.create(),id=p.body.data.id;assert.equal(p.response.status,201);await familyLink(f);await familyAccess(f);const path='students/'+f.one+'/tuition-plans';
+ await f.request('finance/payment-methods/'+f.method+'/change',{expectedVersion:1,name:'New method name',reason:'Synthetic rename'});assert.equal((await f.request(path+'/'+id,undefined,'staff')).body.data.installments[0].methodName,'Synthetic transfer');
+ const replacement=await f.request('finance/tuition-plans/'+id+'/change',{...f.base,expectedVersion:1,agreedAmount:'90',installments:[{dueOn:'2030-02-01',amount:'101.70',methodId:f.method,methodVersion:2}]});assert.equal(replacement.response.status,200,JSON.stringify(replacement.body));const changed=await f.request(path+'/'+id,undefined,'staff');assert.equal(changed.body.data.version,2);assert.equal(changed.body.data.plannedGross,'101.70');assert.equal(changed.body.data.installments[0].methodName,'New method name');
+ assert.equal((await f.request('finance/tuition-plans/'+id+'/cancel',{expectedVersion:2,reason:'Stop future planning'})).response.status,200);assert.equal((await f.request(path+'?state=active',undefined,'staff')).body.data.length,0);assert.equal((await f.request(path+'/'+id,undefined,'staff')).body.data.state,'cancelled');assert.equal((await f.request(path+'?state=cancelled',undefined,'staff')).body.data[0].paymentStatus,'not_tracked_here');
+ for(const suffix of ['?limit=51','?limit=1&limit=2','?after=bad','?paid=true'])assert.equal((await f.request(path+suffix,undefined,'staff')).response.status,400);
+ assert.equal((await f.request(path+'/'+id+'?version=1',undefined,'staff')).response.status,400);assert.equal((await f.request(path+'/'+id,{},'staff')).response.status,405);
+});
 
 check('approved pre-admission tuition preserves original/agreed prices, exact tax, joining context and gross installments without cash or journal postings',async f=>{
  const r=await f.create();assert.equal(r.response.status,201,JSON.stringify(r.body));assert.equal(r.body.approval.selfApproved,true);const v=r.body.data;

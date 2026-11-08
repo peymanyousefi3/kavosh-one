@@ -10,6 +10,7 @@ import { currencyRow } from './finance.ts';
 import { taxCodeRow } from './finance-taxes.ts';
 import { paymentMethodSelection } from './payment-methods.ts';
 import { lockAcademyTopology } from './academy.ts';
+import { receivedTuition,receivedTuitionContract } from './received-tuition.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const money=z.string().min(1).max(80),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
@@ -120,6 +121,7 @@ export const tuitionActions:ApprovalRegistry=Object.fromEntries(['finance.tuitio
  validate:(c:ApiContext,id:string,i:unknown)=>validate(c,action,id,i),dependencies:(c:ApiContext,id:string,i:unknown,purpose:'request'|'review')=>dependencies(c,action,id,i,purpose),authorizeReviewer,apply
 }]));
 export async function tuition(ctx:ApiContext,registry:ApprovalRegistry=tuitionActions):Promise<Reply|null>{
+ const received=await receivedTuition(ctx);if(received)return received;
  const creation=/^enrollments\/([^/]+)\/tuition-plan$/.exec(ctx.path),item=/^finance\/tuition-plans(?:\/([^/]+)(?:\/(change|cancel|history))?)?$/.exec(ctx.path);if(!creation&&!item)return null;
  if(creation){
   if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));
@@ -143,6 +145,7 @@ export async function tuition(ctx:ApiContext,registry:ApprovalRegistry=tuitionAc
  return {status:200,body:{data:rows.slice(0,q.limit).map(p=>({...p,plannedGross:formatMoney(readMinorUnits(p.gross_minor),p.unit_scale),planningOnly:true,posted:false,paymentStatus:'not_tracked_here'})),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
 }
 export const tuitionContract=[
+ ...receivedTuitionContract,
  {path:'/api/v1/enrollments/{id}/tuition-plan',method:'post',summary:'Request an exact reviewed tuition/installment plan before signing or admission; not an invoice, receipt or journal posting',schema:terms},
  {path:'/api/v1/finance/tuition-plans',method:'get',summary:'Scope-filtered tuition plans and expected gross amounts; no actual payment or receivable balance implied',querySchema:query},
  {path:'/api/v1/finance/tuition-plans/{id}',method:'get',summary:'Read own permitted current terms/installments; explicit historical versions require current tuition editing',querySchema:z.object({version:version.optional()}).strict()},

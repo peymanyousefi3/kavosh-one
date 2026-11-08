@@ -17,6 +17,7 @@ const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_mo
 let output='';
 child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
 try {
+  // New family finance reads never expose plan data before authentication.
   // Settlement files must not bypass the normal authenticated API boundary.
   let ready=false;
   for (let i=0;i<80;i++) {
@@ -25,6 +26,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const path of ['students/00000000-0000-4000-8000-000000000001/tuition-plans','students/00000000-0000-4000-8000-000000000001/tuition-plans/00000000-0000-4000-8000-000000000002']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/plannedGross|installments|reason|source_snapshot|stack/);}
   for(const path of ['me/account-security','me/account-security/00000000-0000-4000-8000-000000000001','people/00000000-0000-4000-8000-000000000001/account-security','people/00000000-0000-4000-8000-000000000001/account-security/00000000-0000-4000-8000-000000000002']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/contact_event_id|user_id|origin_transaction|example[.]test|stack/);}
   // No live identity configuration must fail closed,not expose phone proof.
   for(const [suffix,method] of [['','GET'],['/request','POST'],['/authorize','POST'],['/cancel','POST']]){const r=await fetch(base+'/api/auth/phone-change'+suffix,{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{})});assert.equal(r.status,503);assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual(await r.json(),{error:{code:'AUTH_UNAVAILABLE'}});}

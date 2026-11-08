@@ -106,6 +106,7 @@ async function selectedScope(ctx:ApiContext,item:z.infer<typeof assignment>):Pro
 }
 function assertFeatureDelegation(ctx:ApiContext,cap:Capability,target:Scope) {
   const source=permissionScope(ctx,cap);
+  if(cap==='received-tuition.view')cap='tuition.view';
   // A selected-student registration grant follows that student's classes,
   // including future hubs; primary-hub authority alone cannot delegate it.
   if(['report-schedules.view','report-schedules.edit','report-presets.view','report-presets.edit','received-calendar.view','work-files.view','work-files.edit','work-files.upload','work-signatures.view','work-signatures.edit','payruns.view','payruns.edit','work-pay.view','work-pay.edit','payroll-accruals.view','payroll-accruals.edit','payroll-adjustments.view','payroll-adjustments.edit','payroll-preparations.view','payroll-preparations.edit','pay-periods.view','pay-periods.edit','registrations.view','tuition.view','tuition.edit','invoices.view','invoices.edit','receipts.view','receipts.edit','allocations.view','allocations.edit','share-rules.view','share-rules.edit'].includes(cap)&&target.people?.length&&(!ctx.credential.all_hubs||
