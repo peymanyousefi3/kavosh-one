@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.192.0",
+    "version": "0.193.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -35455,6 +35455,47 @@
         }
       }
     },
+    "/api/v1/payroll/payruns/{id}/net/calculation": {
+      "get": {
+        "summary": "Private retained calculated-net input and period/tax/history source fingerprints for a current or pinned historical net edition;requires separate calendar,tax and whole financial-history rights. Current-source flag is not statutory or payout certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/payroll/payruns/{id}/net/contributions-preview": {
       "post": {
         "summary": "Source-authorized read-only 2026 CPP/CPP2 and standard EI salary/wage scenario outside Quebec: exact cents,explicit reviewed same-employer YTD and pensionable months,regular versus standalone non-periodic exemption;current CAD2 gross/year/source bound. No income tax,classification certification,persisted YTD,automatic statement,ledger posting or payment.",
@@ -35644,6 +35685,132 @@
           }
         ],
         "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/payruns/{id}/net/prepare": {
+      "post": {
+        "summary": "Generate reviewed net deductions and employer contributions from the approved shared period,current Ontario2026 declarations and complete paid history. Same existing upper-human approval,immutable statement history and no duplicate gross expense;caller cannot supply tax/net amounts. Changed calculation sources block posting/settlement;actual payment attestation must match the reviewed local pay date. No external payment or statutory certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "calculationRequest": {
+                    "type": "object",
+                    "properties": {
+                      "periodId": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      "expectedPeriodVersion": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 2147483646
+                      },
+                      "pensionableEarnings": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "pattern": "^\\d+(?:\\.\\d+)?$"
+                      },
+                      "insurableEarnings": {
+                        "type": "string",
+                        "maxLength": 80,
+                        "pattern": "^\\d+(?:\\.\\d+)?$"
+                      },
+                      "noQuebecTransfer": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "noOtherSameEmployerPayments": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "noNonCashOrZeroNetPayments": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "eligibilityReview": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "fullyTaxableCashRemuneration": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "noBonusesOrOtherTaxAdjustments": {
+                        "type": "boolean",
+                        "const": true
+                      }
+                    },
+                    "required": [
+                      "periodId",
+                      "expectedPeriodVersion",
+                      "pensionableEarnings",
+                      "insurableEarnings",
+                      "noQuebecTransfer",
+                      "noOtherSameEmployerPayments",
+                      "noNonCashOrZeroNetPayments",
+                      "eligibilityReview",
+                      "fullyTaxableCashRemuneration",
+                      "noBonusesOrOtherTaxAdjustments"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "calculationRequest",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Current data or applied change"
@@ -37526,6 +37693,11 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
+                  "expectedPeriodVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483646
+                  },
                   "pensionableEarnings": {
                     "type": "string",
                     "maxLength": 80,
@@ -37553,11 +37725,6 @@
                     "minLength": 1,
                     "maxLength": 2000
                   },
-                  "expectedPeriodVersion": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 2147483646
-                  },
                   "fullyTaxableCashRemuneration": {
                     "type": "boolean",
                     "const": true
@@ -37568,13 +37735,13 @@
                   }
                 },
                 "required": [
+                  "expectedPeriodVersion",
                   "pensionableEarnings",
                   "insurableEarnings",
                   "noQuebecTransfer",
                   "noOtherSameEmployerPayments",
                   "noNonCashOrZeroNetPayments",
                   "eligibilityReview",
-                  "expectedPeriodVersion",
                   "fullyTaxableCashRemuneration",
                   "noBonusesOrOtherTaxAdjustments"
                 ],
