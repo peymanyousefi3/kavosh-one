@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.226.0",
+    "version": "0.227.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -61351,6 +61351,201 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/tuition-invoices": {
+      "get": {
+        "summary": "Own/current verified legal family issued/credited tuition invoices under received-tuition.view and exact record scope before bounded paging. Pinned invoice amounts,active recorded receipts and credit share one statement snapshot;never infer cash from a payment plan.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "issued",
+                "credited"
+              ]
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/tuition-invoices/{invoiceId}": {
+      "get": {
+        "summary": "Current canonical invoice balance,partial/paid/customer-credit status and pinned school issuer. No other guardian identity,private review/account mappings or historical override. Recorded payments are not independently verified bank settlement;credit does not perform a refund.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "invoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/tuition-invoices/{invoiceId}/receipts": {
+      "get": {
+        "summary": "Bounded original payment history with pinned collector/method labels and explicit reversed status. No bank/holding accounts,staff reasons or evidence links;current family authority and exact invoice scope required.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "invoiceId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "reversed"
+              ]
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
           }
         ],
         "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",

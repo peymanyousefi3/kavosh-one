@@ -26,6 +26,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['','/00000000-0000-4000-8000-000000000002','/00000000-0000-4000-8000-000000000002/receipts']){const r=await fetch(base+'/api/v1/students/00000000-0000-4000-8000-000000000001/tuition-invoices'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/received|balance|collectorName|issuer|stack/);}
   for(const path of ['students/00000000-0000-4000-8000-000000000001/tuition-plans','students/00000000-0000-4000-8000-000000000001/tuition-plans/00000000-0000-4000-8000-000000000002']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/plannedGross|installments|reason|source_snapshot|stack/);}
   for(const path of ['me/account-security','me/account-security/00000000-0000-4000-8000-000000000001','people/00000000-0000-4000-8000-000000000001/account-security','people/00000000-0000-4000-8000-000000000001/account-security/00000000-0000-4000-8000-000000000002']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/contact_event_id|user_id|origin_transaction|example[.]test|stack/);}
   // No live identity configuration must fail closed,not expose phone proof.

@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family posted invoices and recorded payments are human-only bounded reads without paid overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/tuition-invoices';for(const p of [path,path+'/{invoiceId}',path+'/{invoiceId}/receipts']){assert.deepEqual(api.paths[p].get.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[p].post,undefined);}for(const p of [path,path+'/{invoiceId}/receipts'])assert.equal(api.paths[p].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(api.paths[path+'/{invoiceId}/receipts'].get.parameters.find((p:any)=>p.name==='status').schema.enum,['recorded','reversed']);
+});
+
 test('family tuition API is human-only,bounded and cannot request staff history or set paid state',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/tuition-plans';for(const p of [path,path+'/{planId}']){assert.deepEqual(api.paths[p].get.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[p].post,undefined);}const params=api.paths[path].get.parameters;assert.equal(params.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(params.find((p:any)=>p.name==='state').schema.enum,['active','cancelled']);assert.equal(params.some((p:any)=>p.name==='version'||p.name==='paid'),false);assert.equal(api.paths[path+'/{planId}'].get.parameters.some((p:any)=>p.name==='version'),false);
 });

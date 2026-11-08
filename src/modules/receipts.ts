@@ -39,10 +39,15 @@ async function receipt(ctx:ApiContext,id:string,edit=false):Promise<Receipt>{
 async function balances(ctx:ApiContext,invoiceId:string){
  const row=(await ctx.db.query<{gross:string;received:string;credited:boolean;scale:number;currencyCode:string}>(`SELECT t.gross_minor::text AS gross,coalesce((SELECT sum(r.amount_minor) FROM public.tuition_receipts r WHERE r.academy_id=i.academy_id AND r.invoice_id=i.id AND r.reversal_id IS NULL),0)::text AS received,i.credit_id IS NOT NULL AS credited,p.unit_scale AS scale,c.code AS "currencyCode"
  FROM public.tuition_invoices i JOIN public.tuition_plans p ON p.academy_id=i.academy_id AND p.id=i.plan_id JOIN public.tuition_plan_revisions t ON t.academy_id=i.academy_id AND t.plan_id=i.plan_id AND t.version=i.plan_version JOIN public.finance_currencies c ON c.academy_id=p.academy_id AND c.id=p.currency_id WHERE i.id=$1`,[invoiceId])).rows[0];
- if(!row)throw new ApiError(404,'NOT_FOUND');const gross=readMinorUnits(row.gross),received=readMinorUnits(row.received),credited=row.credited?gross:0n,balance=gross-credited-received;
+ if(!row)throw new ApiError(404,'NOT_FOUND');return invoiceBalanceValues(row);
+}
+// Shared exact arithmetic for administrative and family projections. Calling
+// this pure formatter never authorizes access or reads/mutates a ledger.
+export function invoiceBalanceValues(row:{gross:string;received:string;credited:boolean;scale:number;currencyCode:string}){
+ const gross=readMinorUnits(row.gross),received=readMinorUnits(row.received),credited=row.credited?gross:0n,balance=gross-credited-received;
  return {gross,received,credited,balance,isCredited:row.credited,scale:row.scale,currencyCode:row.currencyCode};
 }
-function publicBalance(b:Awaited<ReturnType<typeof balances>>){return {invoiced:formatMoney(b.gross,b.scale),received:formatMoney(b.received,b.scale),credited:formatMoney(b.credited,b.scale),balance:formatMoney(b.balance,b.scale),currencyCode:b.currencyCode,
+export function publicBalance(b:Awaited<ReturnType<typeof balances>>){return {invoiced:formatMoney(b.gross,b.scale),received:formatMoney(b.received,b.scale),credited:formatMoney(b.credited,b.scale),balance:formatMoney(b.balance,b.scale),currencyCode:b.currencyCode,
  paymentStatus:b.balance<0n?'customer_credit':b.isCredited?'credited':b.gross===0n?'no_payment_required':b.balance===0n?'paid':b.received>0n?'partially_paid':'unpaid',refundPerformed:false};}
 async function basis(ctx:ApiContext,input:ReturnType<typeof paymentInput>,lock=false,checkState=true){
  const i=await invoiceRow(ctx,input.invoiceId),auth=financialRecordAuthority(ctx,i,'receipts.edit');financialRecordAuthority(ctx,i,'receipts.view');
