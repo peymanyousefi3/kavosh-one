@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { jsonBody,type ApiContext,type Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
-import { receivedTuitionScope } from './received-tuition.ts';
+import { receivedStudentScope } from './family-access.ts';
 import { issueFileDownload } from './file-downloads.ts';
 import type { R2DownloadConnections } from '../integrations/r2-config.ts';
 
@@ -10,7 +10,7 @@ export async function familyReceiptDownload(ctx:ApiContext,connections?:R2Downlo
  const m=/^students\/([^/]+)\/tuition-invoices\/([^/]+)\/receipts\/([^/]+)\/attachment-download-link$/.exec(ctx.path);if(!m)return null;
  if(ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));empty.parse(await jsonBody(ctx.request));
  const studentId=uuid.parse(m[1]),invoiceId=uuid.parse(m[2]),receiptId=uuid.parse(m[3]);
- async function authorized(c:ApiContext,fileId?:string){const scope=await receivedTuitionScope(c,studentId);
+ async function authorized(c:ApiContext,fileId?:string){const scope=await receivedStudentScope(c,studentId,'received-tuition.view');
   // The ORIGINAL applied payment approval must pin this exact evidence. No
   // general student-file grants,caller-selected file,copy,person or role.
   // Metadata names may evolve;the immutable content/owner binding cannot.

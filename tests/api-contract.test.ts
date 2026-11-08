@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family registration and preparation APIs are human-only bounded and do not offer admission or signer overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/registrations';for(const p of [path,path+'/{enrollmentId}',path+'/{enrollmentId}/agreements']){assert.deepEqual(api.paths[p].get.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[p].post,undefined);}assert.equal(api.paths[path].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.equal(api.paths[path+'/{enrollmentId}/agreements'].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,20);assert.equal(api.paths[path].get.parameters.some((p:any)=>p.name==='signerId'||p.name==='admissionCleared'),false);
+});
+
 test('family receipt attachment contract is human-only and accepts no file copy source or recipient selection',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/students/{id}/tuition-invoices/{invoiceId}/receipts/{receiptId}/attachment-download-link'].post;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);const s=op.requestBody.content['application/json'].schema;assert.deepEqual(s.properties,{});assert.equal(s.additionalProperties,false);assert.match(op.summary,/original upper-approved receipt attachment/);
 });

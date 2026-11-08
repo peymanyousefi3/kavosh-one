@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
 import { formatMoney,readMinorUnits } from '../core/money.ts';
-import { receivedTuitionScope } from './received-tuition.ts';
+import { receivedStudentScope } from './family-access.ts';
 import { invoiceBalanceValues,publicBalance } from './receipts.ts';
 import { invoiceInstallmentStatus,tuitionInstallmentQuery } from './allocations.ts';
 
@@ -16,7 +16,7 @@ export async function receivedTuitionFinance(ctx:ApiContext):Promise<Reply|null>
  const studentId=uuid.parse(m[1]),id=m[2]?uuid.parse(m[2]):null,receipts=m[3]==='receipts',installments=m[3]==='installment-status',includeIssuer=Boolean(id&&!m[3]),params=new URL(ctx.request.url).searchParams;
  if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
  const q=!id?query.parse(Object.fromEntries(params)):null,rq=receipts?receiptQuery.parse(Object.fromEntries(params)):null,iq=installments?tuitionInstallmentQuery.parse(Object.fromEntries(params)):null;if(id&&!m[3])empty.parse(Object.fromEntries(params));
- const scope=await receivedTuitionScope(ctx,studentId);
+ const scope=await receivedStudentScope(ctx,studentId,'received-tuition.view');
  // Immutable invoice terms,credit and active receipts share ONE statement
  // snapshot. Never infer received money from a tuition/installment schedule.
  const rows=(await ctx.db.query<Invoice>(`WITH recipient AS MATERIALIZED(SELECT public.registration_data_basis($1,$2) IS NOT NULL allowed)
