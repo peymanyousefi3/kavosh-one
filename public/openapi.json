@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.198.0",
+    "version": "0.199.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -36192,14 +36192,28 @@
                         "type": "object",
                         "properties": {
                           "givenNames": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 100
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "familyName": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 100
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "address": {
                             "type": "object",
@@ -36220,14 +36234,28 @@
                                 "maxLength": 100
                               },
                               "region": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 100
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 100
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               },
                               "postalCode": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 32
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 32
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
                               },
                               "countryCode": {
                                 "type": "string",
