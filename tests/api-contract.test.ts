@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('work signing observations use the existing bounded event and notification APIs without a signing-completion mutation',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/automations/events'].get,kind=op.parameters.find((p:any)=>p.name==='sourceKind');assert.ok(kind.schema.enum.includes('work_signature'));assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);for(const path of ['/api/v1/notifications','/api/v1/notifications/{id}']){assert.ok(api.paths[path].get);assert.equal(api.paths[path].post,undefined);}assert.deepEqual(Object.keys(api.paths['/api/v1/notifications/{id}/read'].post.requestBody.content['application/json'].schema.properties),['locale']);
+});
+
 test('worker service conflicts have bounded current-rights reads without correction overwrite or send authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/payroll/work-signature-send-requests/{id}/attempts/{attemptId}/dispatch/conflicts',op=api.paths[path].get;assert.equal(api.paths[path].post,undefined);assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.match(op.parameters.find((p:any)=>p.name==='after').schema.pattern,/a-f0-9/);assert.match(op.summary,/current work\/template\/file view rights/);assert.equal(op.parameters.some((p:any)=>['providerVerified','state','actorId','documentId'].includes(p.name)),false);
 });
