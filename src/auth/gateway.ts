@@ -1,16 +1,21 @@
 import { timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { isAPIError } from 'better-auth/api';
 import { ApiError } from '../core/policy.ts';
-import type { Identity, IdentityConfig } from './config.ts';
+import type { Identity, IdentityConfig,Delivery } from './config.ts';
 import { IdentityStore } from './store.ts';
 import { jsonBody,type HumanSession } from '../core/api.ts';
+import { phoneChange } from './phone-change.ts';
 
 const email=z.string().email().max(254).transform(s=>s.trim().toLowerCase());
 const password=z.string().min(15).max(128);
 const phone=z.string().regex(/^\+[1-9]\d{7,14}$/);
 const code=z.string().regex(/^\d{6}$/);
 export const schemas:Record<string,z.ZodType>={
+  '/phone-change/request':z.object({phoneNumber:phone,password:z.string().min(1).max(128)}).strict(),
+  '/phone-change/authorize':z.object({requestId:z.string().uuid(),code:z.string().regex(/^\d{8}$/)}).strict(),
+  '/phone-change/cancel':z.object({requestId:z.string().uuid()}).strict(),
   '/sign-up/email':z.object({name:z.string().trim().min(1).max(200),email,password}).strict(),
   '/sign-in/email':z.object({email,password:z.string().min(1).max(128),rememberMe:z.boolean().optional()}).strict(),
   '/send-verification-email':z.object({email}).strict(),
@@ -30,7 +35,7 @@ export const schemas:Record<string,z.ZodType>={
   '/sign-out':z.object({}).strict(), '/revoke-sessions':z.object({}).strict(), '/revoke-other-sessions':z.object({}).strict(),
   '/revoke-session':z.object({sessionId:z.string().uuid()}).strict()
 };
-export const getPaths=new Set(['/get-session','/list-sessions','/verify-email','/memberships']);
+export const getPaths=new Set(['/get-session','/list-sessions','/verify-email','/memberships','/phone-change']);
 const publicPosts=new Set(['/sign-up/email','/sign-in/email','/request-password-reset','/reset-password','/send-verification-email','/two-factor/send-otp','/two-factor/verify-otp','/two-factor/verify-totp','/two-factor/verify-backup-code']);
 
 async function body(request:Request) {
@@ -72,9 +77,10 @@ export function humanResolver(auth:Identity,store:IdentityStore,config:IdentityC
     return result?{...result,academyId}:null;
   };
 }
-export function identityGateway(auth:Identity,store:IdentityStore,config:IdentityConfig) {
+export function identityGateway(auth:Identity,store:IdentityStore,config:IdentityConfig,delivery?:Delivery) {
   return async(request:Request)=>{
     const headers=new Headers({'Cache-Control':'no-store','Pragma':'no-cache','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'});
+    let libraryInvoked=false;
     try {
       const url=new URL(request.url),path=url.pathname.slice('/api/auth'.length);
       if((request.method==='GET'&&!getPaths.has(path))||(request.method==='POST'&&!schemas[path])||!['GET','POST'].includes(request.method))throw new ApiError(404,'NOT_FOUND');
@@ -96,11 +102,12 @@ export function identityGateway(auth:Identity,store:IdentityStore,config:Identit
       if(request.method==='POST'&&!publicPosts.has(path)) {
         if(!session||!session.user.emailVerified)throw new ApiError(401,'UNAUTHORIZED');
       }
+      if(path==='/phone-change'||path.startsWith('/phone-change/')){if(url.searchParams.size)throw new ApiError(400,'INVALID_INPUT');const reply=await phoneChange(path,input,request,session,auth,store,delivery);return Response.json(reply.body,{status:reply.status,headers});}
       if(path.startsWith('/phone-number/')) {
         if(!session||!session.user.emailVerified)throw new ApiError(401,'UNAUTHORIZED');
         if(Date.now()-new Date(session.session.createdAt).getTime()>900000)throw new ApiError(403,'FRESH_SIGN_IN_REQUIRED');
-        if(session.user.phoneNumberVerified)throw new ApiError(403,'PHONE_CHANGE_REQUIRES_RECOVERY');
         const number=String(input.phoneNumber);
+        if((session.user.phoneNumberVerified||session.user.phoneNumber)&&(!await store.sessionReady(session.user.id,session.session.id)||!await store.phoneChangeReady(session.user.id,session.session.id,number)))throw new ApiError(403,'PHONE_CHANGE_REQUIRES_RECOVERY');
         if(path.endsWith('/send-otp')) {
           if(!await store.budget(`sms:${session.user.id}`,5,3600))throw new ApiError(429,'RATE_LIMITED');
           if(!await store.phoneAvailable(session.user.id,number))throw new ApiError(400,'PHONE_UNAVAILABLE');
@@ -136,7 +143,7 @@ export function identityGateway(auth:Identity,store:IdentityStore,config:Identit
       }
       const forwarded=new Headers(request.headers);forwarded.set('x-kavosh-client-ip',ip);forwarded.delete('x-kavosh-edge-key');forwarded.delete('x-kavosh-invitation');
       const authRequest=new Request(config.origin+target+url.search,{method:request.method,headers:forwarded,...(request.method==='POST'?{body:JSON.stringify(input)}:{})});
-      const result=await auth.handler(authRequest);
+      libraryInvoked=true;const result=await auth.handler(authRequest);
       for(const cookie of result.headers.getSetCookie())headers.append('set-cookie',cookie);
       if(result.headers.has('location'))headers.set('location',result.headers.get('location')!);
       if([204,301,302,303,307,308].includes(result.status))return new Response(null,{status:result.status,headers});
@@ -148,6 +155,17 @@ export function identityGateway(auth:Identity,store:IdentityStore,config:Identit
       if(path==='/two-factor/generate-backup-codes'&&parsed?.backupCodes)return Response.json({backupCodes:parsed.backupCodes},{status:result.status,headers});
       return Response.json(safeOutput(parsed),{status:result.status,headers});
     }catch(error){
+      const failedPath=new URL(request.url).pathname.slice('/api/auth'.length);
+      if(libraryInvoked&&['/request-password-reset','/send-verification-email'].includes(failedPath))return Response.json({status:true,message:'If eligible, check your email.'},{status:202,headers});
+      if(isAPIError(error)){
+        const status=error.statusCode,original=new Headers(error.headers);
+        for(const cookie of original.getSetCookie())headers.append('set-cookie',cookie);
+        if(original.has('location'))headers.set('location',original.get('location')!);
+        if(status>=500)return Response.json({error:{code:'AUTH_UNAVAILABLE'}},{status:503,headers});
+        if([301,302,303,307,308].includes(status))return new Response(null,{status,headers});
+        return Response.json(safeOutput(error.body),{status,headers});
+      }
+      if(error&&typeof error==='object'&&'code' in error&&error.code==='23514'&&'message' in error&&error.message==='PHONE_CHANGE_APPROVAL_REQUIRED')return Response.json({error:{code:'PHONE_CHANGE_SOURCE_CHANGED'}},{status:409,headers});
       const status=error instanceof ApiError?error.status:error instanceof z.ZodError?400:503;
       const code=error instanceof ApiError?error.code:status===400?'INVALID_INPUT':'AUTH_UNAVAILABLE';
       if(status===429)headers.set('retry-after','60');

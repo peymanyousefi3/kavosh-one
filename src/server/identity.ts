@@ -23,8 +23,8 @@ function initialize() {
   pool.on('error',()=>{console.error('identity_database_pool_error');});
   const db=new Kysely<unknown>({dialect:new PostgresDialect({pool})}).withSchema('identity');
   const store=new IdentityStore(db,config.secret);
-  const auth=createIdentity(db,store,queuedDelivery(store,config.secret),config);
-  return {auth,store,config,handle:identityGateway(auth,store,config),resolve:humanResolver(auth,store,config),resolvePlatform:platformHumanResolver(auth,store,config)};
+  const delivery=queuedDelivery(store,config.secret),auth=createIdentity(db,store,delivery,config);
+  return {auth,store,config,handle:identityGateway(auth,store,config,delivery),resolve:humanResolver(auth,store,config),resolvePlatform:platformHumanResolver(auth,store,config)};
 }
 let instance:ReturnType<typeof initialize>|undefined;
 export function getIdentity(){return instance??=initialize();}

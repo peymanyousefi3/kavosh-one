@@ -16,6 +16,9 @@ export function createIdentity(db: Kysely<unknown>, store: IdentityStore, delive
     trustedOrigins: [config.origin],
     database: { db, type: 'postgres', transaction: true },
     logger: { disabled: true },
+    // Better Call otherwise prints non-API driver errors even with logging
+    // disabled. The gateway owns sanitized responses,never raw row diagnostics.
+    onAPIError: { throw: true },
     emailAndPassword: {
       enabled: true, requireEmailVerification: true, autoSignIn: false,
       minPasswordLength: 15, maxPasswordLength: 128, resetPasswordTokenExpiresIn: 900,

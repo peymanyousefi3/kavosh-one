@@ -86,4 +86,9 @@ export class IdentityStore {
     return (await this.query('SELECT 1 FROM identity.session s JOIN identity."user" u ON u.id=s."userId" WHERE s.id=$1 AND u.id=$2 AND s."expiresAt">now() AND u."emailVerified" AND coalesce(u."phoneNumberVerified",false) AND (NOT coalesce(u."twoFactorEnabled",false) OR s."mfaVerified")',[sessionId,userId])).rows.length>0;
   }
   async ownSessionToken(userId:string,sessionId:string) { return (await this.query<{token:string}>('SELECT token FROM identity.session WHERE id=$1 AND "userId"=$2',[sessionId,userId])).rows[0]?.token; }
+  async preparePhoneChange(userId:string,sessionId:string,requestId:string,phone:string,codeHash:string){return(await this.query<{code:string}>('SELECT identity.prepare_phone_change($1,$2,$3,$4,$5) code',[userId,sessionId,requestId,phone,codeHash])).rows[0]?.code;}
+  async authorizePhoneChange(userId:string,sessionId:string,requestId:string,codeHash:string){return(await this.query<{ok:boolean}>('SELECT identity.authorize_phone_change($1,$2,$3,$4) ok',[userId,sessionId,requestId,codeHash])).rows[0]?.ok===true;}
+  async cancelPhoneChange(userId:string,sessionId:string,requestId:string){return(await this.query<{ok:boolean}>('SELECT identity.cancel_phone_change($1,$2,$3) ok',[userId,sessionId,requestId])).rows[0]?.ok===true;}
+  async phoneChange(userId:string,sessionId:string){return(await this.query<{requestId:string;phone:string;state:string;expiresAt:string}>(`SELECT request_id "requestId",phone,state,expires_at::text "expiresAt" FROM identity.phone_change_requests WHERE user_id=$1 AND session_id=$2 AND expires_at>clock_timestamp() AND source_snapshot=identity.phone_change_source($1,$2)`,[userId,sessionId])).rows[0]??null;}
+  async phoneChangeReady(userId:string,sessionId:string,phone:string){const r=await this.phoneChange(userId,sessionId);return r?.state==='authorized'&&r.phone===phone;}
 }

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.221.0",
+    "version": "0.222.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -235,6 +235,206 @@
           },
           "302": {
             "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/phone-change": {
+      "get": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "phone change",
+        "description": "Private signed-session phone recovery. Fresh completed email/phone/MFA sign-in and the real current password start a request (maximum3/hour);an8-digit code is sent only to the current verified email,never returned or stored plaintext. Pending proof expires15minutes,five wrong email guesses exhaust it,and authorization is single-use and bound to the same session/request/target. Authorized permission lasts at most5minutes and still requires the existing new-phone SMS OTP flow. No phone changes before that verification. Completion atomically revokes sessions/trusted-device proofs and records security audit;master identity and mandatory MFA never transfer or weaken. Cancellation removes only the owned request;status contains no approval code/hash/password/source snapshot. No live delivery guarantee.",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "302": {
+            "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/phone-change/authorize": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "phone change · authorize",
+        "description": "Private signed-session phone recovery. Fresh completed email/phone/MFA sign-in and the real current password start a request (maximum3/hour);an8-digit code is sent only to the current verified email,never returned or stored plaintext. Pending proof expires15minutes,five wrong email guesses exhaust it,and authorization is single-use and bound to the same session/request/target. Authorized permission lasts at most5minutes and still requires the existing new-phone SMS OTP flow. No phone changes before that verification. Completion atomically revokes sessions/trusted-device proofs and records security audit;master identity and mandatory MFA never transfer or weaken. Cancellation removes only the owned request;status contains no approval code/hash/password/source snapshot. No live delivery guarantee.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{8}$"
+                  }
+                },
+                "required": [
+                  "requestId",
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/phone-change/cancel": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "phone change · cancel",
+        "description": "Private signed-session phone recovery. Fresh completed email/phone/MFA sign-in and the real current password start a request (maximum3/hour);an8-digit code is sent only to the current verified email,never returned or stored plaintext. Pending proof expires15minutes,five wrong email guesses exhaust it,and authorization is single-use and bound to the same session/request/target. Authorized permission lasts at most5minutes and still requires the existing new-phone SMS OTP flow. No phone changes before that verification. Completion atomically revokes sessions/trusted-device proofs and records security audit;master identity and mandatory MFA never transfer or weaken. Cancellation removes only the owned request;status contains no approval code/hash/password/source snapshot. No live delivery guarantee.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "requestId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/phone-change/request": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "phone change · request",
+        "description": "Private signed-session phone recovery. Fresh completed email/phone/MFA sign-in and the real current password start a request (maximum3/hour);an8-digit code is sent only to the current verified email,never returned or stored plaintext. Pending proof expires15minutes,five wrong email guesses exhaust it,and authorization is single-use and bound to the same session/request/target. Authorized permission lasts at most5minutes and still requires the existing new-phone SMS OTP flow. No phone changes before that verification. Completion atomically revokes sessions/trusted-device proofs and records security audit;master identity and mandatory MFA never transfer or weaken. Cancellation removes only the owned request;status contains no approval code/hash/password/source snapshot. No live delivery guarantee.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "phoneNumber": {
+                    "type": "string",
+                    "pattern": "^\\+[1-9]\\d{7,14}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "phoneNumber",
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
           },
           "default": {
             "$ref": "#/components/responses/error"

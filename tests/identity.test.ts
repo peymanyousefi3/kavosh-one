@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { randomBytes,randomUUID,createHmac } from 'node:crypto';
+import { randomBytes,randomUUID,createHmac,createHash } from 'node:crypto';
 import { readFile,readdir } from 'node:fs/promises';
 import { testDatabase } from './database.ts';
 import { createIdentity,type Delivery } from '../src/auth/config.ts';
@@ -15,6 +15,7 @@ import { once } from 'node:events';
 import autocannon from 'autocannon';
 import { hashPassword } from 'better-auth/crypto';
 import { createPlatformApi } from '../src/platform/api.ts';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 
 const origin='https://academy.example';
 const config={origin,production:false,secret:'synthetic-test-identity-secret-not-for-production-000000'};
@@ -32,15 +33,15 @@ function totp(secret:string,time=Date.now()) {
   const digest=createHmac('sha1',Buffer.from(bytes)).update(counter).digest(),offset=digest.at(-1)!&15;
   return String((digest.readUInt32BE(offset)&0x7fffffff)%1000000).padStart(6,'0');
 }
-async function fixture() {
+async function fixture(options:{throughSchema?:number}={}) {
   const pg=await testDatabase();
   const directory=new URL('../db/migrations/',import.meta.url);
-  for(const file of (await readdir(directory)).filter(n=>n.endsWith('.sql')).sort())await pg.exec(await readFile(new URL(file,directory),'utf8'));
+  for(const file of (await readdir(directory)).filter(n=>n.endsWith('.sql')&&(options.throughSchema===undefined||Number.parseInt(n,10)<=options.throughSchema)).sort())await pg.exec(await readFile(new URL(file,directory),'utf8'));
   const db=pg.identityDb(),store=new IdentityStore(db,config.secret);
   async function admin<T>(fn:()=>Promise<T>){await pg.exec('RESET ROLE');try{return await fn();}finally{if(!pg.runtime)await pg.exec('SET ROLE kavosh_identity');}}
   const messages:{emails:{to:string;text:string}[];sms:{to:string;text:string}[]}={emails:[],sms:[]};
   const delivery:Delivery={async email(message){messages.emails.push(message);},async sms(message){messages.sms.push(message);}};
-  const auth=createIdentity(db,store,delivery,config),gateway=identityGateway(auth,store,config);
+  const auth=createIdentity(db,store,delivery,config),gateway=identityGateway(auth,store,config,delivery);
   if(!pg.runtime)await pg.exec('SET ROLE kavosh_identity');
   async function request(path:string,input?:unknown,jar:Jar=new Map(),headers:Record<string,string>={}) {
     const result=await gateway(new Request(origin+'/api/auth'+path,{method:input===undefined?'GET':'POST',
@@ -425,11 +426,85 @@ test('human identity: real library authentication and protected business access'
   }finally{await f.close();}
 });
 
+test('phone change: real password email approval new-phone OTP and native revocation',async t=>{
+ const f=await fixture();t.beforeEach(async()=>{await f.admin(()=>f.pg.query('DELETE FROM identity.auth_budgets'));});
+ try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+  const candidate='+16479990101',emailCode=()=>f.messages.emails.findLast(m=>m.to===user.email&&m.text.startsWith('Phone change approval code:'))!.text.match(/code: (\d{8})/)![1],smsCode=(phone:string)=>f.messages.sms.findLast(m=>m.to===phone)!.text.match(/\b\d{6}\b/)![0];let requestId='',approvalCode='',otherJar=new Map<string,string>();
+  await t.test('requires fresh verified identity exact origin bounded inputs and real password without exposing the proof',async()=>{
+   assert.equal((await f.request('/phone-change/request',{phoneNumber:candidate,password})).response.status,401);assert.equal((await f.request('/phone-change/request',{phoneNumber:candidate,password},user.jar,{origin:'https://untrusted.example'})).response.status,403);assert.equal((await f.request('/phone-change/request',{phoneNumber:candidate,password,userId:user.id},user.jar)).response.status,400);assert.equal((await f.request('/phone-change/request',{phoneNumber:candidate,password:'Incorrect synthetic password'},user.jar)).response.status,400);assert.equal((await f.request('/phone-number/send-otp',{phoneNumber:candidate},user.jar)).body.error.code,'PHONE_CHANGE_REQUIRES_RECOVERY');assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data,null);
+   await f.admin(async()=>{await f.pg.exec('BEGIN;SET LOCAL ROLE kavosh_identity');try{await assert.rejects(f.pg.query('UPDATE identity."user" SET "phoneNumber"=$2 WHERE id=$1',[user.id,candidate]),/PHONE_CHANGE_APPROVAL_REQUIRED/);}finally{await f.pg.exec('ROLLBACK');}});
+  });
+  await t.test('email proof is hashed owned session-bound limited to five guesses and single-use',async()=>{
+   const smsBefore=f.messages.sms.length,r=await f.request('/phone-change/request',{phoneNumber:candidate,password},user.jar);assert.equal(r.response.status,202,JSON.stringify(r.body));requestId=r.body.requestId;approvalCode=emailCode();assert.equal(f.messages.sms.length,smsBefore);assert.equal(r.body.code,undefined);assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data.state,'pending');await f.admin(async()=>{const stored=(await f.pg.query<{code_hash:string}>('SELECT * FROM identity.phone_change_requests WHERE user_id=$1',[user.id])).rows[0];assert.equal(stored.code_hash,f.store.digest('phone-change:'+user.id+':'+(await f.pg.query<{session_id:string}>('SELECT session_id FROM identity.phone_change_requests WHERE user_id=$1',[user.id])).rows[0].session_id+':'+requestId+':'+approvalCode));assert.notEqual(stored.code_hash,approvalCode);assert.equal(Object.hasOwn(stored,'code'),false);assert.ok(!JSON.stringify(stored).includes(password));});
+   const wrong=approvalCode==='00000000'?'11111111':'00000000';for(let i=0;i<5;i++)assert.equal((await f.request('/phone-change/authorize',{requestId,code:wrong},user.jar)).response.status,409);assert.equal((await f.request('/phone-change/authorize',{requestId,code:approvalCode},user.jar)).response.status,409);assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data,null);
+   const next=await f.request('/phone-change/request',{phoneNumber:candidate,password},user.jar);assert.equal(next.response.status,202);assert.equal((await f.request('/phone-change/authorize',{requestId,code:approvalCode},user.jar)).response.status,409);requestId=next.body.requestId;approvalCode=emailCode();await f.signin(user,otherJar);assert.equal((await f.request('/phone-change/authorize',{requestId,code:approvalCode},otherJar)).response.status,409);const start=performance.now(),confirm=()=>f.request('/phone-change/authorize',{requestId,code:approvalCode},user.jar),decisions=f.pg.runtime?await Promise.all([confirm(),confirm()]):[await confirm(),await confirm()];assert.deepEqual(decisions.map(r=>r.response.status).sort(),[200,409]);if(f.pg.runtime)console.log('Two email approvals finished in '+Math.ceil(performance.now()-start)+'ms;not a capacity test.');assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data.state,'authorized');assert.equal((await f.request('/phone-number/send-otp',{phoneNumber:'+16479990199'},user.jar)).response.status,403);
+  });
+  await t.test('new phone OTP is still required and failed native audit leaves phone sessions and permit unchanged',async t=>{
+   const diagnostics:unknown[][]=[];t.mock.method(console,'error',(...args:unknown[])=>{diagnostics.push(args);});
+   assert.equal((await f.request('/phone-number/send-otp',{phoneNumber:candidate},user.jar)).response.status,200);const code=smsCode(candidate),wrong=code==='000000'?'111111':'000000';assert.equal((await f.request('/phone-number/verify',{phoneNumber:candidate,code:wrong},user.jar)).response.status,400);
+   await f.admin(()=>f.pg.exec("CREATE FUNCTION identity.synthetic_phone_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'SYNTHETIC_PHONE_AUDIT_FAILURE';END $$;CREATE TRIGGER synthetic_phone_audit_failure BEFORE INSERT ON identity.security_events FOR EACH ROW WHEN(NEW.event='phone.changed') EXECUTE FUNCTION identity.synthetic_phone_audit_failure()"));try{assert.equal((await f.request('/phone-number/verify',{phoneNumber:candidate,code},user.jar)).response.status,503);}finally{await f.admin(()=>f.pg.exec('DROP TRIGGER synthetic_phone_audit_failure ON identity.security_events;DROP FUNCTION identity.synthetic_phone_audit_failure()'));}assert.equal(diagnostics.length,0,'Authentication must not print raw database diagnostics');
+   await f.admin(async()=>{assert.equal((await f.pg.query<{phone:string}>('SELECT "phoneNumber" phone FROM identity."user" WHERE id=$1',[user.id])).rows[0].phone,user.phone);assert.equal((await f.pg.query('SELECT 1 FROM identity.session WHERE "userId"=$1',[user.id])).rows.length,2);assert.equal((await f.pg.query<{state:string}>('SELECT state FROM identity.phone_change_requests WHERE user_id=$1',[user.id])).rows[0].state,'authorized');});
+   assert.equal((await f.request('/phone-number/send-otp',{phoneNumber:candidate},user.jar)).response.status,200);const done=await f.request('/phone-number/verify',{phoneNumber:candidate,code:smsCode(candidate)},user.jar);assert.equal(done.response.status,200,JSON.stringify(done.body));assert.equal(done.body.token,undefined);user.phone=candidate;assert.equal((await f.request('/get-session',undefined,user.jar)).body,null);assert.equal((await f.request('/get-session',undefined,otherJar)).body,null);await f.admin(async()=>{assert.equal((await f.pg.query('SELECT 1 FROM identity.session WHERE "userId"=$1',[user.id])).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM identity.phone_change_requests WHERE user_id=$1',[user.id])).rows.length,0);assert.equal((await f.pg.query("SELECT * FROM identity.security_events WHERE user_id=$1 AND event='phone.changed'",[user.id])).rows.length,1);assert.equal((await f.pg.query<{auth_user_id:string}>('SELECT auth_user_id FROM public.people WHERE id=$1',[user.person])).rows[0].auth_user_id,user.id);});await f.signin(user);assert.equal((await f.request('/get-session',undefined,user.jar)).body.user.phoneNumber,candidate);
+  });
+  await t.test('failed email delivery cancels only its request and per-user limits prevent repeated contact spam',async()=>{
+   const send=f.delivery.email;f.delivery.email=async()=>{throw new Error('SYNTHETIC_PRIVATE_DELIVERY_FAILURE');};try{const failed=await f.request('/phone-change/request',{phoneNumber:'+16479990107',password},user.jar);assert.equal(failed.response.status,503);assert.equal(failed.body.error.code,'PHONE_CHANGE_UNAVAILABLE');}finally{f.delivery.email=send;}assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data,null);const count=f.messages.emails.length,a=await f.request('/phone-change/request',{phoneNumber:'+16479990108',password},user.jar),b=await f.request('/phone-change/request',{phoneNumber:'+16479990109',password},user.jar);assert.equal(a.response.status,202);assert.equal(b.response.status,202);assert.equal((await f.request('/phone-change/request',{phoneNumber:'+16479990110',password},user.jar)).response.status,429);assert.equal(f.messages.emails.length,count+2);assert.equal((await f.request('/phone-change/cancel',{requestId:b.body.requestId},user.jar)).response.status,200);assert.equal((await f.request('/get-session',undefined,user.jar)).body.user.phoneNumber,candidate);
+  });
+  await t.test('replacement requests cancellation expiry fresh-session gates and password changes cannot reuse old proof',async()=>{
+   const a=await f.request('/phone-change/request',{phoneNumber:'+16479990102',password},user.jar),oldCode=emailCode(),b=await f.request('/phone-change/request',{phoneNumber:'+16479990103',password},user.jar);assert.equal(a.response.status,202);assert.equal(b.response.status,202);assert.equal((await f.request('/phone-change/authorize',{requestId:a.body.requestId,code:oldCode},user.jar)).response.status,409);assert.equal((await f.request('/phone-change/cancel',{requestId:b.body.requestId},user.jar)).response.status,200);assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data,null);const c=await f.request('/phone-change/request',{phoneNumber:'+16479990104',password},user.jar);assert.equal(c.response.status,202);const current=emailCode();await f.admin(()=>f.pg.query('UPDATE identity.phone_change_requests SET expires_at=now()-interval \'1 second\' WHERE user_id=$1',[user.id]));assert.equal((await f.request('/phone-change/authorize',{requestId:c.body.requestId,code:current},user.jar)).response.status,409);
+   await f.admin(()=>f.pg.query('UPDATE identity.session SET "createdAt"=now()-interval \'16 minutes\' WHERE "userId"=$1',[user.id]));assert.equal((await f.request('/phone-change/request',{phoneNumber:'+16479990105',password},user.jar)).body.error.code,'FRESH_SIGN_IN_REQUIRED');await f.signin(user);await f.admin(()=>f.pg.query('DELETE FROM identity.auth_budgets'));const d=await f.request('/phone-change/request',{phoneNumber:'+16479990106',password},user.jar),code=emailCode();assert.equal(d.response.status,202);const changed='Synthetic changed account password 456!';assert.equal((await f.request('/change-password',{currentPassword:password,newPassword:changed},user.jar)).response.status,200);await f.signin(user,user.jar,changed);assert.equal((await f.request('/phone-change',undefined,user.jar)).body.data,null);assert.equal((await f.request('/phone-change/authorize',{requestId:d.body.requestId,code},user.jar)).response.status,409);assert.equal((await f.request('/get-session',undefined,user.jar)).body.user.phoneNumber,candidate);
+  });
+  await t.test('runtime delivery and unauthenticated callers cannot read or write private phone-change state',async()=>{
+   for(const role of ['kavosh_runtime','kavosh_delivery'])await f.admin(async()=>{await f.pg.exec('BEGIN;SET LOCAL ROLE '+role);try{await assert.rejects(f.pg.query('SELECT * FROM identity.phone_change_requests'),/permission denied/i);}finally{await f.pg.exec('ROLLBACK');}});await f.admin(async()=>{await f.pg.exec('BEGIN;SET LOCAL ROLE kavosh_identity');try{await assert.rejects(f.pg.query('DELETE FROM identity.phone_change_requests'),/permission denied/i);}finally{await f.pg.exec('ROLLBACK');}});
+  });
+ }finally{await f.close();}
+});
+
+test('phone change: master keeps same nontransferable identity mandatory MFA and cannot reuse trusted devices',async()=>{
+ const f=await fixture();try{const user=await f.invitation(true);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);assert.equal((await f.signin(user)).body.twoFactorRedirect,true);await f.mfa(user,user.jar,true);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);const recovery=await f.request('/two-factor/generate-backup-codes',{password},user.jar);assert.equal(recovery.response.status,200);assert.equal(recovery.body.backupCodes.length,10);assert.equal((await f.signin(user)).body.twoFactorRedirect,true);assert.equal((await f.request('/two-factor/verify-backup-code',{code:recovery.body.backupCodes[0],trustDevice:true},user.jar)).response.status,200);const oldPhoneSms=f.messages.sms.filter(m=>m.to===user.phone).length;const candidate='+16479990201',requested=await f.request('/phone-change/request',{phoneNumber:candidate,password},user.jar);assert.equal(requested.response.status,202,JSON.stringify(requested.body));const code=f.messages.emails.findLast(m=>m.to===user.email&&m.text.startsWith('Phone change approval code:'))!.text.match(/code: (\d{8})/)![1];assert.equal((await f.request('/phone-change/authorize',{requestId:requested.body.requestId,code},user.jar)).response.status,200);assert.equal((await f.request('/phone-number/send-otp',{phoneNumber:candidate},user.jar)).response.status,200);const otp=f.messages.sms.findLast(m=>m.to===candidate)!.text.match(/\b\d{6}\b/)![0];assert.equal((await f.request('/phone-number/verify',{phoneNumber:candidate,code:otp},user.jar)).response.status,200);assert.equal(f.messages.sms.filter(m=>m.to===user.phone).length,oldPhoneSms);user.phone=candidate;assert.equal((await f.business(user)).status,401);await f.admin(async()=>{assert.equal((await f.pg.query<{master_person_id:string}>('SELECT master_person_id FROM public.academies WHERE id=$1',[user.academy])).rows[0].master_person_id,user.person);assert.equal((await f.pg.query<{auth_user_id:string}>('SELECT auth_user_id FROM public.people WHERE id=$1',[user.person])).rows[0].auth_user_id,user.id);const u=(await f.pg.query<{mfaRequired:boolean;twoFactorEnabled:boolean}>('SELECT "mfaRequired","twoFactorEnabled" FROM identity."user" WHERE id=$1',[user.id])).rows[0];assert.equal(u.mfaRequired,true);assert.equal(u.twoFactorEnabled,true);assert.equal((await f.pg.query('SELECT * FROM identity.verification WHERE value=$1',[user.id])).rows.length,0);});assert.equal((await f.signin(user)).body.twoFactorRedirect,true);assert.equal((await f.request('/phone-change/request',{phoneNumber:'+16479990202',password},user.jar)).response.status,401);await f.mfa(user);assert.equal((await f.business(user)).status,200);assert.equal((await f.request('/two-factor/disable',{password},user.jar)).response.status,403);
+ }finally{await f.close();}
+});
+
 test('production edge trust rejects spoofed and malformed proxy headers',()=>{
   const production={...config,production:true,edgeSecret:'a'.repeat(32)};
   assert.throws(()=>verifiedProxyIp(new Request(origin),production),/UNTRUSTED_PROXY/);
   assert.throws(()=>verifiedProxyIp(new Request(origin,{headers:{'x-kavosh-edge-key':'é'.repeat(32),'x-kavosh-client-ip':'1.2.3.4'}}),production),/UNTRUSTED_PROXY/);
   assert.equal(verifiedProxyIp(new Request(origin,{headers:{'x-kavosh-edge-key':production.edgeSecret,'x-kavosh-client-ip':'1.2.3.4'}}),production),'1.2.3.4');
+});
+
+test('phone change native password-first race refuses revoked proof without partial contact changes',{skip:!process.env.TEST_DATABASE_URL,timeout:10000},async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);
+  const candidate='+16479990401',r=await f.request('/phone-change/request',{phoneNumber:candidate,password},user.jar);assert.equal(r.response.status,202);
+  const emailCode=f.messages.emails.findLast(m=>m.to===user.email&&m.text.startsWith('Phone change approval code:'))!.text.match(/code: (\d{8})/)![1];
+  assert.equal((await f.request('/phone-change/authorize',{requestId:r.body.requestId,code:emailCode},user.jar)).response.status,200);
+  assert.equal((await f.request('/phone-number/send-otp',{phoneNumber:candidate},user.jar)).response.status,200);
+  const otp=f.messages.sms.findLast(m=>m.to===candidate)!.text.match(/\b\d{6}\b/)![0];
+  let changed!:ReturnType<typeof f.request>,phone!:ReturnType<typeof f.request>;const nextPassword='Synthetic password first race 987!';
+  await f.admin(async()=>{
+   await f.pg.exec('BEGIN');try{
+    // Password revocation queues on the source session. Phone revalidation
+    // must refuse that in-flight writer BEFORE this blocker is released.
+    await f.pg.query('SELECT id FROM identity.session WHERE "userId"=$1 FOR UPDATE',[user.id]);
+    changed=f.request('/change-password',{currentPassword:password,newPassword:nextPassword},user.jar);
+    async function locked(n:number){for(let i=0;i<200;i++){if((await f.pg.query<{n:number}>("SELECT count(*)::integer n FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND wait_event_type='Lock'")).rows[0].n>=n)return;await new Promise<void>(r=>setTimeout(r,10));}assert.fail('Expected controlled native lock wait');}
+    await locked(1);phone=f.request('/phone-number/verify',{phoneNumber:candidate,code:otp},user.jar);
+    assert.equal((await phone).response.status,409);await f.pg.exec('COMMIT');
+   }finally{await f.pg.exec('ROLLBACK');}
+  });
+  const [a,b]=await Promise.all([changed,phone]);assert.equal(a.response.status,200,JSON.stringify(a.body));assert.equal(b.response.status,409,JSON.stringify(b.body));assert.equal(b.body.error.code,'PHONE_CHANGE_SOURCE_CHANGED');
+  await f.admin(async()=>{
+   assert.equal((await f.pg.query<{phone:string}>('SELECT "phoneNumber" phone FROM identity."user" WHERE id=$1',[user.id])).rows[0].phone,user.phone);
+   assert.equal((await f.pg.query('SELECT * FROM identity.phone_change_requests WHERE user_id=$1',[user.id])).rows.length,0);
+   assert.equal((await f.pg.query('SELECT * FROM identity.session WHERE "userId"=$1',[user.id])).rows.length,0);
+  });
+  assert.equal((await f.signin(user,user.jar,nextPassword)).response.status,200);
+ }finally{await f.close();}
+});
+
+test('phone change actual196to197 upgrade preserves existing identities sessions credentials bindings and helper ownership',async()=>{
+ const f=await fixture({throughSchema:196});try{const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);const tables=['identity."user"','identity.session','identity.account','identity.verification','identity.invites','identity.security_events','public.people','public.academies','public.role_permissions','public.role_assignments'],snapshot=async()=>{const r=[];for(const table of tables){const rows=(await f.pg.query('SELECT to_jsonb(x) r FROM '+table+' x ORDER BY to_jsonb(x)::text')).rows;r.push({table,count:rows.length,sha256:createHash('sha256').update(JSON.stringify(rows)).digest('hex')});}return r;};await f.admin(async()=>{const before=await snapshot(),helpers="SELECT oid,proowner,proacl FROM pg_proc WHERE oid=ANY(ARRAY['identity.cleanup_expired_auth()'::regprocedure,'identity.enforce_user_security()'::regprocedure,'public.lock_human(uuid,uuid)'::regprocedure]) ORDER BY oid",owners=(await f.pg.query(helpers)).rows;await f.pg.exec(await readFile(new URL('../db/migrations/197_verified_phone_changes.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(helpers)).rows,owners);assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,197);await upgradeToCurrent(f.pg);assert.equal((await f.pg.query('SELECT * FROM identity.phone_change_requests')).rows.length,0);});assert.equal((await f.request('/get-session',undefined,user.jar)).body.user.id,user.id);assert.equal((await f.request('/phone-change/request',{phoneNumber:'+16479990301',password},user.jar)).response.status,202);
+ }finally{await f.close();}
 });
 
 test('provider configuration fails closed and SMS sends only to fixed endpoint',async()=>{
