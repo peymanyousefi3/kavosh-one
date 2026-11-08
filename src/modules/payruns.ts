@@ -42,7 +42,7 @@ async function access(ctx:ApiContext,cancelling:boolean,raw:unknown){
 }
 async function basis(ctx:ApiContext,cancelling:boolean,raw:unknown){
  scopes(ctx,true);
- if(cancelling){const i=cancelInput.parse(raw);await row(ctx,i.runId,true);const s=(await ctx.db.query<{source:Record<string,unknown>|null}>('SELECT public.payrun_cancel_source($1) source',[i.runId])).rows[0].source;if(!s)throw new ApiError(404,'NOT_FOUND');if(s.cancellationId)throw new ApiError(409,'PAYRUN_ALREADY_CANCELLED');if(s.netPostingActive)throw new ApiError(409,'PAYRUN_NET_POSTING_REVERSAL_REQUIRED');return s;}
+ if(cancelling){const i=cancelInput.parse(raw);await row(ctx,i.runId,true);const s=(await ctx.db.query<{source:Record<string,unknown>|null}>('SELECT public.payrun_cancel_source($1) source',[i.runId])).rows[0].source;if(!s)throw new ApiError(404,'NOT_FOUND');if(s.cancellationId)throw new ApiError(409,'PAYRUN_ALREADY_CANCELLED');if(s.netPostingActive)throw new ApiError(409,'PAYRUN_NET_POSTING_REVERSAL_REQUIRED');if(s.taxPeriodReservationActive)throw new ApiError(409,'TAX_PERIOD_RESERVATION_RELEASE_REQUIRED');return s;}
  const i=create.parse(raw),s=(await ctx.db.query<{source:Source}>('SELECT public.payrun_group_source($1::jsonb) source',[JSON.stringify(i)])).rows[0].source;
  await sourceAuthority(ctx,s.items??[]);if(s.unavailable)throw new ApiError(s.unavailable==='PAYRUN_SOURCE_NOT_FOUND'?404:s.unavailable==='PAYRUN_REQUIRES_BACKGROUND_JOB'?422:409,s.unavailable);await visible(ctx,s.scope,true);if(Buffer.byteLength(JSON.stringify(s))>500000)throw new ApiError(422,'PAYRUN_REQUIRES_BACKGROUND_JOB');return s;
 }
