@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.206.0",
+    "version": "0.207.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39161,6 +39161,59 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 2000
+                          },
+                          "provincialExemptions": {
+                            "description": "Explicit per-slip full-reporting-period box28 marks,not inferred from current deduction settings or zero amounts. Missing is unreviewed. Source references stay private.",
+                            "minItems": 1,
+                            "maxItems": 15,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provinceOfEmployment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AB",
+                                    "BC",
+                                    "MB",
+                                    "NB",
+                                    "NL",
+                                    "NS",
+                                    "NT",
+                                    "NU",
+                                    "ON",
+                                    "PE",
+                                    "QC",
+                                    "SK",
+                                    "YT",
+                                    "US",
+                                    "ZZ"
+                                  ]
+                                },
+                                "cppQpp": {
+                                  "type": "boolean"
+                                },
+                                "ei": {
+                                  "type": "boolean"
+                                },
+                                "ppip": {
+                                  "type": "boolean"
+                                },
+                                "sourceReference": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "provinceOfEmployment",
+                                "cppQpp",
+                                "ei",
+                                "ppip",
+                                "sourceReference"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -39604,6 +39657,59 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 2000
+                          },
+                          "provincialExemptions": {
+                            "description": "Explicit per-slip full-reporting-period box28 marks,not inferred from current deduction settings or zero amounts. Missing is unreviewed. Source references stay private.",
+                            "minItems": 1,
+                            "maxItems": 15,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provinceOfEmployment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AB",
+                                    "BC",
+                                    "MB",
+                                    "NB",
+                                    "NL",
+                                    "NS",
+                                    "NT",
+                                    "NU",
+                                    "ON",
+                                    "PE",
+                                    "QC",
+                                    "SK",
+                                    "YT",
+                                    "US",
+                                    "ZZ"
+                                  ]
+                                },
+                                "cppQpp": {
+                                  "type": "boolean"
+                                },
+                                "ei": {
+                                  "type": "boolean"
+                                },
+                                "ppip": {
+                                  "type": "boolean"
+                                },
+                                "sourceReference": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "provinceOfEmployment",
+                                "cppQpp",
+                                "ei",
+                                "ppip",
+                                "sourceReference"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -49742,7 +49848,7 @@
     },
     "/api/v1/reports/payroll/t4-working-paper": {
       "get": {
-        "summary": "Private2026 provincial T4 working papers from complete reviewed recorded payment recognition,not ledger/planned wages. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate provincial slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Legal identity,exemptions,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
+        "summary": "Private2026 provincial T4 working papers from complete reviewed recorded payment recognition,not ledger/planned wages. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate provincial slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Optional independently reviewed per-province full-period box28 marks never default from zero amounts or current pay settings;contradictory retained pensionable/insurable earnings or contributions refuse mapping. Legal identity,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
         "parameters": [
           {
             "name": "profileId",
