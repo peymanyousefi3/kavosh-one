@@ -14,6 +14,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import autocannon from 'autocannon';
 import { hashPassword } from 'better-auth/crypto';
+import { createPlatformApi } from '../src/platform/api.ts';
 
 const origin='https://academy.example';
 const config={origin,production:false,secret:'synthetic-test-identity-secret-not-for-production-000000'};
@@ -99,6 +100,15 @@ async function fixture() {
   const database:Database=pg.runtime??{async connect(){await pg.exec('SET ROLE kavosh_runtime');return {
     async query<Row>(sql:string,params?:unknown[]){const result=await pg.query<Row>(sql,params);return {rows:result.rows,rowCount:result.affectedRows};},release(){}};}};
   const api=createApi(database,humanResolver(auth,store,config),businessRoutes);
+  const platformDatabase:Database={async connect(){
+    if(pg.runtime){const c=await pg.runtime.connect();await c.query('SET ROLE kavosh_platform_service');return c;}
+    await pg.exec('SET ROLE kavosh_platform_service');return{query:async<Row>(sql:string,params?:unknown[])=>pg.query<Row>(sql,params),release(){}};
+  }};
+  const platformApi=createPlatformApi(platformDatabase,platformHumanResolver(auth,store,config),true,{invitationSecret:config.secret});
+  async function platform(user:{jar:Jar},path:string,input?:unknown,key=randomUUID()){
+    try{const response=await platformApi(new Request(origin+'/api/platform/v1/'+path,{method:input===undefined?'GET':'POST',headers:{origin,cookie:[...user.jar].map(([k,v])=>k+'='+v).join('; '),'content-type':'application/json','idempotency-key':key},...(input===undefined?{}:{body:JSON.stringify(input)})}),path);return{response,body:await response.json()};}
+    finally{if(!pg.runtime)await pg.exec('SET ROLE kavosh_identity');}
+  }
   async function business(user:Awaited<ReturnType<typeof invitation>>,path='hubs',input?:unknown,academy=user.academy,headers:Record<string,string>={}){
     try {return await api(new Request(origin+'/api/v1/'+path,{method:input===undefined?'GET':'POST',headers:{origin,
       cookie:[...user.jar].map(([k,v])=>k+'='+v).join('; '),'x-academy-id':academy,'content-type':'application/json','idempotency-key':randomUUID(),...headers},
@@ -113,7 +123,7 @@ async function fixture() {
       try{return await fn(worker);}finally{if(pg.runtime)await worker.db.destroy();await pg.exec('RESET ROLE');}
     });
   }
-  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,close,gateway,api,resolvePlatform:platformHumanResolver(auth,store,config)};
+  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,platform,close,gateway,api,resolvePlatform:platformHumanResolver(auth,store,config)};
 }
 
 test('human identity: real library authentication and protected business access',async t=>{
@@ -171,6 +181,28 @@ test('human identity: real library authentication and protected business access'
       assert.equal(result?.userId,master.id);assert.ok(result?.sessionId);assert.equal(Object.hasOwn(result!,'academyId'),false);
       assert.equal(await f.resolvePlatform(new Request(origin+'/api/platform/v1/academies',{headers:{cookie:'__Secure-kavosh.session_token=forged'}})),null);
       await assert.rejects(f.resolvePlatform(new Request(origin+'/api/platform/v1/academies',{method:'POST',headers:{...headers,origin:'https://attacker.example'}})),/ORIGIN_REJECTED/);
+    });
+    await t.test('platform-issued master invitation completes real email phone MFA onboarding without plaintext token persistence',async()=>{
+      await f.admin(()=>f.pg.query('SELECT platform_private.register_owner($1,$2)',[master.id,'Verified operator enrollment']));
+      const created=await f.platform(master,'academies',{name:'Invited school',masterName:'Invited master',masterEmail:'platform-invited@example.test',reason:'Approved new school'});assert.equal(created.response.status,201,JSON.stringify(created.body));
+      const academy=created.body.data.id,key=randomUUID(),path='academies/'+academy+'/master-invitation',input={expectedVersion:1,reason:'Provide private onboarding token'};
+      const issued=await f.platform(master,path,input,key);assert.equal(issued.response.status,201,JSON.stringify(issued.body));assert.match(issued.body.data.privateInvitation,/^kvi_[A-Za-z0-9_-]{43}$/);
+      assert.deepEqual((await f.platform(master,path,input,key)).body,issued.body);
+      const token=issued.body.data.privateInvitation;
+      await f.admin(async()=>{
+        for(const table of ['platform_private.request_receipts','platform_private.audit_events','identity.invites']){const rows=await f.pg.query('SELECT row_to_json(t)::text AS data FROM '+table+' t');assert.ok(rows.rows.every(r=>!String(r.data).includes(token)));}
+        assert.equal((await f.pg.query('SELECT * FROM identity.invites WHERE token_hash=$1 AND academy_id=$2',[f.store.digest(token),academy])).rows.length,1);
+      });
+      const newcomer={id:'',email:'platform-invited@example.test',person:issued.body.data.masterPersonId,academy,token,phone:'+16475550999',jar:new Map<string,string>()};
+      await f.signup(newcomer);await f.verifyEmail(newcomer);await f.signin(newcomer);
+      assert.equal((await f.request('/accept-invitation',{invitation:token},newcomer.jar)).response.status,403);
+      await f.phone(newcomer);await f.signin(newcomer);assert.equal((await f.business(newcomer)).status,401);
+      await f.mfa(newcomer);
+      const accepted=await f.request('/accept-invitation',{invitation:token},newcomer.jar);assert.equal(accepted.response.status,200,JSON.stringify(accepted.body));assert.equal(accepted.body.academyId,academy);
+      assert.equal((await f.business(newcomer)).status,200);
+      assert.equal((await f.platform(master,path,input,key)).response.status,409,'completed onboarding must not reissue a cached secret');
+      const ordinaryJar=new Map<string,string>();await f.signin(regular,ordinaryJar);assert.equal((await f.platform({jar:ordinaryJar},'academies')).response.status,403);
+      assert.equal((await f.request('/sign-out',{},ordinaryJar)).response.status,200);
     });
     await t.test('human API reuses tenant scope, role denial and audit; master identity cannot transfer',async()=>{
       const created=await f.business(master,'hubs',{name:'Synthetic hub',city:'Toronto',countryCode:'CA'});
@@ -260,9 +292,11 @@ test('human identity: real library authentication and protected business access'
       assert.equal(sessions.response.status,200);assert.ok(sessions.body.length>=2);
       assert.ok(sessions.body.every((s:Record<string,unknown>)=>s.token===undefined));
       const own=await f.request('/get-session',undefined,regular.jar);
-      const other=sessions.body.find((s:{id:string})=>s.id!==own.body.session.id);
-      assert.equal((await f.request('/revoke-session',{sessionId:other.id},regular.jar)).response.status,200);
+      const other=await f.request('/get-session',undefined,fresh);
+      assert.notEqual(other.body.session.id,own.body.session.id);assert.ok(sessions.body.some((s:{id:string})=>s.id===other.body.session.id));
+      assert.equal((await f.request('/revoke-session',{sessionId:other.body.session.id},regular.jar)).response.status,200);
       assert.equal((await f.request('/get-session',undefined,fresh)).body,null);
+      assert.equal((await f.request('/get-session',undefined,regular.jar)).body.session.id,own.body.session.id);
       assert.equal((await f.request('/two-factor/enable',{password,method:'otp'},regular.jar)).response.status,200);
       assert.equal((await f.signin(regular)).body.twoFactorRedirect,true);await f.mfa(regular);
       assert.equal((await f.request('/two-factor/disable',{password},regular.jar)).response.status,200);

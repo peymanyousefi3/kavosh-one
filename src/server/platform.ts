@@ -14,4 +14,4 @@ const database:Database={async connect(){
  }
  return pool.connect();
 }};
-export function platformApi(request:Request,path:string){return createPlatformApi(database,resolvePlatformHuman,process.env.PLATFORM_ENABLED==='true')(request,path);}
+export function platformApi(request:Request,path:string){return createPlatformApi(database,resolvePlatformHuman,process.env.PLATFORM_ENABLED==='true',{invitationSecret:process.env.AUTH_SECRET})(request,path);}

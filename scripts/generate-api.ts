@@ -6,7 +6,7 @@ import { boldSignWebhookBody } from '../src/integrations/boldsign-inbox.ts';
 import { platformContract } from '../src/platform/api.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.177.0';
+api.info.version='0.178.0';
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
 api.components.securitySchemes.humanSession={type:'apiKey',in:'cookie',name:'__Secure-kavosh.session_token',description:'Opaque HttpOnly signed cookie set by login/MFA, never read or stored by frontend JavaScript. Local HTTP development uses kavosh.session_token.'};
@@ -50,9 +50,9 @@ for(const endpoint of platformContract){
  if(endpoint.method==='post')parameters.push({$ref:'#/components/parameters/idempotency'},{name:'Origin',in:'header',required:true,schema:{type:'string',format:'uri'}});
  if('querySchema' in endpoint){const query=z.toJSONSchema(endpoint.querySchema,{io:'input'});for(const [name,schema] of Object.entries(query.properties??{}))parameters.push({name,in:'query',schema});}
  api.paths[endpoint.path]??={};api.paths[endpoint.path][endpoint.method]={summary:endpoint.summary,security:[{humanSession:[]}],parameters,
- description:'Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. No invitation, message, payment or live provider action is performed.',
+ description:'Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token only for the already assigned pending master. Exact retries preserve expiry, superseded/expired/consumed invitations cannot be replayed, and no plaintext token enters database history. Keep returned tokens private. No message, payment, signature or live provider action is performed.',
  ...('schema' in endpoint?{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(endpoint.schema,{io:'input'})}}}}:{}),
- responses:{'200':{description:'Audited current directory data or version-checked change'},'201':{description:'School and pending master created atomically; verified invitation still required'},default:{$ref:'#/components/responses/error'}}};
+ responses:{'200':{description:'Audited current directory data or version-checked change'},'201':{description:'Pending school/master or private onboarding invitation created atomically; no verification or activation bypass'},default:{$ref:'#/components/responses/error'}}};
 }
 api.paths=Object.fromEntries(Object.keys(api.paths).sort().map(path=>[path,api.paths[path]]));
 await writeFile(file,JSON.stringify(api,null,2)+'\n');

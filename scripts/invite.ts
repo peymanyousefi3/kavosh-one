@@ -9,6 +9,8 @@ const input=z.object({MIGRATION_DATABASE_URL:z.string().url(),AUTH_SECRET:z.stri
 const db=new pg.Client(postgresOptions(input.MIGRATION_DATABASE_URL));
 try {
   await db.connect();await db.query('BEGIN');
+  await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,8))',[input.INVITE_ACADEMY_ID.toLowerCase()]);
+  await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,9))',[input.INVITE_ACADEMY_ID.toLowerCase()]);
   await db.query("SELECT set_config('app.academy_id',$1,true)",[input.INVITE_ACADEMY_ID]);
   const person=(await db.query<{email:string;master:boolean}>(`SELECT p.email,p.id=a.master_person_id AS master FROM public.people p
     JOIN public.academies a ON a.id=p.academy_id WHERE p.academy_id=$1 AND p.id=$2 AND p.kind='human'
