@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.208.0",
+    "version": "0.209.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39162,6 +39162,106 @@
                             "minLength": 1,
                             "maxLength": 2000
                           },
+                          "provincialSupplemental": {
+                            "description": "Reviewed per-province allocations of retained other employee deduction codes to boxes20/44/46 plus whole-dollar pension adjustment and plan. No cash or ledger effect. Supporting references stay private.",
+                            "minItems": 1,
+                            "maxItems": 15,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provinceOfEmployment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AB",
+                                    "BC",
+                                    "MB",
+                                    "NB",
+                                    "NL",
+                                    "NS",
+                                    "NT",
+                                    "NU",
+                                    "ON",
+                                    "PE",
+                                    "QC",
+                                    "SK",
+                                    "YT",
+                                    "US",
+                                    "ZZ"
+                                  ]
+                                },
+                                "deductionAllocations": {
+                                  "maxItems": 100,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "sourceCode": {
+                                        "type": "string",
+                                        "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                      },
+                                      "reportingBox": {
+                                        "type": "string",
+                                        "enum": [
+                                          "20",
+                                          "44",
+                                          "46"
+                                        ]
+                                      },
+                                      "amount": {
+                                        "type": "string",
+                                        "maxLength": 80,
+                                        "pattern": "^\\d+(?:\\.\\d+)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "sourceCode",
+                                      "reportingBox",
+                                      "amount"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "unionReceiptAgreementConfirmed": {
+                                  "type": "boolean"
+                                },
+                                "pensionAdjustmentDollars": {
+                                  "type": "string",
+                                  "maxLength": 38,
+                                  "pattern": "^(0|[1-9][0-9]*)$"
+                                },
+                                "planRegistrationNumber": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{7}$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "pensionAdjustmentEligibilityReviewed": {
+                                  "type": "boolean"
+                                },
+                                "sourceReference": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "provinceOfEmployment",
+                                "deductionAllocations",
+                                "unionReceiptAgreementConfirmed",
+                                "pensionAdjustmentDollars",
+                                "planRegistrationNumber",
+                                "pensionAdjustmentEligibilityReviewed",
+                                "sourceReference"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
                           "provincialExemptions": {
                             "description": "Explicit per-slip full-reporting-period box28 marks,not inferred from current deduction settings or zero amounts. Missing is unreviewed. Source references stay private.",
                             "minItems": 1,
@@ -39657,6 +39757,106 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 2000
+                          },
+                          "provincialSupplemental": {
+                            "description": "Reviewed per-province allocations of retained other employee deduction codes to boxes20/44/46 plus whole-dollar pension adjustment and plan. No cash or ledger effect. Supporting references stay private.",
+                            "minItems": 1,
+                            "maxItems": 15,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provinceOfEmployment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AB",
+                                    "BC",
+                                    "MB",
+                                    "NB",
+                                    "NL",
+                                    "NS",
+                                    "NT",
+                                    "NU",
+                                    "ON",
+                                    "PE",
+                                    "QC",
+                                    "SK",
+                                    "YT",
+                                    "US",
+                                    "ZZ"
+                                  ]
+                                },
+                                "deductionAllocations": {
+                                  "maxItems": 100,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "sourceCode": {
+                                        "type": "string",
+                                        "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                      },
+                                      "reportingBox": {
+                                        "type": "string",
+                                        "enum": [
+                                          "20",
+                                          "44",
+                                          "46"
+                                        ]
+                                      },
+                                      "amount": {
+                                        "type": "string",
+                                        "maxLength": 80,
+                                        "pattern": "^\\d+(?:\\.\\d+)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "sourceCode",
+                                      "reportingBox",
+                                      "amount"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "unionReceiptAgreementConfirmed": {
+                                  "type": "boolean"
+                                },
+                                "pensionAdjustmentDollars": {
+                                  "type": "string",
+                                  "maxLength": 38,
+                                  "pattern": "^(0|[1-9][0-9]*)$"
+                                },
+                                "planRegistrationNumber": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "pattern": "^[0-9]{7}$"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "pensionAdjustmentEligibilityReviewed": {
+                                  "type": "boolean"
+                                },
+                                "sourceReference": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "provinceOfEmployment",
+                                "deductionAllocations",
+                                "unionReceiptAgreementConfirmed",
+                                "pensionAdjustmentDollars",
+                                "planRegistrationNumber",
+                                "pensionAdjustmentEligibilityReviewed",
+                                "sourceReference"
+                              ],
+                              "additionalProperties": false
+                            }
                           },
                           "provincialExemptions": {
                             "description": "Explicit per-slip full-reporting-period box28 marks,not inferred from current deduction settings or zero amounts. Missing is unreviewed. Source references stay private.",
@@ -49848,7 +50048,7 @@
     },
     "/api/v1/reports/payroll/t4-working-paper": {
       "get": {
-        "summary": "Private2026 provincial T4 working papers from complete reviewed recorded payment recognition,not ledger/planned wages. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate provincial slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Optional independently reviewed per-province full-period box28 marks never default from zero amounts or current pay settings;contradictory retained pensionable/insurable earnings or contributions refuse mapping. Box14 amount limit is checked per province with exact integers and exposed alongside the preserved working-paper amount,never silently clamped. Other official fields remain unassessed. Legal identity,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
+        "summary": "Private2026 provincial T4 working papers from complete reviewed recorded payment recognition,not ledger/planned wages. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate provincial slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Optional independently reviewed per-province full-period box28 marks never default from zero amounts or current pay settings;contradictory retained pensionable/insurable earnings or contributions refuse mapping. Box14 amount limit is checked per province with exact integers and exposed alongside the preserved working-paper amount,never silently clamped. Reviewed per-province boxes20/44/46 draw only from retained other deduction codes and cannot exceed their recorded capacity. Positive union dues require explicit receipt-agreement review. Box52 uses reviewed whole dollars with a seven-digit box50 plan and explicit eligibility review,not a computed entitlement. Missing declarations stay unreviewed;supporting references stay private. Other official fields remain unassessed. Legal identity,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
         "parameters": [
           {
             "name": "profileId",
