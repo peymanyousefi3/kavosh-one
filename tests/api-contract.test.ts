@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('paid tax reporting partitions document complete bounded inputs and explicit source-prefill opt-in without changing legacy defaults',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),schema=api.paths['/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}'].post.requestBody.content['application/json'].schema.properties.definition.anyOf.find((s:any)=>s.type==='object'),allocations=schema.properties.t4Allocations;
+ assert.equal(schema.required.includes('t4Allocations'),false);assert.equal(allocations.minItems,1);assert.equal(allocations.maxItems,15);assert.equal(allocations.items.additionalProperties,false);assert.ok(allocations.items.properties.provinceOfEmployment.enum.includes('ON'));assert.equal(schema.properties.t4Order.maximum,1000000);const flag=api.paths['/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}/calculated-draft'].get.parameters.find((p:any)=>p.name==='includeT4Allocations');assert.equal(flag.required,false);assert.deepEqual(flag.schema.enum,['true','false']);assert.equal(Object.hasOwn(flag.schema,'default'),false);
+});
+
 test('annual T4 dental API requires an explicit code and private source reference without a default no-coverage answer',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/payroll/tax-profiles'].post.requestBody.content['application/json'].schema.properties.definition,annual=definition.properties.yearEndT4;
  assert.equal(definition.required.includes('yearEndT4'),false);assert.equal(annual.additionalProperties,false);assert.deepEqual(annual.properties.dentalAccessCode.enum,['1','2','3','4','5']);assert.deepEqual(annual.required,['dentalAccessCode','dentalSourceReference']);assert.equal(Object.hasOwn(annual.properties.dentalAccessCode,'default'),false);

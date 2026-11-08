@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.205.0",
+    "version": "0.206.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39857,7 +39857,7 @@
     },
     "/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}": {
       "post": {
-        "summary": "Upper-human-reviewed exact partial-payment gross/earnings/deduction recognition for one worker/employer/year;explicit line classifications and payment timezone,source/cumulative caps and immutable corrections. No proportional tax guess,statutory calculation,additional journal or external payment.",
+        "summary": "Upper-human-reviewed exact partial-payment gross/earnings/deduction recognition for one worker/employer/year;explicit line classifications and payment timezone,source/cumulative caps and immutable corrections. Optional reviewed T4 province partitions must reconcile every earning measure and classified deduction exactly;array order is the reviewed within-payment cap order and optional t4Order resolves simultaneous-payment reporting. No proportional tax guess,statutory calculation,additional journal or external payment.",
         "parameters": [
           {
             "name": "id",
@@ -39998,6 +39998,103 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 2000
+                          },
+                          "t4Allocations": {
+                            "description": "Explicit reviewed reporting allocations,not residence or a mutable current profile. Earnings and every employee deduction must sum exactly to this payment recognition. Array order is the reviewed within-payment order for shared annual earnings ceilings.",
+                            "minItems": 1,
+                            "maxItems": 15,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provinceOfEmployment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AB",
+                                    "BC",
+                                    "MB",
+                                    "NB",
+                                    "NL",
+                                    "NS",
+                                    "NT",
+                                    "NU",
+                                    "ON",
+                                    "PE",
+                                    "QC",
+                                    "SK",
+                                    "YT",
+                                    "US",
+                                    "ZZ"
+                                  ]
+                                },
+                                "taxableEarnings": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "pensionableEarnings": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "insurableEarnings": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "employeeDeductions": {
+                                  "maxItems": 100,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "code": {
+                                        "type": "string",
+                                        "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "CPP",
+                                          "CPP2",
+                                          "QPP",
+                                          "QPP2",
+                                          "EI",
+                                          "QPIP",
+                                          "income_tax",
+                                          "other"
+                                        ]
+                                      },
+                                      "amount": {
+                                        "type": "string",
+                                        "maxLength": 80,
+                                        "pattern": "^\\d+(?:\\.\\d+)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "code",
+                                      "kind",
+                                      "amount"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "provinceOfEmployment",
+                                "taxableEarnings",
+                                "pensionableEarnings",
+                                "insurableEarnings",
+                                "employeeDeductions"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "t4Order": {
+                            "description": "Optional reviewed ordering among separate payments with the exact same attested instant. Requires explicit T4 allocations;not a payment date or payroll amount override.",
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000000
                           }
                         },
                         "required": [
@@ -40088,7 +40185,7 @@
     },
     "/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}/calculated-draft": {
       "get": {
-        "summary": "Private editor-only full positive recorded calculated-net payment recognition draft. Uses retained earnings, exact classified posted deductions and employer contributions, and reviewed payment timezone/date; refuses partial/replacement/stale/unmatched sources. No mutation: submit the returned submission through the existing upper-human-reviewed payment tax recognition action.",
+        "summary": "Private editor-only full positive recorded calculated-net payment recognition draft. Uses retained earnings, exact classified posted deductions and employer contributions, and reviewed payment timezone/date; refuses partial/replacement/stale/unmatched sources. Opt-in includeT4Allocations prefills a reviewed reporting partition from the retained calculation tax-profile edition;omission preserves legacy output and retry semantics. No mutation: submit the returned submission through the existing upper-human-reviewed payment tax recognition action.",
         "parameters": [
           {
             "name": "id",
@@ -40106,6 +40203,18 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "includeT4Allocations",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           }
         ],
@@ -40190,7 +40299,7 @@
     },
     "/api/v1/payroll/tax-profiles/{id}/payments/{paymentId}/prepare": {
       "post": {
-        "summary": "Prepare and propose initial full positive calculated-net payment tax recognition in one request,with expected net edition and explicit review/reason but no caller tax amounts. Reuses existing work.paid-tax-record.change approval,audit,immutable history,native exact line/capacity and retry controls. Not automatic approval,partial allocation,bank execution or extra ledger posting.",
+        "summary": "Prepare and propose initial full positive calculated-net payment tax recognition in one request,with expected net edition and explicit review/reason but no caller tax amounts. Reuses existing work.paid-tax-record.change approval,audit,immutable history,native exact line/capacity and retry controls. Optional includeT4Allocations uses the retained calculated tax-profile province and exact payment amounts;omission preserves legacy preparation receipts. Not automatic approval,partial allocation,bank execution or extra ledger posting.",
         "parameters": [
           {
             "name": "id",
@@ -40237,6 +40346,9 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 2000
+                  },
+                  "includeT4Allocations": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -49630,7 +49742,7 @@
     },
     "/api/v1/reports/payroll/t4-working-paper": {
       "get": {
-        "summary": "Private2026 single-non-Quebec-province T4 working paper from complete reviewed recorded payment recognition,not ledger/planned wages. Source-linked boxes14/16/16A/18/22/24/26;annual earnings caps retain actual deductions. Missing recognition/province,mixed provinces or Quebec history refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Legal identity,exemptions,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
+        "summary": "Private2026 provincial T4 working papers from complete reviewed recorded payment recognition,not ledger/planned wages. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate provincial slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Legal identity,exemptions,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
         "parameters": [
           {
             "name": "profileId",
