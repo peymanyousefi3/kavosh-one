@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { operationsFixture } from './operations-fixture.ts';
 
 const secret='synthetic-school-invitation-secret-not-for-production-000000';
-async function fixture(configured=true){
- const f=await operationsFixture({invitationSecret:configured?secret:undefined});
+async function fixture(configured=true,throughSchema?:number){
+ const f=await operationsFixture({invitationSecret:configured?secret:undefined,throughSchema});
  await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'invitations.view','allow'),($1,$2,'invitations.edit','allow')",[f.a,f.managerRole]);
  async function person(hub=f.hub){const response=await f.request('people',{name:'Invited person',email:randomUUID()+'@example.test',hubId:hub});assert.equal(response.response.status,201);return response.body.data.id as string;}
  async function prepare(id:string,as='master',key=randomUUID()){const detail=await f.request('invitations/people/'+id,undefined,as);assert.equal(detail.response.status,200);return f.request('invitations',{personId:id,expectedPersonVersion:detail.body.data.version,reason:'Approved private onboarding'},as,{key});}
@@ -136,4 +137,121 @@ test('schema161 preserves old identity and approval rows and private cache is no
   assert.equal((await f.pg.query<{allowed:boolean}>("SELECT has_column_privilege('kavosh_runtime','public.human_invitation_preparations','created_at','INSERT') AS allowed")).rows[0].allowed,false);
   await f.pg.exec('SET ROLE kavosh_runtime');await assert.rejects(f.pg.query('SELECT * FROM identity.human_invitation_issues'),/permission denied/);await f.pg.exec('RESET ROLE');
  }finally{await f.pg.exec('RESET ROLE');await f.pg.close();}
+});
+
+test('master revokes issued and unissued invitations with immutable history and no account changes',async()=>{
+ const f=await fixture();try{
+  for(const issued of [false,true]){
+   const person=await f.person(),prepared=await f.prepare(person),id=prepared.body.data.id,tokenKey=randomUUID();if(issued)assert.equal((await f.token(id,'master',tokenKey)).response.status,201);
+   const snapshot=async()=>({people:(await f.pg.query('SELECT * FROM public.people ORDER BY academy_id,id')).rows,users:(await f.pg.query('SELECT * FROM identity."user" ORDER BY id')).rows,sessions:(await f.pg.query('SELECT * FROM identity.session ORDER BY id')).rows,issues:(await f.pg.query('SELECT * FROM identity.human_invitation_issues ORDER BY preparation_id')).rows});const before=await snapshot(),key=randomUUID(),path='invitations/'+id+'/revoke',body={reason:'Cancel this private invitation'};
+   const revoked=await f.request(path,body,'master',{key});assert.equal(revoked.response.status,201,JSON.stringify(revoked.body));assert.equal(revoked.body.data.revoked,true);assert.equal(revoked.body.data.accountDisabled,false);
+   assert.deepEqual((await f.request(path,body,'master',{key})).body,revoked.body);const duplicate=await f.request(path,body);assert.equal(duplicate.response.status,200);assert.equal(duplicate.body.data.alreadyRevoked,true);
+   assert.deepEqual(await snapshot(),before);
+   const detail=(await f.request('invitations/'+id)).body.data;assert.equal(detail.issue.status,'revoked');assert.equal(detail.revocation.id,revoked.body.data.id);assert.equal(detail.revocation.reason,body.reason);
+   assert.equal((await f.request('invitations')).body.data.find((r:{id:string})=>r.id===id).revoked,true);
+   const handoff=await f.token(id,'master',tokenKey);assert.equal(handoff.response.status,409);assert.equal(handoff.body.error.code,'INVITATION_REVOKED');
+   await assert.rejects(f.pg.query('UPDATE public.human_invitation_revocations SET reason=$2 WHERE id=$1',[revoked.body.data.id,'Rewrite']),/INVITATION_REVOCATION_IMMUTABLE/);
+   if(issued)assert.equal((await f.pg.query<{expired:boolean}>('SELECT expires_at<=clock_timestamp() AS expired FROM identity.invites WHERE academy_id=$1 AND person_id=$2',[f.a,person])).rows[0].expired,true);
+  }
+ }finally{await f.pg.close();}
+});
+
+test('upper-approved cancellation works in read-only school without enabling unrelated writes or approvals',async()=>{
+ const f=await fixture();try{
+  const person=await f.person(),prepared=await f.prepare(person),id=prepared.body.data.id;assert.equal((await f.token(id)).response.status,201);
+  const request=await f.request('invitations/'+id+'/revoke',{reason:'Upper review required'},'manager');assert.equal(request.response.status,202);assert.equal((await f.request('invitations/'+id)).body.data.issue.status,'active');
+  const notices=(await f.pg.query<{person_id:string;severity:string}>("SELECT n.person_id,n.severity FROM public.portal_notifications n JOIN public.automation_event_sources e ON e.academy_id=n.academy_id AND e.event_id=n.event_id WHERE e.approval_id=$1 AND e.event_type='approval.requested' AND n.origin='mandatory'",[request.body.approval.id])).rows;assert.ok(notices.some(n=>n.person_id===f.actors.master.person&&n.severity==='critical'));
+  const unrelated=await f.proposal('Unrelated role change');await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);
+  assert.equal((await f.approve(unrelated.id)).response.status,403);
+  assert.equal((await f.request('approvals/'+unrelated.id+'/decide',{expectedVersion:1,decision:'approve',reason:'Cannot spoof a security exception',securityRevocation:true})).response.status,403);
+  assert.equal((await f.request('roles',{...f.roleInput,name:'Forbidden while read-only'})).response.status,403);
+  assert.equal((await f.request('invitations',{personId:person,expectedPersonVersion:1,reason:'Forbidden issue'})).response.status,403);
+  const applied=await f.approve(request.body.approval.id);assert.equal(applied.response.status,200,JSON.stringify(applied.body));assert.equal(applied.body.data.revoked,true);
+  assert.equal((await f.request('invitations/'+id)).body.data.issue.status,'revoked');assert.equal((await f.token(id)).response.status,403);
+  assert.equal((await f.request('people',{name:'Blocked',email:'blocked@example.test',hubId:f.hub})).response.status,403);
+ }finally{await f.pg.close();}
+});
+
+test('revoking an older preparation leaves a newer replacement usable and audit failure restores the old token',async()=>{
+ const f=await fixture();try{
+  const person=await f.person(),old=(await f.prepare(person)).body.data.id;await f.token(old);const next=(await f.prepare(person)).body.data.id;await f.token(next);
+  assert.equal((await f.request('invitations/'+old+'/revoke',{reason:'Cancel old link only'})).response.status,201);assert.equal((await f.token(next)).response.status,201);
+  const before=(await f.pg.query('SELECT * FROM identity.invites ORDER BY token_hash')).rows;
+  await f.pg.exec("CREATE FUNCTION public.synthetic_revoke_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'SYNTHETIC_REVOKE_AUDIT_FAILURE';END $$; CREATE TRIGGER synthetic_revoke_audit_failure BEFORE INSERT ON public.audit_events FOR EACH ROW WHEN(NEW.action='human-invitation.revoke') EXECUTE FUNCTION public.synthetic_revoke_audit_failure()");
+  assert.equal((await f.request('invitations/'+next+'/revoke',{reason:'Failed revoke'})).response.status,503);assert.deepEqual((await f.pg.query('SELECT * FROM identity.invites ORDER BY token_hash')).rows,before);
+  assert.equal((await f.pg.query('SELECT * FROM public.human_invitation_revocations WHERE preparation_id=$1',[next])).rows.length,0);
+  await f.pg.exec('DROP TRIGGER synthetic_revoke_audit_failure ON public.audit_events; DROP FUNCTION public.synthetic_revoke_audit_failure()');assert.equal((await f.token(next)).response.status,201);
+ }finally{await f.pg.close();}
+});
+
+test('consumption evidence survives auth cleanup and prevents account-disabling revocation',async()=>{
+ const f=await fixture();try{
+  const person=(await f.request('people',{name:'Existing verified user',email:'foreignmaster@example.test',hubId:f.hub})).body.data.id,id=(await f.prepare(person)).body.data.id,token=(await f.token(id)).body.data.privateInvitation;
+  const hash=createHmac('sha256',secret).update(token).digest('hex'),user=f.actors.foreignMaster;
+  await f.pg.exec('SET ROLE kavosh_identity');assert.equal((await f.pg.query<{code:string}>('SELECT * FROM identity.accept_invite($1,$2,$3)',[hash,user.user,user.session])).rows[0].code,'ACCEPTED');await f.pg.exec('RESET ROLE');
+  assert.equal((await f.pg.query('SELECT * FROM identity.human_invitation_consumptions WHERE preparation_id=$1',[id])).rows.length,1);
+  await f.pg.query("UPDATE identity.invites SET expires_at=clock_timestamp()-interval '8 days' WHERE token_hash=$1",[hash]);await f.pg.query('SELECT identity.cleanup_expired_auth()');assert.equal((await f.pg.query('SELECT * FROM identity.invites WHERE token_hash=$1',[hash])).rows.length,0);
+  assert.equal((await f.request('invitations/'+id)).body.data.issue.status,'consumed');const denied=await f.request('invitations/'+id+'/revoke',{reason:'Must not disable account'});assert.equal(denied.response.status,409);assert.equal(denied.body.error.code,'INVITATION_ALREADY_CONSUMED');
+  assert.equal((await f.pg.query<{status:string;auth_user_id:string}>('SELECT status,auth_user_id FROM public.people WHERE id=$1',[person])).rows[0].auth_user_id,user.user);
+  await assert.rejects(f.pg.query('DELETE FROM identity.human_invitation_consumptions WHERE preparation_id=$1',[id]),/INVITATION_ISSUE_IMMUTABLE/);
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.close();}
+});
+
+test('schema162 preserves old fields and helper ACLs,backfills known consumption and labels lost legacy evidence unknown',async()=>{
+ const f=await fixture(true,161);try{
+  const person=(await f.request('people',{name:'Legacy verified recipient',email:'foreignmaster@example.test',hubId:f.hub})).body.data.id;
+  const lost=(await f.prepare(person)).body.data.id,lostToken=(await f.token(lost)).body.data.privateInvitation;
+  const retained=(await f.prepare(person)).body.data.id,token=(await f.token(retained)).body.data.privateInvitation,user=f.actors.foreignMaster;
+  const hash=(value:string)=>createHmac('sha256',secret).update(value).digest('hex');
+  await f.pg.exec('SET ROLE kavosh_identity');assert.equal((await f.pg.query<{code:string}>('SELECT * FROM identity.accept_invite($1,$2,$3)',[hash(token),user.user,user.session])).rows[0].code,'ACCEPTED');await f.pg.exec('RESET ROLE');
+  await f.pg.query("UPDATE identity.invites SET expires_at=clock_timestamp()-interval '8 days' WHERE token_hash=$1",[hash(lostToken)]);await f.pg.query('SELECT identity.cleanup_expired_auth()');
+  const snapshot=async()=>({people:(await f.pg.query('SELECT * FROM public.people ORDER BY academy_id,id')).rows,users:(await f.pg.query('SELECT * FROM identity."user" ORDER BY id')).rows,issues:(await f.pg.query("SELECT to_jsonb(c)-'consumption_tracked' AS data FROM identity.human_invitation_issues c ORDER BY preparation_id")).rows,preparations:(await f.pg.query('SELECT * FROM public.human_invitation_preparations ORDER BY id')).rows,helpers:(await f.pg.query("SELECT oid,proowner,proacl FROM pg_proc WHERE oid IN('public.issue_human_invitation(uuid,uuid,uuid,text)'::regprocedure,'public.human_invitation_issue_status(uuid)'::regprocedure) ORDER BY oid")).rows});
+  const before=await snapshot();await f.pg.exec(await readFile(new URL('../db/migrations/162_human_invitation_revocations.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);
+  // Structural access-path check only,not a throughput benchmark. Force index
+  // consideration on this tiny fixture; production keeps its normal planner.
+  await f.pg.exec('BEGIN');try{
+   await f.pg.query("SELECT set_config('enable_seqscan','off',true)");
+   const lookup=await f.pg.query('EXPLAIN (FORMAT JSON) SELECT preparation_id FROM identity.human_invitation_issues WHERE academy_id=$1 AND token_hash=$2',[f.a,hash(token)]);assert.ok(JSON.stringify(lookup.rows).includes('human_invitation_issue_hash'));
+   const open=await f.pg.query('EXPLAIN (FORMAT JSON) SELECT token_hash FROM identity.invites WHERE academy_id=$1 AND person_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp()',[f.a,person]);assert.ok(JSON.stringify(open.rows).includes('invites_unconsumed_person'));
+  }finally{await f.pg.exec('ROLLBACK');}
+  assert.equal((await f.pg.query('SELECT * FROM identity.human_invitation_consumptions WHERE preparation_id=$1',[retained])).rows.length,1);
+  assert.equal((await f.request('invitations/'+lost)).body.data.issue.status,'consumption_unknown');const denied=await f.request('invitations/'+lost+'/revoke',{reason:'Unknown legacy history'});assert.equal(denied.response.status,409);assert.equal(denied.body.error.code,'INVITATION_CONSUMPTION_UNKNOWN');
+  await f.pg.query("UPDATE identity.invites SET expires_at=clock_timestamp()-interval '8 days' WHERE token_hash=$1",[hash(token)]);await f.pg.query('SELECT identity.cleanup_expired_auth()');assert.equal((await f.request('invitations/'+retained)).body.data.issue.status,'consumed');
+  const fresh=(await f.prepare(await f.person())).body.data.id;assert.equal((await f.token(fresh)).response.status,201);assert.equal((await f.pg.query<{consumption_tracked:boolean}>('SELECT consumption_tracked FROM identity.human_invitation_issues WHERE preparation_id=$1',[fresh])).rows[0].consumption_tracked,true);
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.close();}
+});
+
+test('native cancellation races acceptance without disabling a completed account',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{
+  const person=(await f.request('people',{name:'Race recipient',email:'foreignmaster@example.test',hubId:f.hub})).body.data.id,id=(await f.prepare(person)).body.data.id,token=(await f.token(id)).body.data.privateInvitation,user=f.actors.foreignMaster;
+  const hash=createHmac('sha256',secret).update(token).digest('hex');
+  const accept=async()=>{const db=await f.pg.runtime!.connect();try{await db.query('SET ROLE kavosh_identity');return(await db.query<{code:string}>('SELECT * FROM identity.accept_invite($1,$2,$3)',[hash,user.user,user.session])).rows[0].code;}finally{db.release();}};
+  const [accepted,revoked]=await Promise.all([accept(),f.request('invitations/'+id+'/revoke',{reason:'Concurrent cancellation'})]);
+  const state=(await f.pg.query<{status:string;auth_user_id:string|null}>('SELECT status,auth_user_id FROM public.people WHERE id=$1',[person])).rows[0];
+  if(accepted==='ACCEPTED'){assert.equal(revoked.response.status,409,JSON.stringify(revoked.body));assert.deepEqual(state,{status:'active',auth_user_id:user.user});assert.equal((await f.request('invitations/'+id)).body.data.issue.status,'consumed');}
+  else{assert.equal(accepted,'INVALID_INVITATION');assert.equal(revoked.response.status,201,JSON.stringify(revoked.body));assert.deepEqual(state,{status:'pending',auth_user_id:null});assert.equal((await f.request('invitations/'+id)).body.data.issue.status,'revoked');}
+ }finally{await f.pg.close();}
+});
+
+test('cancellation stays scoped,requires upper review for bots and invalidates pending review after acceptance',async()=>{
+ const f=await fixture();try{
+  const person=await f.person(),id=(await f.prepare(person)).body.data.id;await f.token(id);
+  assert.equal((await f.request('invitations/'+id+'/revoke',{reason:'Outside hub'},'peer')).response.status,404);
+  assert.equal((await f.request('invitations/'+id+'/revoke',{reason:'Other school'},'foreignMaster',{academy:f.b})).response.status,404);
+  assert.equal((await f.request('invitations/'+id+'/revoke',{reason:'Cannot switch target',invitationId:randomUUID()})).response.status,400);
+  const bot=await f.request('invitations/'+id+'/revoke',{reason:'Bot requests human review'},'bot');assert.equal(bot.response.status,202);assert.equal((await f.request('invitations/'+id)).body.data.issue.status,'active');assert.equal((await f.approve(bot.body.approval.id)).response.status,200);
+  const nextPerson=(await f.request('people',{name:'Accepted before review',email:'foreignmaster@example.test',hubId:f.hub})).body.data.id,nextId=(await f.prepare(nextPerson)).body.data.id,token=(await f.token(nextId)).body.data.privateInvitation;
+  const pending=await f.request('invitations/'+nextId+'/revoke',{reason:'Review will be too late'},'manager');assert.equal(pending.response.status,202);
+  const user=f.actors.foreignMaster,hash=createHmac('sha256',secret).update(token).digest('hex');await f.pg.exec('SET ROLE kavosh_identity');assert.equal((await f.pg.query<{code:string}>('SELECT * FROM identity.accept_invite($1,$2,$3)',[hash,user.user,user.session])).rows[0].code,'ACCEPTED');await f.pg.exec('RESET ROLE');
+  const stale=await f.approve(pending.body.approval.id);assert.equal(stale.response.status,409);assert.equal(stale.body.approval.status,'stale');assert.equal((await f.pg.query('SELECT * FROM public.human_invitation_revocations WHERE preparation_id=$1',[nextId])).rows.length,0);
+  assert.equal((await f.request('invitations/'+nextId)).body.data.issue.status,'consumed');
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.close();}
+});
+
+test('native simultaneous cancellation retries preserve one revocation and approval effect',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{
+  const id=(await f.prepare(await f.person())).body.data.id;await f.token(id);const key=randomUUID(),path='invitations/'+id+'/revoke',body={reason:'Same cancellation retry'};
+  const [a,b]=await Promise.all([f.request(path,body,'master',{key}),f.request(path,body,'master',{key})]);assert.equal(a.response.status,201,JSON.stringify(a.body));assert.equal(b.response.status,201,JSON.stringify(b.body));assert.deepEqual(a.body,b.body);
+  assert.equal((await f.pg.query('SELECT * FROM public.human_invitation_revocations WHERE preparation_id=$1',[id])).rows.length,1);assert.equal((await f.pg.query("SELECT * FROM public.audit_events WHERE entity_id=$1 AND action='human-invitation.revoke'",[a.body.data.id])).rows.length,1);
+ }finally{await f.pg.close();}
 });
