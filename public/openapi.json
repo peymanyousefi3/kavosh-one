@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.247.0",
+    "version": "0.248.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5316,7 +5316,7 @@
     },
     "/api/v1/automations/events": {
       "get": {
-        "summary": "Read bound approval,audit,session,report issue and worker-statement release events under current source rights plus automation rights before paging; operational sources are native system observations,not owner actions; no private approval payloads or external delivery claims",
+        "summary": "Read bound approval,audit,session,academy-calendar,report issue,account-security and worker-statement release events under current original-source rights plus automation rights before paging. Calendar envelopes contain timing/type/status only,not private event text or administrative reasons. Current exact family authority is checked independently of event management. No private approval payloads or external delivery claims.",
         "parameters": [
           {
             "name": "limit",
@@ -5382,7 +5382,8 @@
                 "report_schedule",
                 "report_job",
                 "pay_statement",
-                "account_security"
+                "account_security",
+                "calendar_event"
               ]
             }
           }
@@ -5900,6 +5901,19 @@
                                   "properties": {
                                     "kind": {
                                       "type": "string",
+                                      "const": "calendar_guardians"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
                                       "const": "people"
                                     },
                                     "personIds": {
@@ -6345,6 +6359,19 @@
                                     "kind": {
                                       "type": "string",
                                       "const": "statement_worker"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "calendar_guardians"
                                     }
                                   },
                                   "required": [

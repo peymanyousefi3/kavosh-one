@@ -18,6 +18,17 @@ test('missing and type-invalid comparisons remain unknown even under NOT; explic
  assert.equal(evaluateCondition({op:'missing',field:'attributes.missing'},sample).matched,true);
  assert.equal(evaluateCondition({op:'any',conditions:[{op:'exists',field:'attributes.missing'},{op:'eq',field:'severity',value:'critical'}]},sample).matched,true);
 });
+test('calendar temporal conditions preserve microseconds offsets and negative epochs without widening rule windows',()=>{
+ const run=(at:string,op:'before'|'after',boundary:string)=>evaluateCondition({op,field:'attributes.at',value:boundary},{...sample,attributes:{at}});
+ assert.equal(run('2026-07-01T13:00:00.000000Z','before','2026-07-01T13:00:00.000001Z').matched,true);
+ assert.equal(run('2026-07-01T13:00:00.000002Z','after','2026-07-01T08:00:00.000001-05:00').matched,true);
+ assert.equal(run('1969-12-31T23:59:59.999999Z','before','1970-01-01T00:00:00Z').matched,true);
+ assert.equal(run('2026-07-01T13:00:00.000001Z','after','2026-07-01T08:00:00.000001-05:00').matched,false);
+ assert.equal(run('2026-07-01T13:00:00.0000001Z','after','2026-07-01T13:00:00Z').result,'unknown');
+ assert.throws(()=>parseCondition({op:'after',field:'attributes.at',value:'2026-07-01T13:00:00.0000001Z'}));
+ assert.equal(ruleSample.safeParse({...sample,occurredAt:'2026-07-01T13:00:00.000001Z'}).success,false);
+ assert.equal(automationDefinition.safeParse({name:'Original window precision',startsAt:'2026-07-01T13:00:00.000001Z',trigger:{kind:'domain_event',eventTypes:['*']},condition:{op:'exists',field:'entityId'},actions:[{kind:'notify',channels:['portal'],audience:{kind:'school_master'},title:{en:'Notice'},body:{en:'Read current details'}}]}).success,false);
+});
 test('rule parser rejects code/prototype traversal, cyclic/deep/wide trees, invalid numeric coercion and oversized values before evaluation',()=>{
  for(const c of [{op:'eval',field:'severity',value:'process.exit()'},{op:'eq',field:'attributes.__proto__.polluted',value:true},{op:'decimal_gt',field:'attributes.delay',value:1},{op:'exists',field:'severity',value:true},{op:'eq',field:'severity',value:'critical',script:'DROP TABLE'}])assert.throws(()=>parseCondition(c));
  let deep:unknown={op:'exists',field:'severity'};for(let i=0;i<1000;i++)deep={op:'not',condition:deep};assert.throws(()=>parseCondition(deep),/INVALID_RULE_CONDITION/);
