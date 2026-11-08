@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('self avatar API requires a human session and only a bounded current profile edition',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),operation=api.paths['/api/v1/me/community-profile/avatar-download-link'].post,schema=operation.requestBody.content['application/json'].schema;assert.deepEqual(operation.security,[{humanSession:[],academySelection:[]}]);assert.deepEqual(Object.keys(schema.properties),['expectedProfileVersion']);assert.equal(schema.additionalProperties,false);assert.equal(schema.properties.expectedProfileVersion.exclusiveMinimum,0);assert.equal(schema.properties.expectedProfileVersion.maximum,2147483647);
+});
+
 test('self profile API is human-only strictly self-targeted and separately versioned without publication inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path=api.paths['/api/v1/me/community-profile'];for(const method of ['get','post'])assert.deepEqual(path[method].security,[{humanSession:[],academySelection:[]}]);const schema=path.post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(schema.properties).sort(),['definition','expectedVersion']);assert.equal(schema.additionalProperties,false);assert.equal(schema.properties.expectedVersion.minimum,0);assert.equal(schema.properties.expectedVersion.maximum,2147483646);assert.equal(schema.properties.definition.additionalProperties,false);assert.equal(Object.hasOwn(schema.properties.definition.properties,'visibility'),false);assert.equal(path.get.parameters.length,0);
 });
