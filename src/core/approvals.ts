@@ -2,6 +2,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,loadGrants,mutation,record,type ApiContext,type Reply } from './api.ts';
 import { ApiError,scopeFor,scopeContains,scopeNonempty as nonempty,type Capability,type Credential,type Grant,type Scope } from './policy.ts';
+import { payrollPrivateReviewPrefix } from './payroll-private-data.ts';
 
 const uuid=z.string().uuid().transform(value=>value.toLowerCase());
 const version=z.number().int().min(1);
@@ -33,6 +34,7 @@ export interface ApprovalAction {
   validate(ctx:ApiContext,targetId:string,input:unknown,purpose:'request'|'review'):Promise<Scope>;
   dependencies(ctx:ApiContext,targetId:string,input:unknown,purpose:'request'|'review'):Promise<Record<string,unknown>>;
   apply(ctx:ApiContext,proposal:Proposal):Promise<unknown>;
+  protectReason?(ctx:ApiContext,proposal:Proposal,reason:string,operation:'approve'|'reject'|'withdraw'):Promise<{stored:string;public:string;commitment:string}>;
 }
 export type ApprovalRegistry=Readonly<Record<string,ApprovalAction>>;
 function getAction(registry:ApprovalRegistry,name:string) {
@@ -75,14 +77,15 @@ export const approvalReadSelectionSQL=`($1::boolean OR
 export function approvalReadPolicyParameters(ctx:ApiContext,isMaster:boolean){const s=permissionScope(ctx,'approvals.view');return [isMaster,ctx.credential.person_id,nonempty(s),JSON.stringify(s),JSON.stringify(privacyScopes(ctx))];}
 export async function approvalReadParameters(ctx:ApiContext){return approvalReadPolicyParameters(ctx,await master(ctx));}
 
-export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:string,targetId:string|null,targetVersion:number,input:unknown):Promise<Reply> {
+export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:string,targetId:string|null,targetVersion:number,input:unknown,privateCommitment?:string):Promise<Reply> {
   const definition=getAction(registry,action);
   if(!nonempty(permissionScope(ctx,definition.requestCapability)))throw new ApiError(403,'FORBIDDEN');
   await lockApprovalWrites(ctx,definition.policyChange??false);
   const allocatedTarget=targetId??randomUUID();
   const scope=await definition.validate(ctx,allocatedTarget,input,'request');
   if(!nonempty(scope))throw new ApiError(403,'FORBIDDEN');
-  return mutation(ctx,{input,targetVersion},async()=>{
+  const fingerprintInput=privateCommitment===undefined?input:{privateCommitment:z.string().regex(/^[a-f0-9]{64}$/).parse(privateCommitment)};
+  return mutation(ctx,{input:fingerprintInput,targetVersion},async()=>{
     const actualTarget=allocatedTarget,reviewContext=await definition.dependencies(ctx,actualTarget,input,'request');
     const p:Proposal={id:randomUUID(),requester_id:ctx.credential.person_id,requester_kind:ctx.credential.kind??'bot',
       credential_snapshot:ctx.credential,grants_hash:grantsHash(ctx.grants),dependency_hash:stateHash(reviewContext),review_context:reviewContext,
@@ -111,6 +114,7 @@ async function visibleProposal(ctx:ApiContext,p:Proposal,review=false) {
   if(!nonempty(scope)||!scopeContains(scope,storedScope.parse(p.scope)))return false;
   return (await ctx.db.query<{valid:boolean}>('SELECT public.is_supervisor($1,$2) AS valid',[ctx.credential.person_id,p.requester_id])).rows[0]?.valid===true;
 }
+export async function readableApproval(ctx:ApiContext,id:string){const p=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1',[id])).rows[0];if(!p||!await visibleProposal(ctx,p))throw new ApiError(404,'NOT_FOUND');return p;}
 async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:z.infer<typeof decisionInput>):Promise<Reply> {
   if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
   if(p.requester_id===ctx.credential.person_id&&!await master(ctx))throw new ApiError(403,'SELF_APPROVAL_FORBIDDEN');
@@ -118,7 +122,8 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
   // Caller-specific conflicts must reject the attempt, not invalidate a valid
   // case that a different upper reviewer can still approve.
   if(Object.hasOwn(registry,p.action))await registry[p.action].authorizeReviewer?.(ctx,p);
-  return mutation(ctx,input,async()=>{
+  const protectedReason=Object.hasOwn(registry,p.action)?await registry[p.action].protectReason?.(ctx,p,input.reason,input.decision):undefined;
+  return mutation(ctx,protectedReason?{...input,reason:protectedReason.commitment}:input,async()=>{
     const current=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1 FOR UPDATE',[p.id])).rows[0];
     if(current.status!=='pending'||current.version!==input.expectedVersion)throw new ApiError(409,'APPROVAL_CHANGED');
     let status='rejected',result:unknown=null,decisionCode:string|null=null;
@@ -151,15 +156,15 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
         }
       }
     }
-    await ctx.db.query('UPDATE public.approval_requests SET status=$2,version=version+1,reviewer_id=$3,reason=$4,decision_code=$5,decided_at=now() WHERE id=$1',[current.id,status,ctx.credential.person_id,input.reason,decisionCode]);
+    await ctx.db.query('UPDATE public.approval_requests SET status=$2,version=version+1,reviewer_id=$3,reason=$4,decision_code=$5,decided_at=now() WHERE id=$1',[current.id,status,ctx.credential.person_id,protectedReason?.stored??input.reason,decisionCode]);
     await record(ctx.db,ctx.credential,ctx.requestId,'approval.'+status,current.id,null,{before:'pending',after:status,...current.privacy_capability?{hasReason:true}:{reason:input.reason},decisionCode,action:current.action,targetId:current.target_id});
-    return {status:status==='stale'?409:200,body:{approval:{id:current.id,status,version:current.version+1,reason:input.reason,decisionCode},...(result?{data:result}:{})}};
+    return {status:status==='stale'?409:200,body:{approval:{id:current.id,status,version:current.version+1,reason:protectedReason?.public??input.reason,decisionCode},...(result?{data:result}:{})}};
   });
 }
 
 function proposalView(p:Proposal) {
   return {id:p.id,action:p.action,targetId:p.target_id,targetVersion:p.target_version,requesterId:p.requester_id,
-    payload:p.payload,scope:p.scope,status:p.status,version:p.version,reason:p.reason??null,decisionCode:p.decision_code??null,
+    payload:p.payload,scope:p.scope,status:p.status,version:p.version,reason:p.action==='work.payroll-identity.change'&&p.reason?.startsWith(payrollPrivateReviewPrefix)?'Encrypted private review note':p.reason??null,decisionCode:p.decision_code??null,
     reviewContext:p.review_context,
     reviewerId:p.reviewer_id??null,createdAt:p.created_at,decidedAt:p.decided_at??null,...p.privacy_capability?{privacyCapability:p.privacy_capability}:{}};
 }
@@ -197,8 +202,9 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
     if(request.method==='POST'&&approvalPath[2]==='withdraw') {
       if(p.requester_id!==c.person_id)throw new ApiError(403,'REQUESTER_REQUIRED');
       const input=withdrawInput.parse(await jsonBody(request));
-      return mutation(ctx,input,async()=>{
-        const updated=await db.query("UPDATE public.approval_requests SET status='withdrawn',version=version+1,reason=$3,decided_at=now() WHERE id=$1 AND version=$2 AND status='pending' RETURNING id",[id,input.expectedVersion,input.reason]);
+      const protectedReason=Object.hasOwn(registry,p.action)?await registry[p.action].protectReason?.(ctx,p,input.reason,'withdraw'):undefined;
+      return mutation(ctx,protectedReason?{...input,reason:protectedReason.commitment}:input,async()=>{
+        const updated=await db.query("UPDATE public.approval_requests SET status='withdrawn',version=version+1,reason=$3,decided_at=now() WHERE id=$1 AND version=$2 AND status='pending' RETURNING id",[id,input.expectedVersion,protectedReason?.stored??input.reason]);
         if(!updated.rows.length)throw new ApiError(409,'APPROVAL_CHANGED');
         await record(db,c,ctx.requestId,'approval.withdrawn',id,null,p.privacy_capability?{hasReason:true}:{reason:input.reason});
         return {status:200,body:{approval:{id,status:'withdrawn',version:input.expectedVersion+1}}};

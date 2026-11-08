@@ -8,6 +8,8 @@ const config=z.object({activeKeyId:keyId,keys:z.record(keyId,z.string().length(4
 export const payrollPrivateEnvelope=z.object({format:z.literal('payroll-private-v1'),keyId,nonce:z.string().length(16).regex(/^[A-Za-z0-9_-]+$/),tag:z.string().length(22).regex(/^[A-Za-z0-9_-]+$/),ciphertext:z.string().min(1).max(Math.ceil(maxBytes*4/3)).regex(/^[A-Za-z0-9_-]+$/)}).strict();
 const text=z.string().min(1).max(maxBytes).refine(v=>v.isWellFormed()&&Buffer.byteLength(v,'utf8')<=maxBytes);
 export type PayrollPrivateBinding=z.infer<typeof binding>;
+export type PayrollPrivateVault=ReturnType<typeof createPayrollPrivateVault>;
+export const payrollPrivateReviewPrefix='payroll-private-review-v1:';
 function decode(value:string,bytes?:number){const b=Buffer.from(value,'base64url');if(b.toString('base64url')!==value||(bytes!==undefined&&b.length!==bytes))throw new Error('INVALID_ENCODING');return b;}
 function context(raw:unknown){const parsed=binding.safeParse(raw);if(!parsed.success)throw new ApiError(400,'INVALID_PAYROLL_PRIVATE_INPUT');return Buffer.from(JSON.stringify(['kavosh-payroll-identity-v1',parsed.data.academyId,parsed.data.personId,parsed.data.version]),'utf8');}
 function plaintext(raw:unknown){const parsed=text.safeParse(raw);if(!parsed.success)throw new ApiError(400,'INVALID_PAYROLL_PRIVATE_INPUT');return Buffer.from(parsed.data,'utf8');}
