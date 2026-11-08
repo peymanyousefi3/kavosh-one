@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 import { assertSchemaReady,type Connection,type Database } from '../core/database.ts';
-import { signatureCompletionSourceSchema } from './boldsign-completion.ts';
+import { signatureCompletionSourceSchema,workSignatureCompletionSourceSchema } from './boldsign-completion.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const target=z.object({academyId:uuid,startId:uuid}).strict();
@@ -16,7 +16,7 @@ export async function assertSignatureCompletionRole(db:Connection){
  AND NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN('public','identity','auth_private')
  AND(pg_has_role(current_user,c.relowner,'member') OR has_table_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') OR has_any_column_privilege(current_user,c.oid,'SELECT,INSERT,UPDATE,REFERENCES')))
  AND NOT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN('public','identity','auth_private') AND p.prosecdef AND has_schema_privilege(current_user,n.oid,'USAGE') AND has_function_privilege(current_user,p.oid,'EXECUTE')
- AND p.oid NOT IN('public.signature_completion_source(uuid,uuid)'::regprocedure,'public.signature_completion_signer_matches(uuid,uuid,text,text,text,text)'::regprocedure,'public.record_signature_completion_evidence(uuid,uuid,text,text,jsonb)'::regprocedure))
+ AND p.oid NOT IN('public.signature_completion_source(uuid,uuid)'::regprocedure,'public.signature_completion_signer_matches(uuid,uuid,text,text,text,text)'::regprocedure,'public.record_signature_completion_evidence(uuid,uuid,text,text,jsonb)'::regprocedure,'public.work_signature_completion_source(uuid,uuid)'::regprocedure,'public.work_signature_completion_signer_matches(uuid,uuid,text,text,text,text,text)'::regprocedure))
  AND NOT EXISTS(SELECT 1 FROM pg_roles e WHERE(e.rolsuper OR e.rolbypassrls) AND pg_has_role(current_user,e.oid,'member')) safe FROM pg_roles r WHERE r.rolname=current_user`);
  if(!r.rows[0]?.safe)throw new Error('UNSAFE_SIGNATURE_COMPLETION_ROLE');
 }
@@ -36,6 +36,18 @@ export async function loadSignatureCompletionSource(database:Database,raw:unknow
 export async function matchSignatureCompletionSigner(database:Database,rawSource:unknown,rawObserved:unknown){
  const s=signatureCompletionSourceSchema.safeParse(rawSource),o=observed.safeParse(rawObserved);if(!s.success||!o.success)throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_COMPARISON');
  return read(database,async c=>{const result=(await c.query<{name_matches:boolean;email_matches:boolean;phone_matches:boolean}>('SELECT * FROM public.signature_completion_signer_matches($1,$2,$3,$4,$5,$6)',[s.data.academyId,s.data.startId,s.data.sourceFingerprint,o.data.name,o.data.email,o.data.phone])).rows[0];
+  return result?{nameMatches:result.name_matches===true,emailMatches:result.email_matches===true,phoneMatches:result.phone_matches===true}:null;
+ });
+}
+export async function loadWorkSignatureCompletionSource(database:Database,raw:unknown){
+ const p=target.safeParse(raw);if(!p.success)throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_TARGET');
+ return read(database,async c=>{const value=(await c.query<{source:unknown}>('SELECT public.work_signature_completion_source($1,$2) source',[p.data.academyId,p.data.startId])).rows[0]?.source;
+  if(value===null)return null;return workSignatureCompletionSourceSchema.parse(value);
+ });
+}
+export async function matchWorkSignatureCompletionSigner(database:Database,rawSource:unknown,role:'worker'|'academy_representative',rawObserved:unknown){
+ const s=workSignatureCompletionSourceSchema.safeParse(rawSource),o=observed.safeParse(rawObserved);if(!s.success||!o.success||!['worker','academy_representative'].includes(role))throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_COMPARISON');
+ return read(database,async c=>{const result=(await c.query<{name_matches:boolean;email_matches:boolean;phone_matches:boolean}>('SELECT * FROM public.work_signature_completion_signer_matches($1,$2,$3,$4,$5,$6,$7)',[s.data.academyId,s.data.startId,s.data.sourceFingerprint,role,o.data.name,o.data.email,o.data.phone])).rows[0];
   return result?{nameMatches:result.name_matches===true,emailMatches:result.email_matches===true,phoneMatches:result.phone_matches===true}:null;
  });
 }
