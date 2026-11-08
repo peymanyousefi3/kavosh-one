@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('central profile moderation filters are explicit optional choices without default publication or status inference',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),parameters=api.paths['/api/v1/community/profiles'].get.parameters;for(const name of ['includeModeration','restricted']){const p=parameters.find((v:any)=>v.name===name);assert.equal(p.required,false);assert.deepEqual(p.schema.enum,['true','false']);assert.equal(Object.hasOwn(p.schema,'default'),false);}
+});
+
 test('profile moderation contract separates exact draft and moderation versions and private history from self authoring',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/community/profiles/{id}/moderation'],s=p.post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(s.properties).sort(),['expectedProfileVersion','expectedVersion','reason','restricted']);assert.equal(s.additionalProperties,false);assert.equal(s.properties.expectedVersion.minimum,0);assert.equal(s.properties.expectedVersion.maximum,2147483646);assert.equal(s.properties.expectedProfileVersion.exclusiveMinimum,0);assert.equal(s.properties.restricted.type,'boolean');assert.equal(Object.hasOwn(s.properties.restricted,'default'),false);const history=api.paths['/api/v1/community/profiles/{id}/moderation/history'].get;assert.equal(history.parameters.find((v:any)=>v.name==='limit').schema.maximum,20);
 });

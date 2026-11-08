@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.215.0",
+    "version": "0.216.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -8921,7 +8921,7 @@
     },
     "/api/v1/community/profiles": {
       "get": {
-        "summary": "Scoped private administrative school/person/hub identity and branding drafts before paging; school scope requires full profile authority; names are authored content,not copied legal data; no bios,links or edit reasons in summaries,no community/public publication",
+        "summary": "Scoped private administrative school/person/hub identity and branding drafts before paging; school scope requires full profile authority; names are authored content,not copied legal data; no bios,links or edit reasons in summaries,optional includeModeration or restricted filters expose only currently scoped moderation version/state before paging,never private reasons;unavailable status stays null,not unrestricted;no community/public publication",
         "parameters": [
           {
             "name": "limit",
@@ -8942,6 +8942,30 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "includeModeration",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "restricted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           },
           {
