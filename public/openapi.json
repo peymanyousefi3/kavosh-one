@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.210.0",
+    "version": "0.211.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39514,6 +39514,27 @@
                         "type": "string",
                         "const": "CA"
                       },
+                      "reportingAccount": {
+                        "description": "Explicit reviewed default employer RP-account edition for future payroll reporting. Requires separate private employer-account view authority and current active account effective on this profile date. Missing stays unassigned;not a historical payment assignment.",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 2147483646
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
+                      },
                       "provinceOfEmployment": {
                         "type": "string",
                         "enum": [
@@ -40109,6 +40130,27 @@
                       "countryCode": {
                         "type": "string",
                         "const": "CA"
+                      },
+                      "reportingAccount": {
+                        "description": "Explicit reviewed default employer RP-account edition for future payroll reporting. Requires separate private employer-account view authority and current active account effective on this profile date. Missing stays unassigned;not a historical payment assignment.",
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "version": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 2147483646
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "version"
+                        ],
+                        "additionalProperties": false
                       },
                       "provinceOfEmployment": {
                         "type": "string",
