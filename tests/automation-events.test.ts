@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { workFixture } from './work-fixture.ts';
 import { readFile } from 'node:fs/promises';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 
 async function fixture(options:{throughSchema?:number}={}){const f=await operationsFixture(options);try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['automations.view','automations.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
@@ -60,9 +61,10 @@ test('event-source migration does not invent historical approval snapshots and c
  const f=await fixture({throughSchema:59});try{
   const pending=await f.request('automations/rules',{...f.input,definition:{...f.definition,trigger:{kind:'domain_event',eventTypes:['approval.requested']}}},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));const before=(await f.pg.query('SELECT * FROM public.outbox_events ORDER BY id')).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/060_automation_event_sources.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query('SELECT * FROM public.outbox_events ORDER BY id')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.automation_event_sources')).rows.length,0);
-  assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
-  // Query the actual schema60 native projection;current event API additionally
-  // requires later source tables/functions and is not a legacy runtime.
+  // The preservation/no-backfill assertion above is actual59to60 evidence.
+  // Current approval code requires the actual remaining migrations,including
+  // contextual review concurrency;do not pretend it is the old schema60 app.
+  await upgradeToCurrent(f.pg);assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
   const sources=(await f.pg.query<{projection:{eventType:string};source_version:number}>('SELECT projection,source_version FROM public.automation_event_sources WHERE approval_id=$1',[pending.body.approval.id])).rows;assert.equal(sources.length,1);assert.equal(sources[0].projection.eventType,'approval.applied');assert.equal(sources[0].source_version,2);
  }finally{await f.pg.close();}
 });

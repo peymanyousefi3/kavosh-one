@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
@@ -11,7 +12,7 @@ test('salary-policy migration preserves actual old terms and pending payloads in
   const before=(await f.pg.query('SELECT * FROM public.work_engagement_revisions ORDER BY version')).rows,payload=(await f.pg.query('SELECT payload FROM public.approval_requests WHERE id=$1',[pending.body.approval.id])).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/058_salary_forecast_allocation.sql',import.meta.url),'utf8'));
   assert.deepEqual((await f.pg.query('SELECT * FROM public.work_engagement_revisions ORDER BY version')).rows,before);assert.deepEqual((await f.pg.query('SELECT payload FROM public.approval_requests WHERE id=$1',[pending.body.approval.id])).rows,payload);
-  assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
+  await upgradeToCurrent(f.pg);assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,200);
   const changed=await f.amend(id,{expectedVersion:2,effectiveOn:'2027-01-01',components:[{...salary,frequency:'year',forecastAllocation:{kind:'calendar_pay_dates'}}]});assert.equal(changed.response.status,200,JSON.stringify(changed.body));
   assert.equal((await f.request('payroll/engagements/'+id+'?version=1')).body.data.components[0].forecastAllocation,undefined);assert.equal(changed.body.data.components[0].forecastAllocation.kind,'calendar_pay_dates');
  }finally{await f.pg.close();}

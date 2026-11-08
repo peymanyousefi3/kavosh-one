@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -114,7 +115,7 @@ test('schema99 to100 preserves old salary and pending exact work terms without i
   const e=await f.create({components:[f.components[0]]});assert.equal(e.response.status,201);const id=e.body.data.id;assert.equal((await f.period(id)).response.status,201);const p=await f.prepare();assert.equal(p.response.status,201);const pending=await f.amend(id,{components:[f.components[0]],effectiveOn:'2027-01-01'},'staff');assert.equal(pending.response.status,202);
   const snapshot=async()=>({work:(await f.pg.query('SELECT to_jsonb(r) r FROM public.work_engagement_revisions r ORDER BY engagement_id,version')).rows,pending:(await f.pg.query('SELECT payload,review_context FROM public.approval_requests WHERE id=$1',[pending.body.approval.id])).rows,preparation:(await f.pg.query('SELECT source_snapshot FROM public.payroll_preparations WHERE id=$1',[p.body.data.id])).rows});const before=await snapshot();
   await f.pg.exec(await readFile(new URL('../db/migrations/100_salary_earning_basis.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,100);assert.deepEqual(await snapshot(),before);
-  assert.equal((await f.request('payroll/preparations/'+p.body.data.id)).body.data.calculation.salary.unpricedComponents[0].reason,'SALARY_EARNING_POLICY_REQUIRED');assert.equal((await f.approve(pending.body.approval.id)).response.status,200);
+  assert.equal((await f.request('payroll/preparations/'+p.body.data.id)).body.data.calculation.salary.unpricedComponents[0].reason,'SALARY_EARNING_POLICY_REQUIRED');await upgradeToCurrent(f.pg);assert.equal((await f.approve(pending.body.approval.id)).response.status,200);
   assert.equal((await f.amend(id,{expectedVersion:2,components:[{...f.components[0],earningBasis:'calendar_days'}]})).response.status,200);
  }finally{await f.pg.close();}
 });
