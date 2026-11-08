@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('annual T4 dental API requires an explicit code and private source reference without a default no-coverage answer',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/payroll/tax-profiles'].post.requestBody.content['application/json'].schema.properties.definition,annual=definition.properties.yearEndT4;
+ assert.equal(definition.required.includes('yearEndT4'),false);assert.equal(annual.additionalProperties,false);assert.deepEqual(annual.properties.dentalAccessCode.enum,['1','2','3','4','5']);assert.deepEqual(annual.required,['dentalAccessCode','dentalSourceReference']);assert.equal(Object.hasOwn(annual.properties.dentalAccessCode,'default'),false);
+});
+
 test('T4 working-paper contract accepts only a source profile and explicit timezone,not caller monetary or partial-year overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
  for(const suffix of ['','/export']){const op=api.paths['/api/v1/reports/payroll/t4-working-paper'+suffix].get;assert.deepEqual(op.parameters.map((p:{name:string})=>p.name).sort(),['profileId','timeZone']);assert.match(op.summary,/working.paper/i);}

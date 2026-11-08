@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.204.0",
+    "version": "0.205.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -39143,6 +39143,32 @@
                         "maxLength": 80,
                         "pattern": "^\\d+(?:\\.\\d+)?$"
                       },
+                      "yearEndT4": {
+                        "description": "Explicit reviewed employer-offered dental ACCESS at December31 for this tax year,not whether coverage was used. Missing is unreviewed,not code1. Source reference stays private.",
+                        "type": "object",
+                        "properties": {
+                          "dentalAccessCode": {
+                            "type": "string",
+                            "enum": [
+                              "1",
+                              "2",
+                              "3",
+                              "4",
+                              "5"
+                            ]
+                          },
+                          "dentalSourceReference": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          }
+                        },
+                        "required": [
+                          "dentalAccessCode",
+                          "dentalSourceReference"
+                        ],
+                        "additionalProperties": false
+                      },
                       "ontarioTaxReductionClaimCount": {
                         "description": "Reviewed Ontario Factor Y claim count:qualifying child plus qualifying disability/infirmity claims;a dependant can qualify for both. Missing means unreviewed,not zero.",
                         "type": "integer",
@@ -39559,6 +39585,32 @@
                         "type": "string",
                         "maxLength": 80,
                         "pattern": "^\\d+(?:\\.\\d+)?$"
+                      },
+                      "yearEndT4": {
+                        "description": "Explicit reviewed employer-offered dental ACCESS at December31 for this tax year,not whether coverage was used. Missing is unreviewed,not code1. Source reference stays private.",
+                        "type": "object",
+                        "properties": {
+                          "dentalAccessCode": {
+                            "type": "string",
+                            "enum": [
+                              "1",
+                              "2",
+                              "3",
+                              "4",
+                              "5"
+                            ]
+                          },
+                          "dentalSourceReference": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          }
+                        },
+                        "required": [
+                          "dentalAccessCode",
+                          "dentalSourceReference"
+                        ],
+                        "additionalProperties": false
                       },
                       "ontarioTaxReductionClaimCount": {
                         "description": "Reviewed Ontario Factor Y claim count:qualifying child plus qualifying disability/infirmity claims;a dependant can qualify for both. Missing means unreviewed,not zero.",
@@ -49578,7 +49630,7 @@
     },
     "/api/v1/reports/payroll/t4-working-paper": {
       "get": {
-        "summary": "Private2026 single-non-Quebec-province T4 working paper from complete reviewed recorded payment recognition,not ledger/planned wages. Source-linked boxes14/16/16A/18/22/24/26;annual earnings caps retain actual deductions. Missing recognition/province,mixed provinces or Quebec history refuse mapping. Separate legal/dental/exemption/other-information/external/noncash/zero-net eligibility remains unassessed;never an issued or ready-to-file form.",
+        "summary": "Private2026 single-non-Quebec-province T4 working paper from complete reviewed recorded payment recognition,not ledger/planned wages. Source-linked boxes14/16/16A/18/22/24/26;annual earnings caps retain actual deductions. Missing recognition/province,mixed provinces or Quebec history refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Legal identity,exemptions,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
         "parameters": [
           {
             "name": "profileId",
