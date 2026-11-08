@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { operationsFixture } from './operations-fixture.ts';
 import { assertRuntimeRole,type Database } from '../src/core/database.ts';
+import { featureScope } from '../src/core/policy.ts';
 import { assertSignatureCompletionRole,loadSignatureCompletionSource,matchSignatureCompletionSigner } from '../src/integrations/signature-completion-source.ts';
 
 test('completion source refuses arbitrary overrides before connecting and redacts unavailable connection details',async()=>{
@@ -41,6 +42,23 @@ test('completion and web guards reject mixed roles and accidental raw-column aut
   await f.pg.exec('GRANT SELECT(id) ON public.people TO kavosh_signature_completion_worker');try{await f.pg.exec('SET ROLE kavosh_signature_completion_worker');await assert.rejects(assertSignatureCompletionRole({query:f.pg.query.bind(f.pg),release(){}}),/UNSAFE_SIGNATURE_COMPLETION_ROLE/);}finally{await f.pg.exec('RESET ROLE');await f.pg.exec('REVOKE SELECT(id) ON public.people FROM kavosh_signature_completion_worker');}
   await f.pg.exec('GRANT kavosh_signature_completion_worker TO kavosh_runtime');try{await f.pg.exec('SET ROLE kavosh_runtime');await assert.rejects(assertRuntimeRole({query:f.pg.query.bind(f.pg),release(){}}),/UNSAFE_DATABASE_ROLE/);}finally{await f.pg.exec('RESET ROLE');await f.pg.exec('REVOKE kavosh_signature_completion_worker FROM kavosh_runtime');}
   await f.pg.exec('SET ROLE kavosh_signature_completion_worker');try{await assertSignatureCompletionRole({query:f.pg.query.bind(f.pg),release(){}});}finally{await f.pg.exec('RESET ROLE');}
+ }finally{await f.pg.close();}
+});
+test('completion metadata grants no archive columns or automatic roles and preserves exact class/person feature scopes',async()=>{
+ const f=await operationsFixture();try{
+  assert.equal((await f.pg.query("SELECT * FROM public.role_permissions WHERE capability='signature-completions.view'")).rows.length,0);
+  const scope={all:false,hubs:[],classes:[{id:randomUUID(),hubId:f.hub}],people:[{id:f.actors.staff.person,hubId:f.hub}],excludedClasses:[{id:randomUUID(),hubId:f.hub}],excludedPeople:[{id:randomUUID(),hubId:f.hub}]};assert.deepEqual(featureScope(scope,'signature-completions.view'),scope);
+  await f.pg.exec('SET ROLE kavosh_runtime');try{
+   await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);await f.pg.exec('SELECT id,start_id,state,review_reasons,recorded_at FROM public.signature_completion_evidence');
+   for(const column of ['manifest','source','source_fingerprint','evidence_fingerprint','provider_signer_id','recorded_by'])await assert.rejects(f.pg.exec('SELECT '+column+' FROM public.signature_completion_evidence'),/permission denied/i);
+   assert.deepEqual((await f.pg.query('SELECT public.signature_completion_source_current($1) current',[randomUUID()])).rows,[{current:null}]);
+  }finally{await f.pg.exec('RESET ROLE');}
+ }finally{await f.pg.close();}
+});
+test('actual206to207 preserves people roles and private source-function ownership while adding only metadata access',async()=>{
+ const f=await operationsFixture({throughSchema:206});try{
+  const sql="SELECT jsonb_build_object('people',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.people p),'permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY role_id,capability) FROM public.role_permissions p),'evidence',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.signature_completion_evidence p)) snapshot",before=(await f.pg.query(sql)).rows,acl="SELECT oid,proowner,proacl FROM pg_proc WHERE oid='public.signature_completion_source(uuid,uuid)'::regprocedure",original=(await f.pg.query(acl)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/207_signature_completion_directory.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,207);assert.deepEqual((await f.pg.query(sql)).rows,before);assert.deepEqual((await f.pg.query(acl)).rows,original);
  }finally{await f.pg.close();}
 });
 test('actual204to205 adds isolated historical source access without rewriting people approvals or signer history',async()=>{

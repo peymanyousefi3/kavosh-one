@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('completion directory contract is bounded read-only metadata without archive or admission overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/signature-send-requests/{id}/completion-evidence';for(const p of [path,path+'/{evidenceId}']){assert.ok(api.paths[p].get);assert.equal(api.paths[p].post,undefined);assert.match(api.paths[p].get.summary,/metadata/);}const query=api.paths[path].get.parameters.filter((p:any)=>p.in==='query');assert.equal(query.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(query.find((p:any)=>p.name==='state').schema.enum,['evidence_recorded','review_required']);assert.equal(query.some((p:any)=>['fileId','storageTargetId','admissionCleared','approved','signerId'].includes(p.name)),false);
+});
+
 test('agreement preparation documents guardian-led pending child profiles without an account activation or verification override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/enrollments/{id}/agreement-packages'].post;assert.match(op.summary,/pending minor profile needs no child login/);assert.match(op.summary,/never activates/);const s=op.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);for(const key of ['studentStatus','emailVerified','phoneVerified','admissionCleared','activateChild'])assert.equal(s.properties[key],undefined);
 });
