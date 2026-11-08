@@ -7,12 +7,17 @@ import type { Identity, IdentityConfig,Delivery } from './config.ts';
 import { IdentityStore } from './store.ts';
 import { jsonBody,type HumanSession } from '../core/api.ts';
 import { phoneChange } from './phone-change.ts';
+import { emailChange } from './email-change.ts';
 
 const email=z.string().email().max(254).transform(s=>s.trim().toLowerCase());
 const password=z.string().min(15).max(128);
 const phone=z.string().regex(/^\+[1-9]\d{7,14}$/);
 const code=z.string().regex(/^\d{6}$/);
 export const schemas:Record<string,z.ZodType>={
+  '/email-change/request':z.object({email,password:z.string().min(1).max(128)}).strict(),
+  '/email-change/authorize':z.object({requestId:z.string().uuid(),code:z.string().regex(/^\d{8}$/)}).strict(),
+  '/email-change/confirm':z.object({requestId:z.string().uuid(),code:z.string().regex(/^\d{8}$/)}).strict(),
+  '/email-change/cancel':z.object({requestId:z.string().uuid()}).strict(),
   '/phone-change/request':z.object({phoneNumber:phone,password:z.string().min(1).max(128)}).strict(),
   '/phone-change/authorize':z.object({requestId:z.string().uuid(),code:z.string().regex(/^\d{8}$/)}).strict(),
   '/phone-change/cancel':z.object({requestId:z.string().uuid()}).strict(),
@@ -35,7 +40,7 @@ export const schemas:Record<string,z.ZodType>={
   '/sign-out':z.object({}).strict(), '/revoke-sessions':z.object({}).strict(), '/revoke-other-sessions':z.object({}).strict(),
   '/revoke-session':z.object({sessionId:z.string().uuid()}).strict()
 };
-export const getPaths=new Set(['/get-session','/list-sessions','/verify-email','/memberships','/phone-change']);
+export const getPaths=new Set(['/get-session','/list-sessions','/verify-email','/memberships','/phone-change','/email-change']);
 const publicPosts=new Set(['/sign-up/email','/sign-in/email','/request-password-reset','/reset-password','/send-verification-email','/two-factor/send-otp','/two-factor/verify-otp','/two-factor/verify-totp','/two-factor/verify-backup-code']);
 
 async function body(request:Request) {
@@ -103,6 +108,7 @@ export function identityGateway(auth:Identity,store:IdentityStore,config:Identit
         if(!session||!session.user.emailVerified)throw new ApiError(401,'UNAUTHORIZED');
       }
       if(path==='/phone-change'||path.startsWith('/phone-change/')){if(url.searchParams.size)throw new ApiError(400,'INVALID_INPUT');const reply=await phoneChange(path,input,request,session,auth,store,delivery);return Response.json(reply.body,{status:reply.status,headers});}
+      if(path==='/email-change'||path.startsWith('/email-change/')){if(url.searchParams.size)throw new ApiError(400,'INVALID_INPUT');const reply=await emailChange(path,input,request,session,auth,store,delivery);return Response.json(reply.body,{status:reply.status,headers});}
       if(path.startsWith('/phone-number/')) {
         if(!session||!session.user.emailVerified)throw new ApiError(401,'UNAUTHORIZED');
         if(Date.now()-new Date(session.session.createdAt).getTime()>900000)throw new ApiError(403,'FRESH_SIGN_IN_REQUIRED');
@@ -166,6 +172,7 @@ export function identityGateway(auth:Identity,store:IdentityStore,config:Identit
         return Response.json(safeOutput(error.body),{status,headers});
       }
       if(error&&typeof error==='object'&&'code' in error&&error.code==='23514'&&'message' in error&&error.message==='PHONE_CHANGE_APPROVAL_REQUIRED')return Response.json({error:{code:'PHONE_CHANGE_SOURCE_CHANGED'}},{status:409,headers});
+      if(error&&typeof error==='object'&&'code' in error&&error.code==='23514'&&'message' in error&&error.message==='EMAIL_UNAVAILABLE')return Response.json({error:{code:'EMAIL_UNAVAILABLE'}},{status:409,headers});
       const status=error instanceof ApiError?error.status:error instanceof z.ZodError?400:503;
       const code=error instanceof ApiError?error.code:status===400?'INVALID_INPUT':'AUTH_UNAVAILABLE';
       if(status===429)headers.set('retry-after','60');

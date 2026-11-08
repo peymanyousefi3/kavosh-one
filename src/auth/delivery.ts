@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Delivery } from './config.ts';
 import type { IdentityStore } from './store.ts';
 
-const email=z.object({to:z.string().email(),subject:z.string().max(200),text:z.string().max(10000)}).strict();
+const email=z.object({to:z.string().email(),subject:z.string().max(200),text:z.string().max(10000),expiresAt:z.iso.datetime({offset:true}).optional()}).strict();
 const sms=z.object({to:z.string().regex(/^\+[1-9]\d{7,14}$/),text:z.string().max(1000)}).strict();
 
 // The web process queues encrypted messages, never needs provider credentials.
@@ -12,7 +12,8 @@ export function queuedDelivery(store:IdentityStore,key:string):Delivery {
   async function queue(kind:'email'|'sms',message:unknown) {
     const input=(kind==='email'?email:sms).parse(message);
     const payload=await symmetricEncrypt({key,data:JSON.stringify(input)});
-    await store.query(`INSERT INTO identity.delivery_outbox(kind,payload,expires_at) VALUES($1,$2,now()+$3*interval '1 second')`,[kind,payload,kind==='sms'?240:840]);
+    const deadline='expiresAt' in input?input.expiresAt??null:null;
+    await store.query(`INSERT INTO identity.delivery_outbox(kind,payload,expires_at) VALUES($1,$2,least(now()+$3*interval '1 second',$4::timestamptz))`,[kind,payload,kind==='sms'?240:840,deadline]);
   }
   return {email:message=>queue('email',message),sms:message=>queue('sms',message)};
 }

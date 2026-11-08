@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.222.0",
+    "version": "0.223.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -169,6 +169,269 @@
                 "required": [
                   "currentPassword",
                   "newPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/email-change": {
+      "get": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "email change",
+        "description": "Private signed-session email replacement,not an administrative identity transfer. Fresh completed email/phone/MFA plus the real current password start a request(maximum3/hour). An8-digit code goes only to the current verified inbox;authorize consumes it once and sends a separate8-digit code only to the server-bound new inbox. Both proofs are keyed digests,owned by the same user/session/request/source/target. Five wrong guesses exhaust each stage;15-minute total lifetime and at most5minutes for new-inbox proof. Encrypted queued mail expires no later than the actual proof. Confirm requires that new-inbox code and atomically changes verified login email,revokes all sessions/trusted-device/reset proofs and records security audit. Existing academy/master identity,roles,legal/historical registration and signed documents are not rewritten. Old addresses have a16-minute reuse cooldown so earlier address-bound verification links expire before reassignment. Status/cancel exposes no code/hash/source;cancel needs current signed session but not freshness. No automatic sign-in or MFA weakening,no live-provider guarantee. Loss of BOTH inbox access or recovery factors is not resolved by this endpoint.",
+        "responses": {
+          "200": {
+            "description": "Result"
+          },
+          "302": {
+            "description": "Same-origin verification redirect"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/email-change/authorize": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "email change · authorize",
+        "description": "Private signed-session email replacement,not an administrative identity transfer. Fresh completed email/phone/MFA plus the real current password start a request(maximum3/hour). An8-digit code goes only to the current verified inbox;authorize consumes it once and sends a separate8-digit code only to the server-bound new inbox. Both proofs are keyed digests,owned by the same user/session/request/source/target. Five wrong guesses exhaust each stage;15-minute total lifetime and at most5minutes for new-inbox proof. Encrypted queued mail expires no later than the actual proof. Confirm requires that new-inbox code and atomically changes verified login email,revokes all sessions/trusted-device/reset proofs and records security audit. Existing academy/master identity,roles,legal/historical registration and signed documents are not rewritten. Old addresses have a16-minute reuse cooldown so earlier address-bound verification links expire before reassignment. Status/cancel exposes no code/hash/source;cancel needs current signed session but not freshness. No automatic sign-in or MFA weakening,no live-provider guarantee. Loss of BOTH inbox access or recovery factors is not resolved by this endpoint.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{8}$"
+                  }
+                },
+                "required": [
+                  "requestId",
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/email-change/cancel": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "email change · cancel",
+        "description": "Private signed-session email replacement,not an administrative identity transfer. Fresh completed email/phone/MFA plus the real current password start a request(maximum3/hour). An8-digit code goes only to the current verified inbox;authorize consumes it once and sends a separate8-digit code only to the server-bound new inbox. Both proofs are keyed digests,owned by the same user/session/request/source/target. Five wrong guesses exhaust each stage;15-minute total lifetime and at most5minutes for new-inbox proof. Encrypted queued mail expires no later than the actual proof. Confirm requires that new-inbox code and atomically changes verified login email,revokes all sessions/trusted-device/reset proofs and records security audit. Existing academy/master identity,roles,legal/historical registration and signed documents are not rewritten. Old addresses have a16-minute reuse cooldown so earlier address-bound verification links expire before reassignment. Status/cancel exposes no code/hash/source;cancel needs current signed session but not freshness. No automatic sign-in or MFA weakening,no live-provider guarantee. Loss of BOTH inbox access or recovery factors is not resolved by this endpoint.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "requestId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/email-change/confirm": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "email change · confirm",
+        "description": "Private signed-session email replacement,not an administrative identity transfer. Fresh completed email/phone/MFA plus the real current password start a request(maximum3/hour). An8-digit code goes only to the current verified inbox;authorize consumes it once and sends a separate8-digit code only to the server-bound new inbox. Both proofs are keyed digests,owned by the same user/session/request/source/target. Five wrong guesses exhaust each stage;15-minute total lifetime and at most5minutes for new-inbox proof. Encrypted queued mail expires no later than the actual proof. Confirm requires that new-inbox code and atomically changes verified login email,revokes all sessions/trusted-device/reset proofs and records security audit. Existing academy/master identity,roles,legal/historical registration and signed documents are not rewritten. Old addresses have a16-minute reuse cooldown so earlier address-bound verification links expire before reassignment. Status/cancel exposes no code/hash/source;cancel needs current signed session but not freshness. No automatic sign-in or MFA weakening,no live-provider guarantee. Loss of BOTH inbox access or recovery factors is not resolved by this endpoint.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{8}$"
+                  }
+                },
+                "required": [
+                  "requestId",
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed; may require email/phone/MFA next. Session tokens are never returned in JSON."
+          },
+          "202": {
+            "description": "Recovery/resend accepted without disclosing account existence."
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/auth/email-change/request": {
+      "post": {
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "summary": "email change · request",
+        "description": "Private signed-session email replacement,not an administrative identity transfer. Fresh completed email/phone/MFA plus the real current password start a request(maximum3/hour). An8-digit code goes only to the current verified inbox;authorize consumes it once and sends a separate8-digit code only to the server-bound new inbox. Both proofs are keyed digests,owned by the same user/session/request/source/target. Five wrong guesses exhaust each stage;15-minute total lifetime and at most5minutes for new-inbox proof. Encrypted queued mail expires no later than the actual proof. Confirm requires that new-inbox code and atomically changes verified login email,revokes all sessions/trusted-device/reset proofs and records security audit. Existing academy/master identity,roles,legal/historical registration and signed documents are not rewritten. Old addresses have a16-minute reuse cooldown so earlier address-bound verification links expire before reassignment. Status/cancel exposes no code/hash/source;cancel needs current signed session but not freshness. No automatic sign-in or MFA weakening,no live-provider guarantee. Loss of BOTH inbox access or recovery factors is not resolved by this endpoint.",
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "Must exactly match configured APP_ORIGIN."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "email",
+                  "password"
                 ],
                 "additionalProperties": false
               }

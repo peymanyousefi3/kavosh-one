@@ -5,7 +5,7 @@ import type { Kysely } from 'kysely';
 import type { IdentityStore } from './store.ts';
 
 export interface Delivery {
-  email(message: { to: string; subject: string; text: string }): Promise<void>;
+  email(message: { to: string; subject: string; text: string; expiresAt?:string }): Promise<void>;
   sms(message: { to: string; text: string }): Promise<void>;
 }
 export interface IdentityConfig { origin: string; secret: string; production: boolean; edgeSecret?: string }
