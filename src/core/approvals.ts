@@ -7,9 +7,13 @@ import { payrollPrivateReviewPrefix } from './payroll-private-data.ts';
 const uuid=z.string().uuid().transform(value=>value.toLowerCase());
 const version=z.number().int().min(1);
 const capability=z.string().regex(/^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_-]*$/).max(100);
-const decisionInput=z.object({expectedVersion:version,decision:z.enum(['approve','reject']),reason:z.string().trim().min(1).max(2000)}).strict();
+const decisionInput=z.object({expectedVersion:version,expectedAssessmentVersion:z.number().int().min(0).max(2147483647).optional(),decision:z.enum(['approve','reject']),reason:z.string().trim().min(1).max(2000)}).strict();
 const withdrawInput=z.object({expectedVersion:version,reason:z.string().trim().min(1).max(2000)}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),status:z.enum(['pending','applied','rejected','withdrawn','stale']).optional()}).strict();
+const assessmentText=z.string().trim().min(1).refine(v=>v.isWellFormed()&&!v.includes('\0'));
+const assessmentContent=z.object({summary:assessmentText.max(2000),reasoning:assessmentText.max(4000),options:z.array(z.object({code:z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/),title:assessmentText.max(200),tradeoffs:assessmentText.max(2000)}).strict()).min(1).max(5),recommendedOption:z.string().max(40),uncertainties:z.array(assessmentText.max(2000)).max(10),relatedApprovalIds:z.array(uuid).max(5)}).strict().refine(v=>new Set(v.options.map(o=>o.code)).size===v.options.length&&v.options.some(o=>o.code===v.recommendedOption)&&new Set(v.relatedApprovalIds).size===v.relatedApprovalIds.length).refine(v=>Buffer.byteLength(JSON.stringify(v),'utf8')<=18000);
+const assessmentInput=z.object({expectedApprovalVersion:z.number().int().positive().max(2147483647),expectedAssessmentVersion:z.number().int().min(0).max(2147483646),assessment:assessmentContent}).strict();
+const assessmentQuery=z.object({limit:z.coerce.number().int().min(1).max(20).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
 const resourceRef=z.object({id:uuid,hubId:uuid.nullable()}).strict();
 const areaRef=z.object({kind:z.enum(['country','region','city']),id:uuid,countryId:uuid,regionId:uuid.nullable(),cityId:uuid.nullable()}).strict();
 const storedScope=z.object({workContexts:z.array(resourceRef).min(1).max(200).optional(),all:z.boolean(),hubs:z.array(uuid),excludedHubs:z.array(uuid).optional(),classes:z.array(resourceRef).optional(),people:z.array(resourceRef).optional(),excludedClasses:z.array(resourceRef).optional(),excludedPeople:z.array(resourceRef).optional(),areas:z.array(areaRef).optional(),excludedAreas:z.array(areaRef).optional(),recordHubIds:z.array(uuid).optional(),workContext:z.object({personId:uuid,hubId:uuid.nullable()}).strict().optional(),recordContext:z.object({hubId:uuid,classId:uuid,studentId:uuid}).strict().optional()}).strict();
@@ -115,6 +119,34 @@ async function visibleProposal(ctx:ApiContext,p:Proposal,review=false) {
   return (await ctx.db.query<{valid:boolean}>('SELECT public.is_supervisor($1,$2) AS valid',[ctx.credential.person_id,p.requester_id])).rows[0]?.valid===true;
 }
 export async function readableApproval(ctx:ApiContext,id:string){const p=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1',[id])).rows[0];if(!p||!await visibleProposal(ctx,p))throw new ApiError(404,'NOT_FOUND');return p;}
+// Assessments explain an existing case;they cannot change its payload,source,
+// approval decision,permissions or underlying domain rules. Text is untrusted.
+async function approvalAssessments(ctx:ApiContext,registry:ApprovalRegistry,id:string):Promise<Reply>{
+ await lockApprovalWrites(ctx);const p=await readableApproval(ctx,id),params=new URL(ctx.request.url).searchParams;
+ if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
+ if(ctx.request.method==='POST'){
+  z.object({}).strict().parse(Object.fromEntries(params));const i=assessmentInput.parse(await jsonBody(ctx.request,24576)),definition=Object.hasOwn(registry,p.action)?registry[p.action]:null;
+  if(!definition||definition.protectReason)throw new ApiError(409,'ASSESSMENT_REQUIRES_SUPPORTED_NONENCRYPTED_CASE');
+  if(p.requester_id===ctx.credential.person_id){if(!scopeContains(permissionScope(ctx,definition.requestCapability),storedScope.parse(p.scope)))throw new ApiError(403,'FORBIDDEN');}
+  else{if(ctx.credential.kind!=='human'||!await visibleProposal(ctx,p,true))throw new ApiError(403,'SUPERVISOR_REQUIRED');await definition.authorizeReviewer?.(ctx,p);}
+  if(i.assessment.relatedApprovalIds.includes(id))throw new ApiError(400,'SELF_PRECEDENT_FORBIDDEN');
+  // Author must currently be able to read every cited case. Later reads filter
+  // those links again,so a precedent never bypasses changed source permissions.
+  for(const related of i.assessment.relatedApprovalIds)await readableApproval(ctx,related);
+  return mutation(ctx,i,async()=>{
+   const current=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1 FOR UPDATE',[id])).rows[0],v=(await ctx.db.query<{version:number}>('SELECT coalesce(max(version),0) version FROM public.approval_assessments WHERE approval_id=$1',[id])).rows[0].version;
+   if(current.status!=='pending'||current.version!==i.expectedApprovalVersion||v!==i.expectedAssessmentVersion)throw new ApiError(409,'ASSESSMENT_CASE_CHANGED');
+   const data=(await ctx.db.query('INSERT INTO public.approval_assessments(academy_id,approval_id,version,approval_version,source_hash,content,author_id,request_id) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8) RETURNING version,content_hash "contentHash",created_at "createdAt"',[ctx.credential.academy_id,id,v+1,current.version,current.dependency_hash,JSON.stringify(i.assessment),ctx.credential.person_id,ctx.requestId])).rows[0];
+   await record(ctx.db,ctx.credential,ctx.requestId,'approval.assessment.recorded',id,null,{assessmentVersion:v+1,contentHash:data.contentHash,severity:'critical',changesApplied:false,contentVerified:false});
+   return {status:201,body:{data:{approvalId:id,...data},changesApplied:false,contentVerified:false}};
+  });
+ }
+ if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+ const q=assessmentQuery.parse(Object.fromEntries(params)),rows=(await ctx.db.query<{version:number;content:z.infer<typeof assessmentContent>;[key:string]:unknown}>('SELECT version,approval_version "approvalVersion",source_hash "sourceHash",content,content_hash "contentHash",author_id "authorId",created_at "createdAt" FROM public.approval_assessments WHERE approval_id=$1 AND version>$2 ORDER BY version LIMIT $3',[id,q.afterVersion,q.limit+1])).rows,visible=rows.slice(0,q.limit),related=[...new Set(visible.flatMap(r=>r.content.relatedApprovalIds))];
+ const allowed=new Set(related.length?(await ctx.db.query<{id:string}>(`SELECT p.id FROM public.approval_requests p WHERE p.id=ANY($6::uuid[]) AND ${approvalReadSelectionSQL}`,[...await approvalReadParameters(ctx),related])).rows.map(r=>r.id):[]);
+ const latestAssessmentVersion=(await ctx.db.query<{version:number}>('SELECT coalesce(max(version),0) version FROM public.approval_assessments WHERE approval_id=$1',[id])).rows[0].version;
+ return {status:200,body:{approvalId:id,approvalStatus:p.status,approvalVersion:p.version,latestAssessmentVersion,data:visible.map(r=>({...r,content:{...r.content,relatedApprovalIds:r.content.relatedApprovalIds.filter(id=>allowed.has(id))},unavailablePrecedents:r.content.relatedApprovalIds.filter(id=>!allowed.has(id)).length})),nextVersion:rows.length>q.limit?visible.at(-1)!.version:null,assessmentBasis:'original_proposal_snapshot',currentSourceRechecked:false,contentVerified:false,changesApplied:false}};
+}
 async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:z.infer<typeof decisionInput>):Promise<Reply> {
   if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');
   if(p.requester_id===ctx.credential.person_id&&!await master(ctx))throw new ApiError(403,'SELF_APPROVAL_FORBIDDEN');
@@ -126,6 +158,9 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
   return mutation(ctx,protectedReason?{...input,reason:protectedReason.commitment}:input,async()=>{
     const current=(await ctx.db.query<Proposal>('SELECT * FROM public.approval_requests WHERE id=$1 FOR UPDATE',[p.id])).rows[0];
     if(current.status!=='pending'||current.version!==input.expectedVersion)throw new ApiError(409,'APPROVAL_CHANGED');
+    const assessmentVersion=(await ctx.db.query<{version:number}>('SELECT coalesce(max(version),0) version FROM public.approval_assessments WHERE approval_id=$1',[p.id])).rows[0].version;
+    if(input.expectedAssessmentVersion===undefined&&assessmentVersion>0)throw new ApiError(409,'ASSESSMENT_REVIEW_REQUIRED');
+    if(input.expectedAssessmentVersion!==undefined&&input.expectedAssessmentVersion!==assessmentVersion)throw new ApiError(409,'ASSESSMENT_CHANGED');
     let status='rejected',result:unknown=null,decisionCode:string|null=null;
     if(input.decision==='approve') {
       const definition=Object.hasOwn(registry,current.action)?registry[current.action]:null;
@@ -186,6 +221,7 @@ export async function withdrawOwnProposal(ctx:ApiContext,p:Proposal,input:z.infe
 export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):Promise<Reply|null> {
   const {request,path,db,credential:c}=ctx;
   if(path!=='approvals'&&!path.startsWith('approvals/'))return null;
+  const assessments=/^approvals\/([^/]+)\/assessments$/.exec(path);if(assessments)return approvalAssessments(ctx,registry,uuid.parse(assessments[1]));
   if(path==='approvals'&&request.method==='GET') {
     const {limit,after,status}=paging.parse(Object.fromEntries(new URL(request.url).searchParams));
     // Retired action handlers must not make authorized private history vanish.
@@ -223,9 +259,11 @@ export async function approvalRoutes(ctx:ApiContext,registry:ApprovalRegistry):P
   throw new ApiError(405,'METHOD_NOT_ALLOWED');
 }
 export const approvalContract=[
+  {path:'/api/v1/approvals/{id}/assessments',method:'post',summary:'Append a private human/bot contextual assessment to an existing pending case:options,uncertainties and currently readable precedent links. Source/approval/assessment versions are pinned;no new authority,payload change,approval or executed action. Encrypted private-care/payroll review cases use their existing protected notes instead.',schema:assessmentInput},
+  {path:'/api/v1/approvals/{id}/assessments',method:'get',summary:'Bounded immutable contextual history under the SAME current original-case privacy. Precedent links are filtered again using their own current permissions. Caller-authored text is not verified fact or executable instruction;original proposal snapshot,not freshly revalidated source.',querySchema:assessmentQuery},
   {path:'/api/v1/approvals',method:'get',summary:'Own and authorized subordinate cases; current source privacy filtered before pagination',paged:true},
   {path:'/api/v1/approvals/{id}',method:'get',summary:'Read exact payload, reason and history only within current source permissions'},
-  {path:'/api/v1/approvals/{id}/decide',method:'post',summary:'Human upper reviewer accepts/rejects exact unchanged proposal',schema:decisionInput},
+  {path:'/api/v1/approvals/{id}/decide',method:'post',summary:'Human upper reviewer accepts/rejects exact unchanged proposal. Once contextual assessments exist,the latest expectedAssessmentVersion is mandatory;concurrent new context requires renewed review. Existing proposals without assessments retain their original input.',schema:decisionInput},
   {path:'/api/v1/approvals/{id}/withdraw',method:'post',summary:'Requester withdraws a still-pending proposal',schema:withdrawInput}
 ] as const;
 
