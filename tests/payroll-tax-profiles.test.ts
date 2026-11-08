@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { workFixture } from './work-fixture.ts';
@@ -56,5 +57,5 @@ check('tax settings native header writes wait for the payroll worker source fenc
  }finally{await owner.query('ROLLBACK');await update?.catch(()=>{});await writer.query('ROLLBACK');owner.release();writer.release();}
 },true);
 test('tax settings actual168to169 migration preserves existing financial work and approval history without guessing employee declarations',async()=>{
- const f=await fixture(168);try{const before=[];for(const t of ['people','roles','role_permissions','role_assignments','financial_payees','financial_payee_revisions','work_engagements','approval_requests','audit_events'])before.push((await f.pg.query('SELECT * FROM public.'+t+' ORDER BY 1,2')).rows);await upgradeToCurrent(f.pg);let i=0;for(const t of ['people','roles','role_permissions','role_assignments','financial_payees','financial_payee_revisions','work_engagements','approval_requests','audit_events'])assert.deepEqual((await f.pg.query('SELECT * FROM public.'+t+' ORDER BY 1,2')).rows,before[i++]);assert.equal((await f.pg.query('SELECT * FROM public.payroll_tax_profiles')).rows.length,0);assert.equal((await f.createTax()).response.status,201);}finally{await f.pg.close();}
+ const f=await fixture(168);try{const before=[];for(const t of ['people','roles','role_permissions','role_assignments','financial_payees','financial_payee_revisions','work_engagements','approval_requests','audit_events'])before.push((await f.pg.query('SELECT * FROM public.'+t+' ORDER BY 1,2')).rows);await f.pg.exec(await readFile(new URL('../db/migrations/169_payroll_tax_profiles.sql',import.meta.url),'utf8'));let i=0;for(const t of ['people','roles','role_permissions','role_assignments','financial_payees','financial_payee_revisions','work_engagements','approval_requests','audit_events'])assert.deepEqual((await f.pg.query('SELECT * FROM public.'+t+' ORDER BY 1,2')).rows,before[i++]);assert.equal((await f.pg.query('SELECT * FROM public.payroll_tax_profiles')).rows.length,0);await upgradeToCurrent(f.pg);assert.equal((await f.createTax()).response.status,201);}finally{await f.pg.close();}
 });

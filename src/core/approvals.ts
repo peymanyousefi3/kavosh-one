@@ -131,13 +131,17 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
       const definition=Object.hasOwn(registry,current.action)?registry[current.action]:null;
       if(!definition){status='stale';decisionCode='ACTION_UNAVAILABLE';}
       const snapshot=storedCredential.parse(current.credential_snapshot) as Credential;
-      const active=(await ctx.db.query('SELECT 1 FROM public.people WHERE id=$1 AND status=\'active\'',[current.requester_id])).rows.length;
+      // Historical schemas have no cutoff column. JSON field lookup preserves
+      // their original behavior while school-local revocation also invalidates
+      // pre-disable requests after the account is subsequently reactivated.
+      const requester=(await ctx.db.query<{request_valid:boolean}>(`SELECT coalesce((to_jsonb(p)->>'credentials_valid_after')::timestamptz,'-infinity'::timestamptz)<$2::timestamptz request_valid FROM public.people p WHERE id=$1 AND status='active'`,[current.requester_id,current.created_at])).rows[0];
       let authority=snapshot;
       if(current.requester_kind==='bot') {
         const live=(await ctx.db.query<Credential>('SELECT * FROM public.current_bot_scope($1)',[snapshot.token_id])).rows[0];
         if(!live||live.person_id!==current.requester_id||live.academy_id!==ctx.credential.academy_id){status='stale';decisionCode='CREDENTIAL_REVOKED';}else authority=live;
       }
-      if(!active){status='stale';decisionCode='REQUESTER_INACTIVE';}
+      if(!requester){status='stale';decisionCode='REQUESTER_INACTIVE';}
+      else if(!requester.request_valid){status='stale';decisionCode='REQUESTER_ACCESS_REVOKED';}
       if(grantsHash(await loadGrants(ctx.db,authority))!==current.grants_hash){status='stale';decisionCode='AUTHORITY_CHANGED';}
       if(definition&&stateHash(await definition.dependencies(ctx,current.target_id,current.payload,'review'))!==current.dependency_hash){status='stale';decisionCode='DEPENDENCIES_CHANGED';}
       if(status!=='stale') {

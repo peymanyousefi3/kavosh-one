@@ -46,7 +46,7 @@ async function dependencies(ctx:ApiContext,action:Action,targetId:string,input:u
   }
   return {};
 }
-async function canManage(ctx:ApiContext,personId:string) {
+export async function canManage(ctx:ApiContext,personId:string) {
   const target=(await ctx.db.query<{id:string;kind:string;status:string;hub_id:string|null;access_version:number;supervisor_person_id:string|null}>('SELECT id,kind,status,hub_id,access_version,supervisor_person_id FROM public.people WHERE id=$1',[personId])).rows[0];
   if(!target)throw new ApiError(404,'NOT_FOUND');
   if(await master(ctx))return target;
@@ -77,7 +77,7 @@ async function validatePermissions(ctx:ApiContext,permissions:Permission[]) {
     if(!isMaster&&!nonempty(permissionScope(ctx,p.capability as Capability)))throw new ApiError(403,'DELEGATION_EXCEEDS_AUTHORITY');
   }
 }
-async function assignments(ctx:ApiContext,personId:string) {
+export async function assignments(ctx:ApiContext,personId:string) {
   return (await ctx.db.query<{id:string;role_id:string;all_hubs:boolean;hub_ids:string[];class_ids:string[];person_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[];country_ids:string[];region_ids:string[];city_ids:string[];area_refs:AreaRef[];geo_hubs:string[]}>(`SELECT a.id,a.role_id,a.all_hubs,
     ARRAY(SELECT h.hub_id FROM public.assignment_hubs h WHERE h.academy_id=a.academy_id AND h.assignment_id=a.id ORDER BY h.hub_id) AS hub_ids,
     ARRAY(SELECT x.class_id FROM public.assignment_classes x WHERE x.academy_id=a.academy_id AND x.assignment_id=a.id ORDER BY x.class_id) AS class_ids,
@@ -93,7 +93,7 @@ async function assignments(ctx:ApiContext,personId:string) {
     ARRAY(SELECT g.id FROM public.assignment_geographic_hubs g WHERE g.academy_id=a.academy_id AND g.assignment_id=a.id AND g.strict_match ORDER BY g.id) AS geo_hubs
     FROM public.role_assignments a WHERE person_id=$1 ORDER BY role_id`,[personId])).rows;
 }
-function assignedScope(a:{all_hubs:boolean;hub_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[];area_refs:AreaRef[];geo_hubs:string[]}):Scope {
+export function assignedScope(a:{all_hubs:boolean;hub_ids:string[];class_refs:ResourceRef[];person_refs:ResourceRef[];area_refs:AreaRef[];geo_hubs:string[]}):Scope {
   return {all:a.all_hubs,hubs:[...new Set([...a.hub_ids,...a.geo_hubs])],...a.class_refs.length?{classes:a.class_refs}:{},...a.person_refs.length?{people:a.person_refs}:{},...a.area_refs.length?{areas:a.area_refs}:{}};
 }
 async function selectedScope(ctx:ApiContext,item:z.infer<typeof assignment>):Promise<Scope> {

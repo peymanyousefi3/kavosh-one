@@ -201,10 +201,11 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       const status = academy.rows[0]?.status;
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
+      if(status==='read_only'&&request.method==='POST'&&/^people\/[0-9a-f-]{36}\/status$/i.test(path))securityRevocation=z.object({enabled:z.literal(false)}).passthrough().safeParse(await jsonBody(request.clone())).success;
       // Read-only schools may cancel access secrets,not issue new invitations
       // or apply unrelated approvals. Select the stored action,never a body flag.
       const readOnlyDecision=status==='read_only'&&request.method==='POST'?/^approvals\/([0-9a-f-]{36})\/decide$/i.exec(path):null;
-      if(readOnlyDecision)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action='human-invitation.revoke'",[id.parse(readOnlyDecision[1])])).rows.length===1;
+      if(readOnlyDecision)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND(action='human-invitation.revoke' OR(action='person.status' AND payload->'enabled'='false'::jsonb))",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if (status === 'read_only' && request.method !== 'GET' && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
