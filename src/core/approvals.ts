@@ -168,7 +168,7 @@ async function decide(ctx:ApiContext,registry:ApprovalRegistry,p:Proposal,input:
 
 function proposalView(p:Proposal) {
   return {id:p.id,action:p.action,targetId:p.target_id,targetVersion:p.target_version,requesterId:p.requester_id,
-    payload:p.payload,scope:p.scope,status:p.status,version:p.version,reason:p.action==='work.payroll-identity.change'&&p.reason?.startsWith(payrollPrivateReviewPrefix)?'Encrypted private review note':p.reason??null,decisionCode:p.decision_code??null,
+    payload:p.payload,scope:p.scope,status:p.status,version:p.version,reason:((p.action==='work.payroll-identity.change'&&p.reason?.startsWith(payrollPrivateReviewPrefix))||(p.action==='student.care.change'&&p.reason?.startsWith('student-care-private-review-v1:')))?'Encrypted private review note':p.reason??null,decisionCode:p.decision_code??null,
     reviewContext:p.review_context,
     reviewerId:p.reviewer_id??null,createdAt:p.created_at,decidedAt:p.decided_at??null,...p.privacy_capability?{privacyCapability:p.privacy_capability}:{}};
 }
