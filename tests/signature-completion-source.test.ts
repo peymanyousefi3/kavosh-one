@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID,createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 import { operationsFixture } from './operations-fixture.ts';
 import { assertRuntimeRole,type Database } from '../src/core/database.ts';
 import { assertSignatureCompletionRole,loadSignatureCompletionSource,matchSignatureCompletionSigner } from '../src/integrations/signature-completion-source.ts';
@@ -12,17 +13,27 @@ test('completion source refuses arbitrary overrides before connecting and redact
  await assert.rejects(matchSignatureCompletionSigner(db,{},{}),{code:'INVALID_SIGNATURE_COMPLETION_COMPARISON'});assert.equal(connections,0);
  await assert.rejects(loadSignatureCompletionSource(db,target),e=>{assert.equal((e as {code:string}).code,'SIGNATURE_COMPLETION_SOURCE_UNAVAILABLE');assert.doesNotMatch(String(e),/PRIVATE|credentials|contact/);return true;});assert.equal(connections,1);
 });
-test('isolated completion role has only two bounded functions,no raw tables private identity or mutation rights',async()=>{
+test('isolated completion role has only bounded completion functions,no raw tables private identity or generic mutation rights',async()=>{
  const f=await operationsFixture();try{
   await f.pg.exec('SET ROLE kavosh_signature_completion_worker');try{
    await assertSignatureCompletionRole({query:f.pg.query.bind(f.pg),release(){}});
-   for(const table of ['people','signature_dispatch_starts','signature_send_requests','signature_transport_receipts','agreement_packages','agreement_content_bindings','outbox_events'])await assert.rejects(f.pg.exec('SELECT * FROM public.'+table),/permission denied/i);
+   for(const table of ['people','signature_dispatch_starts','signature_send_requests','signature_transport_receipts','agreement_packages','agreement_content_bindings','signature_completion_evidence','outbox_events'])await assert.rejects(f.pg.exec('SELECT * FROM public.'+table),/permission denied/i);
    await assert.rejects(f.pg.exec('SELECT * FROM identity.signature_signer_history'),/permission denied/i);
    await assert.rejects(f.pg.query('SELECT * FROM public.signature_dispatch_contact($1)',[randomUUID()]),/permission denied/i);
    assert.deepEqual((await f.pg.query('SELECT public.signature_completion_source($1,$2) source',[f.a,randomUUID()])).rows,[{source:null}]);
    assert.deepEqual((await f.pg.query('SELECT * FROM public.signature_completion_signer_matches($1,$2,$3,$4,$5,$6)',[f.a,randomUUID(),'a'.repeat(64),'PRIVATE','x@example.test','+16475550101'])).rows,[]);
   }finally{await f.pg.exec('RESET ROLE');}
-  for(const role of ['kavosh_runtime','kavosh_identity','kavosh_delivery','kavosh_file_worker','kavosh_signature_result_worker','kavosh_automation_worker']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.signature_completion_source($1,$2)',[f.a,randomUUID()]),/permission denied/i);await assert.rejects(f.pg.query('SELECT * FROM public.signature_completion_signer_matches($1,$2,$3,$4,$5,$6)',[f.a,randomUUID(),'a'.repeat(64),'PRIVATE','x@example.test','+16475550101']),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
+  for(const role of ['kavosh_runtime','kavosh_identity','kavosh_delivery','kavosh_file_worker','kavosh_signature_result_worker','kavosh_automation_worker']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.signature_completion_source($1,$2)',[f.a,randomUUID()]),/permission denied/i);await assert.rejects(f.pg.query('SELECT * FROM public.signature_completion_signer_matches($1,$2,$3,$4,$5,$6)',[f.a,randomUUID(),'a'.repeat(64),'PRIVATE','x@example.test','+16475550101']),/permission denied/i);await assert.rejects(f.pg.query('SELECT * FROM public.record_signature_completion_evidence($1,$2,$3,$4,$5::jsonb)',[f.a,randomUUID(),'a'.repeat(64),'{}','{}']),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
+ }finally{await f.pg.close();}
+});
+test('actual205to206 preserves historical data and source function identity without manufacturing completed-signature evidence',async()=>{
+ const f=await operationsFixture({throughSchema:205});try{
+  const sql="SELECT jsonb_build_object('people',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.people p),'permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY role_id,capability) FROM public.role_permissions p),'history',(SELECT jsonb_agg(to_jsonb(p) ORDER BY start_id) FROM identity.signature_signer_history p)) snapshot",before=(await f.pg.query(sql)).rows;
+  const acl="SELECT oid,proowner,proacl FROM pg_proc WHERE oid='public.signature_completion_source(uuid,uuid)'::regprocedure",original=(await f.pg.query(acl)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/206_signature_completion_evidence.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,206);assert.deepEqual((await f.pg.query(sql)).rows,before);assert.deepEqual((await f.pg.query(acl)).rows,original);assert.equal((await f.pg.query('SELECT * FROM public.signature_completion_evidence')).rows.length,0);
+  // Deliberately choose vectors where the high/low half-byte differ. This
+  // catches the reproduced UUID variant-bit interop bug deterministically.
+  let checked=0;for(let i=0;i<1000&&checked<8;i++){const sha=createHash('sha256').update(String(i)).digest('hex'),start='00000000-0000-4000-8000-000000000001',fp='b'.repeat(64),hex=createHash('sha256').update(JSON.stringify(['kavosh-signature-evidence-v1',f.a,start,fp,'document',sha])).digest('hex').slice(0,32).split('');if((parseInt(hex[16],16)&3)===(parseInt(hex[17],16)&3))continue;hex[12]='8';hex[16]=((parseInt(hex[16],16)&3)|8).toString(16);const h=hex.join(''),id=`${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;assert.equal((await f.pg.query<{id:string}>('SELECT public.signature_evidence_artifact_id($1,$2,$3,$4,$5) id',[f.a,start,fp,'document',sha])).rows[0].id,id);checked++;}assert.equal(checked,8);
  }finally{await f.pg.close();}
 });
 test('completion and web guards reject mixed roles and accidental raw-column authority',async()=>{
@@ -38,6 +49,7 @@ test('actual204to205 adds isolated historical source access without rewriting pe
   const acl="SELECT oid,proowner,proacl FROM pg_proc WHERE oid='public.signature_dispatch_contact(uuid)'::regprocedure",original=(await f.pg.query(acl)).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/205_signature_completion_source.sql',import.meta.url),'utf8'));
   assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,205);assert.deepEqual((await f.pg.query(sql)).rows,before);assert.deepEqual((await f.pg.query(acl)).rows,original);
-  await f.pg.exec('SET ROLE kavosh_signature_completion_worker');try{await assertSignatureCompletionRole({query:f.pg.query.bind(f.pg),release(){}});assert.deepEqual((await f.pg.query('SELECT public.signature_completion_source($1,$2) source',[f.a,randomUUID()])).rows,[{source:null}]);}finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.exec('SET ROLE kavosh_signature_completion_worker');try{assert.deepEqual((await f.pg.query('SELECT public.signature_completion_source($1,$2) source',[f.a,randomUUID()])).rows,[{source:null}]);}finally{await f.pg.exec('RESET ROLE');}
+  await upgradeToCurrent(f.pg);await f.pg.exec('SET ROLE kavosh_signature_completion_worker');try{await assertSignatureCompletionRole({query:f.pg.query.bind(f.pg),release(){}});}finally{await f.pg.exec('RESET ROLE');}
  }finally{await f.pg.close();}
 });

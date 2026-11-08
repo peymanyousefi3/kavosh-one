@@ -7,7 +7,7 @@ import { getBoldSignCompletionDocument,getBoldSignDocumentPdf,getBoldSignAuditPd
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const signatureField=z.object({id:z.string().min(1).max(200),pageNumber:z.number().int().positive().max(1000),bounds:z.object({x:z.number().min(0).max(20000),y:z.number().min(0).max(20000),width:z.number().positive().max(20000),height:z.number().positive().max(20000)}).strict()}).strict();
-const expected=z.object({academyId:uuid,startId:uuid,signerId:uuid,documentId:uuid,packageId:uuid,attachmentId:uuid,bindingId:uuid,documentSha256:hash,sourceFingerprint:hash,region:z.enum(['US','CA','EU','AU']),signatureFields:z.array(signatureField).min(1).max(100).refine(v=>new Set(v.map(f=>f.id)).size===v.length)}).strict();
+const expected=z.object({academyId:uuid,startId:uuid,signerId:uuid,documentId:uuid,packageId:uuid,attachmentId:uuid,bindingId:uuid,connectionId:uuid,connectionTargetId:hash,documentSha256:hash,sourceFingerprint:hash,region:z.enum(['US','CA','EU','AU']),signatureFields:z.array(signatureField).min(1).max(100).refine(v=>new Set(v.map(f=>f.id)).size===v.length)}).strict();
 const artifact=z.object({id:uuid,sha256:hash,sizeBytes:z.number().int().min(1).max(10485760)}).strict();
 const retained=z.object({sourceFingerprint:hash,document:artifact,audit:artifact,properties:artifact}).strict();
 export const signatureCompletionSourceSchema=expected;
