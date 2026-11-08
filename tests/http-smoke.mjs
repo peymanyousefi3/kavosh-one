@@ -24,6 +24,9 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/payroll/statements');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/postingId|contentSha256|stack/);}
+  for(const suffix of ['','/source','/history']){const r=await fetch(base+'/api/v1/payroll/net-postings/00000000-0000-4000-8000-000000000001/statement'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/workerName|employerAddress|contentSha256|stack/);}
+  {const r=await fetch(base+'/api/v1/payroll/net-postings/00000000-0000-4000-8000-000000000001/statement',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const suffix of ['','/export']){const r=await fetch(base+'/api/v1/reports/payroll/register'+suffix+'?from=2026-01-01&through=2026-12-31');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/deductionLines|employerCost|stack/);}
   for(const path of ['invitations','invitations/00000000-0000-4000-8000-000000000001','invitations/people/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/privateInvitation|source_basis|token_hash|stack/);}
   for(const path of ['invitations','invitations/00000000-0000-4000-8000-000000000001/token','invitations/00000000-0000-4000-8000-000000000001/revoke']){const r=await fetch(base+'/api/v1/'+path,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
