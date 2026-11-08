@@ -308,6 +308,17 @@ test('human identity: real library authentication and protected business access'
         }finally{await f.admin(()=>f.pg.exec(original));}
       }finally{if(f.pg.runtime)await connection.destroy();}
     });
+    await t.test('identity and auth delivery roles reject accidental platform authority',async()=>{
+      await f.store.safe();await f.worker(worker=>worker.safeDelivery());
+      for(const role of ['kavosh_identity','kavosh_delivery']){
+        await f.admin(()=>f.pg.exec('GRANT kavosh_platform_service TO '+role));
+        try{
+          if(role==='kavosh_identity')await assert.rejects(f.store.safe(),/UNSAFE_IDENTITY_ROLE/);
+          else await assert.rejects(f.worker(worker=>worker.safeDelivery()),/UNSAFE_DELIVERY_ROLE/);
+        }finally{await f.admin(()=>f.pg.exec('REVOKE kavosh_platform_service FROM '+role));}
+      }
+      await f.store.safe();await f.worker(worker=>worker.safeDelivery());
+    });
     await t.test('encrypted delivery queue retries, expires, scrubs and isolates credentials',async()=>{
       const queued=queuedDelivery(f.store,config.secret);
       await queued.sms({to:regular.phone,text:'Synthetic private code: 123456'});

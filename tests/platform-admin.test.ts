@@ -5,6 +5,22 @@ import { readFile } from 'node:fs/promises';
 import { operationsFixture } from './operations-fixture.ts';
 import { createPlatformApi } from '../src/platform/api.ts';
 import { assertRuntimeRole,type Database } from '../src/core/database.ts';
+import { assertFileWorkerRole } from '../src/files/inspection-worker.ts';
+import { assertSignatureIngestRole } from '../src/integrations/boldsign-inbox.ts';
+import { assertSignatureResultRole } from '../src/integrations/signature-result-worker.ts';
+
+test('file and signature service boundaries reject accidental platform authority',async()=>{
+ const f=await operationsFixture(),db={query:<Row>(sql:string,params?:unknown[])=>f.pg.query<Row>(sql,params),release(){}};
+ try{
+  for(const [role,check] of [['kavosh_file_worker',assertFileWorkerRole],['kavosh_signature_ingest',assertSignatureIngestRole],['kavosh_signature_result_worker',assertSignatureResultRole]] as const){
+   await f.pg.exec('SET ROLE '+role);await check(db);await f.pg.exec('RESET ROLE');
+   await f.pg.exec('GRANT kavosh_platform_service TO '+role);
+   try{await f.pg.exec('SET ROLE '+role);await assert.rejects(check(db),/UNSAFE_/);}
+   finally{await f.pg.exec('RESET ROLE');await f.pg.exec('REVOKE kavosh_platform_service FROM '+role);}
+   await f.pg.exec('SET ROLE '+role);await check(db);await f.pg.exec('RESET ROLE');
+  }
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.close();}
+});
 
 test('disabled platform API does not resolve credentials or connect to a database',async()=>{
  const api=createPlatformApi({async connect(){throw Error('MUST_NOT_CONNECT');}},async()=>{throw Error('MUST_NOT_AUTHENTICATE');});
