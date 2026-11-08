@@ -39,6 +39,15 @@ const properties=z.object({documentId:uuid,status,signerDetails:z.array(z.object
   authenticationType:z.string().max(100).nullable().optional(),enableEmailOTP:z.boolean().optional(),
   isAuthenticationFailed:z.boolean().nullable().optional(),isReassigned:z.boolean().optional()
 })).max(100)});
+const completionProperties=properties.extend({
+ isDeleted:z.boolean().optional(),enablePrintAndSign:z.boolean().optional(),enableReassign:z.boolean().optional(),
+ metaData:z.record(z.string().max(100),z.string().max(2000)).refine(v=>Object.keys(v).length<=50).optional(),
+ signerDetails:z.array(properties.shape.signerDetails.element.extend({
+  signerName:z.string().max(200).optional(),signType:z.string().max(40).optional(),
+  phoneNumber:z.union([z.string().max(40),z.object({countryCode:z.string().max(5),number:z.string().max(30)})]).nullable().optional(),
+  formFields:z.array(z.object({id:z.string().max(200),type:z.string().max(80),pageNumber:z.number().int().positive().max(1000),bounds:z.object({x:z.number(),y:z.number(),width:z.number().positive(),height:z.number().positive()}).optional()})).max(1000).optional()
+ })).max(100)
+});
 const templateProperties=z.object({templateId:uuid,title:z.string().max(1000),roles:z.array(z.object({
   name:z.string().max(200),index:z.number().int().nonnegative(),signerType:z.string().min(1).max(80),
   formFields:z.array(z.object({id:z.string().min(1).max(200),fieldType:z.string().min(1).max(80),isRequired:z.boolean(),isReadOnly:z.boolean().optional()})).max(1000)
@@ -60,7 +69,7 @@ export const workAgreementRouting=z.object({version:z.literal(1),parties:z.array
 // transport/stream implementation that fails to honor its AbortSignal.
 type PdfResource='template-pdf'|'document-pdf'|'audit-pdf';
 const pdfError={ 'template-pdf':'BOLDSIGN_TEMPLATE_PDF_UNAVAILABLE','document-pdf':'BOLDSIGN_DOCUMENT_PDF_UNAVAILABLE','audit-pdf':'BOLDSIGN_AUDIT_PDF_UNAVAILABLE' } as const;
-async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource|'send',send:typeof fetch,externalSignal?:AbortSignal,wire?:{body:string;onAttempt:()=>void;observeResources?:(settled:Promise<unknown>)=>void}) {
+async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'document'|'template'|PdfResource|'send',send:typeof fetch,externalSignal?:AbortSignal,wire?:{body:string;onAttempt:()=>void;observeResources?:(settled:Promise<unknown>)=>void},observeResources?:(settled:Promise<unknown>)=>void) {
  const posting=resource==='send',pdf=resource.endsWith('-pdf'),kind=resource==='template'||resource==='template-pdf'?'template':'document';
  const configured=connection.safeParse(config),upper=kind.toUpperCase(),mime=pdf?'application/pdf':'application/json',limit=pdf?10_485_760:1_048_576;
  if(!configured.success)throw new ApiError(503,'BOLDSIGN_CONNECTION_NOT_CONFIGURED');
@@ -105,7 +114,7 @@ async function readBoldSignBytes(config:BoldSignConnection,id:string,resource:'d
   throw unavailable();
  }finally {
   clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);
-  try{reader?.releaseLock();}finally{wire?.observeResources?.(Promise.allSettled([...(pendingRequest?[pendingRequest]:[]),...(pendingRead?[pendingRead]:[]),...disposals]));}
+  try{reader?.releaseLock();}finally{(wire?.observeResources??observeResources)?.(Promise.allSettled([...(pendingRequest?[pendingRequest]:[]),...(pendingRead?[pendingRead]:[]),...disposals]));}
  }
 }
 
@@ -151,10 +160,9 @@ export async function getBoldSignTemplatePdf(config:BoldSignConnection,templateI
  const evidence=await readBoldSignPdf(config,templateId,'template-pdf',send,signal);
  return {templateId:templateId.toLowerCase(),...evidence};
 }
-async function readBoldSignPdf(config:BoldSignConnection,id:string,resource:PdfResource,send:typeof fetch,signal?:AbortSignal) {
- const bytes=await readBoldSignBytes(config,id,resource,send,signal);
- if(!/^%PDF-(?:1\.[0-7]|2\.0)[\r\n]/.test(bytes.subarray(0,9).toString('latin1')))
-  throw new ApiError(502,pdfError[resource]);
+async function readBoldSignPdf(config:BoldSignConnection,id:string,resource:PdfResource,send:typeof fetch,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
+ const bytes=await readBoldSignBytes(config,id,resource,send,signal,undefined,observeResources);
+ if(!/^%PDF-(?:1\.[0-7]|2\.0)[\r\n]/.test(bytes.subarray(0,9).toString('latin1'))){bytes.fill(0);throw new ApiError(502,pdfError[resource]);}
  return {bytes,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length};
 }
 
@@ -163,12 +171,12 @@ async function readBoldSignPdf(config:BoldSignConnection,id:string,resource:PdfR
 // Explicit artifact kinds prevent confusing an audit PDF with the agreement.
 // The caller must independently bind owned document/signer/status and protect
 // retained bytes. A provider download alone establishes none of these facts.
-export async function getBoldSignDocumentPdf(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
- const evidence=await readBoldSignPdf(config,documentId,'document-pdf',send,signal);
+export async function getBoldSignDocumentPdf(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
+ const evidence=await readBoldSignPdf(config,documentId,'document-pdf',send,signal,observeResources);
  return {documentId:documentId.toLowerCase(),artifactKind:'document' as const,...evidence};
 }
-export async function getBoldSignAuditPdf(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal) {
- const evidence=await readBoldSignPdf(config,documentId,'audit-pdf',send,signal);
+export async function getBoldSignAuditPdf(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
+ const evidence=await readBoldSignPdf(config,documentId,'audit-pdf',send,signal,observeResources);
  return {documentId:documentId.toLowerCase(),artifactKind:'audit' as const,...evidence};
 }
 
@@ -181,6 +189,15 @@ export async function getBoldSignDocument(config:BoldSignConnection,documentId:s
  const raw=await readBoldSignJson(config,documentId,'document',send,signal);
  try {const result=properties.parse(raw);if(result.documentId!==documentId.toLowerCase())throw new Error('WRONG_RESOURCE');return result;}
  catch{throw new ApiError(502,'BOLDSIGN_STATUS_UNAVAILABLE');}
+}
+
+// Private reconciliation input,NOT an API response. Retain original provider
+// bytes separately from the bounded projection;caller must protect and wipe
+// those bytes. Unknown fields cannot silently become verified completion facts.
+export async function getBoldSignCompletionDocument(config:BoldSignConnection,documentId:string,send:typeof fetch=fetch,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){
+ const bytes=await readBoldSignBytes(config,documentId,'document',send,signal,undefined,observeResources);
+ try{const value=completionProperties.parse(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)));if(value.documentId!==documentId.toLowerCase())throw new Error('WRONG_RESOURCE');return {properties:value,bytes,sha256:createHash('sha256').update(bytes).digest('hex'),sizeBytes:bytes.length};}
+ catch{bytes.fill(0);throw new ApiError(502,'BOLDSIGN_COMPLETION_PROPERTIES_UNAVAILABLE');}
 }
 
 // https://developers.boldsign.com/template/template-details/
