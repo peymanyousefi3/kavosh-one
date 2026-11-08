@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.183.0",
+    "version": "0.184.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -4575,7 +4575,7 @@
     },
     "/api/v1/automations/events": {
       "get": {
-        "summary": "Read bound approval,audit,session and report-schedule and report-job issue events under current source rights plus automation rights before paging; operational sources are native system observations,not owner actions; no private audit changes or delivery claims",
+        "summary": "Read bound approval,audit,session,report issue and worker-statement release events under current source rights plus automation rights before paging; operational sources are native system observations,not owner actions; no private approval payloads or external delivery claims",
         "parameters": [
           {
             "name": "limit",
@@ -4639,7 +4639,8 @@
                 "audit",
                 "session",
                 "report_schedule",
-                "report_job"
+                "report_job",
+                "pay_statement"
               ]
             }
           }
@@ -5144,6 +5145,19 @@
                                   "properties": {
                                     "kind": {
                                       "type": "string",
+                                      "const": "statement_worker"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
                                       "const": "people"
                                     },
                                     "personIds": {
@@ -5576,6 +5590,19 @@
                                     "kind": {
                                       "type": "string",
                                       "const": "session_staff"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "statement_worker"
                                     }
                                   },
                                   "required": [
