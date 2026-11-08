@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('bot name editing documents independent name versions and bounded history',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),operation=api.paths['/api/v1/bots/{id}/name'].post,body=operation.requestBody.content['application/json'].schema;
+ assert.equal(body.additionalProperties,false);assert.equal(body.properties.expectedNameVersion.minimum,0);assert.equal(body.properties.name.maxLength,200);assert.equal(api.paths['/api/v1/bots/{id}/name/history'].get.parameters.find((p:{name:string})=>p.name==='limit').schema.maximum,50);
+});
+
 test('private invitation handoff documents human-only academy authentication,not bot credentials',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
  assert.deepEqual(api.paths['/api/v1/invitations/{id}/token'].post.security,[{humanSession:[],academySelection:[]}]);
