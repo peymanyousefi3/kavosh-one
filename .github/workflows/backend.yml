@@ -125,11 +125,12 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # Run42452747131 exhausted30m in group1. Split the same serial checks,
-      # not their assertions/timeouts;each group still owns its own database.
-      max-parallel: 4
+      # Run42523421190 group3 was still executing when cancelled at30m.
+      # Smaller unchanged serial batches;no dropped checks or stress expansion.
+      # Every runner still owns an independent PostgreSQL service.
+      max-parallel: 6
       matrix:
-        group: ['1', '2', '3', '4']
+        group: ['1', '2', '3', '4', '5', '6']
     # Native roles must NEVER be shared between concurrent groups.
     services:
       postgres:
