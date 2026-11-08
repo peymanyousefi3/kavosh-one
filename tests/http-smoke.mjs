@@ -8,6 +8,7 @@ const env={...process.env};
 // This check deliberately runs with no live credentials or database.
 delete env.DATABASE_URL; delete env.MIGRATION_DATABASE_URL;
 delete env.IDENTITY_DATABASE_URL;delete env.AUTH_SECRET;delete env.EDGE_AUTH_SECRET;
+delete env.PLATFORM_ENABLED;delete env.PLATFORM_DATABASE_URL;
 delete env.R2_UPLOAD_CONNECTIONS;delete env.R2_UPLOAD_LINKS_ENABLED;
 delete env.R2_DOWNLOAD_CONNECTIONS;delete env.R2_DOWNLOAD_LINKS_ENABLED;
 delete env.BOLDSIGN_WEBHOOK_CONNECTIONS;delete env.BOLDSIGN_WEBHOOK_ENABLED;delete env.SIGNATURE_INGEST_DATABASE_URL;
@@ -23,6 +24,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const method of ['GET','POST']){const r=await fetch(base+'/api/platform/v1/academies',{method,...(method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{})});assert.equal(r.status,404);assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual(await r.json(),{error:{code:'NOT_FOUND'}});}
   for(const suffix of ['','/export']){const r=await fetch(base+'/api/v1/reports/payroll/remittances'+suffix+'?on=2026-02-15');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/liabilityBudget|accountName|stack/);}
   for(const path of ['payroll/net-postings/00000000-0000-4000-8000-000000000001/remittances','payroll/net-postings/00000000-0000-4000-8000-000000000001/remittance-status','payroll/net-postings/00000000-0000-4000-8000-000000000001/remittance-report/export','payroll/remittances/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/liabilityBudget|fundingAccount|stack/);}
   {const r=await fetch(base+'/api/v1/reports/finance/outlook/export?on=2026-01-31&through=2026-02-28&timeZone=UTC&payrollCash=recorded_net');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);}

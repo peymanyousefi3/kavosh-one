@@ -55,14 +55,23 @@ export function verifiedProxyIp(request:Request,config:IdentityConfig) {
   if(!isIP(ip))throw new ApiError(403,'UNTRUSTED_PROXY');
   return ip;
 }
+export function platformHumanResolver(auth:Identity,store:IdentityStore,config:IdentityConfig) {
+  return async(request:Request)=>{
+    verifiedProxyIp(request,config);
+    if(!['GET','HEAD'].includes(request.method)&&request.headers.get('origin')!==config.origin)throw new ApiError(403,'ORIGIN_REJECTED');
+    await store.safe();
+    const result=await auth.api.getSession({headers:request.headers,query:{disableCookieCache:true}});
+    return result?{userId:result.user.id,sessionId:result.session.id}:null;
+  };
+}
 export function humanResolver(auth:Identity,store:IdentityStore,config:IdentityConfig) {
+  const resolve=platformHumanResolver(auth,store,config);
   return async(request:Request):Promise<HumanSession|null>=>{
     verifiedProxyIp(request,config);
     if(!['GET','HEAD'].includes(request.method)&&request.headers.get('origin')!==config.origin)throw new ApiError(403,'ORIGIN_REJECTED');
     const academyId=z.string().uuid().parse(request.headers.get('x-academy-id'));
-    await store.safe();
-    const result=await auth.api.getSession({headers:request.headers,query:{disableCookieCache:true}});
-    return result?{userId:result.user.id,sessionId:result.session.id,academyId}:null;
+    const result=await resolve(request);
+    return result?{...result,academyId}:null;
   };
 }
 export function identityGateway(auth:Identity,store:IdentityStore,config:IdentityConfig) {

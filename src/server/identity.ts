@@ -4,7 +4,7 @@ import { Kysely, PostgresDialect } from 'kysely';
 import { z } from 'zod';
 import { createIdentity } from '../auth/config.ts';
 import { IdentityStore } from '../auth/store.ts';
-import { identityGateway, humanResolver } from '../auth/gateway.ts';
+import { identityGateway, humanResolver,platformHumanResolver } from '../auth/gateway.ts';
 import { queuedDelivery } from '../auth/delivery.ts';
 import { postgresOptions } from '../core/postgres-config.ts';
 import type { HumanSession } from '../core/api.ts';
@@ -24,10 +24,11 @@ function initialize() {
   const db=new Kysely<unknown>({dialect:new PostgresDialect({pool})}).withSchema('identity');
   const store=new IdentityStore(db,config.secret);
   const auth=createIdentity(db,store,queuedDelivery(store,config.secret),config);
-  return {auth,store,config,handle:identityGateway(auth,store,config),resolve:humanResolver(auth,store,config)};
+  return {auth,store,config,handle:identityGateway(auth,store,config),resolve:humanResolver(auth,store,config),resolvePlatform:platformHumanResolver(auth,store,config)};
 }
 let instance:ReturnType<typeof initialize>|undefined;
 export function getIdentity(){return instance??=initialize();}
 export async function resolveHuman(request:Request):Promise<HumanSession|null> {
   return getIdentity().resolve(request);
 }
+export async function resolvePlatformHuman(request:Request){return getIdentity().resolvePlatform(request);}

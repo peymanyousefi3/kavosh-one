@@ -9,6 +9,7 @@ export async function assertSignatureResultRole(db:Connection){
  const result=await db.query<{safe:boolean}>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreaterole AND NOT r.rolcreatedb AND NOT r.rolreplication AND left(r.rolname,3)<>'pg_' AND pg_has_role(current_user,'kavosh_signature_result_worker','member')
  AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname<>current_user AND(left(b.rolname,3)='pg_' OR(left(b.rolname,7)='kavosh_' AND b.rolname<>'kavosh_signature_result_worker')) AND pg_has_role(current_user,b.oid,'member'))
  AND NOT has_schema_privilege(current_user,'identity','usage') AND NOT has_schema_privilege(current_user,'auth_private','usage') AND NOT has_schema_privilege(current_user,'public','create')
+ AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname='platform_private' AND has_schema_privilege(current_user,n.oid,'usage'))
  AND NOT EXISTS(SELECT 1 FROM pg_database d WHERE d.datname=current_database() AND pg_has_role(current_user,d.datdba,'member'))
  AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname IN('public','identity','auth_private') AND pg_has_role(current_user,n.nspowner,'member'))
  AND NOT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN('public','identity','auth_private')

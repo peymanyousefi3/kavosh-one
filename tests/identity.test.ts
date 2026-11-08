@@ -5,7 +5,7 @@ import { readFile,readdir } from 'node:fs/promises';
 import { testDatabase } from './database.ts';
 import { createIdentity,type Delivery } from '../src/auth/config.ts';
 import { IdentityStore } from '../src/auth/store.ts';
-import { identityGateway,verifiedProxyIp,humanResolver } from '../src/auth/gateway.ts';
+import { identityGateway,verifiedProxyIp,humanResolver,platformHumanResolver } from '../src/auth/gateway.ts';
 import { queuedDelivery,deliverOne,providerDelivery } from '../src/auth/delivery.ts';
 import { createApi } from '../src/core/api.ts';
 import { business as businessRoutes } from '../src/modules/business.ts';
@@ -113,7 +113,7 @@ async function fixture() {
       try{return await fn(worker);}finally{if(pg.runtime)await worker.db.destroy();await pg.exec('RESET ROLE');}
     });
   }
-  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,close,gateway,api};
+  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,close,gateway,api,resolvePlatform:platformHumanResolver(auth,store,config)};
 }
 
 test('human identity: real library authentication and protected business access',async t=>{
@@ -164,6 +164,13 @@ test('human identity: real library authentication and protected business access'
       assert.equal((await f.request('/accept-invitation',{invitation:master.token},master.jar)).response.status,403);
       assert.equal((await f.business(master)).status,200);
       assert.equal((await f.request('/two-factor/disable',{password},master.jar)).response.status,403);
+    });
+    await t.test('platform resolver reuses real signed session without academy header and rejects forged cookies or cross-origin writes',async()=>{
+      const headers={cookie:[...master.jar].map(([k,v])=>k+'='+v).join('; ')};
+      const result=await f.resolvePlatform(new Request(origin+'/api/platform/v1/academies',{headers}));
+      assert.equal(result?.userId,master.id);assert.ok(result?.sessionId);assert.equal(Object.hasOwn(result!,'academyId'),false);
+      assert.equal(await f.resolvePlatform(new Request(origin+'/api/platform/v1/academies',{headers:{cookie:'__Secure-kavosh.session_token=forged'}})),null);
+      await assert.rejects(f.resolvePlatform(new Request(origin+'/api/platform/v1/academies',{method:'POST',headers:{...headers,origin:'https://attacker.example'}})),/ORIGIN_REJECTED/);
     });
     await t.test('human API reuses tenant scope, role denial and audit; master identity cannot transfer',async()=>{
       const created=await f.business(master,'hubs',{name:'Synthetic hub',city:'Toronto',countryCode:'CA'});

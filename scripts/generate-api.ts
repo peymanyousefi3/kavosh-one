@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { schemas,getPaths } from '../src/auth/gateway.ts';
 import { businessContract } from '../src/modules/business.ts';
 import { boldSignWebhookBody } from '../src/integrations/boldsign-inbox.ts';
+import { platformContract } from '../src/platform/api.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.176.0';
+api.info.version='0.177.0';
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
 api.components.securitySchemes.humanSession={type:'apiKey',in:'cookie',name:'__Secure-kavosh.session_token',description:'Opaque HttpOnly signed cookie set by login/MFA, never read or stored by frontend JavaScript. Local HTTP development uses kavosh.session_token.'};
@@ -42,5 +43,16 @@ api.paths['/api/webhooks/boldsign/{connectionId}']={post:{security:[],summary:'R
  parameters:[{name:'connectionId',in:'path',required:true,schema:{type:'string',format:'uuid'}},{name:'X-BoldSign-Signature',in:'header',required:false,schema:{type:'string',maxLength:1024},description:'Required for every data event. Provider HMAC header; only the strict no-data Verification probe is exempt.'},{name:'X-BoldSign-Event',in:'header',required:false,schema:{type:'string',maxLength:100},description:'When present must match the signed eventType; Verification enables only the strict unsigned probe.'}],
  requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(boldSignWebhookBody,{io:'input'})}}},
  responses:{'200':{description:'Received, duplicate, conflict recorded, or side-effect-free verification probe. No source details or admission status returned.'},'400':{description:'Invalid body or stream identity'},'401':{description:'Missing, stale or invalid provider signature'},'408':{description:'Body read cancelled or deadline exceeded'},'413':{description:'Actual request bytes exceed limit'},'415':{description:'Only uncompressed UTF-8 JSON accepted'},'429':{description:'Shared database per-connection rate budget exhausted'},'503':{description:'Disabled/unconfigured, changed registry, unsafe database role or unavailable persistence; no accepted partial record'}}}};
+api.paths=Object.fromEntries(Object.keys(api.paths).sort().map(path=>[path,api.paths[path]]));
+for(const endpoint of platformContract){
+ const parameters:Record<string,unknown>[]=[];
+ for(const [,name] of endpoint.path.matchAll(/\{([^}]+)\}/g))parameters.push({name,in:'path',required:true,schema:{type:'string',format:'uuid'}});
+ if(endpoint.method==='post')parameters.push({$ref:'#/components/parameters/idempotency'},{name:'Origin',in:'header',required:true,schema:{type:'string',format:'uri'}});
+ if('querySchema' in endpoint){const query=z.toJSONSchema(endpoint.querySchema,{io:'input'});for(const [name,schema] of Object.entries(query.properties??{}))parameters.push({name,in:'query',schema});}
+ api.paths[endpoint.path]??={};api.paths[endpoint.path][endpoint.method]={summary:endpoint.summary,security:[{humanSession:[]}],parameters,
+ description:'Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. No invitation, message, payment or live provider action is performed.',
+ ...('schema' in endpoint?{requestBody:{required:true,content:{'application/json':{schema:z.toJSONSchema(endpoint.schema,{io:'input'})}}}}:{}),
+ responses:{'200':{description:'Audited current directory data or version-checked change'},'201':{description:'School and pending master created atomically; verified invitation still required'},default:{$ref:'#/components/responses/error'}}};
+}
 api.paths=Object.fromEntries(Object.keys(api.paths).sort().map(path=>[path,api.paths[path]]));
 await writeFile(file,JSON.stringify(api,null,2)+'\n');
