@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('account security contract provides one scoped metadata history and own aliases with strict bounded cursors and no contact-value editing',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/me/account-security','/api/v1/people/{id}/account-security']){assert.ok(api.paths[path].get);assert.equal(api.paths[path].post,undefined);const params=api.paths[path].get.parameters;assert.equal(params.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(params.find((p:any)=>p.name==='field').schema.enum,['email','phone']);assert.ok(api.paths[path+'/{eventId}'].get);}assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('account_security'));
+});
+
 test('email replacement contract requires a signed session real password and separate strict request-bound proof stages',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const [path,method] of [['','get'],['/request','post'],['/authorize','post'],['/confirm','post'],['/cancel','post']])assert.deepEqual(api.paths['/api/auth/email-change'+path][method].security,[{humanSession:[]}]);for(const suffix of ['authorize','confirm']){const s=api.paths['/api/auth/email-change/'+suffix].post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(s.properties).sort(),['code','requestId']);assert.equal(s.properties.code.pattern,'^\\d{8}$');assert.equal(s.additionalProperties,false);}const s=api.paths['/api/auth/email-change/request'].post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(s.properties).sort(),['email','password']);assert.equal(s.properties.email.maxLength,254);assert.equal(s.properties.password.maxLength,128);assert.equal(s.additionalProperties,false);assert.equal(api.paths['/api/auth/change-email'],undefined);
 });
