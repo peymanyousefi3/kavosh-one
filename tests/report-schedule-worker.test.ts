@@ -17,21 +17,26 @@ import { readFile } from 'node:fs/promises';
 import { processOneNotification } from '../src/automations/notification-worker.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
-import { historicalReportJob } from './historical-report-job.ts';
+import { historicalReportJob,historicalReportScheduleApproval } from './historical-report-job.ts';
 
 async function fixture(as='staff',maxDelayMinutes=60,throughSchema?:number){const f=await operationsFixture({throughSchema});try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['report-presets.view','report-presets.edit','report-schedules.view','report-schedules.edit','financial-reports.view','ledger.view','accounts.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
  const due=(await f.pg.query<{due:string}>(`SELECT to_char((date_trunc('minute',clock_timestamp())-interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') due`)).rows[0].due,local=Temporal.Instant.from(due).toZonedDateTimeISO('America/Toronto');
  const p=await f.request('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Automatic previous-month report',reportId:'finance.trial-balance',parameters:{includeZero:'true'},dateWindow:{kind:'previous_month',timeZone:'America/Toronto'}},reason:'Recurring report source'});assert.equal(p.response.status,201,JSON.stringify(p.body));
  const definition={name:'Daily automatic report',enabled:true,presetVersion:1,timing:{timeZone:'America/Toronto',localTime:local.toPlainTime().toString({smallestUnit:'minute'}),startsOn:'2026-01-01',cycle:{kind:'daily'},maxDelayMinutes}},q=await f.request('reports/presets/'+p.body.data.id+'/schedules',{definition,reason:'Approved recurring report'},as);let s=q;
- if(as!=='master'){assert.equal(q.response.status,202,JSON.stringify(q.body));s=await f.approve(q.body.approval.id,'manager');assert.equal(s.response.status,200,JSON.stringify(s.body));}else assert.equal(s.response.status,201,JSON.stringify(s.body));const id=s.body.data.id;
+ let created=q.body.data;
+ if(as!=='master'){
+  assert.equal(q.response.status,202,JSON.stringify(q.body));
+  if(throughSchema!==undefined&&throughSchema>=133&&throughSchema<=135){const historical=await historicalReportScheduleApproval(f,q.body.approval.id);assert.equal(historical.status,200);created=historical.body.data;}
+  else{s=await f.approve(q.body.approval.id,'manager');assert.equal(s.response.status,200,JSON.stringify(s.body));created=s.body.data;}
+ }else assert.equal(s.response.status,201,JSON.stringify(s.body));const id=created.id;
  // Owner-only clock staging,not a runtime mutation or a claimed approval test:
  // the same approved daily civil time occurred one minute before this test.
  // Advance the persisted pointer as if the schedule had been created earlier.
  const stage=async(at=due)=>{await f.pg.exec('ALTER TABLE public.report_schedules DISABLE TRIGGER report_schedule_header_guard');try{await f.pg.query('UPDATE public.report_schedules SET next_due_at=$2 WHERE id=$1',[id,at]);}finally{await f.pg.exec('ALTER TABLE public.report_schedules ENABLE TRIGGER report_schedule_header_guard');}};await stage();
  const errors:{code?:string;message?:string}[]=[],database:Database={async connect(){const c=await f.pg.runtime!.connect();await c.query('SET ROLE kavosh_automation_worker');return {async query<Row>(sql:string,params?:unknown[]){try{return await c.query<Row>(sql,params);}catch(e){const x=e as {code?:string;message?:string};errors.push({code:x.code,message:x.message});throw e;}},release(destroy?:boolean){c.release(destroy);}};}};
  const work=(db=database)=>processOneReportSchedule(db,[f.a]),state=()=>f.request('reports/schedules/'+id),stop=(who=as)=>f.request('reports/schedules/'+id+'/stop',{},who),occurrences=(who=as)=>f.request('reports/schedules/'+id+'/occurrences',undefined,who);
- return {...f,id,due,preset:p.body.data,definition:s.body.data.definition,stage,database,errors,work,state,stop,occurrences};
+ return {...f,id,due,preset:p.body.data,definition:created.definition,stage,database,errors,work,state,stop,occurrences};
  }catch(e){await f.pg.close();throw e;}}
 type F=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:F)=>Promise<void>,as='staff',delay=60){test(name,{skip:!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture(as,delay);try{await run(f);}finally{await f.pg.close();}});}
