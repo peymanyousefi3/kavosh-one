@@ -9,6 +9,9 @@ test('private invitation handoff documents human-only academy authentication,not
  assert.deepEqual(api.paths['/api/v1/invitations/{id}/token'].post.security,[{humanSession:[],academySelection:[]}]);
  assert.ok(api.paths['/api/v1/invitations'].post.requestBody.required);
 });
+test('worker pay statement archive documents human-only academy authentication,not administrative bot access',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/{id}','/{id}/history'])assert.deepEqual(api.paths['/api/v1/me/pay-statements'+suffix].get.security,[{humanSession:[],academySelection:[]}]);
+});
 
 test('committed API reference is byte-exact generator output with sorted paths,without rewriting files',()=>{
  const target=new URL('../public/openapi.json',import.meta.url),generator=new URL('../scripts/generate-api.ts',import.meta.url);

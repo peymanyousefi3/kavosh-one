@@ -7,6 +7,7 @@ import { accountingDate } from './finance-periods.ts';
 import { authorizedNetPosting } from './payrun-postings.ts';
 import { payrollRecordSourceAuthoritySQL } from './payroll-settlement-report.ts';
 import { lockAcademyTopology } from './academy.ts';
+export { posting as authorizedStatementPosting };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),text=z.string().trim().min(1).refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)),version=z.number().int().min(0).max(2147483646);
 const earning=z.object({kind:z.enum(['hourly','salary','project','manual_bonus','tuition_course','tuition_session','tuition_collection']),sourceId:uuid,allocationId:uuid,label:text.max(150),calculation:text.max(1000),rateDescription:text.max(300)}).strict();
