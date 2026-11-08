@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { test } from 'node:test';
+import { operationsFixture } from './operations-fixture.ts';
+import { attendanceView } from '../src/modules/session-attendance.ts';
+import { attendanceClearances,attendanceClearanceKey,agreementClearanceSchema,type AttendanceClearance } from '../src/modules/attendance-clearance.ts';
+import type { ApiContext } from '../src/core/api.ts';
+const recognized={admissionCleared:true,agreementClearanceVerified:true,activityRecognized:true,signedAfterActivity:false,reason:null};
+
+test('recognition cannot masquerade as earlier participation permission or invented signing facts',()=>{
+ const later={...recognized,admissionCleared:false,signedAfterActivity:true,reason:'agreement_signed_after_activity'};
+ assert.equal(agreementClearanceSchema.safeParse(recognized).success,true);assert.equal(agreementClearanceSchema.safeParse(later).success,true);
+ for(const invalid of [{...later,admissionCleared:true},{...later,signedAfterActivity:false},{...later,activityRecognized:false},{...later,reason:null},{...recognized,agreementClearanceVerified:false},{...recognized,signedAfterActivity:true}])assert.equal(agreementClearanceSchema.safeParse(invalid).success,false);
+});
+
+test('agreement-only attendance projection preserves observed history and separately counts admitted present late absent and excused statuses (formatting logic)',()=>{
+ const id=randomUUID(),at='2027-01-01T15:00:00Z',items=['present','late','present','excused'].map((status,i)=>({enrollmentId:randomUUID(),enrollmentVersion:1,status,note:'Original private observation '+i})),sheet={session_id:id,class_id:randomUUID(),hub_id:randomUUID(),version:1,session_version:1,entries:items,context:{sessionId:id,classId:randomUUID(),hubId:randomUUID(),sessionVersion:1,classVersion:1,classActive:true,status:'scheduled',startsAt:at,on:'2027-01-01',timeZone:'America/Toronto',members:[]},changed_by:randomUUID(),approval_id:null} as Parameters<typeof attendanceView>[0],before=structuredClone(sheet),evaluation={evaluatedAt:'2026-11-08T12:00:00.000Z',clearances:new Map<string,AttendanceClearance>(items.filter((_,i)=>i!==2).map(e=>[attendanceClearanceKey(e.enrollmentId,at),{...recognized}]))},view=attendanceView(sheet,evaluation);
+ assert.deepEqual(view.observedCounts,{present:2,late:1,absent:0,excused:1});assert.deepEqual(view.effectiveCounts,{present:1,late:1,absent:1,excused:1});assert.equal(view.entries[2].observedStatus,'present');assert.equal(view.entries[2].effectiveAttendance,'absent');assert.equal(view.entries[2].absenceReason,'agreement_clearance_unverified');assert.equal(view.entries[0].absenceReason,null);assert.equal(view.admissionClearanceVerified,false);assert.equal(view.payrollApproved,false);assert.equal(view.sessionEvidenceApproved,false);assert.deepEqual(sheet,before);
+ evaluation.clearances.set(attendanceClearanceKey(items[2].enrollmentId,at),{...recognized,admissionCleared:false,signedAfterActivity:true,reason:'agreement_signed_after_activity'});const later=attendanceView(sheet,evaluation);assert.equal(later.admissionClearanceVerified,true);assert.equal(later.entries[2].effectiveAttendance,'present');assert.equal(later.entries[2].admissionCleared,false);assert.equal(later.entries[2].signedAfterActivity,true);assert.equal(later.entries[2].absenceReason,null);assert.equal(later.entries[1].effectiveAttendance,'late');assert.deepEqual(sheet,before);
+});
+test('bounded request-local clearance batching deduplicates lookups,holds enrollment locks and rejects mismatched database results (batch contract logic)',async()=>{
+ const target={enrollmentId:randomUUID(),startsAt:'2027-01-01T15:00:00Z'},queries:{sql:string;args?:unknown[]}[]=[],ctx={db:{async query(sql:string,args?:unknown[]){queries.push({sql,args});if(sql.includes('FOR SHARE'))return {rows:[]};const inputs=JSON.parse(args![0] as string);return {rows:inputs.map((t:{key:string})=>({key:t.key,clearance:{...recognized},checkedAt:'2026-11-08 12:00:00+00'}))};}}} as unknown as ApiContext;
+ assert.equal((await attendanceClearances(ctx,[])).evaluatedAt,null);assert.equal(queries.length,0);const result=await attendanceClearances(ctx,Array(20).fill(target));assert.equal(queries.length,2);assert.ok(queries[0].sql.endsWith('ORDER BY id FOR SHARE'));assert.deepEqual(queries[0].args,[[target.enrollmentId]]);assert.equal(JSON.parse(queries[1].args![0] as string).length,1);assert.equal(result.clearances.size,1);assert.equal(result.evaluatedAt,'2026-11-08T12:00:00.000Z');assert.equal(result.clearances.get(attendanceClearanceKey(target.enrollmentId,target.startsAt))?.admissionCleared,true);
+ const noIO={db:{query(){throw Error('unexpected query');}}} as unknown as ApiContext;await assert.rejects(attendanceClearances(noIO,Array.from({length:2001},()=>({...target,enrollmentId:randomUUID()}))),{code:'ATTENDANCE_REQUIRES_BACKGROUND_JOB'});
+ for(const bad of [[],[{key:'foreign',clearance:{...recognized},checkedAt:'2026-11-08 12:00:00+00'}],[{key:attendanceClearanceKey(target.enrollmentId,target.startsAt),clearance:{admissionCleared:true,agreementClearanceVerified:false,reason:null},checkedAt:'2026-11-08 12:00:00+00'}]]){
+  const invalid={db:{async query(sql:string){return {rows:sql.includes('FOR SHARE')?[]:bad};}}} as unknown as ApiContext;await assert.rejects(attendanceClearances(invalid,[target]),{code:'ATTENDANCE_CLEARANCE_UNAVAILABLE'});
+ }
+});
+test('actual210to211 preserves observations reviews grants and the previous private review source without manufacturing clearance or widening worker authority',async()=>{
+ const f=await operationsFixture({throughSchema:210});try{
+  const snapshot="SELECT jsonb_build_object('people',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.people p),'permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY role_id,capability) FROM public.role_permissions p),'reviews',(SELECT jsonb_agg(to_jsonb(p) ORDER BY evidence_id) FROM public.signature_completion_reviews p),'attendance',(SELECT jsonb_agg(to_jsonb(p) ORDER BY session_id) FROM public.session_attendance p)) snapshot",before=(await f.pg.query(snapshot)).rows,func="SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid='public.signature_completion_review_source(uuid,uuid,jsonb)'::regprocedure",original=(await f.pg.query(func)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/211_agreement_attendance_clearance.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,211);assert.deepEqual((await f.pg.query(snapshot)).rows,before);assert.deepEqual((await f.pg.query(func)).rows,original);
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.equal((await f.pg.query('SELECT public.enrollment_agreement_clearance($1,$2::timestamptz) clearance',[randomUUID(),'2027-01-01T15:00:00Z'])).rows[0].clearance,null);
+  for(const role of ['kavosh_signature_evidence_worker','kavosh_signature_completion_worker','kavosh_file_worker','kavosh_identity','kavosh_delivery']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.enrollment_agreement_clearance($1,$2::timestamptz)',[randomUUID(),'2027-01-01T15:00:00Z']),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
+ }finally{await f.pg.close();}
+});

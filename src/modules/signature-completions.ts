@@ -20,7 +20,7 @@ export async function signatureCompletions(ctx:ApiContext):Promise<Reply|null>{
  if(q.after&&!(await ctx.db.query('SELECT id FROM public.signature_completion_evidence WHERE start_id=$1 AND id=$2 AND($3::text IS NULL OR state=$3)',[start.id,q.after,q.state??null])).rows.length)throw new ApiError(404,'NOT_FOUND');
  const rows=(await ctx.db.query<{id:string}>(`SELECT e.id,e.start_id AS "dispatchId",e.state AS "evidenceState",e.review_reasons AS "reviewReasons",e.recorded_at AS "recordedAt",public.signature_completion_source_current(e.id) AS "sourceCorrespondenceCurrent",
  CASE WHEN r.evidence_id IS NULL THEN NULL ELSE jsonb_build_object('version',r.version,'decision',r.input->'decision') END AS "evidenceReview",
- CASE WHEN r.evidence_id IS NULL OR r.input->>'decision'<>'accepted' THEN true ELSE r.source IS DISTINCT FROM public.signature_completion_review_source(e.id,r.requested_by,r.input) END AS "reviewPending"
+ CASE WHEN r.evidence_id IS NULL OR r.input->>'decision'<>'accepted' THEN true ELSE r.source-'scope' IS DISTINCT FROM public.signature_completion_review_source(e.id,r.requested_by,r.input)-'scope' END AS "reviewPending"
  FROM public.signature_completion_evidence e LEFT JOIN public.signature_completion_reviews r ON r.academy_id=e.academy_id AND r.evidence_id=e.id WHERE e.start_id=$1 AND($2::uuid IS NULL OR e.id=$2) AND($3::text IS NULL OR e.state=$3)
  AND($4::uuid IS NULL OR(e.recorded_at,e.id)<(SELECT c.recorded_at,c.id FROM public.signature_completion_evidence c WHERE c.start_id=$1 AND c.id=$4))
  ORDER BY e.recorded_at DESC,e.id DESC LIMIT $5`,[start.id,id,q.state??null,q.after??null,id?1:q.limit+1])).rows;

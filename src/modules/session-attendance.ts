@@ -4,6 +4,7 @@ import { propose,master,lockApprovalWrites,type ApprovalRegistry,type Proposal }
 import { ApiError,type Capability } from '../core/policy.ts';
 import { classRow,sessionRow,sessionLocalDate } from './classes.ts';
 import { lockAcademyTopology } from './academy.ts';
+import { attendanceClearances,attendanceClearanceKey,unverifiedAttendanceClearance,type AttendanceClearance } from './attendance-clearance.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().min(1).max(2147483647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0'));
@@ -25,11 +26,14 @@ async function source(ctx:ApiContext,id:string){
  const s=(await ctx.db.query<{source:Source|null}>('SELECT public.session_attendance_source($1) source',[id])).rows[0].source;
  if(!s)throw new ApiError(409,'SESSION_TIME_EVIDENCE_INVALID');if(s.tooLarge)throw new ApiError(409,'ATTENDANCE_REQUIRES_BACKGROUND_JOB');return s;
 }
-function view(s:Sheet){
+export function attendanceView(s:Sheet,evaluation:{clearances:Map<string,AttendanceClearance>;evaluatedAt:string|null}){
  const observedCounts={present:0,late:0,absent:0,excused:0};for(const e of s.entries)observedCounts[e.status]++;
- return {...s,entries:s.entries.map(({status,...e})=>({...e,observedStatus:status,effectiveAttendance:'absent',absenceReason:'agreement_clearance_unverified'})),observedCounts,
-  admissionClearanceVerified:false,payrollApproved:false,sessionEvidenceApproved:false};
+ const entries=s.entries.map(({status,...e})=>{const c=evaluation.clearances.get(attendanceClearanceKey(e.enrollmentId,s.context.startsAt))??unverifiedAttendanceClearance;return {...e,observedStatus:status,effectiveAttendance:c.activityRecognized?status:'absent' as const,absenceReason:c.activityRecognized?null:c.reason,...c};});
+ const effectiveCounts={present:0,late:0,absent:0,excused:0};for(const e of entries)effectiveCounts[e.effectiveAttendance]++;
+ return {...s,entries,observedCounts,effectiveCounts,agreementClearanceEvaluatedAt:evaluation.evaluatedAt,
+  admissionClearanceVerified:entries.length>0&&entries.every(e=>e.agreementClearanceVerified),payrollApproved:false,sessionEvidenceApproved:false};
 }
+const clearanceTargets=(s:Sheet)=>s.entries.map(e=>({enrollmentId:e.enrollmentId,startsAt:s.context.startsAt}));
 async function basis(ctx:ApiContext,id:string,input:Input,cap:Capability){
  if(Buffer.byteLength(JSON.stringify(input.entries),'utf8')>450000)throw new ApiError(413,'ATTENDANCE_PAYLOAD_TOO_LARGE');
  const s=await access(ctx,id,cap,true),c=await classRow(ctx,s.class_id,cap),on=sessionLocalDate(s,c.time_zone),actual=await source(ctx,id),current=await sheet(ctx,id);
@@ -51,7 +55,7 @@ async function persist(ctx:ApiContext,id:string,input:Input,b:Awaited<ReturnType
  }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23514'&&'message' in error&&/^ATTENDANCE_/.test(String(error.message)))throw new ApiError(409,'ATTENDANCE_SOURCE_CHANGED');throw error;}
  await ctx.db.query('INSERT INTO public.session_attendance_revisions(academy_id,session_id,version,definition) SELECT academy_id,session_id,version,to_jsonb(a) FROM public.session_attendance a WHERE session_id=$1',[id]);
  await record(ctx.db,ctx.credential,ctx.requestId,approvalId?'attendance.correct':'session.attendance.recorded',id,b.s.hub_id,{version:after.version,hasReason:true,severity:approvalId?'critical':'notification',payrollApproved:false});
- return view(after);
+ return attendanceView(after,await attendanceClearances(ctx,clearanceTargets(after)));
 }
 export const attendanceActions:ApprovalRegistry={'attendance.correct':{
  requestCapability:'attendance.edit',privacyCapability:'attendance.view',
@@ -75,7 +79,7 @@ export async function sessionAttendance(ctx:ApiContext,registry:ApprovalRegistry
    if(!a||a.version!==input.assignmentVersion)throw new ApiError(409,'STAFF_ASSIGNMENT_CHANGED');const data=await persist(ctx,id,input,b,a,null);return {status:b.current?200:201,body:{data}};
   });
  }
- if(method!=='GET'||section==='change')throw new ApiError(405,'METHOD_NOT_ALLOWED');await access(ctx,id);
+ if(method!=='GET'||section==='change')throw new ApiError(405,'METHOD_NOT_ALLOWED');await lockApprovalWrites(ctx);await access(ctx,id);
  if(section==='history'){
   const q=historyQuery.parse(params),rows=(await ctx.db.query<{version:number;definition:Sheet|null}>(`WITH selected AS MATERIALIZED(
    SELECT version,definition,recorded_at FROM public.session_attendance_revisions WHERE session_id=$1 AND version>$2 ORDER BY version LIMIT $3),
@@ -83,17 +87,20 @@ export async function sessionAttendance(ctx:ApiContext,registry:ApprovalRegistry
    SELECT version,CASE WHEN bytes<=2097152 THEN definition ELSE NULL END definition,recorded_at FROM budget ORDER BY version`,[id,q.afterVersion,q.limit+1])).rows;
   const visible=rows.filter((r):r is typeof r&{definition:Sheet}=>r.definition!==null).slice(0,q.limit);
   if(rows.length&&!visible.length)throw new ApiError(409,'ATTENDANCE_REQUIRES_BACKGROUND_JOB');
-  return {status:200,body:{data:visible.map(r=>({...r,definition:view(r.definition)})),nextVersion:rows.length>visible.length?visible.at(-1)!.version:null}};
+  const evaluated=await attendanceClearances(ctx,visible.flatMap(r=>clearanceTargets(r.definition)));
+  return {status:200,body:{data:visible.map(r=>({...r,definition:attendanceView(r.definition,evaluated)})),nextVersion:rows.length>visible.length?visible.at(-1)!.version:null}};
  }
  empty.parse(params);const current=await sheet(ctx,id),actual=await source(ctx,id);
  const names=(await ctx.db.query<{person_id:string;display_name:string}>('SELECT person_id,coalesce(preferred_name,legal_name) display_name FROM public.student_profiles WHERE person_id=ANY($1::uuid[])',[actual.members.map(m=>m.studentId)])).rows;
  const namesById=new Map(names.map(n=>[n.person_id,n.display_name]));
- return {status:200,body:{data:current?view(current):null,currentSource:actual,roster:actual.members.map(m=>({...m,displayName:namesById.get(m.studentId)??null})),currentSessionStatus:actual.status,
-  recordedSourceCurrent:current?(await ctx.db.query<{current:boolean}>('SELECT $1::jsonb=$2::jsonb current',[JSON.stringify(current.context),JSON.stringify(actual)])).rows[0].current:null,admissionClearanceVerified:false,payrollApproved:false}};
+ const evaluated=await attendanceClearances(ctx,[...actual.members.map(m=>({enrollmentId:m.enrollmentId,startsAt:actual.startsAt})),...current?clearanceTargets(current):[]]);
+ const roster=actual.members.map(m=>({...m,displayName:namesById.get(m.studentId)??null,...evaluated.clearances.get(attendanceClearanceKey(m.enrollmentId,actual.startsAt))??unverifiedAttendanceClearance}));
+ return {status:200,body:{data:current?attendanceView(current,evaluated):null,currentSource:actual,roster,currentSessionStatus:actual.status,agreementClearanceEvaluatedAt:evaluated.evaluatedAt,
+  recordedSourceCurrent:current?(await ctx.db.query<{current:boolean}>('SELECT $1::jsonb=$2::jsonb current',[JSON.stringify(current.context),JSON.stringify(actual)])).rows[0].current:null,admissionClearanceVerified:roster.length>0&&roster.every(m=>m.agreementClearanceVerified),payrollApproved:false}};
 }
 export const sessionAttendanceContract=[
- {path:'/api/v1/sessions/{id}/attendance',method:'get',summary:'Shared class-private observed attendance and exact date-filtered roster; unverified agreements remain operationally absent'},
- {path:'/api/v1/sessions/{id}/attendance',method:'post',summary:'Assigned human saves complete versioned observed roster, not signed eligibility or payroll approval',schema:ownInput},
- {path:'/api/v1/sessions/{id}/attendance/history',method:'get',summary:'Immutable shared attendance revisions within current attendance and roster rights',querySchema:historyQuery},
+ {path:'/api/v1/sessions/{id}/attendance',method:'get',summary:'Shared class-private observed attendance and date-filtered roster with fresh agreement-only recognition from approved joining date,including later paperwork. Actual present/late observations and signature timing stay distinct;recognition is not retrospective legal protection or permission to participate before signing. Live reviewed evidence required;no private signer/artifact details or payroll approval.'},
+ {path:'/api/v1/sessions/{id}/attendance',method:'post',summary:'Assigned human saves complete versioned observed roster;agreement-only effective counts are an evaluated-time snapshot,not an access grant or payroll approval. Idempotent receipts preserve that snapshot;GET refreshes current evidence.',schema:ownInput},
+ {path:'/api/v1/sessions/{id}/attendance/history',method:'get',summary:'Immutable observed revisions with fresh agreement-only annotations at their recorded session times;current attendance/roster rights and bounded distinct evaluations,never rewritten observation history',querySchema:historyQuery},
  {path:'/api/v1/sessions/{id}/attendance/change',method:'post',summary:'Propose upper-reviewed initial attendance or correction, including cancelled historical sessions; never a waiver override',schema:correction}
 ] as const;

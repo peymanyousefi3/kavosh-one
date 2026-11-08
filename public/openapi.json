@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.240.0",
+    "version": "0.241.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -54567,7 +54567,7 @@
     },
     "/api/v1/sessions/{id}/attendance": {
       "get": {
-        "summary": "Shared class-private observed attendance and exact date-filtered roster; unverified agreements remain operationally absent",
+        "summary": "Shared class-private observed attendance and date-filtered roster with fresh agreement-only recognition from approved joining date,including later paperwork. Actual present/late observations and signature timing stay distinct;recognition is not retrospective legal protection or permission to participate before signing. Live reviewed evidence required;no private signer/artifact details or payroll approval.",
         "parameters": [
           {
             "name": "id",
@@ -54596,7 +54596,7 @@
         }
       },
       "post": {
-        "summary": "Assigned human saves complete versioned observed roster, not signed eligibility or payroll approval",
+        "summary": "Assigned human saves complete versioned observed roster;agreement-only effective counts are an evaluated-time snapshot,not an access grant or payroll approval. Idempotent receipts preserve that snapshot;GET refreshes current evidence.",
         "parameters": [
           {
             "name": "id",
@@ -54820,7 +54820,7 @@
     },
     "/api/v1/sessions/{id}/attendance/history": {
       "get": {
-        "summary": "Immutable shared attendance revisions within current attendance and roster rights",
+        "summary": "Immutable observed revisions with fresh agreement-only annotations at their recorded session times;current attendance/roster rights and bounded distinct evaluations,never rewritten observation history",
         "parameters": [
           {
             "name": "id",
@@ -61754,7 +61754,7 @@
     },
     "/api/v1/students/{id}/registrations": {
       "get": {
-        "summary": "Own/current verified legal family class registrations under independently configured received-enrollments.view. Native exact student/class/actual-hub scope precedes bounded paging;optional on applies inclusive joining/leaving dates. No peer roster,private profile,finance or admin grant;registration does not mean signed admission.",
+        "summary": "Own/current verified legal family class registrations under independently configured received-enrollments.view. Native exact student/class/actual-hub scope precedes bounded paging;optional on applies inclusive joining/leaving dates. No peer roster,private profile,finance or admin grant;registration alone does not mean signed admission. Separate native agreement clearance is evaluated at the current instant;on filters membership dates,not that clearance instant.",
         "parameters": [
           {
             "name": "id",
@@ -61853,7 +61853,7 @@
     },
     "/api/v1/students/{id}/registrations/{enrollmentId}": {
       "get": {
-        "summary": "Current own/family registration details with class/hub/course labels and membership-date-filtered current schedule counts. Past scheduled sessions are NOT observed/effective attendance or verified agreement clearance;no meeting link or guardian contacts.",
+        "summary": "Current own/family registration details with class/hub/course labels and membership-date-filtered current schedule counts. Past scheduled counts are NOT attendance. A separate evaluated-time agreement-only status uses the same native gate as staff attendance;no meeting link,signer evidence or guardian contacts.",
         "parameters": [
           {
             "name": "id",
