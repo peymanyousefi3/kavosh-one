@@ -200,7 +200,11 @@ async function applyAction(ctx:ApiContext,p:Proposal):Promise<unknown> {
     await record(ctx.db,ctx.credential,ctx.requestId,p.action,p.target_id,null,{before:existing,after:result,approvalId:p.id});
     return result;
   }
-  const person=(await ctx.db.query<{id:string;access_version:number;supervisor_person_id:string|null}>('SELECT id,access_version,supervisor_person_id FROM public.people WHERE id=$1 FOR UPDATE',[p.target_id])).rows[0];
+  // Actor authentication shares this row before a request can enter the policy
+  // gate. Never wait for that actor while holding the exclusive policy gate.
+  let person:{id:string;access_version:number;supervisor_person_id:string|null}|undefined;
+  try{person=(await ctx.db.query<NonNullable<typeof person>>('SELECT id,access_version,supervisor_person_id FROM public.people WHERE id=$1 FOR UPDATE NOWAIT',[p.target_id])).rows[0];}
+  catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='55P03')throw new ApiError(423,'PERSON_BUSY_RETRY');throw error;}
   if(!person||person.access_version!==p.target_version)throw new ApiError(409,'TARGET_CHANGED');
   if(p.action==='access.replace') {
     const input=accessInput.parse(p.payload),before=await assignments(ctx,p.target_id);
