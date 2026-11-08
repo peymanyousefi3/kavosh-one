@@ -8,6 +8,7 @@ import { reportTiming,nextReportOccurrence } from '../core/report-timing.ts';
 import { executionReportPreset,reviewedReportPreset } from './report-presets.ts';
 import { catalogueReport } from './report-catalogue.ts';
 import { reportJobAccess,reportPresetJobAccess } from './report-job-access.ts';
+import { paidTaxYearConfigurationAccess } from './paid-tax-report-access.ts';
 import { lockAcademyTopology } from './academy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),name=text.trim().min(1).max(200),reason=text.trim().min(1).max(2000),empty=z.object({}).strict();
@@ -24,7 +25,7 @@ async function output(ctx:ApiContext,h:Header){const r=await revision(ctx,h),cur
  return {id:h.id,presetId:h.preset_id,ownerId:h.owner_id,ownerKind:h.owner_kind,version:h.version,controlVersion:h.control_version,status:h.status,nextPlannedOccurrence:h.next_due_at,createdAt:h.created_at,stoppedAt:h.stopped_at,definition:r.definition,presetSourceCurrent:current,authorityBoundToOwner:true,creationCredentialRetained:true,credentialRenewalSupported:true,workerLiveness:'not_observed',definitionManagementOnly:false,automaticExecutionImplemented:true,execution,executionRequiresOptInWorker:true,deliveryImplemented:false,backfillPolicy:'none'};}
 async function basis(ctx:ApiContext,creating:boolean,id:string,raw:unknown){
  const i=creating?create.parse(raw):change.parse(raw),h=creating?null:await header(ctx,id,true);if(h&&'expectedVersion'in i&&h.version!==i.expectedVersion)throw new ApiError(409,'REPORT_SCHEDULE_CHANGED');
- const p=await(i.definition.enabled?executionReportPreset:reviewedReportPreset)(ctx,'presetId'in i?i.presetId:h!.preset_id,i.definition.presetVersion);if(!catalogueReport(p.definition.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');authorize(ctx,p.owner.scope,true);reportJobAccess(ctx,p.definition.reportId);
+ const p=await(i.definition.enabled?executionReportPreset:reviewedReportPreset)(ctx,'presetId'in i?i.presetId:h!.preset_id,i.definition.presetVersion);if(!catalogueReport(p.definition.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');authorize(ctx,p.owner.scope,true);reportJobAccess(ctx,p.definition.reportId);await paidTaxYearConfigurationAccess(ctx,p.definition);
  if(i.definition.enabled&&(!h||h.status!=='active')&&(await ctx.db.query<{n:number}>("SELECT count(*)::integer n FROM public.report_schedules WHERE status='active'")).rows[0].n>=200)throw new ApiError(429,'REPORT_SCHEDULE_LIMIT');
  if(i.definition.enabled&&!nextReportOccurrence(i.definition.timing,await clock(ctx)))throw new ApiError(409,'REPORT_SCHEDULE_HAS_NO_FUTURE_OCCURRENCE');
  const b=(await ctx.db.query<{basis:{owner:Scope;before:unknown}}>('SELECT public.report_schedule_basis($1,$2,$3) basis',[id,p.id,i.definition.presetVersion])).rows[0].basis;if(!b)throw new ApiError(404,'NOT_FOUND');return b;

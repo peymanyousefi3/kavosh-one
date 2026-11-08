@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.196.0",
+    "version": "0.197.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -46517,7 +46517,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue a complete financial,gross-payroll,net-settlement,liability-remittance or achievement CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10,000parent/20,000remittance-bucket maxima and4MiB result ceiling and separate opt-in worker; larger outputs fail without truncation; no message or payment",
+        "summary": "Queue a complete financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10,000parent/20,000remittance-bucket maxima and4MiB result ceiling,private paid-tax-year500payment/20,000line ceiling,and separate opt-in worker; larger outputs fail without truncation; no message or payment",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -46541,7 +46541,8 @@
                       "payroll.gross-accruals",
                       "community.achievements",
                       "payroll.settlements",
-                      "payroll.remittances"
+                      "payroll.remittances",
+                      "payroll.paid-tax-year-to-date"
                     ]
                   },
                   "parameters": {
@@ -46624,7 +46625,7 @@
         }
       },
       "get": {
-        "summary": "Own report-job configurations and states,or school master oversight; tenant/owner filtering precedes bounded paging",
+        "summary": "Own report-job configurations and states,or school master oversight; tenant/owner and private paid-tax-profile filtering precede bounded paging",
         "parameters": [
           {
             "name": "limit",
@@ -49140,7 +49141,7 @@
     },
     "/api/v1/reports/presets/{id}/queue": {
       "post": {
-        "summary": "Queue an exact reviewed active financial,gross-payroll,net-settlement,liability-remittance or achievement CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings",
+        "summary": "Queue an exact reviewed active financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings",
         "parameters": [
           {
             "name": "id",

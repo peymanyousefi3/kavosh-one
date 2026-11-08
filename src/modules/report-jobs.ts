@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
-import { lockApprovalWrites } from '../core/approvals.ts';
+import { lockApprovalWrites,permissionScope } from '../core/approvals.ts';
 import { ApiError } from '../core/policy.ts';
 import { financialReportAccess } from './financial-reports.ts';
 import { catalogueReport,reportConfiguration,reportParameters,resolveConfiguredReportContext,type ReportConfiguration } from './report-catalogue.ts';
@@ -12,26 +12,28 @@ import { achievementReportAuthorization,requireAchievementReportResultAccess } f
 import { payrollReportAuthorization,requirePayrollReportResultAccess } from './payroll-report-access.ts';
 import { payrollSettlementAuthorization,requirePayrollSettlementResultAccess } from './payroll-settlement-report.ts';
 import { payrollRemittanceAuthorization,requirePayrollRemittanceResultAccess } from './payroll-remittance-report.ts';
+import { paidTaxYearAuthorization,paidTaxYearConfigurationAccess,requirePaidTaxYearResultAccess } from './paid-tax-report-access.ts';
 import { reportJobAccess,permittedJobReportIds } from './report-job-access.ts';
 import { lockAcademyTopology } from './academy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),empty=z.object({}).strict();
-export const financialJobInput=z.object({reportId:z.enum(['finance.trial-balance','finance.profit-loss','finance.balance-sheet','payroll.gross-accruals','community.achievements','payroll.settlements','payroll.remittances']),parameters:reportParameters,dateWindow:reportDateWindow.optional()}).strict();
+export const financialJobInput=z.object({reportId:z.enum(['finance.trial-balance','finance.profit-loss','finance.balance-sheet','payroll.gross-accruals','community.achievements','payroll.settlements','payroll.remittances','payroll.paid-tax-year-to-date']),parameters:reportParameters,dateWindow:reportDateWindow.optional()}).strict();
 const presetQueueInput=z.object({expectedVersion:z.number().int().positive().max(2147483647),overrides:reportParameters.default({})}).strict();
 const retryInput=z.object({reason:z.string().trim().min(3).max(2000)}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional()}).strict();
-export const reportAuthorizationContext=z.union([z.object({hubIds:z.array(uuid).max(10000).refine(a=>new Set(a).size===a.length),includesGlobal:z.boolean()}).strict(),payrollReportAuthorization,achievementReportAuthorization,payrollSettlementAuthorization,payrollRemittanceAuthorization]);
+export const reportAuthorizationContext=z.union([z.object({hubIds:z.array(uuid).max(10000).refine(a=>new Set(a).size===a.length),includesGlobal:z.boolean()}).strict(),payrollReportAuthorization,achievementReportAuthorization,payrollSettlementAuthorization,payrollRemittanceAuthorization,paidTaxYearAuthorization]);
 type Job={id:string;configuration:ReturnType<typeof reportConfiguration>;status:string;attempts:number;created_at:string;finished_at:string|null;expires_at:string;last_error:string|null;preset:{id:string;version:number}|null;resolvedDateWindow:unknown};
 const fields='id,configuration,status,attempts,created_at,finished_at,expires_at,last_error,retry_of_job_id "retryOfJobId",CASE WHEN preset_id IS NULL THEN NULL ELSE jsonb_build_object(\'id\',preset_id,\'version\',preset_version) END preset,window_resolution "resolvedDateWindow"';
-async function owned(ctx:ApiContext,id:string){const j=(await ctx.db.query<Job>('SELECT '+fields+' FROM public.report_jobs WHERE id=$1 AND(requester_id=$2 OR($3::boolean AND EXISTS(SELECT 1 FROM public.academies WHERE master_person_id=$2)))',[id,ctx.credential.person_id,ctx.credential.kind==='human'])).rows[0];if(!j)throw new ApiError(404,'NOT_FOUND');reportJobAccess(ctx,j.configuration.reportId);return j;}
+async function owned(ctx:ApiContext,id:string){const j=(await ctx.db.query<Job>('SELECT '+fields+' FROM public.report_jobs WHERE id=$1 AND(requester_id=$2 OR($3::boolean AND EXISTS(SELECT 1 FROM public.academies WHERE master_person_id=$2)))',[id,ctx.credential.person_id,ctx.credential.kind==='human'])).rows[0];if(!j)throw new ApiError(404,'NOT_FOUND');reportJobAccess(ctx,j.configuration.reportId);await paidTaxYearConfigurationAccess(ctx,j.configuration);return j;}
 export async function requireReportResultAccess(ctx:ApiContext,raw:unknown){
  await lockAcademyTopology(ctx);
- const proof=reportAuthorizationContext.parse(raw);if('kind'in proof)return proof.kind==='achievement_summary'?requireAchievementReportResultAccess(ctx,proof):proof.kind==='payroll_remittance'?requirePayrollRemittanceResultAccess(ctx,proof):proof.kind==='payroll_settlement'?requirePayrollSettlementResultAccess(ctx,proof):requirePayrollReportResultAccess(ctx,proof);const access=financialReportAccess(ctx);
+ const proof=reportAuthorizationContext.parse(raw);if('kind'in proof)return proof.kind==='paid_tax_year'?requirePaidTaxYearResultAccess(ctx,proof):proof.kind==='achievement_summary'?requireAchievementReportResultAccess(ctx,proof):proof.kind==='payroll_remittance'?requirePayrollRemittanceResultAccess(ctx,proof):proof.kind==='payroll_settlement'?requirePayrollSettlementResultAccess(ctx,proof):requirePayrollReportResultAccess(ctx,proof);const access=financialReportAccess(ctx);
  if((proof.includesGlobal&&!access.global)||proof.hubIds.some(h=>!(access.all||access.hubs.includes(h))||access.excluded.includes(h)))throw new ApiError(403,'REPORT_SOURCE_ACCESS_CHANGED');
 }
 export async function enqueueReport(ctx:ApiContext,configuration:ReportConfiguration,overrides:Record<string,string>={},preset?:{id:string;version:number},scheduledAt?:string,retry?:{id:string;reason:string;window:unknown}){
  if(!catalogueReport(configuration.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');
  reportJobAccess(ctx,configuration.reportId);
+ await paidTaxYearConfigurationAccess(ctx,configuration);
  if(preset)financialExportParameters(new Request('https://internal.invalid/?'+new URLSearchParams(overrides)));
  await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,130))',[ctx.credential.academy_id+':'+ctx.credential.person_id]);
  // Preserve the original static-direct fingerprint. Relative/preset retries
@@ -66,7 +68,9 @@ export async function reportJobs(ctx:ApiContext):Promise<Reply|null>{
    await record(ctx.db,ctx.credential,ctx.requestId,'report.cancelled',id,null,{externalRequestMade:false});const changed=await ctx.db.query("UPDATE public.report_jobs SET status='cancelled' WHERE id=$1 AND status IN('queued','running') RETURNING id",[id]);if(!changed.rows.length)throw new ApiError(409,'REPORT_JOB_CHANGED');return {status:200,body:{data:await owned(ctx,id)}};});
  }
  if(ctx.request.method!=='GET'||section==='cancel'||section==='retry')throw new ApiError(405,'METHOD_NOT_ALLOWED');
- if(!id){const p=paging.parse(q),allowed=permittedJobReportIds(ctx),rows=(await ctx.db.query<Job>('SELECT '+fields+' FROM public.report_jobs WHERE configuration->>\'reportId\'=ANY($5::text[]) AND(requester_id=$1 OR($4::boolean AND EXISTS(SELECT 1 FROM public.academies WHERE master_person_id=$1))) AND($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3',[ctx.credential.person_id,p.after??null,p.limit+1,ctx.credential.kind==='human',allowed])).rows;return {status:200,body:{data:rows.slice(0,p.limit),nextCursor:rows.length>p.limit?rows[p.limit-1].id:null}};}
+ if(!id){const p=paging.parse(q),allowed=permittedJobReportIds(ctx),rows=(await ctx.db.query<Job>(`SELECT ${fields} FROM public.report_jobs WHERE configuration->>'reportId'=ANY($5::text[]) AND(requester_id=$1 OR($4::boolean AND EXISTS(SELECT 1 FROM public.academies WHERE master_person_id=$1)))
+ AND(configuration->>'reportId'<>'payroll.paid-tax-year-to-date' OR($6::boolean AND EXISTS(SELECT 1 FROM public.payroll_tax_profiles t WHERE t.id::text=configuration#>>'{parameters,profileId}' AND public.work_scope_allows($7::jsonb,NULL,t.person_id))))
+ AND($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3`,[ctx.credential.person_id,p.after??null,p.limit+1,ctx.credential.kind==='human',allowed,ctx.credential.all_hubs,JSON.stringify(permissionScope(ctx,'payroll-tax.view'))])).rows;return {status:200,body:{data:rows.slice(0,p.limit),nextCursor:rows.length>p.limit?rows[p.limit-1].id:null}};}
  empty.parse(q);const j=await owned(ctx,id),stored=(await ctx.db.query<{sha256:string;bytes:number;created_at:string;authorization_context:unknown}>('SELECT sha256,octet_length(body) bytes,created_at,authorization_context FROM public.report_job_results WHERE job_id=$1',[id])).rows[0];
  if(stored)await requireReportResultAccess(ctx,stored.authorization_context);
  if(section==='download'){
@@ -79,9 +83,9 @@ export async function reportJobs(ctx:ApiContext):Promise<Reply|null>{
  const result=stored?{sha256:stored.sha256,bytes:stored.bytes,created_at:stored.created_at}:null,failureIssue=(await ctx.db.query('SELECT id,kind,created_at "observedAt" FROM public.report_job_issues WHERE job_id=$1',[id])).rows[0]??null;return {status:200,body:{data:j,result,failureIssue}};
 }
 export const reportJobsContract=[
- {path:'/api/v1/reports/presets/{id}/queue',method:'post',summary:'Queue an exact reviewed active financial,gross-payroll,net-settlement,liability-remittance or achievement CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings',schema:presetQueueInput,acceptedDescription:'Requester-bound report queued with frozen date filters,not generated or sent.'},
- {path:'/api/v1/reports/jobs',method:'post',summary:'Queue a complete financial,gross-payroll,net-settlement,liability-remittance or achievement CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10,000parent/20,000remittance-bucket maxima and4MiB result ceiling and separate opt-in worker; larger outputs fail without truncation; no message or payment',schema:financialJobInput,acceptedDescription:'Report queued,not generated. Current source access is rechecked at execution and download.'},
- {path:'/api/v1/reports/jobs',method:'get',summary:'Own report-job configurations and states,or school master oversight; tenant/owner filtering precedes bounded paging',querySchema:paging},
+ {path:'/api/v1/reports/presets/{id}/queue',method:'post',summary:'Queue an exact reviewed active financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV preset using current caller rights; freeze relative dates once at enqueue,retain provenance,ignore label-only revisions but cancel on any intervening material change; valid one-off non-page overrides do not edit saved settings',schema:presetQueueInput,acceptedDescription:'Requester-bound report queued with frozen date filters,not generated or sent.'},
+ {path:'/api/v1/reports/jobs',method:'post',summary:'Queue a complete financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority;20pending jobs per person,one-day execution deadline,10,000parent/20,000remittance-bucket maxima and4MiB result ceiling,private paid-tax-year500payment/20,000line ceiling,and separate opt-in worker; larger outputs fail without truncation; no message or payment',schema:financialJobInput,acceptedDescription:'Report queued,not generated. Current source access is rechecked at execution and download.'},
+ {path:'/api/v1/reports/jobs',method:'get',summary:'Own report-job configurations and states,or school master oversight; tenant/owner and private paid-tax-profile filtering precede bounded paging',querySchema:paging},
  {path:'/api/v1/reports/jobs/{id}',method:'get',summary:'Own or school-master report-job state,current-source-authorized hash/byte metadata and native failure-observation link without credentials,leases,SQL errors or report content; reading is not retry or repair'},
  {path:'/api/v1/reports/jobs/{id}/cancel',method:'post',summary:'Owner or school master cancels queued/running report; final native lease fence prevents a result from a cancelled generation',schema:empty},
  {path:'/api/v1/reports/jobs/{id}/retry',method:'post',summary:'Owner or school master creates one new requester-bound recovery job for a failed/non-intentional-cancelled job; preserve frozen dates,preset provenance and original failure;current permissions/preset checks apply,never reuse another credential or restart the schedule',schema:retryInput,acceptedDescription:'New recovery job queued;original failure and issue remain unchanged. A failed recovery may itself be retried.'},
