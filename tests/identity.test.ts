@@ -124,7 +124,12 @@ async function fixture(options:{throughSchema?:number}={}) {
       try{return await fn(worker);}finally{if(pg.runtime)await worker.db.destroy();await pg.exec('RESET ROLE');}
     });
   }
-  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,business,platform,close,gateway,api,resolvePlatform:platformHumanResolver(auth,store,config)};
+  async function replaceEmail(user:Awaited<ReturnType<typeof invitation>>,target:string){
+    const r=await request('/email-change/request',{email:target,password},user.jar);assert.equal(r.response.status,202,JSON.stringify(r.body));
+    const current=messages.emails.findLast(m=>m.to===user.email&&m.text.startsWith('Email change approval code:'))!.text.match(/code: (\d{8})/)![1];assert.equal((await request('/email-change/authorize',{requestId:r.body.requestId,code:current},user.jar)).response.status,202);
+    const next=messages.emails.findLast(m=>m.to===target&&m.text.startsWith('New email verification code:'))!.text.match(/code: (\d{8})/)![1];const done=await request('/email-change/confirm',{requestId:r.body.requestId,code:next},user.jar);assert.equal(done.response.status,200,JSON.stringify(done.body));user.email=target;return done;
+  }
+  return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,replaceEmail,business,platform,close,gateway,api,resolvePlatform:platformHumanResolver(auth,store,config)};
 }
 
 test('human identity: real library authentication and protected business access',async t=>{
@@ -499,6 +504,125 @@ test('phone change native password-first race refuses revoked proof without part
    assert.equal((await f.pg.query('SELECT * FROM identity.session WHERE "userId"=$1',[user.id])).rows.length,0);
   });
   assert.equal((await f.signin(user,user.jar,nextPassword)).response.status,200);
+ }finally{await f.close();}
+});
+
+test('email change pending invitation remains usable by the same verified identity without rewriting its approved recipient',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false),originalEmail=user.email;await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);
+  assert.equal(await f.store.schemaReady(),true);
+  const target='changed-before-acceptance@example.test',r=await f.request('/email-change/request',{email:target,password},user.jar);assert.equal(r.response.status,202);
+  const oldCode=f.messages.emails.findLast(m=>m.to===originalEmail&&m.text.startsWith('Email change approval code:'))!.text.match(/code: (\d{8})/)![1];assert.equal((await f.request('/email-change/authorize',{requestId:r.body.requestId,code:oldCode},user.jar)).response.status,202);
+  const newCode=f.messages.emails.findLast(m=>m.to===target)!.text.match(/code: (\d{8})/)![1];assert.equal((await f.request('/email-change/confirm',{requestId:r.body.requestId,code:newCode},user.jar)).response.status,200);
+  user.email=target;assert.equal((await f.signin(user)).response.status,200);const accepted=await f.request('/accept-invitation',{invitation:user.token},user.jar);assert.equal(accepted.response.status,200,JSON.stringify(accepted.body));assert.equal(accepted.body.academyId,user.academy);
+  await f.admin(async()=>{const p=(await f.pg.query<{auth_user_id:string;email:string}>('SELECT auth_user_id,email FROM public.people WHERE academy_id=$1 AND id=$2',[user.academy,user.person])).rows[0];assert.equal(p.auth_user_id,user.id);assert.equal(p.email,originalEmail);assert.equal((await f.pg.query<{email:string}>('SELECT email FROM identity.invites WHERE token_hash=$1',[f.store.digest(user.token)])).rows[0].email,originalEmail);});
+ }finally{await f.close();}
+});
+
+test('email change pending invitation is identity-bound across repeated changes and cannot be taken by a new holder of the old email',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false),old=user.email;await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);await f.replaceEmail(user,'first-continuity@example.test');await f.signin(user);await f.replaceEmail(user,'second-continuity@example.test');await f.signin(user);
+  await f.admin(async()=>{const row=(await f.pg.query<{user_id:string;email:string;academy_id:string;person_id:string}>('SELECT * FROM identity.invite_account_bindings WHERE token_hash=$1',[f.store.digest(user.token)])).rows[0];assert.equal(row.user_id,user.id);assert.equal(row.email,old);assert.equal(row.academy_id,user.academy);assert.equal(row.person_id,user.person);await f.pg.query('UPDATE identity.retired_emails SET expires_at=clock_timestamp()-interval \'1 second\' WHERE email=$1',[old]);});
+  const other=await f.invitation(false);await f.admin(async()=>{await f.pg.query('UPDATE identity.invites SET email=$2 WHERE token_hash=$1',[f.store.digest(other.token),old]);await f.pg.query('UPDATE public.people SET email=$3 WHERE academy_id=$1 AND id=$2',[other.academy,other.person,old]);});other.email=old;await f.signup(other);await f.verifyEmail(other);await f.signin(other);await f.phone(other);await f.signin(other);
+  assert.equal((await f.request('/accept-invitation',{invitation:user.token},other.jar)).body.error.code,'INVALID_INVITATION');assert.equal(await f.store.invite(user.token,old),null,'bound token cannot create a replacement account');
+  assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);assert.equal((await f.request('/accept-invitation',{invitation:other.token},other.jar)).response.status,200);
+ }finally{await f.close();}
+});
+
+test('email change pending master invitation still requires mandatory MFA and the unchanged sole-master person',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(true);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);await f.mfa(user);await f.replaceEmail(user,'pending-master-continuity@example.test');assert.equal((await f.signin(user)).body.twoFactorRedirect,true);
+  assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,401);await f.mfa(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+  await f.admin(async()=>{assert.equal((await f.pg.query<{master_person_id:string}>('SELECT master_person_id FROM public.academies WHERE id=$1',[user.academy])).rows[0].master_person_id,user.person);assert.equal((await f.pg.query<{auth_user_id:string}>('SELECT auth_user_id FROM public.people WHERE academy_id=$1 AND id=$2',[user.academy,user.person])).rows[0].auth_user_id,user.id);});
+ }finally{await f.close();}
+});
+
+test('email change pending master invitation enables mandatory MFA for an existing ordinary account without lending cross-school authority',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);
+  const master=await f.invitation(true);await f.admin(async()=>{await f.pg.query('UPDATE identity.invites SET email=$2 WHERE token_hash=$1',[f.store.digest(master.token),user.email]);await f.pg.query('UPDATE public.people SET email=$3 WHERE academy_id=$1 AND id=$2',[master.academy,master.person,user.email]);assert.equal((await f.pg.query<{mfaRequired:boolean}>('SELECT "mfaRequired" FROM identity."user" WHERE id=$1',[user.id])).rows[0].mfaRequired,false);});
+  await f.replaceEmail(user,'ordinary-to-master-continuity@example.test');assert.equal((await f.signin(user)).response.status,200);
+  assert.equal((await f.request('/accept-invitation',{invitation:master.token},user.jar)).body.error.code,'MFA_REQUIRED');assert.equal((await f.request('/get-session',undefined,user.jar)).body,null);assert.equal((await f.signin(user)).body.twoFactorRedirect,true);await f.mfa(user);
+  assert.equal((await f.request('/accept-invitation',{invitation:master.token},user.jar)).response.status,200);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+  assert.equal((await f.business(user,'hubs',undefined,master.academy)).status,200);assert.equal((await f.business(user)).status,403,'master in one school is not master of another school');
+  await f.admin(async()=>{assert.equal((await f.pg.query<{master_person_id:string}>('SELECT master_person_id FROM public.academies WHERE id=$1',[master.academy])).rows[0].master_person_id,master.person);assert.equal((await f.pg.query<{auth_user_id:string}>('SELECT auth_user_id FROM public.people WHERE academy_id=$1 AND id=$2',[master.academy,master.person])).rows[0].auth_user_id,user.id);});
+ }finally{await f.close();}
+});
+
+test('email change pending invitation continuity does not bypass temporary school or person unavailability',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);
+  await f.admin(async()=>{await f.pg.query('UPDATE public.academies SET status=\'read_only\' WHERE id=$1',[user.academy]);await f.pg.query('UPDATE public.people SET status=\'disabled\' WHERE academy_id=$1 AND id=$2',[user.academy,user.person]);});
+  await f.replaceEmail(user,'temporarily-unavailable@example.test');await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).body.error.code,'INVALID_INVITATION');
+  await f.admin(()=>f.pg.query('UPDATE public.people SET status=\'pending\' WHERE academy_id=$1 AND id=$2',[user.academy,user.person]));assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).body.error.code,'ACADEMY_UNAVAILABLE');
+  await f.admin(()=>f.pg.query('UPDATE public.academies SET status=\'active\' WHERE id=$1',[user.academy]));assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+ }finally{await f.close();}
+});
+
+test('email change pending invitation pins source,retains revocation,and cleans expired private bindings without raw identity access',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);await f.replaceEmail(user,'revoked-continuity@example.test');await f.signin(user);
+  for(const role of ['kavosh_identity','kavosh_runtime','kavosh_delivery','kavosh_automation_worker'])await f.admin(async()=>{await f.pg.exec('BEGIN;SET LOCAL ROLE '+role);try{await assert.rejects(f.pg.query('SELECT * FROM identity.invite_account_bindings'),/permission denied/i);}finally{await f.pg.exec('ROLLBACK');}});
+  await f.admin(async()=>{await f.pg.exec('BEGIN;SET LOCAL ROLE kavosh_identity_policy');try{await assert.rejects(f.pg.query('INSERT INTO identity.invite_account_bindings(token_hash,user_id,academy_id,person_id,email,master,expires_at) SELECT token_hash,user_id,academy_id,person_id,email,master,expires_at FROM identity.invite_account_bindings WHERE token_hash=$1',[f.store.digest(user.token)]),/INVITATION_CONTACT_CHANGE_REQUIRED/);}finally{await f.pg.exec('ROLLBACK');}});
+  await f.admin(async()=>{await f.pg.exec('BEGIN');try{await assert.rejects(f.pg.query('UPDATE identity.invite_account_bindings SET user_id=$2 WHERE token_hash=$1',[f.store.digest(user.token),randomUUID()]),/INVITATION_CONTACT_BINDING_IMMUTABLE/);}finally{await f.pg.exec('ROLLBACK');}await f.pg.exec('BEGIN');try{await assert.rejects(f.pg.query('DELETE FROM identity.invite_account_bindings WHERE token_hash=$1',[f.store.digest(user.token)]),/INVITATION_CONTACT_BINDING_IMMUTABLE/);}finally{await f.pg.exec('ROLLBACK');}});
+  await f.admin(()=>f.pg.query('UPDATE identity.invites SET expires_at=expires_at+interval \'1 second\' WHERE token_hash=$1',[f.store.digest(user.token)]));assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).body.error.code,'INVALID_INVITATION','even unexpired source replacement cannot silently inherit binding');
+  await f.worker(async worker=>{await worker.query('SELECT identity.cleanup_expired_auth()');});await f.admin(async()=>{assert.equal((await f.pg.query('SELECT * FROM identity.invite_account_bindings WHERE token_hash=$1',[f.store.digest(user.token)])).rows.length,1,'cleanup must not restore address-only fallback for a still-live source');});
+  await f.admin(()=>f.pg.query('UPDATE identity.invites SET expires_at=clock_timestamp()-interval \'8 days\' WHERE token_hash=$1',[f.store.digest(user.token)]));assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).body.error.code,'INVALID_INVITATION');
+  await f.worker(async worker=>{await worker.query('SELECT identity.cleanup_expired_auth()');});
+  await f.admin(async()=>{assert.equal((await f.pg.query('SELECT * FROM identity.invite_account_bindings WHERE token_hash=$1',[f.store.digest(user.token)])).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM identity.invites WHERE token_hash=$1',[f.store.digest(user.token)])).rows.length,0);assert.equal((await f.pg.query<{auth_user_id:null}>('SELECT auth_user_id FROM public.people WHERE academy_id=$1 AND id=$2',[user.academy,user.person])).rows[0].auth_user_id,null);assert.equal((await f.pg.query("SELECT * FROM identity.security_events WHERE user_id=$1 AND event='invitation.contact_bound'",[user.id])).rows.length,1);});
+ }finally{await f.close();}
+});
+
+test('email change pending invitation late audit failure rolls back contacts sessions retirement continuity and observations together',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false),old=user.email;await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);
+  const target='atomic-continuity@example.test',r=await f.request('/email-change/request',{email:target,password},user.jar);assert.equal(r.response.status,202);const oldCode=f.messages.emails.findLast(m=>m.to===old&&m.text.startsWith('Email change approval code:'))!.text.match(/code: (\d{8})/)![1];assert.equal((await f.request('/email-change/authorize',{requestId:r.body.requestId,code:oldCode},user.jar)).response.status,202);const code=f.messages.emails.findLast(m=>m.to===target)!.text.match(/code: (\d{8})/)![1];
+  await f.admin(()=>f.pg.exec("CREATE FUNCTION identity.synthetic_continuity_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'SYNTHETIC_CONTINUITY_AUDIT_FAILURE';END $$;CREATE TRIGGER synthetic_continuity_audit_failure BEFORE INSERT ON identity.security_events FOR EACH ROW WHEN(NEW.event='invitation.contact_bound') EXECUTE FUNCTION identity.synthetic_continuity_audit_failure()"));
+  try{assert.equal((await f.request('/email-change/confirm',{requestId:r.body.requestId,code},user.jar)).response.status,503);}finally{await f.admin(()=>f.pg.exec('DROP TRIGGER synthetic_continuity_audit_failure ON identity.security_events;DROP FUNCTION identity.synthetic_continuity_audit_failure()'));}
+  await f.admin(async()=>{
+   assert.equal((await f.pg.query<{email:string}>('SELECT email FROM identity."user" WHERE id=$1',[user.id])).rows[0].email,old);assert.equal((await f.pg.query('SELECT * FROM identity.session WHERE "userId"=$1',[user.id])).rows.length,1);
+   for(const table of ['invite_account_bindings','retired_emails','contact_change_events'])assert.equal((await f.pg.query('SELECT * FROM identity.'+table)).rows.length,0,table);assert.equal((await f.pg.query("SELECT * FROM identity.security_events WHERE user_id=$1 AND event IN('email.changed','invitation.contact_bound')",[user.id])).rows.length,0);
+  });
+  assert.equal((await f.request('/email-change/confirm',{requestId:r.body.requestId,code},user.jar)).response.status,200);user.email=target;await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+ }finally{await f.close();}
+});
+
+test('email change pending invitation continuity does not wait on school invitation row locks',{skip:!process.env.TEST_DATABASE_URL,timeout:10000},async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);
+  const target='nonblocking-continuity@example.test',r=await f.request('/email-change/request',{email:target,password},user.jar);assert.equal(r.response.status,202);const oldCode=f.messages.emails.findLast(m=>m.to===user.email&&m.text.startsWith('Email change approval code:'))!.text.match(/code: (\d{8})/)![1];assert.equal((await f.request('/email-change/authorize',{requestId:r.body.requestId,code:oldCode},user.jar)).response.status,202);const code=f.messages.emails.findLast(m=>m.to===target)!.text.match(/code: (\d{8})/)![1];
+  let pending!:ReturnType<typeof f.request>;await f.admin(async()=>{
+   await f.pg.exec('BEGIN');let timer:ReturnType<typeof setTimeout>|undefined;try{
+    await f.pg.query('SELECT token_hash FROM identity.invites WHERE token_hash=$1 FOR UPDATE',[f.store.digest(user.token)]);pending=f.request('/email-change/confirm',{requestId:r.body.requestId,code},user.jar);
+    const result=await Promise.race([pending,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),2000);})]);assert.ok(result,'Contact confirmation must return BEFORE releasing the held invitation row');assert.equal(result.response.status,200,JSON.stringify(result.body));
+   }finally{if(timer)clearTimeout(timer);await f.pg.exec('ROLLBACK');}
+  });await pending;user.email=target;await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+ }finally{await f.close();}
+});
+
+test('email change pending invitation owner repair does not manufacture continuity from an unverified former email',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(false);await f.signup(user);
+  await f.admin(async()=>{await f.pg.query('UPDATE identity."user" SET email=\'unverified-repair@example.test\' WHERE id=$1',[user.id]);assert.equal((await f.pg.query('SELECT * FROM identity.invite_account_bindings')).rows.length,0);});
+ }finally{await f.close();}
+});
+
+test('email change pending invitation actual199to200 upgrade preserves source identities permissions and helper ownership without backfill',async()=>{
+ const f=await fixture({throughSchema:199});try{
+  const user=await f.invitation(false);await f.signup(user);await f.verifyEmail(user);await f.signin(user);await f.phone(user);await f.signin(user);const phone=await f.request('/phone-change/request',{phoneNumber:'+16479990801',password},user.jar);assert.equal(phone.response.status,202);
+  const beforeUpgrade=await f.request('/email-change/request',{email:'not-yet-migrated@example.test',password},user.jar);assert.equal(beforeUpgrade.response.status,503);assert.equal(beforeUpgrade.body.error.code,'AUTH_SCHEMA_NOT_CURRENT');
+  // Arrange a genuine old native request,not a current API write that must
+  // refuse this historical schema. Viewing/aborting it must remain available.
+  const oldRequest=randomUUID(),oldSession=(await f.request('/get-session',undefined,user.jar)).body.session.id;assert.equal(await f.store.prepareEmailChange(user.id,oldSession,oldRequest,'old-native-request@example.test','a'.repeat(64)),'PREPARED');
+  for(const path of ['/email-change/authorize','/email-change/confirm']){const blocked=await f.request(path,{requestId:oldRequest,code:'00000000'},user.jar);assert.equal(blocked.response.status,503);assert.equal(blocked.body.error.code,'AUTH_SCHEMA_NOT_CURRENT');}
+  assert.equal((await f.request('/email-change',undefined,user.jar)).body.data.requestId,oldRequest);assert.equal((await f.request('/email-change/cancel',{requestId:oldRequest},user.jar)).response.status,200);
+  await f.admin(async()=>{
+   const tables=['identity."user"','identity.session','identity.account','identity.invites','identity.security_events','identity.phone_change_requests','identity.contact_change_events','identity.contact_change_targets','public.people','public.academies','public.role_permissions','public.role_assignments'];async function snapshot(){const rows=[];for(const table of tables)rows.push({table,rows:(await f.pg.query('SELECT to_jsonb(x) r FROM '+table+' x ORDER BY to_jsonb(x)::text')).rows});return rows;}
+   const before=await snapshot(),helpers="SELECT oid,proowner,proacl FROM pg_proc WHERE oid=ANY(ARRAY['identity.accept_invite(text,uuid,uuid)'::regprocedure,'identity.inspect_invite(text,text)'::regprocedure,'identity.cleanup_expired_auth()'::regprocedure,'identity.finish_email_change()'::regprocedure,'public.lock_human(uuid,uuid)'::regprocedure]) ORDER BY oid",acl=(await f.pg.query(helpers)).rows;
+   await f.pg.exec(await readFile(new URL('../db/migrations/200_invitation_contact_continuity.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(helpers)).rows,acl);assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,200);await upgradeToCurrent(f.pg);assert.equal((await f.pg.query('SELECT * FROM identity.invite_account_bindings')).rows.length,0);
+  });
+  const code=f.messages.emails.findLast(m=>m.to===user.email&&m.text.startsWith('Phone change approval code:'))!.text.match(/code: (\d{8})/)![1];assert.equal((await f.request('/phone-change/authorize',{requestId:phone.body.requestId,code},user.jar)).response.status,200);
+  await f.replaceEmail(user,'upgraded-continuity@example.test');await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
  }finally{await f.close();}
 });
 

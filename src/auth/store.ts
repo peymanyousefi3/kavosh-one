@@ -1,5 +1,6 @@
 import { createHmac } from 'node:crypto';
 import { CompiledQuery, type Kysely } from 'kysely';
+import { expectedSchemaRevision } from '../core/database.ts';
 
 export class IdentityStore {
   constructor(readonly db: Kysely<unknown>, private secret: string) {}
@@ -27,6 +28,7 @@ export class IdentityStore {
     if (!result.rows[0]?.safe) throw new Error('UNSAFE_IDENTITY_ROLE');
   }
   digest(value: string) { return createHmac('sha256',this.secret).update(value).digest('hex'); }
+  async schemaReady(){try{const r=(await this.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0]?.revision;return typeof r==='number'&&Number.isInteger(r)&&r>=expectedSchemaRevision;}catch(e){if(e&&typeof e==='object'&&'code' in e&&(e.code==='42501'||e.code==='42883'))return false;throw e;}}
   async safeDelivery() {
     const result=await this.query<{safe:boolean}>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls
     AND pg_has_role(current_user,'kavosh_delivery','member')

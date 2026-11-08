@@ -11,6 +11,9 @@ export async function emailChange(path:string,input:Record<string,unknown>,reque
  if(!await store.sessionReady(userId,sessionId))throw new ApiError(403,'VERIFICATION_REQUIRED');
  if(path==='/email-change')return {status:200,body:{data:await store.emailChange(userId,sessionId),emailChanged:false}};
  if(path==='/email-change/cancel'){if(!await store.cancelEmailChange(userId,sessionId,String(input.requestId)))throw new ApiError(409,'INVALID_EMAIL_CHANGE');return {status:200,body:{status:true,cancelled:true,emailChanged:false}};}
+ // Status/cancellation remain available. New proof/mutation steps must not
+ // silently use old native triggers during rollout and orphan an invitation.
+ if(!await store.schemaReady())throw new ApiError(503,'AUTH_SCHEMA_NOT_CURRENT');
  if(Date.now()-new Date(session.session.createdAt).getTime()>900000)throw new ApiError(403,'FRESH_SIGN_IN_REQUIRED');
  const digest=(stage:string,requestId:string,code:string)=>store.digest('email-change:'+stage+':'+userId+':'+sessionId+':'+requestId+':'+code);
  if(path==='/email-change/confirm'){

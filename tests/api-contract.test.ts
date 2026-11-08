@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('invitation acceptance contract remains a private-token and verified-session operation without caller identity recipient or role overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/auth/accept-invitation'].post;assert.deepEqual(op.security,[{humanSession:[]}]);const schema=op.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(schema.properties),['invitation']);assert.equal(schema.additionalProperties,false);assert.equal(schema.properties.invitation.maxLength,100);assert.ok(op.description.includes('SAME auth identity'));assert.ok(op.description.includes('expiry/revocation'));
+});
+
 test('account security contract provides one scoped metadata history and own aliases with strict bounded cursors and no contact-value editing',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/me/account-security','/api/v1/people/{id}/account-security']){assert.ok(api.paths[path].get);assert.equal(api.paths[path].post,undefined);const params=api.paths[path].get.parameters;assert.equal(params.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(params.find((p:any)=>p.name==='field').schema.enum,['email','phone']);assert.ok(api.paths[path+'/{eventId}'].get);}assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('account_security'));
 });
