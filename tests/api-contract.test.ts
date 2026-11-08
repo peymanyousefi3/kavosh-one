@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('profile moderation contract separates exact draft and moderation versions and private history from self authoring',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/community/profiles/{id}/moderation'],s=p.post.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(s.properties).sort(),['expectedProfileVersion','expectedVersion','reason','restricted']);assert.equal(s.additionalProperties,false);assert.equal(s.properties.expectedVersion.minimum,0);assert.equal(s.properties.expectedVersion.maximum,2147483646);assert.equal(s.properties.expectedProfileVersion.exclusiveMinimum,0);assert.equal(s.properties.restricted.type,'boolean');assert.equal(Object.hasOwn(s.properties.restricted,'default'),false);const history=api.paths['/api/v1/community/profiles/{id}/moderation/history'].get;assert.equal(history.parameters.find((v:any)=>v.name==='limit').schema.maximum,20);
+});
+
 test('self avatar API requires a human session and only a bounded current profile edition',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),operation=api.paths['/api/v1/me/community-profile/avatar-download-link'].post,schema=operation.requestBody.content['application/json'].schema;assert.deepEqual(operation.security,[{humanSession:[],academySelection:[]}]);assert.deepEqual(Object.keys(schema.properties),['expectedProfileVersion']);assert.equal(schema.additionalProperties,false);assert.equal(schema.properties.expectedProfileVersion.exclusiveMinimum,0);assert.equal(schema.properties.expectedProfileVersion.maximum,2147483647);
 });
