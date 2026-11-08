@@ -28,7 +28,7 @@ export type InspectionResult=z.infer<typeof resultSchema>;
 export async function assertFileWorkerRole(db:Connection) {
   const result=await db.query<{safe:boolean}>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls
    AND pg_has_role(current_user,'kavosh_file_worker','member')
-   AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname IN ('kavosh_signature_ingest','kavosh_signature_policy','kavosh_signature_result_worker','kavosh_signature_result_policy') AND pg_has_role(current_user,b.oid,'member'))
+   AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname IN ('kavosh_signature_ingest','kavosh_signature_policy','kavosh_signature_result_worker','kavosh_signature_result_policy','kavosh_signature_completion_worker','kavosh_signature_completion_policy','kavosh_signature_evidence_worker','kavosh_signature_evidence_policy') AND pg_has_role(current_user,b.oid,'member'))
    AND NOT EXISTS(SELECT 1 FROM pg_roles blocked WHERE blocked.rolname IN ('kavosh_runtime','kavosh_identity','kavosh_delivery','kavosh_identity_policy','kavosh_file_policy') AND pg_has_role(current_user,blocked.oid,'member'))
    AND NOT has_schema_privilege(current_user,'auth_private','usage') AND NOT has_schema_privilege(current_user,'identity','usage') AND NOT has_schema_privilege(current_user,'public','create')
    AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname='platform_private' AND has_schema_privilege(current_user,n.oid,'usage'))

@@ -6,16 +6,22 @@ import { ApiError } from '../core/policy.ts';
 import { privateR2 } from './r2.ts';
 import { r2Connection,r2TargetId,type R2Connection } from './r2-config.ts';
 import { clamdConfiguration,type ClamdConfiguration } from './clamav.ts';
-import { clamdDatabasePolicy,scanWithFreshClamd,type ClamdDatabasePolicy } from './clamav-database.ts';
+import { clamdDatabasePolicy,clamdDatabaseObservation,scanWithFreshClamd,type ClamdDatabasePolicy } from './clamav-database.ts';
 import { pdfServiceConfiguration,validateSignedEvidencePdfViaService } from '../files/pdf-service.ts';
-import { pdfValidationMatches } from '../files/pdf-validation.ts';
+import { pdfValidationMatches,signedEvidencePdfValidationSchema } from '../files/pdf-validation.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 export const signatureEvidenceInspectionTaskSchema=z.object({academyId:uuid,evidenceId:uuid,sourceFingerprint:hash,kind:z.enum(['document','audit']),artifactId:uuid,storageTargetId:hash,bytes:z.number().int().min(9).max(10485760),sha256:hash,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict();
 const settings=z.object({timeoutMs:z.number().int().min(1).max(120000).default(30000),signal:z.instanceof(AbortSignal).optional()}).strict();
 const markers={safeToServe:false,admissionCleared:false,cryptographicValidityVerified:false} as const;
+const flags={safeToServe:z.literal(false),admissionCleared:z.literal(false),cryptographicValidityVerified:z.literal(false)},measured={bytes:z.number().int().min(9).max(10485760),sha256:hash,etag:signatureEvidenceInspectionTaskSchema.shape.etag};
+export const signatureEvidenceInspectionResultSchema=z.discriminatedUnion('outcome',[
+ z.object({outcome:z.enum(['screened','rejected']),...measured,...flags,databaseObservation:clamdDatabaseObservation,pdfValidation:signedEvidencePdfValidationSchema}).strict().refine(v=>v.outcome===v.pdfValidation.outcome&&pdfValidationMatches(v.pdfValidation,v.bytes,v.sha256)),
+ z.object({outcome:z.literal('detected'),...measured,...flags}).strict(),z.object({outcome:z.literal('content_mismatch'),...flags}).strict(),
+ z.object({outcome:z.literal('unavailable'),reason:z.enum(['INTERRUPTED','TIMEOUT','SCANNER_UNAVAILABLE','PDF_SERVICE_UNAVAILABLE','STORAGE_UNAVAILABLE']),...flags}).strict()
+]);
 let active=0;
-// Internal IO only. A future durable controller must derive this exact task
+// Internal IO only. The isolated durable controller derives this exact task
 // from the ORIGINAL retained evidence row,not browser IDs or caller booleans.
 // Explicit separate read-only evidence credentials and isolated local services
 // are operator requirements;no URL,write,provider call,daemon or auto-enable.
