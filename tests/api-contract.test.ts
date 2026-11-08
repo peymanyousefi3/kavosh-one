@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('worker service conflicts have bounded current-rights reads without correction overwrite or send authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/payroll/work-signature-send-requests/{id}/attempts/{attemptId}/dispatch/conflicts',op=api.paths[path].get;assert.equal(api.paths[path].post,undefined);assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.match(op.parameters.find((p:any)=>p.name==='after').schema.pattern,/a-f0-9/);assert.match(op.summary,/current work\/template\/file view rights/);assert.equal(op.parameters.some((p:any)=>['providerVerified','state','actorId','documentId'].includes(p.name)),false);
+});
+
 test('worker start requires an exact private original and bounded actor-only observations cannot override signing or delivery',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/payroll/work-signature-send-requests/{id}/attempts/{attemptId}/dispatch',s=api.paths[path].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.ok(s.required.includes('original'));assert.deepEqual(Object.keys(s.properties.original.properties).sort(),['copyId','sourceFingerprint']);assert.equal(s.properties.original.additionalProperties,false);assert.ok(api.paths[path].get);assert.match(api.paths[path].post.summary,/replay always409/);const states=api.paths[path+'/outcome'].post.requestBody.content['application/json'].schema.oneOf;assert.deepEqual(states.map((v:any)=>v.properties.state.const).sort(),['accepted_for_processing','not_attempted','outcome_unknown']);for(const variant of states){assert.equal(variant.additionalProperties,false);for(const key of ['source_current','actorId','providerVerified','signedByBothParties'])assert.equal(variant.properties[key],undefined);}
 });

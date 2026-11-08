@@ -16,12 +16,17 @@ test('result sink preflight checks native policy grants and refuses an unrelated
   await assert.rejects(probeSignatureResultSink(database),{code:'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE'});
  }finally{await f.pg.exec('RESET ROLE');await f.pg.exec('GRANT INSERT ON public.signature_transport_receipts TO kavosh_signature_result_policy');await f.pg.close();}
 });
+test('worker-contract sink uses fixed separate targets and checks its own grants without weakening enrollment preflight',async()=>{
+ const f=await operationsFixture(),database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_signature_result_worker');return c;}};
+ try{await probeSignatureResultSink(database,undefined,'worker_services');if(!f.pg.runtime)await f.pg.exec('RESET ROLE');await assert.rejects(probeSignatureResultSink(database,{academyId:f.a,startId:randomUUID(),sourceFingerprint:'a'.repeat(64)},'worker_services'),{code:'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE'});if(!f.pg.runtime)await f.pg.exec('RESET ROLE');await f.pg.exec('REVOKE INSERT ON public.work_signature_transport_receipts FROM kavosh_signature_result_policy');await assert.rejects(probeSignatureResultSink(database,undefined,'worker_services'),{code:'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE'});if(!f.pg.runtime)await f.pg.exec('RESET ROLE');await probeSignatureResultSink(database);
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.exec('GRANT INSERT ON public.work_signature_transport_receipts TO kavosh_signature_result_policy');await f.pg.close();}
+});
 test('receipt connection failures never expose operator credentials or private diagnostics',async()=>{
  const database:Database={async connect(){throw new Error('PRIVATE synthetic operator credential');}};await assert.rejects(recordSignatureTransportReceipt(database,{academyId:randomUUID(),startId:randomUUID(),workerId:randomUUID(),outcome}),e=>{assert.equal((e as {code:string}).code,'SIGNATURE_TRANSPORT_RECEIPT_UNAVAILABLE');assert.doesNotMatch(String(e),/PRIVATE|credential/);return true;});
 });
 test('result recorder strictly rejects invented signing proof,private payloads and malformed identities before connecting',async()=>{
  let calls=0;const database:Database={async connect(){calls++;throw new Error('MUST_NOT_CONNECT');}},valid={academyId:randomUUID(),startId:randomUUID(),workerId:randomUUID(),outcome};
- for(const raw of [{...valid,academyId:'other'},{...valid,privateBody:'PRIVATE'},{...valid,outcome:{...outcome,providerVerified:true}},{...valid,outcome:{...outcome,deliveryVerified:true}},{...valid,outcome:{...outcome,state:'completed'}},{...valid,outcome:{...outcome,reconciliationRequired:false}},{...valid,outcome:{...outcome,documentId:randomUUID()}},{...valid,outcome:{...outcome,state:'accepted_for_processing'}}])await assert.rejects(recordSignatureTransportReceipt(database,raw),{code:'INVALID_SIGNATURE_TRANSPORT_RECEIPT',status:400});assert.equal(calls,0);
+ for(const raw of [{...valid,purpose:'arbitrary_database'},{...valid,academyId:'other'},{...valid,privateBody:'PRIVATE'},{...valid,outcome:{...outcome,providerVerified:true}},{...valid,outcome:{...outcome,deliveryVerified:true}},{...valid,outcome:{...outcome,state:'completed'}},{...valid,outcome:{...outcome,reconciliationRequired:false}},{...valid,outcome:{...outcome,documentId:randomUUID()}},{...valid,outcome:{...outcome,state:'accepted_for_processing'}}])await assert.rejects(recordSignatureTransportReceipt(database,raw),{code:'INVALID_SIGNATURE_TRANSPORT_RECEIPT',status:400});assert.equal(calls,0);
 });
 test('receipt status mapping never hides a conflict behind a not-attempted outcome (isolated logic,not role evidence)',async()=>{
  for(const status of ['recorded_conflict','duplicate_conflict','conflict']){
@@ -29,11 +34,11 @@ test('receipt status mapping never hides a conflict behind a not-attempted outco
   const result=await recordSignatureTransportReceipt(database,{academyId:randomUUID(),startId:randomUUID(),workerId:randomUUID(),outcome:{state:'not_attempted',automaticRetryAllowed:false,reconciliationRequired:false,deliveryVerified:false}});assert.equal(result.recorded,true);assert.equal(result.conflict,true);assert.equal(result.reconciliationRequired,true);assert.equal(result.providerVerified,false);assert.equal(released,true);
  }
 });
-test('result role has one narrow entry point,no table or identity access,and cannot record unknown authority',async()=>{
+test('result role has only fixed receipt and target entrypoints,no table or identity access,and cannot record unknown authority',async()=>{
  const f=await operationsFixture();try{
   await f.pg.exec('SET ROLE kavosh_signature_result_worker');try{
    await assertSignatureResultRole({query:f.pg.query.bind(f.pg),release(){}});
-   for(const table of ['people','signature_dispatch_starts','signature_transport_receipts','signature_transport_conflicts','outbox_events'])await assert.rejects(f.pg.exec('SELECT * FROM public.'+table),/permission denied/i);
+   for(const table of ['people','signature_dispatch_starts','signature_transport_receipts','signature_transport_conflicts','work_signature_dispatch_starts','work_signature_transport_receipts','work_signature_transport_conflicts','outbox_events'])await assert.rejects(f.pg.exec('SELECT * FROM public.'+table),/permission denied/i);
    await assert.rejects(f.pg.exec('SELECT email FROM identity."user"'),/permission denied/i);
    await assert.rejects(f.pg.query('SELECT * FROM public.signer_verification_status($1)',[f.actors.staff.person]),/permission denied/i);
   }finally{await f.pg.exec('RESET ROLE');}

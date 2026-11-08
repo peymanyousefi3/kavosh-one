@@ -6,6 +6,9 @@ import { mintToken } from '../src/core/tokens.ts';
 
 const config=()=>({origin:'https://control.example',academyId:randomUUID(),token:mintToken()});
 const json=(value:unknown,status=200)=>Response.json(value,{status});
+test('worker signing control chooses only its fixed payroll workspace and never accepts a caller-selected path',async()=>{
+ const c={...config(),purpose:'worker_services'},request=randomUUID(),attempt=randomUUID();let calls=0;const api=createSigningControlApi(c,async(url,options)=>{calls++;assert.ok(new URL(String(url)).pathname.startsWith('/api/v1/payroll/work-signature-send-requests/'+request));assert.equal(options?.redirect,'error');assert.equal(options?.credentials,'omit');return json({data:{}});});assert.equal(api.purpose,'worker_services');await api.intention(request);await api.source(request,randomUUID());await api.attempts(request);await api.reserve(request,{},randomUUID());await api.start(request,attempt,{},randomUUID());assert.equal(calls,5);assert.throws(()=>createSigningControlApi({...c,purpose:'../other'},async()=>json({})),{code:'SIGNING_CONTROL_NOT_CONFIGURED'});
+});
 test('signing control restricts origin and identifiers before any network request',async()=>{
  let calls=0;const send:typeof fetch=async()=>{calls++;return json({});},c=config();
  for(const origin of ['http://control.example','https://user:secret@control.example','https://control.example/private','https://control.example/?token=secret','https://control.example/#private'])assert.throws(()=>createSigningControlApi({...c,origin},send),{code:'SIGNING_CONTROL_NOT_CONFIGURED'});
