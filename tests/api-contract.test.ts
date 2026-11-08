@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family installment status documents only a bounded comparison date,not money or historical source overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/tuition-invoices/{invoiceId}/installment-status',op=api.paths[path].get;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[path].post,undefined);assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name),['overdueOn']);assert.match(op.summary,/NOT a historical/);
+});
+
 test('family posted invoices and recorded payments are human-only bounded reads without paid overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/tuition-invoices';for(const p of [path,path+'/{invoiceId}',path+'/{invoiceId}/receipts']){assert.deepEqual(api.paths[p].get.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[p].post,undefined);}for(const p of [path,path+'/{invoiceId}/receipts'])assert.equal(api.paths[p].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(api.paths[path+'/{invoiceId}/receipts'].get.parameters.find((p:any)=>p.name==='status').schema.enum,['recorded','reversed']);
 });
