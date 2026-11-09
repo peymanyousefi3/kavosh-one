@@ -28,6 +28,7 @@
     "messages:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .notification-worker scripts/process-messages.ts",
     "files:inspect": "node --import tsx scripts/inspect-files.ts",
     "signatures:register": "node --import tsx scripts/register-signature-webhook.ts",
+    "payments:register": "node --import tsx scripts/register-payment-webhook.ts",
     "api:generate": "node --import tsx scripts/generate-api.ts"
   },
   "dependencies": {
@@ -46,6 +47,7 @@
     "react-dom": "19.3.1",
     "server-only": "0.0.1",
     "sharp": "0.35.5",
+    "stripe": "23.1.0",
     "zod": "4.6.7"
   },
   "devDependencies": {

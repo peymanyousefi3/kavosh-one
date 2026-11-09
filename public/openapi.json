@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.320.0",
+    "version": "0.321.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -73114,6 +73114,162 @@
           },
           "503": {
             "description": "Disabled/unconfigured, changed registry, unsafe database role or unavailable persistence; no accepted partial record"
+          }
+        }
+      }
+    },
+    "/api/webhooks/stripe/{connectionId}": {
+      "post": {
+        "security": [],
+        "summary": "Receive signed payment references into a school/account-bound isolated durable inbox; never mark an invoice paid",
+        "description": "Disabled by default. Official Stripe SDK authenticates original bytes with endpoint-specific current/previous secrets and a fixed 300-second past/future bound. Operator registry pins school,own account,mode and snapshot API version. No Connect/thin event, browser success page, human session, bot token or supplied academy metadata provides payment authority. Only minimal event/object references and original-body digest retained; no card/customer/metadata or money fields. Duplicate event IDs deduplicate; conflicting authenticated content preserves original and records a critical alert. Multiple event IDs for the same object are evidence only,not separate receipts; event timestamps are not used to order financial state. No live provider, checkout creation, payment reconciliation, receipt, charge, refund or financial posting is verified or performed. Subscribe only to these event types: checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed, checkout.session.expired, payment_intent.succeeded, payment_intent.payment_failed, payment_intent.canceled, charge.refunded, refund.created, refund.updated, refund.failed, charge.dispute.created, charge.dispute.updated, charge.dispute.closed, payout.paid, payout.failed, payout.canceled.",
+        "parameters": [
+          {
+            "name": "connectionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Stripe-Signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^evt_[A-Za-z0-9]{1,200}$"
+                  },
+                  "object": {
+                    "type": "string",
+                    "const": "event"
+                  },
+                  "api_version": {
+                    "type": "string",
+                    "const": "2026-10-28.endive"
+                  },
+                  "created": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740691
+                  },
+                  "livemode": {
+                    "type": "boolean"
+                  },
+                  "account": {
+                    "type": "null"
+                  },
+                  "context": {
+                    "type": "null"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "checkout.session.completed",
+                      "checkout.session.async_payment_succeeded",
+                      "checkout.session.async_payment_failed",
+                      "checkout.session.expired",
+                      "payment_intent.succeeded",
+                      "payment_intent.payment_failed",
+                      "payment_intent.canceled",
+                      "charge.refunded",
+                      "refund.created",
+                      "refund.updated",
+                      "refund.failed",
+                      "charge.dispute.created",
+                      "charge.dispute.updated",
+                      "charge.dispute.closed",
+                      "payout.paid",
+                      "payout.failed",
+                      "payout.canceled"
+                    ]
+                  },
+                  "data": {
+                    "type": "object",
+                    "properties": {
+                      "object": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "maxLength": 220
+                          },
+                          "object": {
+                            "type": "string",
+                            "enum": [
+                              "checkout.session",
+                              "payment_intent",
+                              "charge",
+                              "refund",
+                              "dispute",
+                              "payout"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "object"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "object"
+                    ]
+                  }
+                },
+                "required": [
+                  "id",
+                  "object",
+                  "api_version",
+                  "created",
+                  "livemode",
+                  "type",
+                  "data"
+                ],
+                "description": "Original UTF-8 snapshot JSON bytes, at most 1 MiB. Required Stripe-Signature authenticates the configured account-level endpoint. Unknown provider data is discarded; no payment or ledger status is changed."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Durably recorded,duplicate or critical conflict; no payment status returned"
+          },
+          "400": {
+            "description": "Invalid snapshot or stream identity"
+          },
+          "401": {
+            "description": "Missing,stale,future or invalid signature"
+          },
+          "408": {
+            "description": "Body cancelled or fixed 3-second deadline exceeded"
+          },
+          "413": {
+            "description": "Actual bytes exceed 1 MiB"
+          },
+          "415": {
+            "description": "Uncompressed UTF-8 JSON required"
+          },
+          "429": {
+            "description": "Shared per-connection native rate budget exhausted"
+          },
+          "503": {
+            "description": "Disabled,unconfigured,changed registry,unsafe role or unavailable transaction; no partial acceptance"
           }
         }
       }

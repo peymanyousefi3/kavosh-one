@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('payment provider callback exposes only fixed snapshot references and signature,never user financial authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/webhooks/stripe/{connectionId}'].post,s=p.requestBody.content['application/json'].schema;
+ assert.deepEqual(p.security,[]);assert.deepEqual(p.parameters.map((v:any)=>v.name),['connectionId','Stripe-Signature']);assert.equal(p.parameters[1].required,true);assert.equal(s.properties.api_version.const,'2026-10-28.endive');assert.equal(s.properties.account.type,'null');assert.match(p.summary,/never mark an invoice paid/);for(const key of ['amount','invoiceId','academyId','paid','receiptId','approved'])assert.equal(s.properties[key],undefined);assert.equal(api.paths['/api/webhooks/stripe/{connectionId}'].get,undefined);
+});
+
 test('reference financial outlook is explicit,retains ordinary reports and accepts no source or monetary authority overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),read=api.paths['/api/v1/reports/finance/outlook'].get,exported=api.paths['/api/v1/reports/finance/outlook/export'].get;
  assert.deepEqual(exported.parameters,read.parameters);const mode=read.parameters.find((p:any)=>p.name==='valuation');assert.equal(mode.schema.const,'reference');assert.equal(mode.required,false);for(const name of ['targetCurrencyId','rateOn','maximumAgeDays'])assert.equal(read.parameters.find((p:any)=>p.name===name).required,false);

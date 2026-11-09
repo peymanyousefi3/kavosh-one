@@ -13,6 +13,7 @@ delete env.PLATFORM_ENABLED;delete env.PLATFORM_DATABASE_URL;
 delete env.R2_UPLOAD_CONNECTIONS;delete env.R2_UPLOAD_LINKS_ENABLED;
 delete env.R2_DOWNLOAD_CONNECTIONS;delete env.R2_DOWNLOAD_LINKS_ENABLED;
 delete env.BOLDSIGN_WEBHOOK_CONNECTIONS;delete env.BOLDSIGN_WEBHOOK_ENABLED;delete env.SIGNATURE_INGEST_DATABASE_URL;
+delete env.STRIPE_WEBHOOK_CONNECTIONS;delete env.STRIPE_WEBHOOK_ENABLED;delete env.PAYMENT_INGEST_DATABASE_URL;
 const child=process.env.SMOKE_BASE_URL ? null : spawn(process.execPath,['node_modules/next/dist/bin/next','start','--hostname','127.0.0.1','--port',port],{env,stdio:['ignore','pipe','pipe']});
 let output='';
 child?.stdout.on('data',b=>{output+=b;});child?.stderr.on('data',b=>{output+=b;});
@@ -26,6 +27,9 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const path=base+'/api/webhooks/stripe/00000000-0000-4000-8000-000000000001';
+   const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,503);assert.equal(r.headers.get('cache-control'),'no-store');const body=await r.json();assert.equal(body.error.code,'STRIPE_WEBHOOK_NOT_CONFIGURED');assert.doesNotMatch(JSON.stringify(body),/whsec_|postgresql|stack|accountId/);
+   const get=await fetch(path);assert.equal(get.status,405);assert.equal(get.headers.get('cache-control'),'no-store');}
   {const r=await fetch(base+'/api/v1/me/counterparty-statements/00000000-0000-4000-8000-000000000001/settlement-status?timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/signedDueMinor|matchedMinor|remainingMinor|currency_id|sourceStamp|stack/);}
   {const r=await fetch(base+'/api/v1/automations/events?sourceKind=statement_due');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceStamp|currencies|recipientId|source_snapshot|stack/);}
   {const r=await fetch(base+'/api/v1/finance/counterparty-statements/00000000-0000-4000-8000-000000000001/reminder-source?daysFromDue=0&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceStamp|unmatchedPaymentCount|remainingMinor|scope|stack/);}
