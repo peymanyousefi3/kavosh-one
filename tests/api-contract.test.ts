@@ -313,3 +313,7 @@ test('sharing fee bills use the existing reviewed expense API and never accept c
  assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['asOf','invoiceId','policyVersion']);assert.deepEqual([...s.required].sort(),['asOf','invoiceId','policyVersion']);
  const q=api.paths['/api/v1/finance/invoices/{id}/sharing-fee-capacity'].get.parameters;for(const name of ['policyVersion','payeeId','asOf','postedOn'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['sourceStamp','amount','approved','availableNet'])assert.ok(!q.some((p:any)=>p.name===name));assert.ok(api.paths['/api/v1/finance/expense-bills'].get.parameters.some((p:any)=>p.name==='sharingInvoiceId'));
 });
+test('collector capacity documents date and direction without accepting client balances or source proofs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/collectors/{id}/remittance-capacity',q=api.paths[path].get.parameters;
+ for(const name of ['holdingAccountId','on','direction'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['amount','available','approved','sourceStamp','activity'])assert.ok(!q.some((p:any)=>p.name===name));assert.deepEqual(q.find((p:any)=>p.name==='direction').schema.enum,['to_academy','to_collector']);assert.match(api.paths['/api/v1/finance/collectors/{id}/remittances'].post.summary,/full dated-timeline capacity/);
+});
