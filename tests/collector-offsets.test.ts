@@ -2,26 +2,12 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { expenseFixture } from './expense-fixture.ts';
+import { collectorOffsetFixture as fixture } from './collector-offset-fixture.ts';
 import { mintToken,hashToken } from '../src/core/tokens.ts';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
 import { processOneNotification } from '../src/automations/notification-worker.ts';
 import type { Database } from '../src/core/database.ts';
 
-async function fixture(throughSchema?:number,dueToday=false){
- const f=await expenseFixture({throughSchema});try{
-  const issued=await f.issue();assert.equal(issued.response.status,201);const invoice=issued.body.data;
-  const due=await f.made('finance/accounts',{code:'HUB-HELD',name:'Synthetic hub-held funds',kind:'asset',operationalRole:'collector_receivable',hubId:f.hub,currencyId:f.currency.id,currencyVersion:1,reason:'Explicit custody account'}),hubPayee=await f.made('finance/payees',{hubId:f.hub,kind:'hub',code:'HUB-FEE',name:'Synthetic hub fee beneficiary',reason:'Typed hub identity'}),collector=await f.made('finance/collectors',{hubId:f.hub,code:'HUB-HELD',kind:'hub',custody:'third_party',name:'Synthetic holding hub',accounts:[{id:due.id,version:1}],reason:'Explicit third-party custody'});
-  const receipt=await f.request('finance/invoices/'+invoice.id+'/receipts',{amount:'113',collector:{id:collector.id,version:1},holdingAccount:{id:due.id,version:1},method:{id:f.method.id,version:1},receivedAt:'2026-11-06T12:00:00Z',period:{id:f.period.id,version:1},missingEvidenceReason:'Synthetic receipt exception',taxTreatment:'settle_invoice',allocation:'unallocated',reason:'Actual recorded tuition collection'});assert.equal(receipt.response.status,201);
-  assert.equal((await f.request('finance/tuition-plans/'+f.plan.id+'/sharing',{expectedVersion:0,tuitionVersion:1,basis:'net_tuition',creditHandling:'retain_collections',recipients:[{payeeId:hubPayee.id,payeeVersion:1,method:'percentage',value:'75',release:'proportional'}],reason:'Actual synthetic hub sharing policy'})).response.status,200);
-  const dueOn=dueToday?(await f.pg.query<{today:string}>("SELECT (statement_timestamp() AT TIME ZONE 'America/Toronto')::date::text today")).rows[0].today:f.input.dueOn,billed=await f.bill({dueOn,payee:{id:hubPayee.id,version:1},sharing:{invoiceId:invoice.id,policyVersion:1,asOf:'2026-11-06'},lines:[{...f.input.lines[0],amount:'75',recoverablePercent:'100'}]});assert.equal(billed.response.status,201);const bill=billed.body.data;
-  const input={fundingAccount:{id:due.id,version:1},payableVersion:1,collector:{id:collector.id,version:1},offsetAuthority:'same_hub',offsetReview:'Synthetic human-reviewed authority; identity matching alone is not consent',amount:'84.75',period:{id:f.period.id,version:1},postedOn:'2026-11-08',missingEvidenceReason:'Synthetic missing agreement evidence exception,not legal certification',taxTreatment:'settle_expense_bill',reason:'Private approved noncash offset'},path='finance/expense-bills/'+bill.id+'/offsets';
-  const offset=(patch:Record<string,unknown>={},as='master',key?:string)=>f.request(path,{...input,...patch},as,{key}),status=(through?:string,as='master')=>f.request('finance/expense-bills/'+bill.id+'/payment-status'+(through?'?through='+through:''),undefined,as),reverse=(id:string,patch:Record<string,unknown>={},as='master')=>f.request('finance/expense-payments/'+id+'/reverse',{period:input.period,postedOn:'2026-11-10',reason:'Private retained offset correction',...patch},as);
-  const remit=(amount='28.25',postedOn='2026-11-09')=>f.request('finance/collectors/'+collector.id+'/remittances',{collectorVersion:1,holdingAccount:input.fundingAccount,academyAccount:{id:f.cash.id,version:1},method:{id:f.method.id,version:1},period:input.period,direction:'to_academy',amount,postedOn,transferredAt:postedOn+'T12:00:00Z',missingEvidenceReason:'Synthetic remittance only',taxTreatment:'settle_collector',reason:'Transfer actual remaining held funds'});
-  async function funds(through='2026-11-09'){const r=await f.request('finance/collectors/'+collector.id+'/remittance-balances?through='+through);assert.equal(r.response.status,200,JSON.stringify(r.body));return r.body.data[0];}
-  return {...f,makeBill:f.bill,invoice,due,hubPayee,collector,receipt:receipt.body.data,bill,input,path,offset,status,reverse,remit,funds};
- }catch(error){await f.pg.close();throw error;}
-}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 async function access(f:Fixture,as='staff'){

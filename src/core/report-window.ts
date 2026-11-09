@@ -8,6 +8,7 @@ export type ReportDateWindow=z.infer<typeof reportDateWindow>;
 export const frozenReportWindow=z.object({window:reportDateWindow,resolvedAt:z.iso.datetime(),from:z.iso.date(),through:z.iso.date(),calendar:z.literal('iso8601'),interval:z.literal('inclusive_civil_days'),effectiveParameters:z.partialRecord(z.enum(['on','from','through','timeZone']),z.string().nullable()),overriddenFields:z.array(z.enum(['on','from','through','timeZone'])).max(4)}).strict();
 type Inputs={fields:readonly string[];timeZone?:true};
 const inputs:Record<string,Inputs>={
+ 'finance.counterparty-statement':{fields:['from','through']},
  'finance.collector-custody':{fields:['from','through']},
  'finance.profitability':{fields:['from','through']},
  'finance.manual-income-costs':{fields:['from','through']},
