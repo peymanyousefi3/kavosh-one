@@ -12,6 +12,7 @@ import { pdfValidationMatches,signedEvidencePdfValidationSchema } from '../files
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 export const signatureEvidenceInspectionTaskSchema=z.object({academyId:uuid,evidenceId:uuid,sourceFingerprint:hash,kind:z.enum(['document','audit']),artifactId:uuid,storageTargetId:hash,bytes:z.number().int().min(9).max(10485760),sha256:hash,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict();
+export const workSignatureEvidenceInspectionTaskSchema=signatureEvidenceInspectionTaskSchema.extend({purpose:z.literal('worker_services')}).strict();
 const settings=z.object({timeoutMs:z.number().int().min(1).max(120000).default(30000),signal:z.instanceof(AbortSignal).optional()}).strict();
 const markers={safeToServe:false,admissionCleared:false,cryptographicValidityVerified:false} as const;
 const flags={safeToServe:z.literal(false),admissionCleared:z.literal(false),cryptographicValidityVerified:z.literal(false)},measured={bytes:z.number().int().min(9).max(10485760),sha256:hash,etag:signatureEvidenceInspectionTaskSchema.shape.etag};
@@ -58,4 +59,8 @@ export async function inspectSignatureEvidence(configuration:R2Connection,raw:un
   if(contentMismatch||error instanceof ApiError&&['FILE_HASH_MISMATCH','FILE_SIZE_MISMATCH','FILE_ETAG_MISMATCH'].includes(error.code))return {outcome:'content_mismatch' as const,...markers};
   return {outcome:'unavailable' as const,reason:error instanceof ApiError&&error.code==='R2_INSPECTION_TIMEOUT'?'TIMEOUT' as const:scannerFailed?'SCANNER_UNAVAILABLE' as const:pdfFailed?'PDF_SERVICE_UNAVAILABLE' as const:'STORAGE_UNAVAILABLE' as const,...markers};
  }finally{storage.close();if(resources)void resources.then(()=>{active--;},()=>{active--;});else active--;}
+}
+export async function inspectWorkSignatureEvidence(configuration:R2Connection,raw:unknown,scanner:ClamdConfiguration,databasePolicy:ClamdDatabasePolicy,pdfService:z.infer<typeof pdfServiceConfiguration>,options:z.input<typeof settings>={},handler?:S3ClientConfig['requestHandler']){
+ const source=workSignatureEvidenceInspectionTaskSchema.safeParse(raw);if(!source.success)throw new ApiError(400,'INVALID_SIGNATURE_EVIDENCE_INSPECTION');
+ const {purpose:_,...task}=source.data;return inspectSignatureEvidence(configuration,task,scanner,databasePolicy,pdfService,options,handler);
 }
