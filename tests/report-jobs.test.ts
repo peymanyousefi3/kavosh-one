@@ -14,6 +14,8 @@ import { processOneNotification } from '../src/automations/notification-worker.t
 import { ruleSample } from '../src/core/automation-rules.ts';
 import { historicalReportJob } from './historical-report-job.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
+import { assertPayrollGrossBounds } from '../src/modules/payroll-gross-report.ts';
+import { ApiError } from '../src/core/policy.ts';
 
 test('every implemented report job operation is registered in the main generated bot API',async()=>{
  const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportJobsContract.length,7);for(const endpoint of reportJobsContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
@@ -108,6 +110,14 @@ async function boundaryAccounts(f:F,count:number){
  await f.pg.query("INSERT INTO public.finance_account_revisions(academy_id,account_id,version,code,name,description,kind,normal_balance,active,changed_by,approval_id,reason) SELECT $1,s.id,1,'Q'||lpad(s.n::text,5,'0'),'Synthetic boundary account '||s.n,'','asset','debit',true,$2,$3,'One-row-beyond export boundary' FROM synthetic_queued_accounts s",[f.a,f.actors.master.person,approval]);await f.pg.exec('COMMIT');
  }catch(e){await f.pg.exec('ROLLBACK');throw e;}
 }
+check('gross payroll source limit becomes a final useful queue error instead of advice to queue again',async f=>{
+ // Obtain the actual source guard's error without creating 10,001 payroll
+ // sources. Inject only that error into the real leased worker transaction;
+ // this tests error translation/persistence,not oversized-report throughput.
+ let limitError:unknown;try{assertPayrollGrossBounds({allocations:10001,currencyGroups:1,chartGroups:1});}catch(error){limitError=error;}assert.ok(limitError instanceof ApiError);assert.equal(limitError.code,'GROSS_EARNINGS_REPORT_REQUIRES_BACKGROUND_JOB');
+ const q=await f.queue();assert.equal(q.response.status,202);let injected=false;const database:Database={async connect(){const c=await f.database.connect();return {async query<Row>(sql:string,params?:unknown[]){if(sql.startsWith('SELECT configuration,preset_id')){injected=true;throw limitError;}return c.query<Row>(sql,params);},release(destroy?:boolean){c.release(destroy);}};}};
+ assert.deepEqual(await f.work(database),{claimed:true,recorded:true,outcome:'cancelled'});assert.equal(injected,true);const saved=await f.state(q.body.data.id);assert.equal(saved.body.data.last_error,'REPORT_OUTPUT_LIMIT_EXCEEDED');assert.equal(saved.body.data.attempts,1);assert.ok(saved.body.failureIssue);assert.equal((await f.pg.query('SELECT * FROM public.report_job_results')).rows.length,0);assert.equal((await f.pg.query("SELECT * FROM public.audit_events WHERE action='report.generated'")).rows.length,0);assert.deepEqual(await f.work(),{claimed:false,recorded:false});
+});
 test('one actual queued CSV completes the first row beyond the synchronous ceiling without partial totals',{skip:!process.env.TEST_DATABASE_URL},async()=>{
  const f=await fixture();try{await boundaryAccounts(f,1999);
  const immediate=await f.request('reports/finance/trial-balance/export?through=2026-12-31&includeZero=true',undefined,'staff');assert.equal(immediate.response.status,409);assert.equal(immediate.response.headers.get('content-disposition'),null);
