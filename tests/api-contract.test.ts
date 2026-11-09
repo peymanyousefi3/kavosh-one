@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('statement due-source preview accepts only civil-day and zone,never clock,money or review authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/v1/finance/counterparty-statements/{id}/reminder-source',op=api.paths[p].get;assert.equal(api.paths[p].post,undefined);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['daysFromDue','id','timeZone']);for(const k of ['daysFromDue','timeZone'])assert.equal(op.parameters.find((p:any)=>p.name===k).required,true);assert.equal(op.parameters.find((p:any)=>p.name==='daysFromDue').schema.minimum,-365);assert.equal(op.parameters.find((p:any)=>p.name==='daysFromDue').schema.maximum,3650);assert.match(op.summary,/one-snapshot/);assert.match(op.summary,/unmatched-payment review gate/);assert.match(op.summary,/Does not queue notifications/);
+});
+
 test('academy statement notice rules expose a source-bound recipient audience without supplied financial proofs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,audience=definition.properties.actions.items.properties.audience;assert.ok(audience.oneOf.some((s:any)=>s.properties.kind.const==='statement_recipient'));assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('counterparty_statement'));const queue=api.paths['/api/v1/automations/rules/{id}/queue'].post.requestBody.content['application/json'].schema;assert.equal(queue.additionalProperties,false);assert.deepEqual(Object.keys(queue.properties).sort(),['eventId','expectedVersion','locale']);for(const key of ['recipientId','sourceSnapshot','paid','amount','forceSend'])assert.equal(queue.properties[key],undefined);
 });

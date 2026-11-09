@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ApiError } from './policy.ts';
 
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),uuid=z.string().uuid().transform(v=>v.toLowerCase());
-const namedTimeZone=text.min(1).max(100).transform((v,ctx)=>{try{if(/^[+-]/.test(v))throw Error();return new Intl.DateTimeFormat('en',{timeZone:v}).resolvedOptions().timeZone;}catch{ctx.addIssue({code:'custom',message:'Choose a supported named time zone.'});return z.NEVER;}});
+export const namedTimeZone=text.min(1).max(100).transform((v,ctx)=>{try{if(/^[+-]/.test(v))throw Error();return new Intl.DateTimeFormat('en',{timeZone:v}).resolvedOptions().timeZone;}catch{ctx.addIssue({code:'custom',message:'Choose a supported named time zone.'});return z.NEVER;}});
 const scalar=z.union([text.max(2000),z.number().finite(),z.boolean(),z.null()]);
 const forbidden=new Set(['__proto__','prototype','constructor']);
 const field=text.max(200).refine(v=>/^(eventType|entityId|hubId|actorId|actorKind|severity|occurredAt|attributes(?:\.[A-Za-z0-9_-]+){1,7})$/.test(v)&&v.split('.').every(s=>!forbidden.has(s)));
