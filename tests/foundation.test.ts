@@ -10,6 +10,11 @@ import type { Database } from '../src/core/database.ts';
 import { postgresOptions } from '../src/core/postgres-config.ts';
 import { expectedSchemaRevision } from '../src/core/database.ts';
 
+test('backend workload baseline keeps the reported effort calculation separate from release acceptance',async()=>{
+ const b=JSON.parse(await readFile(new URL('../backend-workload-baseline.json',import.meta.url),'utf8'));assert.equal(b.frontendExcluded,true);assert.equal(b.backendIntegrationsTestingAndDeploymentIncluded,true);assert.equal(b.isMeasuredHoursOrTestCoverage,false);assert.equal(b.isReleaseAcceptance,false);assert.equal(new Set(b.groups.map((g:{id:string})=>g.id)).size,b.groups.length);
+ let total=0,completed=0;for(const g of b.groups){assert.ok(Number.isFinite(g.totalPoints)&&g.totalPoints>0);assert.ok(Number.isFinite(g.completedPoints)&&g.completedPoints>=0&&g.completedPoints<=g.totalPoints);total+=g.totalPoints;completed+=g.completedPoints;}assert.equal(total,100);assert.deepEqual(b.reportedBaseline,{totalPoints:total,completedPoints:completed,remainingPoints:total-completed});assert.match(b.revisionRule,/do not silently switch/);
+});
+
 test('every SQL migration is discoverable by the real installer and the numbered sequence matches the runtime revision',async()=>{
  const names=(await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')).sort();for(const name of names)assert.match(name,/^\d+_[a-z_]+\.sql$/);assert.deepEqual(names.map(n=>Number.parseInt(n,10)),Array.from({length:expectedSchemaRevision},(_,i)=>i+1));
 });

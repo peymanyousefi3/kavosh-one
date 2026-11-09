@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "assessedOn": "2026-11-09",
+  "kind": "effort_weighted_engineering_estimate",
+  "sourcePlan": "docs/implementation-plan.md",
+  "frontendExcluded": true,
+  "backendIntegrationsTestingAndDeploymentIncluded": true,
+  "isMeasuredHoursOrTestCoverage": false,
+  "isReleaseAcceptance": false,
+  "basis": "Workload weights and completed points are engineering judgments based on the approved scope and current implementation/evidence register. They are not counts of features, migrations, commits or passing tests. The full approved backend remains unfinished.",
+  "groups": [
+    { "id": "foundation", "name": "Identity, permissions and core security", "totalPoints": 15, "completedPoints": 14 },
+    { "id": "operations", "name": "Academy, people, scheduling and learning", "totalPoints": 15, "completedPoints": 14 },
+    { "id": "files_signing", "name": "Files, media and signing workflows", "totalPoints": 10, "completedPoints": 8 },
+    { "id": "finance", "name": "Accounting, payments, payroll and inventory", "totalPoints": 30, "completedPoints": 23 },
+    { "id": "reports_automation", "name": "Reporting, forecasts, notifications and automation", "totalPoints": 15, "completedPoints": 12 },
+    { "id": "profiles_platform", "name": "Academic profiles and platform administration", "totalPoints": 5, "completedPoints": 2 },
+    { "id": "production_acceptance", "name": "Production hardening, privacy, backups and live verification", "totalPoints": 10, "completedPoints": 2 }
+  ],
+  "reportedBaseline": { "totalPoints": 100, "completedPoints": 75, "remainingPoints": 25 },
+  "revisionRule": "Keep the backend-only scope and effort weighting consistent. Explain and record any reassessment; do not silently switch to whole-product progress or feature counting. Update verified acceptance separately in backend-work.json. No estimate can establish live-service verification or goal completion."
+}
