@@ -4,7 +4,8 @@ import { payrollCostAuthorization,requirePayrollCostResultAccess } from './payro
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
 import { lockApprovalWrites,permissionScope } from '../core/approvals.ts';
 import { ApiError } from '../core/policy.ts';
-import { financialReportAccess } from './financial-reports.ts';
+import { requireFinancialReportResultAccess } from './financial-reports.ts';
+import { profitabilityAuthorization,requireProfitabilityResultAccess } from './profitability-report-access.ts';
 import { catalogueReport,reportConfiguration,reportParameters,resolveConfiguredReportContext,type ReportConfiguration } from './report-catalogue.ts';
 import { financialExportParameters } from './financial-report-export.ts';
 import { executionReportPreset } from './report-presets.ts';
@@ -20,21 +21,22 @@ import { performanceAuthorization,requirePerformanceResultAccess } from './stude
 import { attributionAuthorization,requireAttributionResultAccess } from './financial-attribution-access.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),empty=z.object({}).strict();
-export const financialJobInput=z.object({reportId:z.enum(['finance.manual-income-costs','payroll.costs','finance.tuition-income','finance.expense-costs','learning.student-performance','finance.trial-balance','finance.profit-loss','finance.balance-sheet','payroll.gross-accruals','community.achievements','payroll.settlements','payroll.remittances','payroll.paid-tax-year-to-date','payroll.t4-working-paper']),parameters:reportParameters,dateWindow:reportDateWindow.optional()}).strict();
+export const financialJobInput=z.object({reportId:z.enum(['finance.profitability','finance.manual-income-costs','payroll.costs','finance.tuition-income','finance.expense-costs','learning.student-performance','finance.trial-balance','finance.profit-loss','finance.balance-sheet','payroll.gross-accruals','community.achievements','payroll.settlements','payroll.remittances','payroll.paid-tax-year-to-date','payroll.t4-working-paper']),parameters:reportParameters,dateWindow:reportDateWindow.optional()}).strict();
 const presetQueueInput=z.object({expectedVersion:z.number().int().positive().max(2147483647),overrides:reportParameters.default({})}).strict();
 const retryInput=z.object({reason:z.string().trim().min(3).max(2000)}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional()}).strict();
-export const reportAuthorizationContext=z.union([payrollCostAuthorization,attributionAuthorization,performanceAuthorization,z.object({hubIds:z.array(uuid).max(10000).refine(a=>new Set(a).size===a.length),includesGlobal:z.boolean()}).strict(),payrollReportAuthorization,achievementReportAuthorization,payrollSettlementAuthorization,payrollRemittanceAuthorization,paidTaxYearAuthorization]);
+export const reportAuthorizationContext=z.union([profitabilityAuthorization,payrollCostAuthorization,attributionAuthorization,performanceAuthorization,z.object({hubIds:z.array(uuid).max(10000).refine(a=>new Set(a).size===a.length),includesGlobal:z.boolean()}).strict(),payrollReportAuthorization,achievementReportAuthorization,payrollSettlementAuthorization,payrollRemittanceAuthorization,paidTaxYearAuthorization]);
 type Job={id:string;configuration:ReturnType<typeof reportConfiguration>;status:string;attempts:number;created_at:string;finished_at:string|null;expires_at:string;last_error:string|null;preset:{id:string;version:number}|null;resolvedDateWindow:unknown};
 const fields='id,configuration,status,attempts,created_at,finished_at,expires_at,last_error,retry_of_job_id "retryOfJobId",CASE WHEN preset_id IS NULL THEN NULL ELSE jsonb_build_object(\'id\',preset_id,\'version\',preset_version) END preset,window_resolution "resolvedDateWindow"';
 async function owned(ctx:ApiContext,id:string){const j=(await ctx.db.query<Job>('SELECT '+fields+' FROM public.report_jobs WHERE id=$1 AND(requester_id=$2 OR($3::boolean AND EXISTS(SELECT 1 FROM public.academies WHERE master_person_id=$2)))',[id,ctx.credential.person_id,ctx.credential.kind==='human'])).rows[0];if(!j)throw new ApiError(404,'NOT_FOUND');reportJobAccess(ctx,j.configuration.reportId);await paidTaxYearConfigurationAccess(ctx,j.configuration);return j;}
 export async function requireReportResultAccess(ctx:ApiContext,raw:unknown){
  await lockAcademyTopology(ctx);
+ if(raw&&typeof raw==='object'&&'kind'in raw&&raw.kind==='academy_profitability')return requireProfitabilityResultAccess(ctx,raw);
  if(raw&&typeof raw==='object'&&'kind'in raw&&(raw.kind==='payroll_cost'||raw.kind==='allocated_payroll_cost'))return requirePayrollCostResultAccess(ctx,raw);
  if(raw&&typeof raw==='object'&&'kind'in raw&&(raw.kind==='manual_journal_attribution'||raw.kind==='tuition_attribution'||raw.kind==='expense_attribution'||raw.kind==='allocated_expense_attribution'))return requireAttributionResultAccess(ctx,raw);
  if(raw&&typeof raw==='object'&&'kind'in raw&&raw.kind==='student_performance')return requirePerformanceResultAccess(ctx,raw);
- const proof=reportAuthorizationContext.parse(raw);if('kind'in proof)return proof.kind==='paid_tax_year'?requirePaidTaxYearResultAccess(ctx,proof):proof.kind==='achievement_summary'?requireAchievementReportResultAccess(ctx,proof):proof.kind==='payroll_remittance'?requirePayrollRemittanceResultAccess(ctx,proof):proof.kind==='payroll_settlement'?requirePayrollSettlementResultAccess(ctx,proof):requirePayrollReportResultAccess(ctx,proof);const access=financialReportAccess(ctx);
- if((proof.includesGlobal&&!access.global)||proof.hubIds.some(h=>!(access.all||access.hubs.includes(h))||access.excluded.includes(h)))throw new ApiError(403,'REPORT_SOURCE_ACCESS_CHANGED');
+ const proof=reportAuthorizationContext.parse(raw);if('kind'in proof)return proof.kind==='academy_profitability'?requireProfitabilityResultAccess(ctx,proof):proof.kind==='paid_tax_year'?requirePaidTaxYearResultAccess(ctx,proof):proof.kind==='achievement_summary'?requireAchievementReportResultAccess(ctx,proof):proof.kind==='payroll_remittance'?requirePayrollRemittanceResultAccess(ctx,proof):proof.kind==='payroll_settlement'?requirePayrollSettlementResultAccess(ctx,proof):requirePayrollReportResultAccess(ctx,proof);requireFinancialReportResultAccess(ctx,proof);
+
 }
 export async function enqueueReport(ctx:ApiContext,configuration:ReportConfiguration,overrides:Record<string,string>={},preset?:{id:string;version:number},scheduledAt?:string,retry?:{id:string;reason:string;window:unknown}){
  if(!catalogueReport(configuration.reportId).backgroundCsv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');

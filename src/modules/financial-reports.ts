@@ -70,3 +70,4 @@ export async function financialReports(ctx:ApiContext,exportEntryLimit?:number):
 }
 export const financialReportsContract=[{path:'/api/v1/reports/finance/trial-balance',method:'get',summary:'Same-snapshot posted trial balance with intersected account/ledger/report rights, exact per-currency totals and explicit scoped coverage; not financial certification or FX conversion',querySchema:query}] as const;
 export { authority as financialReportAccess,authority as hubReportAccess,ids as financialIds,kinds as financialKinds };
+export function requireFinancialReportResultAccess(ctx:ApiContext,proof:{hubIds:string[];includesGlobal:boolean}){const access=authority(ctx);if((proof.includesGlobal&&!access.global)||proof.hubIds.some(h=>!(access.all||access.hubs.includes(h))||access.excluded.includes(h)))throw new ApiError(403,'REPORT_SOURCE_ACCESS_CHANGED');}

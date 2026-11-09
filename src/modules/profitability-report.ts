@@ -11,35 +11,36 @@ import { tuitionIncomeQuery,tuitionIncomeReportStatement,assertTuitionIncomeBoun
 import { expenseCostQuery,expenseCostReportStatement,assertExpenseCostBounds } from './expense-cost-report.ts';
 import { manualIncomeCostQuery,manualIncomeCostReportStatement,assertManualIncomeCostBounds } from './manual-income-cost-report.ts';
 import { payrollCostQuery,payrollCostReportStatement,assertPayrollCostBounds } from './payroll-cost-report.ts';
+import { profitabilityAuthorization } from './profitability-report-access.ts';
 
 export const profitabilityQuery=z.object({from:accountingDate,through:accountingDate,attributionBasis:z.enum(['recorded','reviewed']).default('recorded'),hubIds:financialIds.optional(),classIds:financialIds.optional(),studentIds:financialIds.optional(),currencyIds:financialIds.optional(),countryIds:financialIds.optional(),regionIds:financialIds.optional(),cityIds:financialIds.optional()}).strict().refine(q=>q.from<=q.through);
 const sources=['tuition','supplier','payroll','manual'] as const,dimensions=['hub','class','student','month','source'] as const;
 const measures=['tuitionIncome','manualIncome','supplierExpense','payrollExpense','manualExpense','income','expenses','netResult'] as const;
 type Source=typeof sources[number];
 type RawRow={key:string|null;currencyId:string;currencyCode:string;unitScale:number;[key:string]:unknown};
-type SourceResult={events:number;lines?:number;allocations?:number;series:Record<string,RawRow[]>};
+type SourceResult={events:number;lines?:number;allocations?:number;series:Record<string,RawRow[]>;authorizationContext?:unknown};
 type LedgerRow={currencyId:string;currencyCode:string;unitScale:number;incomeMinor:string;expenseMinor:string};
-type Ledger={currencies:LedgerRow[];unclassifiedLineCount:string;accountCount:number};
+type Ledger={currencies:LedgerRow[];unclassifiedLineCount:string;accountCount:number;authorizationHubs:(string|null)[]};
 type MoneyRow={key:string|null;currencyId:string;currencyCode:string;unitScale:number}&Record<typeof measures[number],bigint>;
 // These are the SAME prepared statements used by the dedicated reports. Only
 // fixed internal SQL placeholders are rebased;all caller values stay bound.
 // One combined database statement gives sources,assignments and ledger ONE
 // MVCC snapshot without a new isolation level or blocking financial writers.
-function sourceStatements(ctx:ApiContext,q:z.infer<typeof profitabilityQuery>){
+function sourceStatements(ctx:ApiContext,q:z.infer<typeof profitabilityQuery>,includeAuthorization=false){
  const {attributionBasis,...rest}=q,common=Object.fromEntries(Object.entries(rest).map(([key,value])=>[key,Array.isArray(value)?value.join(','):value]));
  return {
-  tuition:tuitionIncomeReportStatement(ctx,tuitionIncomeQuery.parse(common)),
-  supplier:expenseCostReportStatement(ctx,expenseCostQuery.parse({...common,costBasis:attributionBasis})),
-  payroll:payrollCostReportStatement(ctx,payrollCostQuery.parse({...common,attributionBasis})),
-  manual:manualIncomeCostReportStatement(ctx,manualIncomeCostQuery.parse({...common,attributionBasis}))
+  tuition:tuitionIncomeReportStatement(ctx,tuitionIncomeQuery.parse(common),includeAuthorization),
+  supplier:expenseCostReportStatement(ctx,expenseCostQuery.parse({...common,costBasis:attributionBasis}),includeAuthorization),
+  payroll:payrollCostReportStatement(ctx,payrollCostQuery.parse({...common,attributionBasis}),includeAuthorization),
+  manual:manualIncomeCostReportStatement(ctx,manualIncomeCostQuery.parse({...common,attributionBasis}),includeAuthorization)
  };
 }
 function checkSource(kind:Source,r:SourceResult){const groups=Object.values(r.series).map(a=>a.length);if(kind==='tuition')assertTuitionIncomeBounds(r.events,groups);else if(kind==='supplier')assertExpenseCostBounds(r.events,r.lines!,groups);else if(kind==='payroll')assertPayrollCostBounds(r.events,r.allocations!,groups);else assertManualIncomeCostBounds(r.events,r.lines!,groups);}
 function sourceMeasures(kind:Source,r:RawRow){const value=(key:string)=>{if(typeof r[key]!=='string')throw new Error('PROFITABILITY_SOURCE_INVALID');return readMinorUnits(r[key]);};return {tuitionIncome:kind==='tuition'?value('recognizedRevenue'):0n,manualIncome:kind==='manual'?value('income'):0n,supplierExpense:kind==='supplier'?value('expense'):0n,payrollExpense:kind==='payroll'?value('expense'):0n,manualExpense:kind==='manual'?value('expense'):0n};}
-export async function profitabilityReport(ctx:ApiContext):Promise<Reply|null>{
+export async function profitabilityReport(ctx:ApiContext,includeAuthorization=false):Promise<Reply|null>{
  if(ctx.path!=='reports/finance/profitability')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=profitabilityQuery.parse(Object.fromEntries(params));await lockAcademyTopology(ctx);
- const contextual=['hubIds','classIds','studentIds','countryIds','regionIds','cityIds'].some(k=>Object.hasOwn(q,k)),baseline=sourceStatements(ctx,{from:q.from,through:q.through,attributionBasis:q.attributionBasis,...q.currencyIds?{currencyIds:q.currencyIds}:{}}),selected=contextual?sourceStatements(ctx,q):baseline,access=financialReportAccess(ctx);
+ const contextual=['hubIds','classIds','studentIds','countryIds','regionIds','cityIds'].some(k=>Object.hasOwn(q,k)),baseline=sourceStatements(ctx,{from:q.from,through:q.through,attributionBasis:q.attributionBasis,...q.currencyIds?{currencyIds:q.currencyIds}:{}},includeAuthorization),selected=contextual?sourceStatements(ctx,q):baseline,access=financialReportAccess(ctx);
  const parameters:unknown[]=[],ctes:string[]=[],parts:string[]=[];
  const add=(name:string,statement:{sql:string;parameters:unknown[]})=>{const offset=parameters.length;parameters.push(...statement.parameters);ctes.push(`${name} AS MATERIALIZED(${statement.sql.replace(/\$(\d+)\b/g,(_m,n:string)=>'$'+(Number(n)+offset))})`);return `(SELECT to_jsonb(${name}) FROM ${name})`;};
  for(const kind of sources){const whole=add('baseline_'+kind,baseline[kind]);parts.push(`'baseline_${kind}',${whole}`);parts.push(`'selected_${kind}',${contextual?add('selected_'+kind,selected[kind]):whole}`);}
@@ -63,6 +64,6 @@ export async function profitabilityReport(ctx:ApiContext):Promise<Reply|null>{
  const reconciliation=[...scales].map(([currencyId,{scale,code}])=>{const ledger=r.reports.ledger.currencies.find(c=>c.currencyId===currencyId),source=whole.find(c=>c.currencyId===currencyId),factor=10n**BigInt(scale-(ledger?.unitScale??scale)),income=readMinorUnits(ledger?.incomeMinor??'0')*factor,expenses=readMinorUnits(ledger?.expenseMinor??'0')*factor,sourceIncome=source?.income??0n,sourceExpenses=source?.expenses??0n,differenceIncome=income-sourceIncome,differenceExpenses=expenses-sourceExpenses;return {currencyId,currencyCode:code,unitScale:scale,postedIncome:exact(income,scale),postedExpenses:exact(expenses,scale),postedNetResult:exact(income-expenses,scale),sourceIncome:exact(sourceIncome,scale),sourceExpenses:exact(sourceExpenses,scale),unreconciledIncome:exact(differenceIncome,scale),unreconciledExpenses:exact(differenceExpenses,scale),moneyReconciles:differenceIncome===0n&&differenceExpenses===0n};});
  const unassigned=Object.fromEntries(['hub','class','student'].map(dim=>[dim,grouped('baseline',dim).filter(row=>row.key===null).map(view)]));
  const body={data:{report:'posted_academy_profitability',snapshotAt:r.snapshotAt,filters:q,currencies:currencies.map(view),charts,ledgerReconciliation:reconciliation,unassigned,ledgerCoverage:access.global?'complete_selected_currencies':'scoped_selected_accounts',ledgerUnclassifiedLineCount:r.reports.ledger.unclassifiedLineCount,requiresPurposeReview:r.reports.ledger.unclassifiedLineCount!=='0',selectedResultBasis:'authorized_source_contribution_after_context_filters',reconciliationBasis:'all_authorized_accounts_and_sources_before_context_filters',reconciliationIsCompletenessProof:false,sharedCostPolicy:'original_or_explicit_reviewed_targets_never_guessed',allocationDateBasis:q.attributionBasis==='reviewed'?'latest_approved_at_single_report_snapshot_not_historical_as_of':'original_recorded_contexts',currencyConversion:'none',chargedTaxIsRevenue:false,recoverableTaxIsExpense:false,deferredBillingsAreIncome:false,receiptsOrPaymentsCreateProfit:false,inventoryStatusChangesExpense:false,privateBodiesIncluded:false,additionalLedgerPosting:false,contextFiltersApplied:contextual,contextProfitRequiresSharedCostReview:true}};
- if(Buffer.byteLength(JSON.stringify(body))>4_194_304)throw new ApiError(422,'PROFITABILITY_REPORT_REQUIRES_BACKGROUND_JOB');return {status:200,body};
+ if(Buffer.byteLength(JSON.stringify(body))>4_194_304)throw new ApiError(422,'PROFITABILITY_REPORT_REQUIRES_BACKGROUND_JOB');const ledger=r.reports.ledger;return {status:200,body:includeAuthorization?{data:{...body.data,authorizationContext:profitabilityAuthorization.parse({kind:'academy_profitability',basis:q.attributionBasis,ledger:{hubIds:ledger.authorizationHubs.filter((id):id is string=>id!==null),includesGlobal:ledger.authorizationHubs.includes(null)},...Object.fromEntries(sources.map(kind=>[kind,r.reports['baseline_'+kind].authorizationContext]))})}}:body};
 }
 export const profitabilityReportContract=[{path:'/api/v1/reports/finance/profitability',method:'get',summary:'Consolidated exact tuition recognized income,supplier costs,gross plus employer payroll costs and manual operating entries in ONE source/assignment/ledger snapshot. Charts combine hub,class,student,month and source;original whole-source privacy and reviewed target rights apply before all filters. Full authorized ledger operating result and separate income/expense reconciliation remain visible BEFORE context filters;zero net difference alone never certifies source completeness. Unassigned shared costs are explicit,not guessed onto students. Separate currencies and immutable precision;deferred billings,tax,receipts,payments and inventory removal never manufacture profit. Existing per-source limits,10000combined groups/dimension/4MiB. No private documents or new ledger postings.',querySchema:profitabilityQuery}] as const;
