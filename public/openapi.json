@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.296.0",
+    "version": "0.297.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5884,7 +5884,8 @@
                 "calendar_event",
                 "work_signature",
                 "tuition_due",
-                "expense_due"
+                "expense_due",
+                "payroll_due"
               ]
             }
           }
@@ -6312,6 +6313,27 @@
                         },
                         "required": [
                           "daysFromDue",
+                          "timeZone"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "payrollReminder": {
+                        "description": "One database-clock civil day relative to the approved posted worker-net planned payment date. Not forecast gross,legal overdue determination,statutory remittances or payment execution. Explicit named zone;one timer per rule.",
+                        "type": "object",
+                        "properties": {
+                          "daysFromPlannedPay": {
+                            "type": "integer",
+                            "minimum": -365,
+                            "maximum": 3650
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          }
+                        },
+                        "required": [
+                          "daysFromPlannedPay",
                           "timeZone"
                         ],
                         "additionalProperties": false
@@ -6831,6 +6853,27 @@
                         },
                         "required": [
                           "daysFromDue",
+                          "timeZone"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "payrollReminder": {
+                        "description": "One database-clock civil day relative to the approved posted worker-net planned payment date. Not forecast gross,legal overdue determination,statutory remittances or payment execution. Explicit named zone;one timer per rule.",
+                        "type": "object",
+                        "properties": {
+                          "daysFromPlannedPay": {
+                            "type": "integer",
+                            "minimum": -365,
+                            "maximum": 3650
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          }
+                        },
+                        "required": [
+                          "daysFromPlannedPay",
                           "timeZone"
                         ],
                         "additionalProperties": false
@@ -33746,7 +33789,7 @@
     },
     "/api/v1/notifications/{id}": {
       "get": {
-        "summary": "Read own portal notification and linked approval,audit,report issue,worker statement,contract-delivery/evidence/review observation,tuition installment,supplier/reimbursement bill or account-security source only while its underlying record remains authorized. Financial reminder notices retain history with current balance drift and private family/admin record links;reading never marks payment or verifies bank settlement.",
+        "summary": "Read own portal notification and linked approval,audit,report issue,worker statement,contract-delivery/evidence/review observation,tuition installment,supplier/reimbursement bill,posted worker-net payroll or account-security source only while its underlying record remains authorized. Financial reminder notices retain history with current balance drift and private family/admin record links;reading never marks payment or verifies bank settlement.",
         "parameters": [
           {
             "name": "id",
