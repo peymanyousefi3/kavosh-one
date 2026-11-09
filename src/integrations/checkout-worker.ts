@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { jsonBody } from '../core/api.ts';
 import { parseBearer } from '../core/tokens.ts';
 import type { Database } from '../core/database.ts';
-import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection } from './checkout-result-worker.ts';
+import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection,recordCheckoutFeeInspection } from './checkout-result-worker.ts';
 import { stripeCheckoutDraft,stripeCheckoutTransport,StripeCheckoutError,type StripeCheckoutConnection } from './stripe-checkout.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -64,4 +64,15 @@ export async function reconcileCheckoutAttempt(raw:unknown,sessionId:string,conf
  const {t,s,transport}=await recoveryContext(raw,config,api,send),inspection=await transport.inspect(s.draft,sessionId),id=randomUUID();
  const receipt=await recordCheckoutProviderInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,workerId:api.workerId,requestSha256:s.requestSha256,inspection});
  return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,inspection,...receipt};
+}
+export async function inspectCheckoutFees(raw:unknown,sessionId:string,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch=fetch){
+ const {t,s,transport}=await recoveryContext(raw,config,api,send),principalId=randomUUID(),id=randomUUID();
+ // Persist principal review facts FIRST. Fee-only reads must not lose a newly
+ // discovered refund/dispute and leave previously available credit spendable.
+ const evidence=await transport.inspectFees(s.draft,sessionId,async inspection=>{
+  const principal=await recordCheckoutProviderInspection(api.resultDatabase,{academyId:config.academyId,id:principalId,startId:s.start.id,workerId:api.workerId,requestSha256:s.requestSha256,inspection});
+  if(!principal.recorded)throw new CheckoutWorkerError('source',true);
+ });
+ const receipt=await recordCheckoutFeeInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,principalInspectionId:principalId,workerId:api.workerId,requestSha256:s.requestSha256,fees:evidence.fees});
+ return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,principalInspectionId:principalId,fees:evidence.fees,...receipt};
 }

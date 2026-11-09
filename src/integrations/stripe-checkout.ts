@@ -6,7 +6,7 @@ import { jsonBody } from '../core/api.ts';
 import { readMinorUnits } from '../core/money.ts';
 import { stripeWebhookConnection,stripeSnapshotVersion } from './stripe-webhook-config.ts';
 
-const uuid=z.string().uuid().transform(v=>v.toLowerCase()),integer=z.number().int().min(0).max(999_999_999_999),epoch=z.number().int().positive().max(9_999_999_999),sessionId=z.string().regex(/^cs_(test|live)_[A-Za-z0-9]{1,200}$/),paymentId=z.string().regex(/^pi_[A-Za-z0-9]{1,200}$/),chargeId=z.string().regex(/^ch_[A-Za-z0-9]{1,200}$/);
+const uuid=z.string().uuid().transform(v=>v.toLowerCase()),integer=z.number().int().min(0).max(999_999_999_999),signedInteger=z.number().int().min(-999_999_999_999).max(999_999_999_999),epoch=z.number().int().positive().max(9_999_999_999),sessionId=z.string().regex(/^cs_(test|live)_[A-Za-z0-9]{1,200}$/),paymentId=z.string().regex(/^pi_[A-Za-z0-9]{1,200}$/),chargeId=z.string().regex(/^ch_[A-Za-z0-9]{1,200}$/),balanceId=z.string().regex(/^txn_[A-Za-z0-9]{1,200}$/);
 const origin=z.string().max(2000).refine(value=>{try{const u=new URL(value);return u.origin===value&&u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}});
 export const stripeCheckoutPublicConnection=stripeWebhookConnection.omit({secrets:true}).extend({origin});
 export const stripeCheckoutConnection=stripeCheckoutPublicConnection.extend({apiKey:z.string().regex(/^(sk|rk)_(test|live)_[A-Za-z0-9]{16,256}$/)}).strict().refine(c=>c.apiKey.split('_')[1]===(c.livemode?'live':'test'));
@@ -60,8 +60,16 @@ function checkedSession(raw:unknown,d:Draft){
 }
 function publicSession(s:z.infer<typeof session>){return {sessionId:s.id,paymentId:s.payment_intent,status:s.status,paymentStatus:s.payment_status,expiresAt:s.expires_at,checkoutUrl:s.url,amount:s.amount_total,currency:s.currency,paymentVerified:false as const};}
 const intent=z.object({id:paymentId,object:z.literal('payment_intent'),livemode:z.boolean(),currency:z.string(),amount:integer,amount_received:integer,metadata:tags,status:z.enum(['requires_payment_method','requires_confirmation','requires_action','processing','requires_capture','canceled','succeeded']),latest_charge:chargeId.nullable()});
-const charge=z.object({id:chargeId,object:z.literal('charge'),livemode:z.boolean(),payment_intent:paymentId,currency:z.string(),amount:integer,amount_captured:integer,amount_refunded:integer,paid:z.boolean(),captured:z.boolean(),disputed:z.boolean(),status:z.enum(['succeeded','pending','failed']),payment_method_details:z.object({type:z.literal('card'),card:z.object({funding:z.enum(['credit','debit','prepaid','unknown'])})})});
+const charge=z.object({id:chargeId,object:z.literal('charge'),livemode:z.boolean(),payment_intent:paymentId,currency:z.string(),amount:integer,amount_captured:integer,amount_refunded:integer,paid:z.boolean(),captured:z.boolean(),disputed:z.boolean(),balance_transaction:balanceId.nullable().optional(),status:z.enum(['succeeded','pending','failed']),payment_method_details:z.object({type:z.literal('card'),card:z.object({funding:z.enum(['credit','debit','prepaid','unknown'])})})});
 const discoveryWindow=z.object({createdAfter:z.number().int().nonnegative(),createdBefore:z.number().int().nonnegative(),after:sessionId.optional()}).strict().refine(v=>v.createdBefore>=v.createdAfter);
+const feeDetail=z.object({amount:signedInteger,currency:z.string().regex(/^[a-z]{3}$/),type:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),application:z.string().regex(/^[A-Za-z0-9_]{1,200}$/).nullable().optional()});
+const balanceTransaction=z.object({id:balanceId,object:z.literal('balance_transaction'),source:chargeId,type:z.enum(['charge','payment']),balance_type:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),reporting_category:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),amount:integer.positive(),currency:z.string().regex(/^[a-z]{3}$/),fee:signedInteger,net:signedInteger,created:epoch,available_on:epoch,status:z.enum(['pending','available']),exchange_rate:z.number().positive().finite().nullable(),fee_details:z.array(feeDetail).max(100)});
+const feeProofBase=z.object({sessionId,paymentId,chargeId,bankSettled:z.literal(false),ledgerAdjusted:z.literal(false),feePosted:z.literal(false),taxVerified:z.literal(false)});
+export const stripeCheckoutFeeInspection=z.discriminatedUnion('state',[
+ feeProofBase.extend({state:z.literal('principal_not_captured'),paymentId:paymentId.nullable(),chargeId:z.null()}).strict(),
+ feeProofBase.extend({state:z.literal('awaiting_balance_transaction')}).strict(),
+ feeProofBase.extend({state:z.literal('charge_balance'),balanceTransactionId:balanceId,balanceType:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).nullable(),providerUnitScale:z.number().int().min(0).max(3),chargeAmount:integer.positive(),chargeCurrency:z.string().regex(/^[a-z]{3}$/),grossAmount:integer.positive(),currency:z.string().regex(/^[a-z]{3}$/),feeAmount:signedInteger,netAmount:signedInteger,createdAt:epoch,availableOn:epoch,status:z.enum(['pending','available']),exchangeRate:z.number().positive().finite().nullable(),reportingCategory:z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),feeDetails:z.array(feeDetail.strict()).max(100),feeBreakdownComplete:z.boolean(),requiresFxReview:z.boolean(),principalRequiresReview:z.boolean()}).strict()
+]);
 const discoveryPage=z.object({object:z.literal('list'),url:z.literal('/v1/checkout/sessions'),has_more:z.boolean(),data:z.array(z.object({id:sessionId,object:z.literal('checkout.session'),created:z.number().int().nonnegative(),client_reference_id:z.string().nullable().optional(),metadata:z.record(z.string(),z.string()).nullable().optional()}).passthrough()).max(100)});
 const inspectionBase=z.object({sessionId,paymentId:paymentId.nullable(),bankSettled:z.literal(false),ledgerAdjusted:z.literal(false)});
 const captureFields={paymentId,chargeId,amount:integer.positive(),currency:z.string().regex(/^[a-z]{3}$/),cardFunding:z.enum(['credit','debit','prepaid','unknown']),refundedAmount:integer,disputed:z.boolean()};
@@ -100,6 +108,25 @@ export function stripeCheckoutTransport(configured:StripeCheckoutConnection,send
    return {accountId:c.accountId,livemode:c.livemode,country:a.country,supportedCurrencies:[...country.supported_payment_currencies],cardPaymentsEnabled:true};
   }catch{throw new StripeCheckoutError('not_attempted','STRIPE_ACCOUNT_CHECK_FAILED');}
  }
+ async function inspectOriginal(raw:unknown,id:string,capture?:(q:z.infer<typeof charge>)=>void){
+   const d=stripeCheckoutDraft.parse(raw);bound(c,d);const selected=sessionId.parse(id);if(!selected.startsWith(c.livemode?'cs_live_':'cs_test_'))throw new ApiError(409,'STRIPE_SESSION_MODE_MISMATCH');
+   try{
+    // Disabling NEW charges must not prevent reconciliation of earlier money.
+    if(!identityAt||Date.now()-identityAt>60_000)await identify();
+    const s=checkedSession(await sdk.checkout.sessions.retrieve(selected),d);if(s.id!==selected)throw new Error('WRONG_SESSION');
+    const base={sessionId:s.id,paymentId:s.payment_intent,bankSettled:false as const,ledgerAdjusted:false as const};
+    if(!s.payment_intent){if(s.payment_status==='paid')throw new Error('PAID_WITHOUT_PAYMENT');return {...base,state:s.status==='expired'?'expired' as const:'awaiting_payment' as const,paymentVerified:false as const};}
+    const p=intent.parse(await sdk.paymentIntents.retrieve(s.payment_intent)),m=stripeChargeAmount(d.currencyCode,d.unitScale,d.amountMinor);
+    if(p.id!==s.payment_intent||p.livemode!==c.livemode||p.currency!==m.currency||p.amount!==m.amount||JSON.stringify(p.metadata)!==JSON.stringify(metadata(d)))throw new Error('PAYMENT_MISMATCH');
+    if(p.status!=='succeeded'){if(s.payment_status==='paid')throw new Error('INCONSISTENT_PAID_STATUS');return {...base,state:p.status==='canceled'||s.status==='expired'?'expired' as const:'awaiting_payment' as const,paymentVerified:false as const};}
+    if(!p.latest_charge)throw new Error('MISSING_CHARGE');const q=charge.parse(await sdk.charges.retrieve(p.latest_charge));
+    if(q.id!==p.latest_charge||q.payment_intent!==p.id||q.livemode!==c.livemode||q.currency!==m.currency||q.amount!==m.amount||q.amount_captured!==m.amount||p.amount_received!==m.amount||!q.paid||!q.captured||q.status!=='succeeded'||q.amount_refunded>q.amount_captured)throw new Error('CAPTURE_MISMATCH');
+    capture?.(q);
+    const proof={...base,paymentId:p.id,chargeId:q.id,amount:m.amount,currency:m.currency,cardFunding:q.payment_method_details.card.funding,refundedAmount:q.amount_refunded,disputed:q.disputed};
+    if(q.amount_refunded||q.disputed||s.status!=='complete'||s.payment_status!=='paid')return {...proof,state:'requires_review' as const,paymentVerified:false as const};
+    return {...proof,state:'captured' as const,paymentVerified:true as const};
+   }catch{throw new StripeCheckoutError('outcome_unknown','STRIPE_PAYMENT_RECONCILIATION_REQUIRED');}
+ }
  return {preflight,
   // Caller MUST first persist the exact manifest and atomically claim dispatch
   // using the original approved invoice source. One-use below is reentry-only,
@@ -129,23 +156,21 @@ export function stripeCheckoutTransport(configured:StripeCheckoutConnection,send
     return {requestId:d.requestId,createdAfter:w.createdAfter,createdBefore:w.createdBefore,examined:ids.length,matchingSessionIds:matches,nextCursor:page.has_more?ids.at(-1)!:null,searchCompleteWithinWindow:!page.has_more,absenceVerified:false as const,paymentVerified:false as const,automaticRetryAllowed:false as const,bankSettled:false as const,ledgerAdjusted:false as const};
    }catch{throw new StripeCheckoutError('outcome_unknown','STRIPE_CHECKOUT_DISCOVERY_REQUIRES_REVIEW');}
   },
-  async inspect(raw:unknown,id:string){
-   const d=stripeCheckoutDraft.parse(raw);bound(c,d);const selected=sessionId.parse(id);if(!selected.startsWith(c.livemode?'cs_live_':'cs_test_'))throw new ApiError(409,'STRIPE_SESSION_MODE_MISMATCH');
+  inspect:(raw:unknown,id:string)=>inspectOriginal(raw,id),
+  async inspectFees(raw:unknown,id:string,onPrincipal?:(principal:z.infer<typeof stripeCheckoutInspection>)=>Promise<void>){
+   const captured:{value?:z.infer<typeof charge>}={},principal=stripeCheckoutInspection.parse(await inspectOriginal(raw,id,q=>{captured.value=q;})),q=captured.value;
+   // Preserve validated refund/dispute facts even if the later fee lookup
+   // fails. A failed evidence write must stop before reading more fees.
+   await onPrincipal?.(principal);
+   if(!q||!principal.paymentId)return {principal,fees:stripeCheckoutFeeInspection.parse({state:'principal_not_captured',sessionId:principal.sessionId,paymentId:principal.paymentId,chargeId:null,bankSettled:false,ledgerAdjusted:false,feePosted:false,taxVerified:false})};
+   const base={sessionId:principal.sessionId,paymentId:principal.paymentId,chargeId:q.id,bankSettled:false as const,ledgerAdjusted:false as const,feePosted:false as const,taxVerified:false as const};
+   if(!q.balance_transaction)return {principal,fees:stripeCheckoutFeeInspection.parse({...base,state:'awaiting_balance_transaction'})};
    try{
-    // Disabling NEW charges must not prevent reconciliation of earlier money.
-    if(!identityAt||Date.now()-identityAt>60_000)await identify();
-    const s=checkedSession(await sdk.checkout.sessions.retrieve(selected),d);if(s.id!==selected)throw new Error('WRONG_SESSION');
-    const base={sessionId:s.id,paymentId:s.payment_intent,bankSettled:false as const,ledgerAdjusted:false as const};
-    if(!s.payment_intent){if(s.payment_status==='paid')throw new Error('PAID_WITHOUT_PAYMENT');return {...base,state:s.status==='expired'?'expired' as const:'awaiting_payment' as const,paymentVerified:false as const};}
-    const p=intent.parse(await sdk.paymentIntents.retrieve(s.payment_intent)),m=stripeChargeAmount(d.currencyCode,d.unitScale,d.amountMinor);
-    if(p.id!==s.payment_intent||p.livemode!==c.livemode||p.currency!==m.currency||p.amount!==m.amount||JSON.stringify(p.metadata)!==JSON.stringify(metadata(d)))throw new Error('PAYMENT_MISMATCH');
-    if(p.status!=='succeeded'){if(s.payment_status==='paid')throw new Error('INCONSISTENT_PAID_STATUS');return {...base,state:p.status==='canceled'||s.status==='expired'?'expired' as const:'awaiting_payment' as const,paymentVerified:false as const};}
-    if(!p.latest_charge)throw new Error('MISSING_CHARGE');const q=charge.parse(await sdk.charges.retrieve(p.latest_charge));
-    if(q.id!==p.latest_charge||q.payment_intent!==p.id||q.livemode!==c.livemode||q.currency!==m.currency||q.amount!==m.amount||q.amount_captured!==m.amount||p.amount_received!==m.amount||!q.paid||!q.captured||q.status!=='succeeded'||q.amount_refunded>q.amount_captured)throw new Error('CAPTURE_MISMATCH');
-    const proof={...base,chargeId:q.id,amount:m.amount,currency:m.currency,cardFunding:q.payment_method_details.card.funding,refundedAmount:q.amount_refunded,disputed:q.disputed};
-    if(q.amount_refunded||q.disputed||s.status!=='complete'||s.payment_status!=='paid')return {...proof,state:'requires_review' as const,paymentVerified:false as const};
-    return {...proof,state:'captured' as const,paymentVerified:true as const};
-   }catch{throw new StripeCheckoutError('outcome_unknown','STRIPE_PAYMENT_RECONCILIATION_REQUIRED');}
+    const b=balanceTransaction.parse(await sdk.balanceTransactions.retrieve(q.balance_transaction));
+    if(b.id!==q.balance_transaction||b.source!==q.id||BigInt(b.net)!==BigInt(b.amount)-BigInt(b.fee)||b.currency===q.currency&&b.amount!==q.amount_captured)throw new Error('BALANCE_BINDING_MISMATCH');
+    const complete=b.fee_details.every(f=>f.currency===b.currency)&&b.fee_details.reduce((n,f)=>n+BigInt(f.amount),0n)===BigInt(b.fee);
+    return {principal,fees:stripeCheckoutFeeInspection.parse({...base,state:'charge_balance',balanceTransactionId:b.id,balanceType:b.balance_type??null,providerUnitScale:stripeChargeAmount(b.currency.toUpperCase(),0,'1').providerScale,chargeAmount:q.amount_captured,chargeCurrency:q.currency,grossAmount:b.amount,currency:b.currency,feeAmount:b.fee,netAmount:b.net,createdAt:b.created,availableOn:b.available_on,status:b.status,exchangeRate:b.exchange_rate,reportingCategory:b.reporting_category,feeDetails:b.fee_details,feeBreakdownComplete:complete,requiresFxReview:b.currency!==q.currency,principalRequiresReview:principal.state==='requires_review'})};
+   }catch{throw new StripeCheckoutError('outcome_unknown','STRIPE_FEE_RECONCILIATION_REQUIRED');}
   }
  };
 }
