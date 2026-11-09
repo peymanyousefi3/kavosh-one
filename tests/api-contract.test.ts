@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('performance report contracts keep family published-only human access separate from filtered administrative trends',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),family=api.paths['/api/v1/students/{id}/performance'],admin=api.paths['/api/v1/reports/learning/student-performance'];assert.deepEqual(family.get.security,[{humanSession:[],academySelection:[]}]);assert.equal(admin.get.security,undefined);assert.equal(family.post,undefined);assert.equal(admin.post,undefined);assert.equal(family.get.parameters.some((p:any)=>['visibility','studentId','includePrivate','limit'].includes(p.name)),false);assert.deepEqual(admin.get.parameters.find((p:any)=>p.name==='visibility').schema.enum,['all','published','private']);assert.match(admin.get.summary,/PINNED rubric version/);assert.match(family.get.summary,/actually approved and published/);
+});
+
 test('learning export contracts advertise complete source-protected CSV without write or pagination inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
  for(const path of ['/api/v1/reports/learning/session-follow-up/export','/api/v1/reports/learning/sessions/{id}/evidence/export']){const route=api.paths[path];assert.ok(route.get);assert.equal(route.post,undefined);assert.ok(route.get.responses['200'].content['text/csv']);assert.match(route.get.summary,/private/);}
