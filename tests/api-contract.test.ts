@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('tuition reminders extend existing rule and event APIs with civil-day bounds and no client clock or financial authority overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,timing=definition.properties.tuitionReminder;
+ assert.ok(timing);assert.equal(timing.additionalProperties,false);assert.deepEqual(Object.keys(timing.properties),['daysFromDue']);assert.equal(timing.properties.daysFromDue.minimum,-365);assert.equal(timing.properties.daysFromDue.maximum,3650);assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('tuition_due'));assert.match(api.paths['/api/v1/notifications/{id}'].get.summary,/reading never marks payment/);
+ for(const name of ['now','paid','approved','accountId','sourceSnapshot','forceSend'])assert.equal(timing.properties[name],undefined);
+});
+
 test('tuition recognition contracts require explicit net earning evidence and expose no tax cash authority or source overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),parent=api.paths['/api/v1/finance/invoices/{id}/recognitions'],voided=api.paths['/api/v1/finance/tuition-recognitions/{id}/void'];assert.ok(parent.get);assert.ok(parent.post);const s=parent.post.requestBody.content['application/json'].schema;for(const k of ['amount','deferredAccount','revenueAccount','earnedOn','postedOn','period','reference','earningReview'])assert.ok(s.required.includes(k));assert.equal(s.additionalProperties,false);for(const k of ['invoiceId','taxRate','cashAccount','approved','sourceSnapshot'])assert.equal(s.properties[k],undefined);assert.equal(voided.post.requestBody.content['application/json'].schema.properties.amount,undefined);assert.match(parent.get.summary,/full tracked NET summary/);assert.match(parent.post.summary,/No payment,tax recalculation/);
 });

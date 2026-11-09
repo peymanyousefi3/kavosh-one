@@ -29,7 +29,9 @@ export async function processOneMessage(database:Database,academies:string[],con
   async function begin(){await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)",[lease.academy_id]);}
   async function commit(){await db.query('COMMIT');transaction=false;}
   async function finish(outcome:'accepted'|'failed'|'unknown'|'cancelled',providerId:string|null,error:string|null){await begin();const recorded=(await db.query<{ok:boolean}>('SELECT public.finish_notification_delivery($1,$2,$3,$4,$5) ok',[lease.id,lease.lease_token,outcome,providerId,error])).rows[0]?.ok===true;await commit();return {claimed:true,recorded,outcome};}
-  await begin();await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,8))',[lease.academy_id]);await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[lease.academy_id]);
+  // The lease-bound native source lock owns policy/book/topology ordering.
+  // Do not pre-acquire topology before a financial source's book gate.
+  await begin();
   const locked=(await db.query<{ok:boolean}>('SELECT public.lock_notification_delivery_source($1,$2) ok',[lease.id,lease.lease_token])).rows[0]?.ok===true;
   if(!locked){await commit();return {claimed:true,recorded:false,outcome:'lease_lost' as const};}
   const policy=await deliveryRecipientPolicy(db,lease.person_id),source=policy?(await db.query(`SELECT d.id ${deliverySourceFrom} AND d.id=$6 AND coalesce((${currentSource}),false) AND EXISTS(SELECT 1 FROM public.automation_rules rule JOIN public.automation_rule_revisions v ON v.academy_id=rule.academy_id AND v.rule_id=rule.id AND v.version=rule.version WHERE rule.id=d.rule_id AND rule.version=d.rule_version AND v.definition->'enabled'='true'::jsonb AND v.definition#>>'{execution,mode}'='automatic')`,[...policy,lease.id])).rows[0]:null;

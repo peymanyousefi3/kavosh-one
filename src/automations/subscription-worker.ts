@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { assertRuntimeRole,assertSchemaReady,type Database } from '../core/database.ts';
 import { loadGrants,type ApiContext } from '../core/api.ts';
 import { ApiError,requireScope,type Credential } from '../core/policy.ts';
-import { permissionScope } from '../core/approvals.ts';
+import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
+import { lockFinanceBook } from '../core/finance-lock.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
 import { automationRuleHeader,automationRuleRevision } from '../modules/automation-rules.ts';
 import { pendingSubscriptionEvent } from '../modules/automation-events.ts';
@@ -11,6 +12,7 @@ import { notificationJobs } from '../modules/notification-jobs.ts';
 import { lockAcademyTopology } from '../modules/academy.ts';
 import { nextSessionReminder } from './session-reminders.ts';
 import { nextSessionFollowUp } from './session-follow-up.ts';
+import { nextTuitionReminder,watchesTuitionReminders } from './tuition-reminders.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),academies=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
 type Lease={id:string;academy_id:string;lease_token:string};
@@ -29,11 +31,14 @@ export async function processOneSubscription(database:Database,allowedAcademies:
    const locked=c.kind==='human'?await db.query<{valid:boolean}>('SELECT public.lock_human($1,$2) valid',[c.token_id,c.user_id]):await db.query<{valid:boolean}>('SELECT public.lock_bot($1) valid',[c.token_id]);if(!locked.rows[0]?.valid)throw new ApiError(401,'SUBSCRIPTION_AUTHORIZATION_EXPIRED');
    if((await db.query<{status:string}>('SELECT status FROM public.academies WHERE id=$1',[lease.academy_id])).rows[0]?.status!=='active')throw new ApiError(403,'ACADEMY_UNAVAILABLE');
    const sub=(await db.query<{rule_id:string;locale:string;initial_snapshot:string;activation_transaction:string}>('SELECT rule_id,locale,initial_snapshot::text,activation_transaction::text FROM public.automation_subscriptions WHERE id=$1',[lease.id])).rows[0];if(!sub)throw new ApiError(404,'SUBSCRIPTION_UNAVAILABLE');
-   const ctx:ApiContext={db,credential:c,grants:await loadGrants(db,c),request:new Request('https://internal.invalid'),path:'',requestId:randomUUID()};await lockAcademyTopology(ctx);
+   const ctx:ApiContext={db,credential:c,grants:await loadGrants(db,c),request:new Request('https://internal.invalid'),path:'',requestId:randomUUID()};await lockApprovalWrites(ctx);
    const header=await automationRuleHeader(ctx,sub.rule_id);requireScope(permissionScope(ctx,'automations.execute'),header.hub_id??undefined);
+   const revision=await automationRuleRevision(ctx,header),definition=automationDefinition.parse(revision.definition);
+   if(watchesTuitionReminders(definition))await lockFinanceBook(ctx);
+   await lockAcademyTopology(ctx);
    const version=(await db.query<{version:number}>('SELECT version FROM public.automation_rules WHERE id=$1 FOR SHARE',[header.id])).rows[0]?.version;if(version!==header.version)throw new ApiError(409,'AUTOMATION_RULE_CHANGED');
-   const revision=await automationRuleRevision(ctx,header),definition=automationDefinition.parse(revision.definition),event=await nextSessionFollowUp(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionReminder(ctx,lease.id,lease.lease_token,header,definition)??await pendingSubscriptionEvent(ctx,lease.id,sub.initial_snapshot,sub.activation_transaction);let outcome:'idle'|'ignored'|'queued'=event?'ignored':'idle',jobId:string|null=null;
-   if(event&&(!['session','report_schedule','calendar_event'].includes(event.source_kind)||event.source_current)&&definition.execution.mode==='automatic'&&simulateRule(definition,header.hub_id,ruleSample.parse(event.projection),z.enum(['en','fr','zh-CN']).parse(sub.locale)).eligibleByConfiguration){
+   const event=await nextTuitionReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionFollowUp(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionReminder(ctx,lease.id,lease.lease_token,header,definition)??await pendingSubscriptionEvent(ctx,lease.id,sub.initial_snapshot,sub.activation_transaction);let outcome:'idle'|'ignored'|'queued'=event?'ignored':'idle',jobId:string|null=null;
+   if(event&&(!['session','report_schedule','calendar_event','tuition_due'].includes(event.source_kind)||event.source_current)&&definition.execution.mode==='automatic'&&simulateRule(definition,header.hub_id,ruleSample.parse(event.projection),z.enum(['en','fr','zh-CN']).parse(sub.locale)).eligibleByConfiguration){
     const path='automations/rules/'+header.id+'/queue',request=new Request('https://internal.invalid/api/v1/'+path,{method:'POST',headers:{'content-type':'application/json','idempotency-key':randomUUID()},body:JSON.stringify({eventId:event.id,expectedVersion:header.version,locale:sub.locale})});
     const reply=await notificationJobs({...ctx,path,request});if(!reply||![200,202].includes(reply.status))throw new Error('SUBSCRIPTION_QUEUE_FAILED');jobId=uuid.parse((reply.body as {data:{id:string}}).data.id);outcome='queued';
    }

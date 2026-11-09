@@ -4,7 +4,7 @@ export interface Connection {
   release(destroy?: boolean): void;
 }
 export interface Database { connect(): Promise<Connection> }
-export const expectedSchemaRevision=243;
+export const expectedSchemaRevision=244;
 export async function assertSchemaReady(db:Connection) {
   const result=await db.query<{revision:number}>('SELECT public.schema_revision() AS revision');
   if(!Number.isInteger(result.rows[0]?.revision)||result.rows[0].revision<expectedSchemaRevision)throw new Error('SCHEMA_NOT_CURRENT');
@@ -31,7 +31,8 @@ export async function assertRuntimeRole(db: Connection,purpose:'web'|'automation
         AND p.oid<>ALL(array_remove(ARRAY[to_regprocedure('public.claim_notification_delivery(jsonb)'),to_regprocedure('public.begin_notification_delivery(uuid,uuid)'),
           to_regprocedure('public.finish_notification_delivery(uuid,uuid,text,text,text)'),to_regprocedure('public.lock_notification_delivery_source(uuid,uuid)'),
           to_regprocedure('public.account_security_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.report_comment_human_verified(uuid)'),
-          to_regprocedure('public.work_signature_evidence_notice_state(uuid)')],NULL)::oid[])))
+          to_regprocedure('public.work_signature_evidence_notice_state(uuid)'),to_regprocedure('public.tuition_reminder_notice_current(uuid)'),
+          to_regprocedure('public.tuition_reminder_notice_allows(uuid,uuid,jsonb)')],NULL)::oid[])))
       AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname='identity' AND has_schema_privilege(current_user,n.oid,'usage'))
       AND NOT EXISTS (SELECT 1 FROM pg_database d WHERE d.datname=current_database()
         AND pg_has_role(current_user,d.datdba,'member'))
