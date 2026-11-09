@@ -18,7 +18,7 @@ import { assertPayrollGrossBounds } from '../src/modules/payroll-gross-report.ts
 import { ApiError } from '../src/core/policy.ts';
 
 test('every implemented report job operation is registered in the main generated bot API',async()=>{
- const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportJobsContract.length,7);for(const endpoint of reportJobsContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
+ const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportJobsContract.length,9);for(const endpoint of reportJobsContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
 });
 
 async function fixture(throughSchema?:number){const f=await operationsFixture({throughSchema});try{

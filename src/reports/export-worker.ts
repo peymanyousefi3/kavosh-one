@@ -22,6 +22,7 @@ import { attributionReportData,attributionReportCsv } from '../modules/attributi
 import { attributionReportIds } from '../modules/financial-attribution-access.ts';
 import { profitabilityReportData,profitabilityReportCsv } from '../modules/profitability-report-export.ts';
 import {counterpartyStatementJob} from '../modules/counterparty-statement.ts';
+import {processCounterpartyReportPart} from './counterparty-parts.ts';
 
 export const backgroundFinancialEntryLimit=10000;
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(a=>new Set(a).size===a.length);
@@ -45,7 +46,11 @@ export async function processOneReport(database:Database,allowedAcademies:string
    const window=job.window_resolution?frozenReportWindow.parse(job.window_resolution):undefined,source=configuredReportContext(ctx,job.configuration),url=new URL(source.request.url);url.searchParams.delete('limit');source.request=new Request(url);
    const scheduledOccurrence=(await db.query<{scheduleId:string;dueAt:string;recordedAt:string}>(`SELECT schedule_id "scheduleId",to_char(due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') "dueAt",to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') "recordedAt" FROM public.report_schedule_occurrences WHERE job_id=$1`,[lease.id])).rows[0];
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const provenance={id:job.preset_id??undefined,version:job.preset_version??undefined,dateWindow:window,scheduledOccurrence,retryOfJobId:job.retry_of_job_id??undefined};let file:Reply,proof:z.infer<typeof reportAuthorizationContext>;
-   if(job.configuration.reportId==='finance.counterparty-statement'){const result=await counterpartyStatementJob(source,provenance);proof=reportAuthorizationContext.parse(result.authorizationContext);file=result.file;}
+   if(job.configuration.reportId==='finance.counterparty-statement'){
+    const captured=(await db.query('SELECT job_id FROM public.counterparty_report_captures WHERE job_id=$1',[lease.id])).rows.length>0;let small:Awaited<ReturnType<typeof counterpartyStatementJob>>|undefined;
+    if(!captured){try{small=await counterpartyStatementJob(source,provenance);}catch(e){if(!(e instanceof ApiError)||!['REPORT_OUTPUT_LIMIT_EXCEEDED','REPORT_REQUIRES_BACKGROUND_JOB'].includes(e.code))throw e;}}
+    if(small){proof=reportAuthorizationContext.parse(small.authorizationContext);file=small.file;}else{const step=await processCounterpartyReportPart(source,lease.id,lease.lease_token,provenance,signal);if(step.continued){if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');await db.query('COMMIT');transaction=false;return {claimed:true,recorded:true,outcome:'continued' as const};}proof=reportAuthorizationContext.parse(step.proof);file=step.file;}
+   }
    else if(job.configuration.reportId==='finance.profitability'){const data=await profitabilityReportData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=profitabilityReportCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.costs'||attributionReportIds.some(id=>id===job.configuration.reportId)){const data=await attributionReportData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=attributionReportCsv(data,provenance);}
    else if(job.configuration.reportId==='community.achievements'){const reply=await achievementReport(source,true);if(!reply?.body||typeof reply.body!=='object'||!('data'in reply.body))throw new Error('ACHIEVEMENT_REPORT_INVALID');const data=reply.body.data as {authorizationContext:unknown};proof=reportAuthorizationContext.parse(data.authorizationContext);file=achievementReportCsv(data,provenance);}

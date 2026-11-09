@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.315.0",
+    "version": "0.316.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -57983,7 +57983,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue a complete counterparty-statement (10000 source and window events,10000 bills,4MiB;original contexts and exact opening membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB retained file ceiling. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
+        "summary": "Queue a complete counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -58229,6 +58229,108 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/jobs/{id}/parts": {
+      "get": {
+        "summary": "Current-source-authorized ordered CSV byte-part directory for completed large counterparty reports;owner or school master only. Bounded paging,per-part original-byte hashes,logical filename and total bytes. Concatenate bytes in ascending part order;only first part has BOM/header. Pending,cancelled,foreign or newly forbidden results expose no part metadata.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/jobs/{id}/parts/{part}/download": {
+      "get": {
+        "summary": "Download one immutable UTF8 byte segment of a completed large counterparty CSV after the same owner,tenant and whole-original/current-source checks as its directory. Not a standalone full report. Existing ordinary download refuses multipart results instead of returning an index or partial data.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "part",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
             }
           }
         ],

@@ -4,12 +4,16 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('large counterparty report parts have bounded numeric paths,paging and explicit assembly semantics',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),directory=api.paths['/api/v1/reports/jobs/{id}/parts'].get,part=api.paths['/api/v1/reports/jobs/{id}/parts/{part}/download'].get,p=part.parameters.find((p:any)=>p.name==='part');assert.equal(p.schema.type,'integer');assert.equal(p.schema.minimum,1);assert.equal(p.schema.maximum,1000);assert.equal(p.required,true);assert.match(directory.summary,/ascending part order/);assert.match(part.summary,/Not a standalone full report/);assert.equal(directory.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.equal(directory.parameters.find((p:any)=>p.name==='after').schema.maximum,1000);assert.equal(api.paths['/api/v1/reports/jobs/{id}/parts'].post,undefined);
+});
+
 test('received statement live status is human-only with a separate permission and no caller financial authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/me/counterparty-statements/{id}/settlement-status',op=api.paths[path].get;assert.equal(api.paths[path].post,undefined);assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['id','timeZone']);assert.equal(op.parameters.find((p:any)=>p.name==='timeZone').required,true);assert.match(op.summary,/received-statement-settlements.view/);assert.match(op.summary,/unreleased new edition/);for(const key of ['on','version','amount','paid','sourceStamp','recipientId'])assert.equal(op.parameters.some((p:any)=>p.name===key),false);
 });
 
 test('counterparty statement background jobs reuse strict configurations without supplied source proofs or money',()=>{
- const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/reports/jobs'].post,s=p.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('finance.counterparty-statement'));assert.equal(s.additionalProperties,false);for(const key of ['authorizationContext','sourceManifest','sourceFingerprint','paid','amount','requesterId'])assert.equal(s.properties[key],undefined);assert.match(p.summary,/10000 source and window events/);assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/original event/);
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/reports/jobs'].post,s=p.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('finance.counterparty-statement'));assert.equal(s.additionalProperties,false);for(const key of ['authorizationContext','sourceManifest','sourceFingerprint','paid','amount','requesterId'])assert.equal(s.properties[key],undefined);assert.match(p.summary,/200000 source and window events/);assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/original event/);
 });
 
 test('statement reminder rules expose one strict civil-day timer and native source without money or clock overrides',()=>{
