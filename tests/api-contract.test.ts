@@ -313,6 +313,14 @@ test('sharing fee bills use the existing reviewed expense API and never accept c
  assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['asOf','invoiceId','policyVersion']);assert.deepEqual([...s.required].sort(),['asOf','invoiceId','policyVersion']);
  const q=api.paths['/api/v1/finance/invoices/{id}/sharing-fee-capacity'].get.parameters;for(const name of ['policyVersion','payeeId','asOf','postedOn'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['sourceStamp','amount','approved','availableNet'])assert.ok(!q.some((p:any)=>p.name===name));assert.ok(api.paths['/api/v1/finance/expense-bills'].get.parameters.some((p:any)=>p.name==='sharingInvoiceId'));
 });
+test('collector offsets expose an explicit noncash settlement without fabricated method time or client approval proofs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/finance/expense-bills/{id}/offsets'].post,s=op.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);for(const name of ['collector','offsetAuthority','offsetReview','fundingAccount','amount','postedOn'])assert.ok(s.required.includes(name));
+ for(const name of ['method','paidAt','settlementKind','sourceStamp','availableMinor','approved','legalAuthorityVerified'])assert.equal(s.properties[name],undefined);
+ assert.deepEqual(s.properties.offsetAuthority.enum,['same_hub','same_person','reviewed_agreement']);assert.match(op.summary,/BOTH subledgers/);assert.match(op.summary,/not legal certification/);
+ const cash=api.paths['/api/v1/finance/expense-bills/{id}/payments'].post.requestBody.content['application/json'].schema;assert.ok(cash.required.includes('method'));assert.ok(cash.required.includes('paidAt'));assert.equal(cash.properties.collector,undefined);
+ assert.match(api.paths['/api/v1/finance/expense-bills/{id}/payment-status'].get.summary,/paid is total settlement/);
+});
 test('collector capacity documents date and direction without accepting client balances or source proofs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/collectors/{id}/remittance-capacity',q=api.paths[path].get.parameters;
  for(const name of ['holdingAccountId','on','direction'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['amount','available','approved','sourceStamp','activity'])assert.ok(!q.some((p:any)=>p.name===name));assert.deepEqual(q.find((p:any)=>p.name==='direction').schema.enum,['to_academy','to_collector']);assert.match(api.paths['/api/v1/finance/collectors/{id}/remittances'].post.summary,/full dated-timeline capacity/);
