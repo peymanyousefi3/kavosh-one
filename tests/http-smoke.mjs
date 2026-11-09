@@ -26,6 +26,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/me/counterparty-statements/00000000-0000-4000-8000-000000000001/settlement-status?timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/signedDueMinor|matchedMinor|remainingMinor|currency_id|sourceStamp|stack/);}
   {const r=await fetch(base+'/api/v1/automations/events?sourceKind=statement_due');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceStamp|currencies|recipientId|source_snapshot|stack/);}
   {const r=await fetch(base+'/api/v1/finance/counterparty-statements/00000000-0000-4000-8000-000000000001/reminder-source?daysFromDue=0&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceStamp|unmatchedPaymentCount|remainingMinor|scope|stack/);}
   {const r=await fetch(base+'/api/v1/automations/events?sourceKind=counterparty_statement');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/releaseId|recipientId|source_snapshot|accountBinding|stack/);}
