@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash,randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { readFile,readdir } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import pg from 'pg';
 import { receiptFixture } from './receipt-fixture.ts';
 
 async function fixture(){
@@ -10,6 +13,66 @@ async function fixture(){
  return {...f,paymentId:id,path,allocate,read,installments:status};
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
+if(process.env.TEST_DATABASE_URL)test('actual migration installer applies exact checksums once and retains the shared installment snapshot boundary',async()=>{
+ const url=new URL(process.env.TEST_DATABASE_URL!);assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));
+ const admin=new pg.Client({connectionString:url.toString()}),name='kavosh_test_'+randomUUID().replaceAll('-','');await admin.connect();let created=false,client:pg.Client|undefined;
+ try{
+  await admin.query(`CREATE DATABASE "${name}"`);created=true;url.pathname='/'+name;
+  const directory=new URL('../db/migrations/',import.meta.url),names=(await readdir(directory)).filter(n=>n.endsWith('.sql')).sort();
+  const run=()=>spawnSync(process.execPath,['--import','tsx','scripts/migrate.ts'],{cwd:new URL('..',import.meta.url),env:{PATH:process.env.PATH,NODE_ENV:'test',DATABASE_SSL_MODE:'disable',MIGRATION_DATABASE_URL:url.toString()},encoding:'utf8',timeout:30000,maxBuffer:1024*1024});
+  const first=run();assert.equal(first.status,0,first.stderr);assert.equal(first.stdout.split('\n').filter(line=>line.startsWith('Applied ')).length,names.length);
+  const again=run();assert.equal(again.status,0,again.stderr);assert.equal(again.stdout.trim(),'');
+  client=new pg.Client({connectionString:url.toString()});await client.connect();const rows=(await client.query<{name:string;checksum:string}>('SELECT name,checksum FROM public.schema_migrations ORDER BY name')).rows;assert.equal(rows.length,names.length);
+  for(const [index,file]of names.entries())assert.deepEqual(rows[index],{name:file,checksum:createHash('sha256').update(await readFile(new URL(file,directory))).digest('hex')});
+  assert.equal((await client.query("SELECT prosecdef FROM pg_proc WHERE oid='public.tuition_installment_snapshot(uuid)'::regprocedure")).rows[0].prosecdef,false);
+  console.log(JSON.stringify({measurement:'actual-installment-snapshot-migration-install',applied:first.stdout.split('\n').filter(line=>line.startsWith('Applied ')).length,reapplied:0,verifiedChecksums:rows.length}));
+ }finally{if(client)await client.end();if(created)await admin.query(`DROP DATABASE "${name}"`);await admin.end();}
+});
+test('shared installment snapshot upgrade preserves receipt revisions money and audit history',async()=>{
+ const f=await receiptFixture({throughSchema:241});try{
+  const payment=await f.pay({amount:'80'});assert.equal(payment.response.status,201);
+  const path='finance/receipts/'+payment.body.data.id+'/allocations';
+  assert.equal((await f.request(path,{expectedVersion:0,mode:'oldest_due',reason:'Initial reviewed split'})).response.status,200);
+  assert.equal((await f.request(path,{expectedVersion:1,mode:'manual',lines:[{installment:2,amount:'60'}],reason:'Reviewed replacement split'})).response.status,200);
+  const tables=['tuition_invoices','tuition_receipts','tuition_plans','tuition_installments','receipt_allocation_plans','receipt_allocation_revisions','receipt_allocation_lines','finance_journals','finance_journal_lines','approval_requests','audit_events','outbox_events'],before=[];
+  for(const table of tables)before.push((await f.pg.query('SELECT * FROM public.'+table+' ORDER BY 1,2')).rows);
+  await f.pg.exec(await readFile(new URL('../db/migrations/242_tuition_installment_snapshot.sql',import.meta.url),'utf8'));
+  for(const [index,table]of tables.entries())assert.deepEqual((await f.pg.query('SELECT * FROM public.'+table+' ORDER BY 1,2')).rows,before[index],table);
+  assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,242);
+  const result=await f.request('finance/invoices/'+f.invoice.id+'/installment-status?overdueOn=2027-01-02');assert.equal(result.response.status,200,JSON.stringify(result.body));
+  assert.equal(result.body.data.received,'80.00');assert.equal(result.body.data.activeAllocated,'60.00');assert.equal(result.body.data.unallocatedReceived,'20.00');assert.equal(result.body.data.allocationReviewRequired,true);
+  assert.deepEqual(result.body.data.installments.map((row:any)=>[row.outstanding,row.status]),[['50.00','needs_allocation'],['3.00','needs_allocation']]);
+ }finally{await f.pg.close();}
+});
+test('shared installment snapshot is invoker-only tenant-bound and excludes contacts accounts and private review evidence',async()=>{
+ const f=await receiptFixture();try{
+  const authority=(await f.pg.query<{prosecdef:boolean;provolatile:string;proconfig:string[];runtime:boolean;sender:boolean;automation:boolean}>(`SELECT prosecdef,provolatile,proconfig,has_function_privilege('kavosh_runtime',oid,'EXECUTE') runtime,has_function_privilege('kavosh_message_worker',oid,'EXECUTE') sender,has_function_privilege('kavosh_automation_worker',oid,'EXECUTE') automation FROM pg_proc WHERE oid='public.tuition_installment_snapshot(uuid)'::regprocedure`)).rows[0];
+  assert.equal(authority.prosecdef,false);assert.equal(authority.provolatile,'s');assert.ok(authority.proconfig.includes('search_path=pg_catalog'));assert.equal(authority.runtime,true);assert.equal(authority.sender,false);
+  // The existing delegated automation worker inherits runtime rights;the
+  // passive external sender deliberately does not. No new elevated role.
+  assert.equal(authority.automation,true);
+  await f.pg.exec('SET ROLE kavosh_runtime');
+  try{
+   for(const academy of ['',f.b]){await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[academy]);assert.equal((await f.pg.query('SELECT public.tuition_installment_snapshot($1) snapshot',[f.invoice.id])).rows[0].snapshot,null);}
+   await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);const data=(await f.pg.query<{snapshot:Record<string,unknown>}>('SELECT public.tuition_installment_snapshot($1) snapshot',[f.invoice.id])).rows[0].snapshot;
+   assert.deepEqual(Object.keys(data).sort(),['credit_id','currencyCode','installments','received','scale','today']);assert.equal(data.received,'0');assert.doesNotMatch(JSON.stringify(data),/Private|email|phone|reason|account|legalName/);
+   assert.equal((await f.pg.query('SELECT public.tuition_installment_snapshot($1) snapshot',[randomUUID()])).rows[0].snapshot,null);
+  }finally{await f.pg.exec('RESET ROLE');}
+ }finally{await f.pg.close();}
+});
+test('shared installment snapshot keeps original invoice terms and class-local civil dates regardless of connection settings',async()=>{
+ const f=await receiptFixture();try{
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
+  for(const zone of ['Pacific/Kiritimati','Pacific/Pago_Pago']){
+   await f.pg.query('UPDATE public.classes SET time_zone=$2 WHERE id=$1',[f.c.id,zone]);await f.pg.exec("SET TimeZone='UTC';SET DateStyle='SQL,DMY'");
+   const result=(await f.pg.query<{snapshot:{today:string;installments:{dueOn:string;planned:string}[]};today:string}>('SELECT public.tuition_installment_snapshot($1) snapshot,to_char(statement_timestamp() AT TIME ZONE $2,\'YYYY-MM-DD\') today',[f.invoice.id,zone])).rows[0];
+   assert.equal(result.snapshot.today,result.today);assert.deepEqual(result.snapshot.installments.map(row=>[row.dueOn,row.planned]),[['2026-12-01','5000'],['2027-01-01','6300']]);
+  }
+  await f.pg.exec("SET DateStyle='ISO,MDY'");assert.equal((await f.credit(f.invoice.id)).response.status,201);
+  assert.equal((await f.request('finance/tuition-plans/'+f.plan.id+'/change',{...f.planInput,expectedVersion:1,originalAmount:'240',agreedAmount:'200',installments:[{...f.planInput.installments[0],amount:'226'}]})).response.status,200);
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);const old=(await f.pg.query<{snapshot:{credit_id:string;installments:{planned:string}[]}}>('SELECT public.tuition_installment_snapshot($1) snapshot',[f.invoice.id])).rows[0].snapshot;assert.ok(old.credit_id);assert.deepEqual(old.installments.map(row=>row.planned),['5000','6300']);
+ }finally{await f.pg.close();}
+});
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 async function access(f:Fixture,as:string,caps=['allocations.view','allocations.edit','receipts.view','invoices.view']){
  const role=await f.made('roles',{name:'Allocation access '+as,permissions:caps.map(capability=>({capability,effect:'allow'}))}),person=as==='bot'?f.bot:f.actors[as].person,path='people/'+person+'/access',old=await f.request(path);
