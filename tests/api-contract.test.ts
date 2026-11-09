@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('invoice checkout intentions expose exact bounded requests but no provider,accounting or review-authority overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/invoices/{id}/checkout-requests',op=api.paths[base].post,s=op.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['amount','connectionId','dispatchWithinMinutes','priorId','reason','sessionLifetimeMinutes']);assert.equal(s.properties.amount.type,'string');assert.equal(s.properties.dispatchWithinMinutes.minimum,1);assert.equal(s.properties.sessionLifetimeMinutes.minimum,30);assert.equal(s.properties.sessionLifetimeMinutes.maximum,1440);for(const k of ['paid','invoiceId','accountId','amountMinor','sourceSnapshot','approvalId','checkoutUrl'])assert.equal(s.properties[k],undefined);
+ const cancel=api.paths['/api/v1/finance/checkout-requests/{id}/cancel'].post.requestBody.content['application/json'].schema;assert.equal(cancel.additionalProperties,false);assert.deepEqual(Object.keys(cancel.properties),['reason']);assert.match(op.summary,/No provider call/);assert.ok(api.paths[base].get);assert.ok(api.paths['/api/v1/finance/checkout-requests/{id}/review'].get);
+});
+
 test('payment provider callback exposes only fixed snapshot references and signature,never user financial authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/webhooks/stripe/{connectionId}'].post,s=p.requestBody.content['application/json'].schema;
  assert.deepEqual(p.security,[]);assert.deepEqual(p.parameters.map((v:any)=>v.name),['connectionId','Stripe-Signature']);assert.equal(p.parameters[1].required,true);assert.equal(s.properties.api_version.const,'2026-10-28.endive');assert.equal(s.properties.account.type,'null');assert.match(p.summary,/never mark an invoice paid/);for(const key of ['amount','invoiceId','academyId','paid','receiptId','approved'])assert.equal(s.properties[key],undefined);assert.equal(api.paths['/api/webhooks/stripe/{connectionId}'].get,undefined);
