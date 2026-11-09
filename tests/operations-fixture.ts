@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile,readdir } from 'node:fs/promises';
-import { testDatabase } from './database.ts';
+import { testDatabase,migratedTestDatabase } from './database.ts';
 import { createApi } from '../src/core/api.ts';
 import { business } from '../src/modules/business.ts';
 import type { Capability } from '../src/core/policy.ts';
@@ -11,9 +11,9 @@ import type { R2UploadConnections,R2DownloadConnections } from '../src/integrati
 import type { PayrollPrivateVault } from '../src/core/payroll-private-data.ts';
 
 export async function operationsFixture(options:{botCredentialSecret?:string;connections?:R2UploadConnections;downloadConnections?:R2DownloadConnections;throughSchema?:number;invitationSecret?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault}={}) {
-  const pg=await testDatabase();
+  const pg=options.throughSchema===undefined?await migratedTestDatabase():await testDatabase();
   try {
-    for(const file of (await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&(options.throughSchema===undefined||Number.parseInt(n,10)<=options.throughSchema)).sort())
+    for(const file of options.throughSchema===undefined?[]:(await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&Number.parseInt(n,10)<=options.throughSchema!).sort())
       await pg.exec(await readFile(new URL('../db/migrations/'+file,import.meta.url),'utf8'));
     const a=randomUUID(),b=randomUUID(),hub=randomUUID(),otherHub=randomUUID(),foreignHub=randomUUID();
     const actors=Object.fromEntries(['master','manager','staff','peer','foreignMaster'].map(key=>[key,{person:randomUUID(),user:randomUUID(),session:randomUUID()}]));
