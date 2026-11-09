@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('durable checkout coordination accepts bounded hashes and expiry,never caller money,owner,return URLs or payment authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/checkout-requests/{id}/attempts',reserve=api.paths[base].post.requestBody.content['application/json'].schema,start=api.paths[base+'/{attemptId}/dispatch'].post.requestBody.content['application/json'].schema;
+ assert.equal(reserve.additionalProperties,false);assert.deepEqual(Object.keys(reserve.properties).sort(),['expiresAt','requestBytes','requestSha256','sourceFingerprint']);assert.equal(reserve.properties.requestBytes.maximum,16384);assert.deepEqual(Object.keys(start.properties).sort(),['requestBytes','requestSha256']);assert.equal(start.additionalProperties,false);
+ for(const key of ['amount','accountId','apiKey','draft','paid','successUrl','cancelUrl'])assert.equal(reserve.properties[key],undefined);assert.match(api.paths[base+'/{attemptId}/dispatch'].post.summary,/Cached repeats return409/);assert.match(api.paths[base+'/{attemptId}/dispatch/outcome'].post.summary,/Not trusted provider evidence/);assert.ok(api.paths[base+'/{attemptId}/source'].get);
+});
+
 test('invoice checkout intentions expose exact bounded requests but no provider,accounting or review-authority overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/invoices/{id}/checkout-requests',op=api.paths[base].post,s=op.requestBody.content['application/json'].schema;
  assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['amount','connectionId','dispatchWithinMinutes','priorId','reason','sessionLifetimeMinutes']);assert.equal(s.properties.amount.type,'string');assert.equal(s.properties.dispatchWithinMinutes.minimum,1);assert.equal(s.properties.sessionLifetimeMinutes.minimum,30);assert.equal(s.properties.sessionLifetimeMinutes.maximum,1440);for(const k of ['paid','invoiceId','accountId','amountMinor','sourceSnapshot','approvalId','checkoutUrl'])assert.equal(s.properties[k],undefined);

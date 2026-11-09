@@ -8,7 +8,8 @@ import { stripeWebhookConnection,stripeSnapshotVersion } from './stripe-webhook-
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),integer=z.number().int().min(0).max(999_999_999_999),epoch=z.number().int().positive().max(9_999_999_999),sessionId=z.string().regex(/^cs_(test|live)_[A-Za-z0-9]{1,200}$/),paymentId=z.string().regex(/^pi_[A-Za-z0-9]{1,200}$/),chargeId=z.string().regex(/^ch_[A-Za-z0-9]{1,200}$/);
 const origin=z.string().max(2000).refine(value=>{try{const u=new URL(value);return u.origin===value&&u.protocol==='https:'&&!u.username&&!u.password;}catch{return false;}});
-export const stripeCheckoutConnection=stripeWebhookConnection.omit({secrets:true}).extend({apiKey:z.string().regex(/^(sk|rk)_(test|live)_[A-Za-z0-9]{16,256}$/),origin}).strict().refine(c=>c.apiKey.split('_')[1]===(c.livemode?'live':'test'));
+export const stripeCheckoutPublicConnection=stripeWebhookConnection.omit({secrets:true}).extend({origin});
+export const stripeCheckoutConnection=stripeCheckoutPublicConnection.extend({apiKey:z.string().regex(/^(sk|rk)_(test|live)_[A-Za-z0-9]{16,256}$/)}).strict().refine(c=>c.apiKey.split('_')[1]===(c.livemode?'live':'test'));
 export type StripeCheckoutConnection=z.infer<typeof stripeCheckoutConnection>;
 // No environment auto-enable,account creation or mounted route. This component
 // is for an isolated dispatcher;web/bot request data must never supply keys.
@@ -35,9 +36,10 @@ export function stripeChargeAmount(currencyCode:string,unitScale:number,minorUni
  return {amount:Number(value),currency:currencyCode.toLowerCase(),providerScale:scale};
 }
 function metadata(d:Draft){return {kavosh_schema:'checkout-v1',kavosh_request:d.requestId,kavosh_school:d.academyId,kavosh_invoice:d.invoiceId,kavosh_connection:d.connectionId};}
-function bound(config:StripeCheckoutConnection,d:Draft){if(d.connectionId!==config.connectionId||d.academyId!==config.academyId||d.accountId!==config.accountId||d.livemode!==config.livemode)throw new ApiError(409,'STRIPE_CONNECTION_MISMATCH');}
-export function buildStripeCheckout(raw:unknown,configured:StripeCheckoutConnection,now=Date.now()){
- const c=stripeCheckoutConnection.parse(configured),d=stripeCheckoutDraft.parse(raw);bound(c,d);
+function bound(config:z.infer<typeof stripeCheckoutPublicConnection>,d:Draft){if(d.connectionId!==config.connectionId||d.academyId!==config.academyId||d.accountId!==config.accountId||d.livemode!==config.livemode)throw new ApiError(409,'STRIPE_CONNECTION_MISMATCH');}
+export function buildStripeCheckout(raw:unknown,configured:z.infer<typeof stripeCheckoutPublicConnection>,now=Date.now()){
+ // The web coordinator requires only public identity/origin,never API keys.
+ const c=stripeCheckoutPublicConnection.strip().parse(configured),d=stripeCheckoutDraft.parse(raw);bound(c,d);
  if(d.expiresAt<Math.floor(now/1000)+1800||d.expiresAt>Math.floor(now/1000)+86400)throw new ApiError(409,'STRIPE_CHECKOUT_EXPIRY_INVALID');
  for(const value of [d.successUrl,d.cancelUrl]){const u=new URL(value);if(u.origin!==c.origin||u.username||u.password||u.hash||u.protocol!=='https:')throw new ApiError(400,'STRIPE_RETURN_URL_FORBIDDEN');}
  const money=stripeChargeAmount(d.currencyCode,d.unitScale,d.amountMinor),tags=metadata(d);
