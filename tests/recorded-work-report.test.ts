@@ -16,6 +16,18 @@ async function fixture(throughSchema?:number){const f=await workFixture({through
  return {...f,session,hourly,input,save,report};
  }catch(error){await f.pg.close();throw error;}}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
+test('actual230to231 retains populated teaching time history and pricing while adding isolated read-only agreement context',async()=>{
+ const f=await fixture(230);try{
+  const engagement=await f.create({components:[f.hourly]});assert.equal(engagement.response.status,201);const saved=await f.save();assert.equal(saved.response.status,201);
+  const snapshot="SELECT jsonb_build_object('entries',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM public.session_time_entries e),'history',(SELECT jsonb_agg(to_jsonb(e) ORDER BY entry_id,version) FROM public.session_time_revisions e),'terms',(SELECT jsonb_agg(to_jsonb(e) ORDER BY engagement_id,version) FROM public.work_engagement_revisions e),'roles',(SELECT jsonb_agg(to_jsonb(e) ORDER BY role_id,capability) FROM public.role_permissions e)) snapshot",before=(await f.pg.query(snapshot)).rows,reportBefore=await f.report();assert.equal(reportBefore.response.status,200);
+  await f.pg.exec(await readFile(new URL('../db/migrations/231_work_activity_agreement_context.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,231);assert.deepEqual((await f.pg.query(snapshot)).rows,before);
+  const reportAfter=await f.report();assert.equal(reportAfter.response.status,200);assert.deepEqual(reportAfter.body.data.currencies,reportBefore.body.data.currencies);assert.equal(reportAfter.body.data.currencies[0].actualHourlyTotal.amount,'20.67');
+  const path='payroll/engagements/'+engagement.body.data.id+'/recorded-time/'+saved.body.data.id+'/agreement-context?entryVersion=1&termsVersion=1',context=await f.request(path);assert.equal(context.response.status,200,JSON.stringify({body:context.body,errors:f.metrics.queryFailures}));assert.equal(context.body.data.activityRecorded,true);assert.deepEqual(context.body.data.observations,[]);assert.equal(context.body.data.signatureRequiredToRetainRecordedWork,false);assert.equal((await f.request(context.body.data.workTermsPath.replace('/api/v1/',''))).response.status,200);
+  for(const role of ['kavosh_file_worker','kavosh_signature_result_worker','kavosh_signature_completion_worker','kavosh_signature_evidence_worker','kavosh_identity','kavosh_delivery']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.work_activity_agreement_context($1,$2,1)',[saved.body.data.id,saved.body.data.id]),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
+  await f.pg.exec('SET ROLE kavosh_signature_evidence_policy');try{await assert.rejects(f.pg.exec('SELECT reason FROM public.session_time_entries'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(path)).response.status,200);assert.deepEqual((await f.pg.query(snapshot)).rows,before);
+ }finally{await f.pg.close();}
+});
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 
 check('recorded hourly report reads actual persisted sources, preserves five-minute reductions and posts no pay or journals',async f=>{
