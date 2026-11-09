@@ -5,6 +5,12 @@ import { operationsFixture } from './operations-fixture.ts';
 import { workFixture } from './work-fixture.ts';
 import { readFile } from 'node:fs/promises';
 import { upgradeToCurrent } from './migration-upgrade.ts';
+import { reportJobFeatureScopesSQL } from '../src/modules/automation-events.ts';
+import { financialJobInput } from '../src/modules/report-jobs.ts';
+
+test('every queued report kind has an explicit fail-closed notification source branch',()=>{
+ for(const id of financialJobInput.shape.reportId.options)assert.ok(reportJobFeatureScopesSQL.includes("'"+id+"'"),'Missing report notification source policy: '+id);assert.match(reportJobFeatureScopesSQL,/ELSE false END/);
+});
 
 async function fixture(options:{throughSchema?:number}={}){const f=await operationsFixture(options);try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['automations.view','automations.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
