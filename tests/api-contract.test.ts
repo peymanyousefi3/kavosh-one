@@ -303,3 +303,8 @@ test('committed API reference is byte-exact generator output with sorted paths,w
  const output=execFileSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{cwd:fileURLToPath(new URL('../',import.meta.url)),maxBuffer:8_388_608,timeout:15000});
  const saved=readFileSync(target),paths=Object.keys(JSON.parse(saved.toString()).paths);assert.deepEqual(paths,[...paths].sort());assert.ok(output.equals(saved),'API reference differs from current generator output');
 });
+test('sharing preview exposes only a strict optional accounting date, never caller supplied financial proof',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/finance/invoices/{id}/sharing-preview'].get.parameters;
+ assert.ok(p.some((p:any)=>p.name==='asOf'&&p.required===false));assert.ok(p.some((p:any)=>p.name==='version'));
+ for(const key of ['sourceStamp','receivedAmount','approved','payeeId','creditHandling'])assert.ok(!p.some((p:any)=>p.name===key));
+});

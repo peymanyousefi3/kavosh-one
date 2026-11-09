@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.297.0",
+    "version": "0.298.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -20754,7 +20754,7 @@
     },
     "/api/v1/finance/invoices/{id}/sharing-preview": {
       "get": {
-        "summary": "Private calculation from actual recorded invoice receipts under a pinned agreement version; still not a posted payable or fee-tax certification",
+        "summary": "Private calculation from actual recorded invoice receipts under a pinned agreement version. Optional asOf uses actual receipt and correction posting dates with a canonical source stamp; no payable, fee-tax certification, collector setoff or bank settlement.",
         "parameters": [
           {
             "name": "id",
@@ -20773,6 +20773,15 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 2147483647
+            }
+          },
+          {
+            "name": "asOf",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
             }
           }
         ],
