@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('delivery supervision is a separately permissioned read-only human or bot API without contact or retry inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/automations/deliveries';
+ for(const suffix of ['', '/summary','/{id}','/{id}/history']){const route=api.paths[root+suffix];assert.ok(route.get);assert.equal(route.post,undefined);assert.equal(route.get.security,undefined);assert.equal(route.get.parameters.some((p:any)=>['to','providerId','approved','retry','delivered','leaseToken'].includes(p.name)),false);}
+ const params=api.paths[root].get.parameters;assert.equal(params.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(params.find((p:any)=>p.name==='channel').schema.enum,['email','sms']);assert.ok(params.some((p:any)=>p.name==='personId'));assert.match(api.paths[root].get.summary,/BEFORE filters and paging/);assert.equal(api.paths[root+'/summary'].get.parameters.some((p:any)=>p.name==='after'),false);
+});
+
 test('outbound status is a human-only source-authorized metadata read with bounded filters and no delivery override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/me/notification-deliveries';for(const path of [root,root+'/{id}',root+'/{id}/history']){assert.deepEqual(api.paths[path].get.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[path].post,undefined);}
  const parameters=api.paths[root].get.parameters;assert.equal(parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(parameters.find((p:any)=>p.name==='channel').schema.enum,['email','sms']);assert.equal(parameters.some((p:any)=>['personId','providerId','approved','delivered','to'].includes(p.name)),false);assert.match(api.paths[root].get.summary,/never confirmed delivery/);

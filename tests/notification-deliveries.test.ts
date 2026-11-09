@@ -26,8 +26,86 @@ async function fixture(options:{throughSchema?:number}={}){
  return {...f,sent,transport,database,work,optIn,queue};
 }
 type F=Awaited<ReturnType<typeof fixture>>;
+const monitoring='automations/deliveries';
+async function allowMonitoring(f:F,role=f.managerRole){await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'notification-deliveries.view','allow')",[f.a,role]);}
 function check(name:string,run:(f:F)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 function noSecrets(v:unknown){assert.doesNotMatch(JSON.stringify(v),/example[.]test|[+]1647|owner_epoch|contact_epoch|lease_token|provider_id|auth_user_id|Mise à jour/);}
+
+check('delivery supervision requires a separate explicit permission and keeps source privacy before metadata counts and paging',async f=>{
+ await f.optIn();await f.queue();assert.equal((await f.request(monitoring,undefined,'manager')).response.status,403);assert.equal((await f.request(monitoring,undefined,'bot')).response.status,403);
+ await allowMonitoring(f);const first=await f.request(monitoring+'?limit=1',undefined,'manager');assert.equal(first.response.status,200,JSON.stringify(first.body));assert.equal(first.body.data.length,1);assert.ok(first.body.nextCursor);noSecrets(first.body);
+ const second=await f.request(monitoring+'?limit=1&after='+first.body.nextCursor,undefined,'manager');assert.equal(second.body.data.length,1);assert.notEqual(first.body.data[0].id,second.body.data[0].id);assert.equal(second.body.nextCursor,null);
+ assert.equal((await f.request(monitoring+'/summary',undefined,'manager')).body.data.reduce((n:number,r:{count:string})=>n+Number(r.count),0),2);
+ assert.equal((await f.request(monitoring+'?attentionOnly=true',undefined,'manager')).body.data.length,0);
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='automations.view'",[f.managerRole]);
+ assert.deepEqual((await f.request(monitoring,undefined,'manager')).body.data,[]);assert.deepEqual((await f.request(monitoring+'/summary',undefined,'manager')).body.data,[]);
+ for(const suffix of ['', '/history'])assert.equal((await f.request(monitoring+'/'+first.body.data[0].id+suffix,undefined,'manager')).response.status,404);
+ assert.equal((await f.request(root,undefined,'staff')).body.data.length,2,'monitoring permissions do not replace private self access');
+});
+
+check('delivery monitoring shows precise failure and uncertain states without retrying or treating provider acceptance as receipt',async f=>{
+ await f.optIn();const q=await f.queue();await allowMonitoring(f);let attempts=0;
+ const transport={...f.transport,async email(){attempts++;throw new MessageDeliveryError('rejected','SYNTHETIC_REJECTION');},async sms(){attempts++;throw new Error('SYNTHETIC_UNCERTAIN');}};
+ for(let i=0;i<2;i++)assert.equal((await f.work(transport)).recorded,true);assert.equal(attempts,2);
+ const records=await f.request(monitoring+'?attentionOnly=true&ruleId='+q.rule.id,undefined,'manager');assert.equal(records.response.status,200,JSON.stringify(records.body));assert.deepEqual(records.body.data.map((d:{status:string})=>d.status).sort(),['failed','unknown']);assert.ok(records.body.data.every((d:{needsAttention:boolean})=>d.needsAttention));noSecrets(records.body);
+ const counts=await f.request(monitoring+'/summary?attentionOnly=true&ruleId='+q.rule.id,undefined,'manager');assert.deepEqual(counts.body.data.map((r:{status:string;count:string;attentionCount:string})=>[r.status,r.count,r.attentionCount]).sort(),[['failed','1','1'],['unknown','1','1']]);
+ for(const job of records.body.data){const detail=await f.request(monitoring+'/'+job.id,undefined,'manager');assert.equal(detail.body.data.sourceStillCurrent,true);assert.equal(detail.body.readDoesNotResolve,true);assert.equal(detail.body.deliveryConfirmed,false);noSecrets(detail.body);
+  const history=await f.request(monitoring+'/'+job.id+'/history?limit=1',undefined,'manager');assert.equal(history.body.data.length,1);assert.equal(history.body.data[0].state.status,job.status);assert.equal(history.body.nextCursor,4);noSecrets(history.body);}
+ assert.equal((await f.work(transport)).claimed,false);assert.equal(attempts,2);assert.equal((await f.request(monitoring+'/summary?status=accepted',undefined,'manager')).body.data.length,0);
+});
+
+check('API bot monitoring intersects its own current token ceiling and never borrows a manager or master source identity',async f=>{
+ await f.optIn('manager',['email']);await allowMonitoring(f);await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'audit.view','allow')",[f.a,f.managerRole]);
+ const created=await f.request('people',{name:'Synthetic source for bot observation',hubId:f.hub});assert.equal(created.response.status,201);
+ const event=(await f.pg.query<{event_id:string}>("SELECT event_id FROM public.automation_event_sources WHERE source_kind='audit' AND projection->>'entityId'=$1",[created.body.data.id])).rows[0];assert.ok(event);
+ const rule=await f.rule({trigger:{kind:'domain_event',eventTypes:['person.created']},actions:[{...f.definition.actions[0],channels:['email'],audience:{kind:'people',personIds:[f.actors.manager.person]}}]},'BOT_SUPERVISION');assert.equal((await f.dispatch(rule.id,event.event_id)).body.data.summary.outboundQueued,1);
+ const list=await f.request(monitoring,undefined,'bot');assert.equal(list.response.status,200,JSON.stringify(list.body));assert.equal(list.body.data.length,1);const id=list.body.data[0].id;noSecrets(list.body);assert.equal((await f.request(monitoring+'/'+id+'/history',undefined,'bot')).response.status,200);
+ await f.pg.query('INSERT INTO public.assignment_hubs(academy_id,assignment_id,hub_id) SELECT $1,id,$2 FROM public.role_assignments WHERE person_id=$3 AND role_id=$4',[f.a,f.otherHub,f.bot,f.managerRole]);
+ await f.pg.query('UPDATE auth_private.credentials SET all_hubs=false WHERE id=$1',[f.credential]);await f.pg.query('INSERT INTO auth_private.credential_hubs VALUES($1,$2,$3)',[f.credential,f.a,f.otherHub]);
+ const narrowed=await f.request(monitoring,undefined,'bot');assert.equal(narrowed.response.status,200,JSON.stringify(narrowed.body));assert.deepEqual(narrowed.body.data,[]);assert.deepEqual((await f.request(monitoring+'/summary',undefined,'bot')).body.data,[]);assert.equal((await f.request(monitoring+'/'+id,undefined,'bot')).response.status,404);
+ assert.equal((await f.request(monitoring,undefined,'master')).body.data.length,1);assert.equal((await f.pg.query('SELECT status FROM public.notification_deliveries')).rows[0].status,'queued');assert.equal(f.sent.length,0);
+});
+
+check('selected-recipient delivery permission and explicit person denial constrain detail history and summaries before pagination',async f=>{
+ await f.optIn('staff',['email']);await f.optIn('manager',['email']);await f.queue(['email']);
+ const role=randomUUID(),assignment=randomUUID();await f.pg.query('INSERT INTO public.roles(academy_id,id,name) VALUES($1,$2,\'Selected delivery monitor\')',[f.a,role]);await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'notification-deliveries.view','allow')",[f.a,role]);await f.pg.query('INSERT INTO public.role_assignments(academy_id,id,person_id,role_id,all_hubs) VALUES($1,$2,$3,$4,false)',[f.a,assignment,f.actors.manager.person,role]);await f.pg.query('INSERT INTO public.assignment_people VALUES($1,$2,$3)',[f.a,assignment,f.actors.staff.person]);
+ const records=await f.request(monitoring+'?limit=1',undefined,'manager');assert.equal(records.response.status,200,JSON.stringify(records.body));assert.equal(records.body.data.length,1);assert.equal(records.body.data[0].recipientPersonId,f.actors.staff.person);assert.equal(records.body.nextCursor,null);
+ assert.equal((await f.request(monitoring+'/summary',undefined,'manager')).body.data[0].count,'1');
+ const hidden=(await f.pg.query<{id:string}>('SELECT id FROM public.notification_deliveries WHERE person_id=$1',[f.actors.manager.person])).rows[0];assert.equal((await f.request(monitoring+'/'+hidden.id,undefined,'manager')).response.status,404);
+ await allowMonitoring(f);await f.pg.query("UPDATE public.role_permissions SET effect='deny' WHERE role_id=$1 AND capability='notification-deliveries.view'",[role]);
+ const remaining=await f.request(monitoring,undefined,'manager');assert.equal(remaining.body.data.length,1);assert.equal(remaining.body.data[0].id,hidden.id);assert.equal((await f.request(monitoring+'/'+records.body.data[0].id+'/history',undefined,'manager')).response.status,404);
+});
+
+check('delivery supervision validates strict bounded filters and stays tenant-bound and read-only',async f=>{
+ await f.optIn('staff',['email']);const q=await f.queue(['email']);const id=(await f.pg.query<{id:string}>('SELECT id FROM public.notification_deliveries')).rows[0].id;await allowMonitoring(f);
+ const day=(await f.pg.query<{created_on:string}>("SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD') created_on FROM public.notification_deliveries")).rows[0].created_on;
+ const selected=await f.request(monitoring+'?channel=email&status=queued&personId='+f.actors.staff.person+'&eventId='+q.event.id+'&from='+day+'&through='+day,undefined,'manager');assert.equal(selected.body.data.length,1);
+ assert.deepEqual((await f.request(monitoring+'?through=2000-01-01',undefined,'manager')).body.data,[]);
+ for(const suffix of ['?limit=51','?status=delivered','?to=private@example.test','?limit=1&limit=2','?from=2026-11-09&through=2026-11-08','/summary?limit=1','/summary?from=0000-01-01','/'+id+'/history?beforeVersion=2147483648'])assert.equal((await f.request(monitoring+suffix,undefined,'manager')).response.status,400,suffix);
+ for(const suffix of ['', '/summary','/'+id,'/'+id+'/history'])assert.equal((await f.request(monitoring+suffix,{},'manager')).response.status,405);
+ for(const suffix of ['', '/summary'])assert.deepEqual((await f.request(monitoring+suffix,undefined,'foreignMaster',{academy:f.b})).body.data,[]);
+ for(const suffix of ['', '/history'])assert.equal((await f.request(monitoring+'/'+id+suffix,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ const before=(await f.pg.query('SELECT id,status,version FROM public.notification_deliveries')).rows;await f.request(monitoring+'/'+id+'/history',undefined,'manager');assert.deepEqual((await f.pg.query('SELECT id,status,version FROM public.notification_deliveries')).rows,before);assert.equal(f.sent.length,0);
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='people.view'",[f.managerRole]);assert.equal((await f.request(monitoring,undefined,'manager')).response.status,403);
+});
+
+test('actual234to235 preserves all prior jobs permissions and credentials without inferring delivery-monitor grants',async()=>{
+ const f=await fixture({throughSchema:234});try{await f.optIn('staff',['email']);await f.queue(['email']);
+  const tables=['public.role_permissions','public.role_assignments','auth_private.credentials','public.notification_deliveries','public.notification_delivery_revisions'];
+  async function snapshot(){const rows=[];for(const table of tables)rows.push((await f.pg.query('SELECT to_jsonb(x) data FROM '+table+' x ORDER BY to_jsonb(x)::text')).rows);return rows;}
+  const before=await snapshot();await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.equal((await f.request(monitoring,undefined,'manager')).response.status,403);assert.equal((await f.request(monitoring,undefined,'bot')).response.status,403);assert.equal((await f.request(monitoring,undefined,'master')).body.data.length,1);assert.equal(f.sent.length,0);
+ }finally{await f.pg.close();}
+});
+
+check('master configures the monitoring feature through ordinary role presets and selected-person access APIs',async f=>{
+ await f.optIn('staff',['email']);await f.optIn('manager',['email']);await f.queue(['email']);
+ const catalog=await f.request('capabilities');assert.equal(catalog.response.status,200);assert.deepEqual(catalog.body.data.find((c:{name:string})=>c.name==='notification-deliveries.view').scope_kinds,['hub','person','country','region','city']);
+ const preset=await f.request('roles',{name:'Selected message monitoring',permissions:[{capability:'notification-deliveries.view',effect:'allow'}]});assert.equal(preset.response.status,201,JSON.stringify(preset.body));
+ const path='people/'+f.actors.manager.person+'/access',before=await f.request(path);assert.equal(before.response.status,200);
+ const assign=await f.request(path,{expectedVersion:before.body.data.version,assignments:[{roleId:f.managerRole,allHubs:false,hubIds:[f.hub]},{roleId:f.policyRole,allHubs:true},{roleId:preset.body.data.id,allHubs:false,personIds:[f.actors.staff.person]}]});assert.equal(assign.response.status,200,JSON.stringify(assign.body));
+ const list=await f.request(monitoring,undefined,'manager');assert.equal(list.response.status,200,JSON.stringify(list.body));assert.equal(list.body.data.length,1);assert.equal(list.body.data[0].recipientPersonId,f.actors.staff.person);assert.equal(f.sent.length,0);
+ await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(monitoring+'/summary',undefined,'manager')).body.data[0].count,'1','Supervision stays available while writes are frozen');
+});
 
 check('external-only approved rules queue opted-in current recipients without inventing portal messages or provider acceptance',async f=>{
  await f.optIn();const q=await f.queue();assert.equal(q.result.body.data.summary.outboundQueued,2);assert.equal(q.result.body.data.summary.portalNotifications,0);assert.equal(q.result.body.data.summary.externalChannelSuppressed,2);assert.equal(q.result.body.data.externalRequestMade,false);assert.equal(f.sent.length,0);
