@@ -33,6 +33,7 @@ export const expenseAllocationSelectionSQL=(snapshot:string,ownerScopes:string,c
  WHERE EXISTS(SELECT 1 FROM jsonb_array_elements(${ownerScopes}) scope(value) WHERE public.scope_contains(scope.value,${hub("(target->>'hubId')::uuid")}) IS NOT TRUE)
  OR(target->>'classId' IS NOT NULL AND(cl.id IS NULL OR cl.hub_id IS DISTINCT FROM(target->>'hubId')::uuid OR public.scope_contains(${classScope},jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',cl.id,'hubId',cl.hub_id)))) IS NOT TRUE))
  OR(target->>'studentId' IS NOT NULL AND(person.id IS NULL OR public.scope_contains(${studentScope},jsonb_build_object('all',false,'hubs','[]'::jsonb,'people',jsonb_build_array(jsonb_build_object('id',person.id,'hubId',person.hub_id)))) IS NOT TRUE)))`;
+export { expenseAllocationSelectionSQL as attributionRevisionSelectionSQL };
 
 // A saved file is not a newly filtered live report. Every captured immutable
 // source must still be authorized BEFORE its bytes or hash metadata is read.

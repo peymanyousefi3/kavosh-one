@@ -26,6 +26,8 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['','?version=1','/history']){const r=await fetch(base+'/api/v1/finance/journals/00000000-0000-4000-8000-000000000001/attribution'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/signedMinor|source_snapshot|studentId|stack/);}
+  {const r=await fetch(base+'/api/v1/finance/journals/00000000-0000-4000-8000-000000000001/attribution',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const suffix of ['','?version=1','/history']){const r=await fetch(base+'/api/v1/finance/expense-bills/00000000-0000-4000-8000-000000000001/cost-allocation'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/expenseMinor|source_snapshot|studentId|stack/);}
   {const r=await fetch(base+'/api/v1/finance/expense-bills/00000000-0000-4000-8000-000000000001/cost-allocation',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const path of ['finance/invoices/00000000-0000-4000-8000-000000000001/recognitions','finance/tuition-recognitions/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/trackedReleasedNet|source_snapshot|earningReview|stack/);}

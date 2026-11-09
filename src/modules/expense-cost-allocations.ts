@@ -1,17 +1,16 @@
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
-import { propose,permissionScope,master,lockApprovalWrites,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
-import { ApiError,requireScope } from '../core/policy.ts';
+import { propose,master,lockApprovalWrites,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
+import { ApiError } from '../core/policy.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { lockFinanceBook } from '../core/finance-lock.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { expenseBillRow } from './expenses.ts';
-import { classRow } from './classes.ts';
-import { permittedPeople } from './students.ts';
+import { financialAttributionTarget,attributionTargetsAuthority } from './financial-attribution-targets.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),reason=z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'));
-const target=z.object({hubId:uuid.nullable(),classId:uuid.nullable().default(null),studentId:uuid.nullable().default(null),weight:z.number().int().min(1).max(1000000).default(1)}).strict().refine(t=>t.hubId!==null||(t.classId===null&&t.studentId===null));
+const target=financialAttributionTarget;
 const selection=z.object({expectedVersion:z.number().int().min(0).max(2147483646),lines:z.array(z.object({lineNumber:z.number().int().min(1).max(50),targets:z.array(target).min(1).max(200).refine(a=>new Set(a.map(t=>JSON.stringify([t.hubId,t.classId,t.studentId]))).size===a.length)}).strict()).max(50).refine(a=>new Set(a.map(l=>l.lineNumber)).size===a.length&&a.reduce((n,l)=>n+l.targets.length,0)<=200),reason}).strict();
 const payload=selection.extend({billId:uuid}),empty=z.object({}).strict(),readQuery=z.object({version:z.coerce.number().int().positive().max(2147483647).optional()}).strict(),historyQuery=z.object({afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0),limit:z.coerce.number().int().min(1).max(100).default(25)}).strict();
 type Input=z.infer<typeof payload>;
@@ -19,13 +18,10 @@ type Target=z.infer<typeof target>;
 type Amounts={netMinor:string;taxMinor:string;recoverableMinor:string;nonrecoverableMinor:string;grossMinor:string;expenseMinor:string};
 type Source={unavailable?:string;before:{version:number};billId:string;currencyId:string;unitScale:number;allocationPolicy:string;lines:({lineNumber:number;originalHubId:string|null;originalClassId:string|null;originalStudentId:string|null;expenseAccountId:string;expenseAccountVersion:number;targets:(Target&Amounts)[]}&Omit<Amounts,'nonrecoverableMinor'>)[]};
 type Revision={version:number;current_version:number;input:Input;source_snapshot:Source;created_at:string};
-async function targetsAuthority(ctx:ApiContext,targets:Target[],edit=false){
- const hubs=new Set<string|null>(),classes=new Map<string,string>(),students=new Set<string>();for(const t of targets){if(!hubs.has(t.hubId)){requireScope(permissionScope(ctx,'expenses.view'),t.hubId??undefined);if(edit)requireScope(permissionScope(ctx,'expenses.edit'),t.hubId??undefined);hubs.add(t.hubId);}if(t.classId){if(!classes.has(t.classId))classes.set(t.classId,(await classRow(ctx,t.classId)).hub_id);if(classes.get(t.classId)!==t.hubId)throw new ApiError(404,'NOT_FOUND');}if(t.studentId)students.add(t.studentId);}await permittedPeople(ctx,[...students],'students.view');return hubs;
-}
 async function revisions(ctx:ApiContext,id:string){return(await ctx.db.query<Revision>('SELECT r.version,a.version AS current_version,r.input,r.source_snapshot,r.created_at::text FROM public.expense_cost_allocations a JOIN public.expense_cost_allocation_revisions r ON r.academy_id=a.academy_id AND r.bill_id=a.bill_id AND r.version=a.version WHERE a.bill_id=$1',[id])).rows[0];}
 async function authority(ctx:ApiContext,id:string,targets:Target[]=[],edit=false){
  await expenseBillRow(ctx,id,edit);const original=(await ctx.db.query<Target>('SELECT hub_id AS "hubId",class_id AS "classId",student_id AS "studentId",1 AS weight FROM public.expense_bill_lines WHERE bill_id=$1',[id])).rows;
- const hubs=await targetsAuthority(ctx,[...original,...targets],edit);
+ const hubs=await attributionTargetsAuthority(ctx,[...original,...targets],edit?['expenses.view','expenses.edit']:['expenses.view']);
  return hubs.has(null)?{all:true,hubs:[]}:{all:false,hubs:[...hubs].filter((h):h is string=>h!==null).sort()};
 }
 async function source(ctx:ApiContext,i:Input){const s=(await ctx.db.query<{source:Source|null}>('SELECT public.expense_cost_allocation_source($1::jsonb) source',[JSON.stringify(i)])).rows[0].source;if(!s)throw new ApiError(404,'NOT_FOUND');if(s.unavailable)throw new ApiError(409,s.unavailable);return s;}
