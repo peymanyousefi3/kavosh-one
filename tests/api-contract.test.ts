@@ -308,3 +308,8 @@ test('sharing preview exposes only a strict optional accounting date, never call
  assert.ok(p.some((p:any)=>p.name==='asOf'&&p.required===false));assert.ok(p.some((p:any)=>p.name==='version'));
  for(const key of ['sourceStamp','receivedAmount','approved','payeeId','creditHandling'])assert.ok(!p.some((p:any)=>p.name===key));
 });
+test('sharing fee bills use the existing reviewed expense API and never accept client source proofs or approval overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),s=api.paths['/api/v1/finance/expense-bills'].post.requestBody.content['application/json'].schema.properties.sharing;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['asOf','invoiceId','policyVersion']);assert.deepEqual([...s.required].sort(),['asOf','invoiceId','policyVersion']);
+ const q=api.paths['/api/v1/finance/invoices/{id}/sharing-fee-capacity'].get.parameters;for(const name of ['policyVersion','payeeId','asOf','postedOn'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['sourceStamp','amount','approved','availableNet'])assert.ok(!q.some((p:any)=>p.name===name));assert.ok(api.paths['/api/v1/finance/expense-bills'].get.parameters.some((p:any)=>p.name==='sharingInvoiceId'));
+});

@@ -12,6 +12,7 @@ import { permittedPerson } from './students.ts';
 import { payeeSelection } from './payees.ts';
 import { invoiceRow } from './invoices.ts';
 import { accountingDate } from './finance-periods.ts';
+import { sharingFeeCapacity,sharingFeeCapacityContract } from './sharing-fees.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000);
 const recipient=z.object({payeeId:uuid,payeeVersion:version,method:z.enum(['percentage','flat']),value:text.min(1).max(80),release:z.enum(['proportional','first_collection','fully_collected','on_invoice'])}).strict();
@@ -64,6 +65,7 @@ async function policy(ctx:ApiContext,id:string,v?:number){const s=await load(ctx
 async function reviewer(ctx:ApiContext,p:Proposal){if(await master(ctx))return;const input=payload(p.payload),s=await source(ctx,input.tuitionPlanId),payees=await payeeSelection(ctx,input.recipients.map(r=>({id:r.payeeId,version:r.payeeVersion})));if(payees.some(p=>p.person_id===ctx.credential.person_id)||s.student_id===ctx.credential.person_id||(await ctx.db.query('SELECT 1 FROM public.family_relationships WHERE student_id=$1 AND guardian_id=$2 LIMIT 1',[s.student_id,ctx.credential.person_id])).rows.length)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');}
 export const sharingActions:ApprovalRegistry={'finance.sharing.replace':{requestCapability:'share-rules.edit',privacyCapability:'share-rules.edit',validate,dependencies,authorizeReviewer:reviewer,apply}};
 export async function sharing(ctx:ApiContext,registry:ApprovalRegistry=sharingActions):Promise<Reply|null>{
+ const capacity=await sharingFeeCapacity(ctx);if(capacity)return capacity;
  if(ctx.path==='finance/sharing-plans'){
   if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const q=listQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),s=permissionScope(ctx,'share-rules.view');if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');
   const rows=(await ctx.db.query<{id:string}>(`SELECT h.id,h.tuition_plan_id AS "tuitionPlanId",h.student_id AS "studentId",h.class_id AS "classId",h.hub_id AS "hubId",h.version,r.active,r.basis,r.full_fee_total>r.base_minor AS "overAllocated" FROM public.revenue_share_plans h JOIN public.revenue_share_revisions r ON r.academy_id=h.academy_id AND r.plan_id=h.id AND r.version=h.version
@@ -88,6 +90,7 @@ export async function sharing(ctx:ApiContext,registry:ApprovalRegistry=sharingAc
  const q=readQuery.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await policy(ctx,id,q.version)}};
 }
 export const sharingContract=[
+ ...sharingFeeCapacityContract,
  {path:'/api/v1/finance/sharing-plans',method:'get',summary:'Private sharing agreements filtered by current hub/class/student permissions before pagination',querySchema:listQuery},
  {path:'/api/v1/finance/tuition-plans/{id}/sharing',method:'get',summary:'Private versioned sharing agreement with pinned named payees, recruiter source and exact full entitlements; not a payable or payment',querySchema:readQuery},
  {path:'/api/v1/finance/tuition-plans/{id}/sharing',method:'post',summary:'Request reviewed full sharing replacement with explicit tuition/tax basis, percentage/flat recipients, release timing, credit policy and justified over-budget override',schema:change},
