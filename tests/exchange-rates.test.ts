@@ -89,7 +89,7 @@ check('native immutable, exact-ratio and deferred completion constraints reject 
  }finally{await f.pg.exec('ROLLBACK');}}
  for(const withRate of [false,true]){await f.pg.exec('BEGIN');try{
   await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);await f.pg.exec('SET LOCAL ROLE kavosh_runtime');if(withRate)await f.pg.query(sql,[pending.body.approval.id,f.actors.master.person,'135']);
-  await f.pg.query("UPDATE public.approval_requests SET status='applied',reviewer_id=$2 WHERE id=$1",[pending.body.approval.id,f.actors.master.person]);
+  await f.pg.query("UPDATE public.approval_requests SET status='applied',version=version+1,reviewer_id=$2,reason='Synthetic missing-effect or audit attack',decided_at=transaction_timestamp() WHERE id=$1",[pending.body.approval.id,f.actors.master.person]);
   await assert.rejects(f.pg.exec('COMMIT'),withRate?/EXCHANGE_RATE_CRITICAL_AUDIT_REQUIRED/:/EXCHANGE_RATE_EFFECT_REQUIRED/);
  }finally{await f.pg.exec('ROLLBACK');}}
  assert.equal((await f.pg.query('SELECT * FROM public.finance_exchange_rates')).rows.length,0);assert.equal((await f.approve(pending.body.approval.id)).response.status,200);
