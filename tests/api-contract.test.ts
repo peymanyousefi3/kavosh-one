@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('provider fee expenses accept only an original observation pointer and explicit existing accounting fields,not supplied provider facts',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),s=api.paths['/api/v1/finance/expense-bills'].post.requestBody.content['application/json'].schema,ref=s.properties.providerFee;assert.equal(ref.additionalProperties,false);assert.deepEqual(Object.keys(ref.properties),['inspectionId']);assert.deepEqual(ref.required,['inspectionId']);for(const key of ['feeAmount','transactionId','currency','sourceSnapshot','approved','paid','taxVerified'])assert.equal(ref.properties[key],undefined);assert.equal(s.additionalProperties,false);assert.match(api.paths['/api/v1/finance/expense-bills'].post.summary,/native deduplication/);
+});
+
 test('durable checkout coordination accepts bounded hashes and expiry,never caller money,owner,return URLs or payment authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/checkout-requests/{id}/attempts',reserve=api.paths[base].post.requestBody.content['application/json'].schema,start=api.paths[base+'/{attemptId}/dispatch'].post.requestBody.content['application/json'].schema;
  assert.equal(reserve.additionalProperties,false);assert.deepEqual(Object.keys(reserve.properties).sort(),['expiresAt','requestBytes','requestSha256','sourceFingerprint']);assert.equal(reserve.properties.requestBytes.maximum,16384);assert.deepEqual(Object.keys(start.properties).sort(),['requestBytes','requestSha256']);assert.equal(start.additionalProperties,false);
