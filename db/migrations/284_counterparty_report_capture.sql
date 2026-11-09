@@ -31,7 +31,7 @@ BEGIN
  -- Source membership is emitted as bounded rows below,not a giant JSON value.
  summary=replace(summary,'CASE WHEN $11 AND','CASE WHEN false AND');
  source=prefix||', capture_summary AS MATERIALIZED('||summary||')'||$tail$
- SELECT 0::smallint,0,to_jsonb(s)-ARRAY['currencies','entries','days','sourceManifest'] FROM capture_summary s
+ SELECT 0::smallint,0,(to_jsonb(s)-ARRAY['currencies','entries','days','sourceManifest'])||jsonb_build_object('custodyIdentityBasis',CASE WHEN(SELECT kind FROM party) IN('hub','person') THEN 'same_immutable_internal_hub_or_person_not_name_matching' ELSE 'explicit_immutable_organization_payee_link_at_collector_creation' END) FROM capture_summary s
  UNION ALL
  SELECT 1::smallint,row_number() OVER(ORDER BY c.code,t.currency_id)::integer,to_jsonb(t)||jsonb_build_object('currencyCode',c.code)
  FROM totals t JOIN public.finance_currencies c ON c.id=t.currency_id WHERE(SELECT allowed FROM proof_gate)

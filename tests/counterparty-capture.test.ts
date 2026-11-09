@@ -9,6 +9,8 @@ import type {Credential} from '../src/core/policy.ts';
 import {assertRuntimeRole} from '../src/core/database.ts';
 import {lockAcademyTopology} from '../src/modules/academy.ts';
 import {readFile} from 'node:fs/promises';
+import {parse} from 'csv-parse/sync';
+import {renderCounterpartyCaptureRows} from '../src/reports/counterparty-render.ts';
 async function fixture(){const f=await collectorOffsetFixture();try{
  for(const cap of counterpartyReportCapabilities)await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.staffRole,cap]);
  const parameters={payeeId:f.hubPayee.id,from:'2026-11-06',through:'2026-11-08'},q=await f.request('reports/jobs',{reportId:'finance.counterparty-statement',parameters},'staff');assert.equal(q.response.status,202,JSON.stringify(q.body));
@@ -32,6 +34,11 @@ check('captured money and source membership remain frozen after a later real rem
  assert.equal((await f.remit('10','2026-11-07')).response.status,201);
  assert.deepEqual((await f.pg.query('SELECT section,ordinal,payload FROM public.counterparty_report_capture_rows ORDER BY section,ordinal')).rows,before);
  const live=await f.request('reports/finance/counterparty-statement?'+new URLSearchParams(f.parameters),undefined,'staff');assert.equal(live.response.status,200,JSON.stringify(live.body));assert.equal(live.body.data.currencies[0].closing.minor,'1825');
+});
+check('bounded capture renderer preserves every canonical financial CSV row and disclosure flag',async f=>{
+ await f.capture();const rows=(await f.pg.query('SELECT section,ordinal,payload FROM public.counterparty_report_capture_rows WHERE section<4 ORDER BY section,ordinal')).rows,frame=(await f.pg.query<any>('SELECT frame FROM public.counterparty_report_captures')).rows[0].frame,whole=renderCounterpartyCaptureRows(frame,rows).body,parts=rows.map(r=>renderCounterpartyCaptureRows(frame,[r]).body).join('');assert.equal(parts,whole);
+ const direct=await f.request('reports/finance/counterparty-statement/export?'+new URLSearchParams(f.parameters),undefined,'staff');assert.equal(direct.response.status,200,JSON.stringify(direct.body));const actual=parse(whole,{columns:true,bom:true})as Record<string,string>[],expected=parse(direct.body,{columns:true,bom:true})as Record<string,string>[];assert.deepEqual(actual.filter(r=>r.section!=='metadata'),expected.filter(r=>r.section!=='metadata'));
+ for(const r of expected.filter(r=>r.section==='metadata'&&r.field!=='snapshotAt'))assert.deepEqual(actual.find(a=>a.section==='metadata'&&a.field===r.field),r,r.field);assert.doesNotMatch(whole,/sourceScope|sourceManifest|authorizationContext|lease_token/);
 });
 check('opening source membership and noncash offsets survive capture without becoming current-window cash',async f=>{
  const principal=await f.made('finance/accounts',{code:'CAPTURE-OPENING',name:'Explicit original principal',kind:'asset',operationalRole:'other',hubId:f.hub,currencyId:f.currency.id,currencyVersion:1,reason:'Original opening source'}),opening=await f.request('finance/journals',{periodId:f.period.id,periodVersion:1,postedOn:'2026-01-01',purpose:'opening',description:'Original opening principal',reason:'Retain actual dated source',lines:[{accountId:principal.id,accountVersion:1,side:'debit',amount:'100'},{accountId:f.cash.id,accountVersion:1,side:'credit',amount:'100'}],counterpartyLines:[{lineNumber:1,payee:{id:f.hubPayee.id,version:1},category:'opening_balance'}]});assert.equal(opening.response.status,201,JSON.stringify(opening.body));assert.equal((await f.offset()).response.status,201);
