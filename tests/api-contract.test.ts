@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('reviewed shared-cost allocation contracts never accept supplied money,approval or source proofs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/expense-bills/{id}/cost-allocation',s=api.paths[path].post.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.equal(s.properties.expectedVersion.minimum,0);assert.equal(s.properties.lines.maxItems,50);const t=s.properties.lines.items.properties.targets;assert.equal(t.maxItems,200);assert.equal(t.items.additionalProperties,false);for(const k of ['billId','approved','sourceSnapshot','actorId','amount','netMinor'])assert.equal(s.properties[k],undefined);for(const k of ['amount','expenseMinor','approved'])assert.equal(t.items.properties[k],undefined);assert.ok(api.paths[path].get);assert.ok(api.paths[path+'/history'].get);assert.match(api.paths[path].post.summary,/No new posting\/payment/);
+});
+
 test('payroll cost report exposes strict source filters and no monetary authority or partial-page overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/payroll/costs'].get,names=op.parameters.map((p:any)=>p.name);assert.deepEqual(names,['from','through','hubIds','classIds','studentIds','personIds','accountIds','currencyIds','countryIds','regionIds','cityIds','kind']);for(const key of ['amount','approved','source','actorId','limit','afterId','includePrivate'])assert.ok(!names.includes(key));assert.match(op.summary,/highest-rate hourly allocations/);assert.match(op.summary,/no net pay/);assert.equal(api.paths['/api/v1/reports/payroll/costs'].post,undefined);
 });
