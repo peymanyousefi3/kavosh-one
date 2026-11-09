@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('reference financial outlook is explicit,retains ordinary reports and accepts no source or monetary authority overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),read=api.paths['/api/v1/reports/finance/outlook'].get,exported=api.paths['/api/v1/reports/finance/outlook/export'].get;
+ assert.deepEqual(exported.parameters,read.parameters);const mode=read.parameters.find((p:any)=>p.name==='valuation');assert.equal(mode.schema.const,'reference');assert.equal(mode.required,false);for(const name of ['targetCurrencyId','rateOn','maximumAgeDays'])assert.equal(read.parameters.find((p:any)=>p.name===name).required,false);
+ const age=read.parameters.find((p:any)=>p.name==='maximumAgeDays');assert.equal(age.schema.minimum,0);assert.equal(age.schema.maximum,3660);for(const name of ['amount','sourceSnapshot','approved','referenceValuation','allHubs','exchangeRate'])assert.ok(!read.parameters.some((p:any)=>p.name===name));assert.match(read.summary,/EVERY source before aggregation/);assert.match(read.summary,/not future FX prediction/);
+});
+
 test('large counterparty report parts have bounded numeric paths,paging and explicit assembly semantics',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),directory=api.paths['/api/v1/reports/jobs/{id}/parts'].get,part=api.paths['/api/v1/reports/jobs/{id}/parts/{part}/download'].get,p=part.parameters.find((p:any)=>p.name==='part');assert.equal(p.schema.type,'integer');assert.equal(p.schema.minimum,1);assert.equal(p.schema.maximum,1000);assert.equal(p.required,true);assert.match(directory.summary,/ascending part order/);assert.match(part.summary,/Not a standalone full report/);assert.equal(directory.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.equal(directory.parameters.find((p:any)=>p.name==='after').schema.maximum,1000);assert.equal(api.paths['/api/v1/reports/jobs/{id}/parts'].post,undefined);
 });

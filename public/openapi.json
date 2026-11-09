@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.319.0",
+    "version": "0.320.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -56491,7 +56491,7 @@
     },
     "/api/v1/reports/finance/outlook": {
       "get": {
-        "summary": "Single-statement financial outlook with baseline cash/AR/AP,future journals,horizon-reserved settlements and unmatched cost plans. Optional payrollCash=recorded_net adds exact permitted original wage-liability buckets at approved planned pay dates or explicit report-only payrollDates overrides(not before posting/reopening),after reserving all horizon payments/corrections. Potential same-person selected-currency bill/plan overlap is unscheduled unless payrollOverlap=separate_liabilities explicitly selects that scenario;not automatic matching. Payroll funding banks,unposted/scheduled gross and statutory remittances remain unassigned/excluded. Full source/current geographic rights;not complete cash/accrual forecasting,bank verification or payment authorization.",
+        "summary": "Single-statement financial outlook with baseline cash/AR/AP,future journals,horizon-reserved settlements and unmatched cost plans. Optional payrollCash=recorded_net adds exact permitted original wage-liability buckets at approved planned pay dates or explicit report-only payrollDates overrides(not before posting/reopening),after reserving all horizon payments/corrections. Potential same-person selected-currency bill/plan overlap is unscheduled unless payrollOverlap=separate_liabilities explicitly selects that scenario;not automatic matching. Payroll funding banks,unposted/scheduled gross and statutory remittances remain unassigned/excluded. Full source/current geographic rights;not complete cash/accrual forecasting,bank verification or payment authorization. Optional valuation=reference retains original figures and adds same-statement target-currency totals,daily carry-forward and separate scheduled gross using explicit or reviewed school/hub defaults and approved direct rates at rateOn(or on). Extra currency-valuation rights intersect EVERY source before aggregation;global currency/rate view is also required. Missing or withdrawn nonzero prices give null converted totals and labelled known subtotals. Half-even exact sums round once per measure/day;not future FX prediction,posted revaluation,or additional scheduled-gross cash deductions.",
         "parameters": [
           {
             "name": "on",
@@ -56509,6 +56509,44 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "valuation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "const": "reference"
+            }
+          },
+          {
+            "name": "targetCurrencyId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "rateOn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "maximumAgeDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3660
             }
           },
           {
@@ -56591,7 +56629,7 @@
     },
     "/api/v1/reports/finance/outlook/export": {
       "get": {
-        "summary": "Complete same-snapshot source-scoped financial-outlook CSV:exact currency totals,all cash-chart points,review flags,scenario overrides and separate scheduled gross totals/unpriced cases/hourly segments/salary allocations. Original current permissions and source/output ceilings apply;4MiB refuses oversized files,never truncates. Preserves explicit forecast limitations;not bank verification,payroll approval or complete accounting. No queued outlook export yet.",
+        "summary": "Complete same-snapshot source-scoped financial-outlook CSV:exact currency totals,all cash-chart points,review flags,scenario overrides and separate scheduled gross totals/unpriced cases/hourly segments/salary allocations. Original current permissions and source/output ceilings apply;4MiB refuses oversized files,never truncates. Preserves explicit forecast limitations;not bank verification,payroll approval or complete accounting. No queued outlook export yet. Optional valuation=reference retains original figures and adds same-statement target-currency totals,daily carry-forward and separate scheduled gross using explicit or reviewed school/hub defaults and approved direct rates at rateOn(or on). Extra currency-valuation rights intersect EVERY source before aggregation;global currency/rate view is also required. Missing or withdrawn nonzero prices give null converted totals and labelled known subtotals. Half-even exact sums round once per measure/day;not future FX prediction,posted revaluation,or additional scheduled-gross cash deductions.",
         "parameters": [
           {
             "name": "on",
@@ -56609,6 +56647,44 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "valuation",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "const": "reference"
+            }
+          },
+          {
+            "name": "targetCurrencyId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "rateOn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "maximumAgeDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3660
             }
           },
           {

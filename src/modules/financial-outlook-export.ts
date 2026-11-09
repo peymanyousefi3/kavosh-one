@@ -4,12 +4,10 @@ import { csvRow,csvText } from '../core/csv.ts';
 import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import type { ResolvedReportWindow } from '../core/report-window.ts';
 import { financialOutlook,financialOutlookContract,assertOutlookOutputBounds } from './financial-outlook.ts';
+import {outlookBaseMeasures as baseMeasures,outlookPayrollMeasures as payrollMeasures,outlookFlows as flows} from './outlook-reference.ts';
 
 type Data=NonNullable<Awaited<ReturnType<typeof financialOutlook>>>['body']['data'];
 type Provenance={id:string;version:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}};
-const baseMeasures=['openingCash','receivable','customerCredit','payable','supplierCredit','undatedReceivable','overdueReceivable','overduePayable','recordedCashChange','recordedHorizonReceivable','recordedHorizonCustomerCredit','recordedHorizonPayable','recordedHorizonSupplierCredit','horizonUnscheduledReceivable','horizonUnscheduledPayable','expectedReceipts','expectedBillPayments','unmatchedPlannedCosts','knownScenarioClosingCash'] as const;
-const payrollMeasures=['currentRecordedPayrollUnpaid','horizonRecordedPayrollUnpaid','expectedNetPayrollPayments','horizonUnscheduledPayroll','pastPlannedPayrollPay','payrollDueBeyondHorizon'] as const;
-const flows=['recordedCashChange','expectedReceipts','expectedBillPayments','unmatchedPlannedCosts'] as const;
 // ponytail: synchronous complete source/output bounds remain in the read engine;
 // CSV adds a4MiB limit. Queued/chunked outlook exports are not yet supported.
 export function financialOutlookCsv(d:Data,provenance?:Provenance):Reply{
@@ -17,7 +15,7 @@ export function financialOutlookCsv(d:Data,provenance?:Provenance):Reply{
  if(new Set(d.currencies.map(c=>c.currencyId)).size!==d.currencies.length||d.snapshotAt!==d.scheduledPayroll.snapshotAt)throw new Error('OUTLOOK_EXPORT_SNAPSHOT_INVALID');
  const header=['section','field','value','currency_id','currency_code','unit_scale','on','source_id','minor','amount','details_json'],rows:(string|number|boolean|null|undefined)[][]=[header];
  const meta=(section:string,k:string,v:unknown)=>{if(v!==undefined)rows.push([section,k,csvText(typeof v==='string'?v:JSON.stringify(v))]);};
- for(const [k,v] of Object.entries(d))if(!['currencies','chartData','reviewRequired','scheduledPayroll'].includes(k))meta('metadata',k,v);
+ for(const [k,v] of Object.entries(d))if(!['currencies','chartData','reviewRequired','scheduledPayroll','referenceValuation'].includes(k))meta('metadata',k,v);
  meta('metadata','exportCompleteness','complete_permitted_report_within_source_and_output_limits');meta('metadata','numericPrecisionPolicy','Money and minor units are exact CSV text; import as text to avoid spreadsheet precision loss.');meta('metadata','textPolicy','Formula-like free text uses a visible text: prefix; stored records are unchanged.');meta('metadata','scheduledPayrollPolicy','Scheduled gross costs are separate estimates,not cash payments or additional deductions from the cash scenario.');
  if(provenance){meta('metadata','presetId',provenance.id);meta('metadata','presetVersion',provenance.version);if(provenance.dateWindow){const w=provenance.dateWindow;meta('metadata','dateWindow',w);}}
  type Currency={currencyId:string;currencyCode:string;unitScale:number};
@@ -41,8 +39,18 @@ export function financialOutlookCsv(d:Data,provenance?:Provenance):Reply{
   // pinned segment sources and allocation details,not only aggregate totals.
   for(const e of c.hourlyPlans){const {estimatedCost,...details}=e;amountRow('scheduled_hourly','estimatedCost',c,estimatedCost,undefined,undefined,details);}
  }
+ if(d.referenceValuation){
+  const fx=d.referenceValuation,c={currencyId:fx.targetCurrency.id,currencyCode:fx.targetCurrency.code,unitScale:fx.targetCurrency.unitScale};if(fx.snapshotAt!==d.snapshotAt)throw Error('OUTLOOK_REFERENCE_SNAPSHOT_INVALID');
+  for(const [key,value] of Object.entries(fx))if(!['totals','chartData','scheduledGross','rates'].includes(key))meta('valuation_metadata',key,value);
+  type Converted={complete:boolean;total:unknown|null;knownSubtotal:unknown;missingCurrencyIds:string[];unpricedSourceComponentsPresent?:boolean};
+  const value=(section:string,field:string,v:Converted,on?:string)=>{if(!v||typeof v.complete!=='boolean'||v.complete!==(v.total!==null)||!Array.isArray(v.missingCurrencyIds))throw Error('OUTLOOK_REFERENCE_TOTAL_INVALID');const known=amountRow(section+'_known_subtotal',field,c,v.knownSubtotal,on);if(v.complete){if(amountRow(section,field,c,v.total,on)!==known)throw Error('OUTLOOK_REFERENCE_TOTAL_INVALID');}else rows.push([section+'_status',field,'incomplete_reference_or_unpriced_source',c.currencyId,csvText(c.currencyCode),c.unitScale,on,'','','',csvText(JSON.stringify({missingCurrencyIds:v.missingCurrencyIds,unpricedSourceComponentsPresent:v.unpricedSourceComponentsPresent??false}))]);};
+  for(const [field,v] of Object.entries(fx.totals))value('valuation_total',field,v);
+  for(const point of fx.chartData)for(const [field,v] of Object.entries(point))if(field!=='on')value('valuation_chart',field,v as Converted,point.on);
+  for(const [field,v] of Object.entries(fx.scheduledGross))value('valuation_scheduled',field,v);
+  for(const r of fx.rates)rows.push(['valuation_rate',r.sameCurrencyIdentity?'same_currency_identity':'direct_reference_quote','',r.currencyId,csvText(r.currencyCode),'',r.quote?.on,r.quote?.id,'',r.quote?.rate,csvText(JSON.stringify(r.quote))]);
+ }
  const body='\uFEFF'+rows.map(row=>csvRow(Array.from({length:header.length},(_,i)=>row[i]))).join('\r\n')+'\r\n';if(Buffer.byteLength(body)>4_194_304)throw new ApiError(422,'FINANCIAL_OUTLOOK_REQUIRES_BACKGROUND_JOB');return {status:200,body,csv:{filename:`financial-outlook-${d.on}-${d.through}.csv`}};
 }
 export async function completeFinancialOutlookExport(ctx:ApiContext,provenance?:Provenance){const reply=await financialOutlook(ctx);if(!reply||reply.status!==200)throw new Error('OUTLOOK_REPORT_INVALID');return financialOutlookCsv(reply.body.data,provenance);}
 export async function financialOutlookExport(ctx:ApiContext):Promise<Reply|null>{if(ctx.path!=='reports/finance/outlook/export')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const path='reports/finance/outlook',url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;return completeFinancialOutlookExport({...ctx,path,request:new Request(url,{method:'GET'})});}
-export const financialOutlookExportContract=[{path:'/api/v1/reports/finance/outlook/export',method:'get',summary:'Complete same-snapshot source-scoped financial-outlook CSV:exact currency totals,all cash-chart points,review flags,scenario overrides and separate scheduled gross totals/unpriced cases/hourly segments/salary allocations. Original current permissions and source/output ceilings apply;4MiB refuses oversized files,never truncates. Preserves explicit forecast limitations;not bank verification,payroll approval or complete accounting. No queued outlook export yet.',querySchema:financialOutlookContract[0].querySchema,responseContentType:'text/csv' as const}] as const;
+export const financialOutlookExportContract=[{path:'/api/v1/reports/finance/outlook/export',method:'get',summary:'Complete same-snapshot source-scoped financial-outlook CSV:exact currency totals,all cash-chart points,review flags,scenario overrides and separate scheduled gross totals/unpriced cases/hourly segments/salary allocations. Original current permissions and source/output ceilings apply;4MiB refuses oversized files,never truncates. Preserves explicit forecast limitations;not bank verification,payroll approval or complete accounting. No queued outlook export yet. Optional valuation=reference retains original figures and adds same-statement target-currency totals,daily carry-forward and separate scheduled gross using explicit or reviewed school/hub defaults and approved direct rates at rateOn(or on). Extra currency-valuation rights intersect EVERY source before aggregation;global currency/rate view is also required. Missing or withdrawn nonzero prices give null converted totals and labelled known subtotals. Half-even exact sums round once per measure/day;not future FX prediction,posted revaluation,or additional scheduled-gross cash deductions.',querySchema:financialOutlookContract[0].querySchema,responseContentType:'text/csv' as const}] as const;

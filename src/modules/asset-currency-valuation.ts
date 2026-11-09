@@ -8,6 +8,7 @@ import {financialAccountSelectionSQL,financialReportAccess,financialIds} from '.
 import {journalPointLookupSQL} from './finance-journals.ts';
 import {exchangeRateAuthority} from './exchange-rates.ts';
 import {accountingDate} from './finance-periods.ts';
+import {referenceCurrencySQL,requireReferenceCurrency} from './reference-currency.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const query=z.object({through:accountingDate,targetCurrencyId:uuid.optional(),rateOn:accountingDate.optional(),maximumAgeDays:z.coerce.number().int().min(0).max(3660).optional(),hubIds:financialIds.optional(),currencyIds:financialIds.optional(),accountIds:financialIds.optional(),includeZero:z.enum(['true','false']).default('false')}).strict();
@@ -19,14 +20,8 @@ type Result={snapshotAt:string;sourceCount:number;targetSource:'explicit'|'hub'|
 // share ONE statement snapshot. More than2000selected accounts fails closed.
 // ponytail: synchronous ceiling is2000accounts;larger complete valuations
 // must use requester-bound report jobs rather than truncation or a longer wait.
-const sql=`WITH settings AS MATERIALIZED(SELECT version,currency_id,maximum_rate_age_days FROM public.finance_reporting_preferences ORDER BY version DESC LIMIT 1),hub_default AS MATERIALIZED(
- SELECT h.currency FROM public.hubs h WHERE h.id=CASE WHEN $6::uuid[] IS NOT NULL THEN CASE WHEN cardinality($6::uuid[])=1 THEN($6::uuid[])[1] END WHEN NOT $1::boolean AND cardinality($2::uuid[])=1 THEN($2::uuid[])[1] END AND($1::boolean OR h.id=ANY($2::uuid[])) AND NOT h.id=ANY($3::uuid[])
-),resolved AS MATERIALIZED(
- SELECT CASE WHEN $9::uuid IS NOT NULL THEN $9::uuid WHEN(SELECT currency FROM hub_default) IS NOT NULL THEN(SELECT id FROM public.finance_currency_catalogue WHERE code=(SELECT currency FROM hub_default)) ELSE(SELECT currency_id FROM settings) END currency_id,
- CASE WHEN $9::uuid IS NOT NULL THEN 'explicit' WHEN(SELECT currency FROM hub_default) IS NOT NULL THEN 'hub' WHEN EXISTS(SELECT 1 FROM settings) THEN 'school' ELSE 'unconfigured' END source,
- coalesce((SELECT version FROM settings),0) defaults_version,coalesce($11::integer,(SELECT maximum_rate_age_days FROM settings),0) maximum_age_days,
- CASE WHEN $11::integer IS NOT NULL THEN 'explicit' WHEN EXISTS(SELECT 1 FROM settings) THEN 'school' ELSE 'zero_days' END age_source
-),selected AS MATERIALIZED(${financialAccountSelectionSQL} AND a.kind='asset'),bounded AS MATERIALIZED(SELECT * FROM selected ORDER BY code,id LIMIT 2001),balances AS(
+const resolvedSQL=referenceCurrencySQL.replace(/\$(\d+)/g,(_,n:string)=>['$9','$11','$6','$1','$2','$3'][Number(n)-1]);
+const sql=`WITH resolved AS MATERIALIZED(${resolvedSQL}),selected AS MATERIALIZED(${financialAccountSelectionSQL} AND a.kind='asset'),bounded AS MATERIALIZED(SELECT * FROM selected ORDER BY code,id LIMIT 2001),balances AS(
  SELECT a.*,coalesce(l.closing_minor,0) closing_minor FROM bounded a CROSS JOIN LATERAL(
   SELECT sum(CASE WHEN l.side='debit' THEN l.amount_minor ELSE -l.amount_minor END) closing_minor FROM public.finance_journal_lines l ${journalPointLookupSQL} WHERE l.account_id=a.id AND j.posted_on<=$5::date
  ) l
@@ -43,7 +38,7 @@ async function data(ctx:ApiContext){
  exchangeRateAuthority(ctx);const access=financialReportAccess(ctx,['currency-valuation.view','financial-reports.view','ledger.view','accounts.view']),p=new URL(ctx.request.url).searchParams;
  if(new Set(p.keys()).size!==[...p.keys()].length)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(p)),rateOn=q.rateOn??q.through;
  const r=(await ctx.db.query<Result>(sql,[access.all,access.hubs,access.excluded,access.global,q.through,q.hubIds??null,q.currencyIds??null,q.accountIds??null,q.targetCurrencyId??null,rateOn,q.maximumAgeDays??null,q.includeZero==='true'])).rows[0];
- if(!r.target)throw new ApiError(q.targetCurrencyId?404:409,q.targetCurrencyId?'NOT_FOUND':r.targetSource==='hub'?'HUB_REPORTING_CURRENCY_NOT_CONFIGURED':'REPORTING_CURRENCY_NOT_CONFIGURED');if(!r.target.active&&r.targetSource!=='explicit')throw new ApiError(409,'DEFAULT_REPORTING_CURRENCY_RETIRED');if(r.sourceCount>2000)throw new ApiError(422,'REFERENCE_VALUATION_SOURCE_LIMIT');const target=r.target;
+ const target=requireReferenceCurrency({source:r.targetSource,target:r.target});if(r.sourceCount>2000)throw new ApiError(422,'REFERENCE_VALUATION_SOURCE_LIMIT');
  const terms:Parameters<typeof sumReferenceMinor>[0]=[],missing=new Set<string>();
  const entries=r.entries.map(e=>{const same=e.currencyId===target.id,ratio=same?{numerator:1n,denominator:1n}:e.rate?.state==='recorded'?{numerator:readMinorUnits(e.rate.numerator!),denominator:readMinorUnits(e.rate.denominator!)}:null;
   // Zero assets contribute exactly zero without requiring a price. Nonzero
