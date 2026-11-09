@@ -1,0 +1,20 @@
+# Exact reviewed historical findings only;no path,rule or future-commit exclusions.
+# Documentation field names/prose,documented API checksums and synthetic fixtures.
+4e536d7692d5963b675cee9b6dabf8d7574c4d4c:backend-work.json:generic-api-key:6
+4e536d7692d5963b675cee9b6dabf8d7574c4d4c:backend-work.json:generic-api-key:7
+081ac7505546e04779e7d8602d78c1574cf35fb5:backend-work.json:generic-api-key:2
+23e1729c18c64c14eda7c3db94c83eebf67c7853:backend-work.json:generic-api-key:3
+e9bc0753e7f58773c60cc619fe477c724c680a2c:backend-work.json:generic-api-key:3
+0cd78799bf66711064877e6b5776b83767d066f2:backend-work.json:generic-api-key:4
+0c9a879918cd4ce96e869d389bf63bfbdff1e22e:README.md:generic-api-key:29
+b90fb458e02663cad4fa3bbf4342bb6e8dd946ea:README.md:generic-api-key:29
+e229bd80fb34b30c323e11bbfd55a2a86b21b8c7:README.md:generic-api-key:31
+62b3644fe457de0247d3234778a02d6de7f3adc6:backend-work.json:generic-api-key:3
+bc280c6d0c18fe5386fc9892d5a87f9a49f2820b:README.md:generic-api-key:420
+3629e8616e26ca57480353b776fe9f4ba0aec372:README.md:generic-api-key:418
+61628ae2f76283cea4610a023e03674faf64fc8d:tests/upload-links.test.ts:generic-api-key:61
+# The three known offline test literals reported by GitHub remain in history.
+# They were replaced by ephemeral generation in58cad42;GitHub alerts stay open.
+223139df9c24636a934a7b6eb4ff221745889425:tests/stripe-fixture.ts:stripe-webhook-signing-secret:4
+223139df9c24636a934a7b6eb4ff221745889425:tests/stripe-event.test.ts:stripe-webhook-signing-secret:13
+223139df9c24636a934a7b6eb4ff221745889425:tests/stripe-event.test.ts:stripe-webhook-signing-secret:38

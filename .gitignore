@@ -26,5 +26,6 @@ exports/
 .DS_Store
 
 # Generated local tooling
+/.local-tools/
 __pycache__/
 *.tsbuildinfo

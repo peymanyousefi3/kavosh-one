@@ -29,7 +29,8 @@
     "files:inspect": "node --import tsx scripts/inspect-files.ts",
     "signatures:register": "node --import tsx scripts/register-signature-webhook.ts",
     "payments:register": "node --import tsx scripts/register-payment-webhook.ts",
-    "api:generate": "node --import tsx scripts/generate-api.ts"
+    "api:generate": "node --import tsx scripts/generate-api.ts",
+    "secrets:check": "node scripts/check-secrets.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1161.0",
