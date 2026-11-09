@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes,randomUUID } from 'node:crypto';
 import { test,before,after } from 'node:test';
 import { checkoutFixture } from './checkout-fixture.ts';
 import { record } from '../src/core/api.ts';
 import type { Connection } from '../src/core/database.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
+import { executeCheckoutAttempt,CheckoutWorkerError } from '../src/integrations/checkout-worker.ts';
+import { buildStripeCheckout,type StripeCheckoutConnection } from '../src/integrations/stripe-checkout.ts';
 
 const priorOrigin=process.env.APP_ORIGIN;before(()=>{process.env.APP_ORIGIN='https://academy.example';});after(()=>{if(priorOrigin===undefined)delete process.env.APP_ORIGIN;else process.env.APP_ORIGIN=priorOrigin;});
 async function fixture(){const f=await checkoutFixture(),r=await f.prepare();assert.equal(r.response.status,201,JSON.stringify(r.body));const requestId=r.body.data.id,path='finance/checkout-requests/'+requestId;
@@ -22,6 +24,32 @@ check('server-only nonsecret draft and exact durable reservation preserve origin
  assert.equal((await f.request(f.path+'/attempts',input)).response.status,409);assert.equal((await f.request(f.path+'/attempts')).body.data.length,1);
  const normal=await f.request(f.path+'/attempts/'+a.body.data.id);assert.equal(normal.response.status,200);assert.equal(normal.body.data.draft,undefined);const privateRead=await f.request(f.path+'/attempts/'+a.body.data.id+'/source');assert.equal(privateRead.response.status,200);assert.deepEqual(privateRead.body.data.draft,d.draft);assert.equal(privateRead.body.data.dispatchAuthority,false);
  assert.equal((await f.status()).balance,'113.00');assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.tuition_receipts')).rows[0].n,0);
+});
+for(const scenario of ['accepted','lost_start','lost_provider','lost_observation','wrong_manifest'] as const)check('isolated actual SDK plus native coordination: '+scenario,async f=>{
+ const a=(await f.reserve()).body.data,source=(await f.request(f.path+'/attempts/'+a.id+'/source')).body.data;
+ const {secrets:_secrets,...identity}=f.connection,config:StripeCheckoutConnection={...identity,origin:'https://academy.example',apiKey:['sk','test',randomBytes(24).toString('hex')].join('_')},token='kvo_'+randomBytes(32).toString('base64url');
+ const built=buildStripeCheckout(source.draft,config),sessionId='cs_test_'+randomBytes(12).toString('hex');let posts=0,backendCalls=0;
+ const send:typeof fetch=async(url,init)=>{
+  const u=new URL(String(url)),method=init?.method??'GET';assert.equal(init?.redirect,'error');
+  if(u.origin===config.origin){backendCalls++;assert.equal(new Headers(init?.headers).get('authorization'),'Bearer '+token);const path=u.pathname.slice('/api/v1/'.length),body=method==='GET'?undefined:JSON.parse(String(init?.body)),r=await f.request(path,body,'master',{key:new Headers(init?.headers).get('idempotency-key')??undefined});
+   if(scenario==='lost_start'&&path.endsWith('/dispatch'))throw new Error('PRIVATE lost committed start');
+   if(scenario==='lost_observation'&&path.endsWith('/outcome'))throw new Error('PRIVATE lost committed observation');
+   if(scenario==='wrong_manifest'&&path.endsWith('/source'))r.body.data.requestSha256='0'.repeat(64);
+   return Response.json(r.body,{status:r.response.status});
+  }
+  assert.equal(u.origin,'https://api.stripe.com');assert.notEqual(new Headers(init?.headers).get('authorization'),'Bearer '+token);
+  if(u.pathname==='/v1/account')return Response.json({id:config.accountId,object:'account',country:'CA',charges_enabled:true,capabilities:{card_payments:'active'}});
+  if(u.pathname==='/v1/country_specs/CA')return Response.json({id:'CA',object:'country_spec',supported_payment_currencies:['cad'],supported_payment_methods:['card']});
+  assert.equal(u.pathname,'/v1/checkout/sessions');assert.equal(method,'POST');posts++;assert.equal(new Headers(init?.headers).get('idempotency-key'),source.idempotencyKey);const form=new URLSearchParams(String(init?.body));assert.equal(form.get('line_items[0][price_data][unit_amount]'),'5000');assert.equal(form.get('metadata[kavosh_request]'),f.requestId);assert.equal(form.get('success_url'),source.draft.successUrl);
+  if(scenario==='lost_provider')throw new Error('PRIVATE '+config.apiKey);
+  return Response.json({id:sessionId,object:'checkout.session',livemode:false,mode:'payment',ui_mode:'hosted_page',client_reference_id:f.requestId,metadata:built.params.metadata,currency:'cad',amount_total:5000,amount_subtotal:5000,total_details:{amount_discount:0,amount_shipping:0,amount_tax:0},automatic_tax:{enabled:false},payment_method_types:['card'],status:'open',payment_status:'unpaid',payment_intent:null,expires_at:source.draft.expiresAt,url:'https://checkout.stripe.com/c/pay/'+sessionId});
+ };
+ const target={requestId:f.requestId,attemptId:a.id},api={origin:config.origin,token};
+ if(scenario==='lost_start'||scenario==='wrong_manifest')await assert.rejects(executeCheckoutAttempt(target,config,api,send),e=>e instanceof CheckoutWorkerError&&e.stage===(scenario==='lost_start'?'start':'preflight')&&e.reconciliationRequired===(scenario==='lost_start'));
+ else{const result=await executeCheckoutAttempt(target,config,api,send);assert.equal(result.outcome,scenario==='lost_provider'?'outcome_unknown':'accepted');assert.equal(result.observationRecorded,scenario!=='lost_observation');assert.equal(result.paymentVerified,false);assert.equal(result.ledgerAdjusted,false);assert.equal(result.automaticRetryAllowed,false);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|apiKey|Bearer/);}
+ assert.equal(posts,scenario==='lost_start'||scenario==='wrong_manifest'?0:1);assert.equal((await f.status()).received,'0.00');
+ if(scenario!=='wrong_manifest'){await assert.rejects(executeCheckoutAttempt(target,config,api,send),e=>e instanceof CheckoutWorkerError&&e.stage==='source');assert.equal(posts,scenario==='lost_start'?0:1);assert.equal((await f.cancel(f.requestId)).response.status,409);}
+ const before=backendCalls;await assert.rejects(executeCheckoutAttempt(target,config,{...api,origin:'http://academy.example'},send),e=>e instanceof CheckoutWorkerError&&e.stage==='configuration');assert.equal(backendCalls,before);
 });
 check('one committed start survives fresh reads and idempotent retries; unverified outcomes cannot permit cancellation,replacement or another charge',async f=>{
  const a=(await f.reserve()).body.data,key=randomUUID(),start=await f.start(a,'master',key);assert.equal(start.response.status,201,JSON.stringify({body:start.body,failures:f.metrics.queryFailures}));assert.equal(start.body.data.providerVerified,false);
