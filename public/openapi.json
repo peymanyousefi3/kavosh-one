@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.291.0",
+    "version": "0.292.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -54027,6 +54027,129 @@
         }
       }
     },
+    "/api/v1/reports/finance/profitability": {
+      "get": {
+        "summary": "Consolidated exact tuition recognized income,supplier costs,gross plus employer payroll costs and manual operating entries in ONE source/assignment/ledger snapshot. Charts combine hub,class,student,month and source;original whole-source privacy and reviewed target rights apply before all filters. Full authorized ledger operating result and separate income/expense reconciliation remain visible BEFORE context filters;zero net difference alone never certifies source completeness. Unassigned shared costs are explicit,not guessed onto students. Separate currencies and immutable precision;deferred billings,tax,receipts,payments and inventory removal never manufacture profit. Existing per-source limits,10000combined groups/dimension/4MiB. No private documents or new ledger postings.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "attributionBasis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "recorded",
+              "type": "string",
+              "enum": [
+                "recorded",
+                "reviewed"
+              ]
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "classIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "studentIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "countryIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "regionIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "cityIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/finance/receivables-aging": {
       "get": {
         "summary": "Source-scoped tuition invoice aging as of inclusive effective book date: dated credits/reversals, current approved installment mapping, explicit unallocated/conflicted aging, exact per-currency totals and chart bands, intersected record scopes before all aggregates/paging; not all-company AR or an as-known-then snapshot; bounded sources refuse truncation",
@@ -57830,6 +57953,7 @@
                 "finance.outlook",
                 "finance.payables-aging",
                 "finance.profit-loss",
+                "finance.profitability",
                 "finance.receivables-aging",
                 "finance.trial-balance",
                 "finance.tuition-income",
@@ -58020,6 +58144,7 @@
                           "finance.outlook",
                           "finance.payables-aging",
                           "finance.profit-loss",
+                          "finance.profitability",
                           "finance.receivables-aging",
                           "finance.trial-balance",
                           "finance.tuition-income",
@@ -58267,6 +58392,7 @@
                           "finance.outlook",
                           "finance.payables-aging",
                           "finance.profit-loss",
+                          "finance.profitability",
                           "finance.receivables-aging",
                           "finance.trial-balance",
                           "finance.tuition-income",

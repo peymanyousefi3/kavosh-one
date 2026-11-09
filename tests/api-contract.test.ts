@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('consolidated profitability exposes only bounded source context filters,not supplied money,scope or partial pages',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/reports/finance/profitability'].get.parameters;assert.deepEqual(p.find((p:any)=>p.name==='attributionBasis').schema.enum,['recorded','reviewed']);for(const key of ['approved','amount','authorizationContext','allocationVersion','allHubs','limit','afterId','accountIds'])assert.ok(!p.some((p:any)=>p.name===key));for(const key of ['from','through','hubIds','classIds','studentIds','currencyIds','countryIds','regionIds','cityIds'])assert.ok(p.some((p:any)=>p.name===key));assert.match(api.paths['/api/v1/reports/finance/profitability'].get.summary,/ONE source\/assignment\/ledger snapshot/);
+});
+
 test('payroll reviewed report basis is explicit and exports accept no caller proofs or assignment versions',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of['/api/v1/reports/payroll/costs','/api/v1/reports/payroll/costs/export']){const p=api.paths[path].get.parameters,b=p.find((p:any)=>p.name==='attributionBasis');assert.deepEqual(b.schema.enum,['recorded','reviewed']);assert.equal(b.required,false);for(const key of['assignmentVersion','allocationVersion','authorizationContext','approved'])assert.ok(!p.some((p:any)=>p.name===key));}assert.match(api.paths['/api/v1/reports/payroll/costs'].get.summary,/Saved files pin exact assignment versions/);
 });
