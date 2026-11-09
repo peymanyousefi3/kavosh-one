@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.332.0",
+    "version": "0.333.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -26111,7 +26111,7 @@
     },
     "/api/v1/finance/provider-collections/{id}": {
       "get": {
-        "summary": "Current-rights posted principal record. Neither invoice application,tuition income nor bank settlement is implied.",
+        "summary": "Current-rights retained accounting summary with optional original-class-local on day. Separates dated applied/refunded/remaining credit from future-booked totals and peak future reservations. No target invoice details,live provider balance or bank settlement implied.",
         "parameters": [
           {
             "name": "id",
@@ -26120,6 +26120,15 @@
             "schema": {
               "type": "string",
               "format": "uuid"
+            }
+          },
+          {
+            "name": "on",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
             }
           }
         ],

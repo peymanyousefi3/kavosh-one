@@ -2,9 +2,9 @@ import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
 import { isDeepStrictEqual } from 'node:util';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
-import { propose,master,type Proposal,type ApprovalRegistry } from '../core/approvals.ts';
+import { propose,master,lockApprovalWrites,type Proposal,type ApprovalRegistry } from '../core/approvals.ts';
 import { ApiError } from '../core/policy.ts';
-import { formatMoney,readMinorUnits } from '../core/money.ts';
+import { formatMoney,formatMoneyTotal,readMinorUnits } from '../core/money.ts';
 import { lockFinanceBook } from '../core/finance-lock.ts';
 import { lockCollectorFunds } from '../core/collector-funds.ts';
 import { lockAcademyTopology } from './academy.ts';
@@ -13,10 +13,12 @@ import { financialRecordAuthority } from './tuition.ts';
 import { collectorRow } from './collectors.ts';
 import { accountRow } from './finance.ts';
 import { paymentMethodRow } from './payment-methods.ts';
+import { accountingDate } from './finance-periods.ts';
 import { prepareJournal,journalDependencies,applyJournal } from './finance-journals.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),ref=z.object({id:uuid,version:z.number().int().positive().max(2147483647)}).strict();
 const input=z.object({inspectionId:uuid,collector:ref,method:ref,holdingAccount:ref,creditAccount:ref,receivedAt:z.iso.datetime({offset:true}).max(100),period:ref,reason:z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!v.includes('\0'))}).strict(),payload=input.extend({invoiceId:uuid}),paging=z.object({limit:z.coerce.number().int().min(1).max(100).default(25),after:uuid.optional()}).strict();
+const summaryQuery=z.object({on:accountingDate.optional()}).strict();
 type Source={inspectionId:string;startId:string;requestId:string;invoiceId:string;studentId:string;classId:string;hubId:string;accountId:string;livemode:boolean;chargeId:string;amountMinor:string;currencyId:string;currencyCode:string;unitScale:number;inspection:unknown;recordedAt:string;manualReferenceExists:boolean;collectionId:string|null};
 async function authority(ctx:ApiContext,id:string,edit=false){const i=await invoiceRow(ctx,id);financialRecordAuthority(ctx,i,'receipts.view');financialRecordAuthority(ctx,i,'checkouts.view');return {i,auth:financialRecordAuthority(ctx,i,edit?'receipts.edit':'receipts.view')};}
 async function basis(ctx:ApiContext,i:z.infer<typeof payload>,lock=false){
@@ -36,7 +38,18 @@ async function basis(ctx:ApiContext,i:z.infer<typeof payload>,lock=false){
  await prepareJournal(ctx,false,journal,lock);return {source,on,journal,auth:a.auth};
 }
 async function reviewState(ctx:ApiContext,b:Awaited<ReturnType<typeof basis>>){return JSON.parse(JSON.stringify({source:b.source,receivedOn:b.on,posting:await journalDependencies(ctx,false,b.journal,'review')}));}
-async function detail(ctx:ApiContext,id:string){const r=(await ctx.db.query<{invoice_id:string;amount_minor:string;unit_scale:number;currency_code:string}>(`SELECT c.*,c.amount_minor::text,r.unit_scale,r.currency_code FROM public.provider_collections c JOIN public.payment_checkout_dispatch_starts s ON s.academy_id=c.academy_id AND s.id=c.start_id JOIN public.payment_checkout_attempts a ON a.academy_id=s.academy_id AND a.id=s.attempt_id JOIN public.payment_checkout_requests r ON r.academy_id=a.academy_id AND r.id=a.request_id WHERE c.id=$1`,[id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');await authority(ctx,r.invoice_id);return {id,invoiceId:r.invoice_id,amount:formatMoney(readMinorUnits(r.amount_minor),r.unit_scale),currencyCode:r.currency_code,accountingState:'customer_credit_pending_application',invoiceApplied:false,bankSettled:false,additionalTaxPosting:false,providerPaymentExecuted:false,receivedAtProviderVerified:false};}
+type Summary={on:string;timeZone:string;principalMinor:string;appliedMinor:string;refundedMinor:string;remainingMinor:string;bookedAppliedMinor:string;bookedRefundedMinor:string;bookedRemainingMinor:string;reservedAvailableMinor:string;providerReviewRequired:boolean};
+async function detail(ctx:ApiContext,id:string,on:string|null=null){
+ const r=(await ctx.db.query<{invoice_id:string;amount_minor:string;unit_scale:number;currency_code:string}>(`SELECT c.*,c.amount_minor::text,r.unit_scale,r.currency_code FROM public.provider_collections c JOIN public.payment_checkout_dispatch_starts s ON s.academy_id=c.academy_id AND s.id=c.start_id JOIN public.payment_checkout_attempts a ON a.academy_id=s.academy_id AND a.id=s.attempt_id JOIN public.payment_checkout_requests r ON r.academy_id=a.academy_id AND r.id=a.request_id WHERE c.id=$1`,[id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');await authority(ctx,r.invoice_id);
+ // Historical migration fixtures retain their real schema. Never substitute
+ // initial-posting flags for an unavailable current accounting projection.
+ const available=(await ctx.db.query<{available:boolean}>("SELECT to_regprocedure('public.provider_collection_accounting_summary(uuid,date)') IS NOT NULL available,EXISTS(SELECT 1 FROM public.provider_collections LIMIT 1) relation_probe")).rows[0].available;
+ const s=available?(await ctx.db.query<{summary:Summary|null}>('SELECT public.provider_collection_accounting_summary($1,$2::date) summary',[id,on])).rows[0].summary:null;
+ if(available&&!s)throw new ApiError(409,'PROVIDER_COLLECTION_SUMMARY_UNAVAILABLE');
+ const money=(v:string)=>formatMoneyTotal(readMinorUnits(v),r.unit_scale),applied=s?readMinorUnits(s.appliedMinor):null,refunded=s?readMinorUnits(s.refundedMinor):null,remaining=s?readMinorUnits(s.remainingMinor):null;
+ const accountingState=!s?'current_summary_unavailable':readMinorUnits(s.principalMinor)===0n?'collection_not_yet_effective':remaining!<0n||applied!<0n||refunded!<0n?'requires_accounting_review':refunded!>0n?(remaining===0n?'credit_consumed_with_refund':'partially_refunded'):applied!>0n?(remaining===0n?'customer_credit_applied':'customer_credit_partially_applied'):'customer_credit_pending_application';
+ return {id,invoiceId:r.invoice_id,amount:formatMoney(readMinorUnits(r.amount_minor),r.unit_scale),currencyCode:r.currency_code,accountingState,invoiceApplied:applied===null?null:applied>0n,accounting:s?{on:s.on,timeZone:s.timeZone,principal:money(s.principalMinor),appliedToInvoices:money(s.appliedMinor),refunded:money(s.refundedMinor),remainingCredit:money(s.remainingMinor),bookedAppliedToInvoices:money(s.bookedAppliedMinor),bookedRefunded:money(s.bookedRefundedMinor),bookedRemainingCredit:money(s.bookedRemainingMinor),availableAfterFutureReservations:money(s.reservedAvailableMinor),providerReviewRequired:s.providerReviewRequired,source:'retained_accounting_events',includesFutureDatedEntries:false,bookedTotalsIncludeFutureDatedEntries:true,invoiceApplicationMeans:'some_credit_applied_not_full_invoice_payment',providerBalanceVerified:false}:null,bankSettled:false,additionalTaxPosting:false,providerPaymentExecuted:false,receivedAtProviderVerified:false};
+}
 export const providerCollectionActions:ApprovalRegistry={'finance.provider-collection.record':{
  requestCapability:'receipts.edit',privacyCapability:'receipts.edit',createdStatus:201,
  validate:async(ctx,_id,raw)=>{const i=payload.parse(raw),a=await authority(ctx,i.invoiceId,true);await collectorRow(ctx,i.collector.id);await paymentMethodRow(ctx,i.method.id);await accountRow(ctx,i.holdingAccount.id);await accountRow(ctx,i.creditAccount.id);return a.auth;},
@@ -49,12 +62,12 @@ export const providerCollectionActions:ApprovalRegistry={'finance.provider-colle
 }};
 export async function providerCollections(ctx:ApiContext,registry:ApprovalRegistry=providerCollectionActions):Promise<Reply|null>{
  const p=/^finance\/invoices\/([^/]+)\/provider-collections$/.exec(ctx.path),read=/^finance\/provider-collections\/([^/]+)$/.exec(ctx.path);if(!p&&!read)return null;const params=new URL(ctx.request.url).searchParams;if(new Set(params.keys()).size!==[...params].length)throw new ApiError(400,'DUPLICATE_QUERY');const q=Object.fromEntries(params);
- if(read){if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');z.object({}).strict().parse(q);return {status:200,body:{data:await detail(ctx,uuid.parse(read[1]))}};}
+ if(read){if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const query=summaryQuery.parse(q);await lockApprovalWrites(ctx);return {status:200,body:{data:await detail(ctx,uuid.parse(read[1]),query.on??null)}};}
  const invoiceId=uuid.parse(p![1]);await authority(ctx,invoiceId,ctx.request.method==='POST');if(ctx.request.method==='POST'){z.object({}).strict().parse(q);return propose(ctx,registry,'finance.provider-collection.record',null,0,{...input.parse(await jsonBody(ctx.request)),invoiceId});}
- if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const query=paging.parse(q),rows=(await ctx.db.query<{id:string}>('SELECT id,inspection_id "inspectionId",amount_minor::text "amountMinor",received_on "receivedOn" FROM public.provider_collections WHERE invoice_id=$1 AND($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3',[invoiceId,query.after??null,query.limit+1])).rows;return {status:200,body:{data:rows.slice(0,query.limit),nextCursor:rows.length>query.limit?rows[query.limit-1].id:null,invoiceApplied:false,bankSettled:false}};
+ if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const query=paging.parse(q),rows=(await ctx.db.query<{id:string}>('SELECT id,inspection_id "inspectionId",amount_minor::text "amountMinor",received_on "receivedOn" FROM public.provider_collections WHERE invoice_id=$1 AND($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3',[invoiceId,query.after??null,query.limit+1])).rows;return {status:200,body:{data:rows.slice(0,query.limit),nextCursor:rows.length>query.limit?rows[query.limit-1].id:null,invoiceApplicationStatus:'read_each_collection_summary',bankSettled:false}};
 }
 export const providerCollectionsContract=[
  {path:'/api/v1/finance/invoices/{id}/provider-collections',method:'post',summary:'Upper-reviewed exact captured principal into processor receivable/customer-credit liability,including manual-payment/credit races. No caller amount,new tax,tuition receipt,invoice allocation,bank deposit or provider charge. Received date is explicitly reviewer-attested.',schema:input},
  {path:'/api/v1/finance/invoices/{id}/provider-collections',method:'get',summary:'Bounded invoice-scoped provider collection directory;customer credit awaits a separate approved application',querySchema:paging},
- {path:'/api/v1/finance/provider-collections/{id}',method:'get',summary:'Current-rights posted principal record. Neither invoice application,tuition income nor bank settlement is implied.'}
+ {path:'/api/v1/finance/provider-collections/{id}',method:'get',summary:'Current-rights retained accounting summary with optional original-class-local on day. Separates dated applied/refunded/remaining credit from future-booked totals and peak future reservations. No target invoice details,live provider balance or bank settlement implied.',querySchema:summaryQuery}
 ] as const;
