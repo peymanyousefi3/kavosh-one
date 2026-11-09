@@ -1,6 +1,9 @@
 # Kavosh One: approval plan
 Kavosh Al and Robotics Academy Inc. | 3 November 2026 | Version 1.0
 
+## Subsequent owner instructions
+Backend implementation is authorized and continues autonomously; visual UI/UX still requires owner input. Social-media posts, stories, feeds and social commenting are excluded. Academic profiles, achievements, certificates, reporting and contextual class/homework discussions remain. These instructions supersede the original planning-only approval gate and social-media scope.
+
 ## Decision summary
 Build a complete academy operations platform with eight consistent workspaces: Overview, Academy, People, Learning, Finance, Reports, Community and Administration. Media is a shared library; approvals and notifications have one central inbox. Records link across workspaces without duplicate data entry.
 
@@ -44,7 +47,7 @@ Approval accepts the proposed product structure, architecture and staged impleme
 - Cash, accrual and forecast views, including tuition due dates, rent, salaries and scheduled teaching estimates.
 
 ## Community and Administration
-- Student/teacher/hub profiles, QR links, achievements, certificates, pinned academy history, posts/stories, verified-user comments, moderation and weekly leaderboards. No direct private messages.
+- Student/teacher/hub profiles, QR links, achievements, certificates, pinned academy history, profile-content moderation and academic weekly scoring/leaderboards. No social posts, stories, feeds, social comments or direct private messages.
 - Custom roles/presets/scopes; notifications; rule builder; audit diff/history; media browser/search; integrations; bot controls; branding; localization.
 - Email/SMS/portal reminders, polls and record-based family/staff discussions. Parent class reminder initially 24 hours; teacher reminder initially one hour.
 - English, French, Simplified Chinese; tenant/hub branding; subscription plans, read-only grace/cancellation states and confirmed tenant deletion.
@@ -185,7 +188,7 @@ Create a versioned privacy notice, terms of service, enrollment agreement/waiver
 
 PIPEDA planning includes purpose limitation, minimal collection, safeguards, access/correction, consent records, accountable privacy contact and breach assessment/notification where required. Maintain breach records; recordkeeping duration is set from the applicable rule. Separate legally necessary processing from optional public profiles, marketing and analytics. [S9]
 
-Children require guardian-managed onboarding and age-appropriate notices. Default profiles private; public visibility needs documented choice and guardian authorization where applicable. Public posts must not reveal DOB, health data, exact class schedules or private reports. Student-selected visibility cannot override guardian/legal restrictions.
+Children require guardian-managed onboarding and age-appropriate notices. Default profiles private; public visibility needs documented choice and guardian authorization where applicable. Public profile content must not reveal DOB, health data, exact class schedules or private reports. Student-selected visibility cannot override guardian/legal restrictions.
 
 The requirement that every user verify a phone conflicts with younger students who lack phones. Proposed resolution: a student account can use a verified linked guardian contact, with guardian-controlled recovery, rather than forcing a child's own phone or allowing shared-number account takeover. Keep student login identity separate. This is a proposed refinement for approval.
 

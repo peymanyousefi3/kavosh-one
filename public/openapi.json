@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.277.0",
+    "version": "0.278.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -53553,7 +53553,7 @@
     },
     "/api/v1/reports/finance/tuition-income": {
       "get": {
-        "summary": "Exact scoped tuition invoice/credit attribution by student,class,hub,consideration account,original recognition,month and event. Earned invoice revenue,deferred billings and charged tax stay separate;receipt does not create income again. Current source and all mapped-account rights before filters/counts/charts. Not remaining deferred balance,all income or academy profit;10000events/groups per dimension and4MiB complete-output bound.",
+        "summary": "Exact scoped tuition invoice/credit plus reviewed recognition/reversal attribution by student,class,hub,ORIGINAL invoice consideration account,original invoice policy,month and event. Original billings/tax stay separate from subsequent earned revenue,total recognized revenue and period net-deferred change;documents and earning events counted separately. All original and release account rights before counts/charts;receipt never creates income again. Not remaining deferred balance,all income or academy profit;10000source events/groups per dimension and4MiB bound.",
         "parameters": [
           {
             "name": "from",
@@ -53608,7 +53608,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "description": "Original invoice consideration account;also applies to associated earning and reversal events.",
               "type": "string",
               "maxLength": 8000
             }
@@ -53669,6 +53669,7 @@
             "required": false,
             "schema": {
               "default": "all",
+              "description": "Original immutable invoice policy,not current earning state.",
               "type": "string",
               "enum": [
                 "all",
@@ -53752,7 +53753,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "description": "Original invoice consideration account;also applies to associated earning and reversal events.",
               "type": "string",
               "maxLength": 8000
             }
@@ -53813,6 +53814,7 @@
             "required": false,
             "schema": {
               "default": "all",
+              "description": "Original immutable invoice policy,not current earning state.",
               "type": "string",
               "enum": [
                 "all",
