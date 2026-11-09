@@ -47,7 +47,7 @@ jobs:
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Historical financial and academic report archive upgrade compatibility
-        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^schema142 preserves|^actual146-to147 upgrade|^249 to250 retains|^255 to256 retains' tests/payroll-gross-report.test.ts tests/achievements.test.ts tests/allocated-expense-reports.test.ts tests/profitability-report.test.ts
+        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^schema142 preserves|^actual146-to147 upgrade|^249 to250 retains|^255 to256 retains|^253 to254 preserves|^queued paid tax actual175to176|^queued remittance actual155to156|^actual152to153' tests/payroll-gross-report.test.ts tests/achievements.test.ts tests/allocated-expense-reports.test.ts tests/profitability-report.test.ts tests/payroll-cost-attributions.test.ts tests/payruns.test.ts
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Real-library login verification recovery and concurrent phone-change logic
