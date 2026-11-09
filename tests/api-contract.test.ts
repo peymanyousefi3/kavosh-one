@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('manual operating report and export reuse bounded source filters and jobs without proof or money inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/reports/finance/manual-income-costs','/api/v1/reports/finance/manual-income-costs/export']){const p=api.paths[path].get.parameters;assert.deepEqual(p.find((p:any)=>p.name==='attributionBasis').schema.enum,['recorded','reviewed']);for(const key of ['amount','approved','authorizationContext','allocationVersion','source','limit','afterId'])assert.ok(!p.some((p:any)=>p.name===key));}assert.ok(api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema.properties.reportId.enum.includes('finance.manual-income-costs'));assert.match(api.paths['/api/v1/reports/finance/manual-income-costs'].get.summary,/Original whole journal\/account\/ledger\/report rights/);
+});
+
 test('manual journal attribution supports the full200line source bound without money,source or approval overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/journals/{id}/attribution',s=api.paths[path].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.equal(s.properties.expectedVersion.minimum,0);assert.equal(s.properties.lines.maxItems,200);assert.equal(s.properties.lines.items.properties.lineNumber.maximum,200);assert.equal(s.properties.lines.items.properties.targets.maxItems,200);for(const key of ['journalId','amount','signedMinor','sourceSnapshot','approved','actorId'])assert.equal(s.properties[key],undefined);assert.ok(api.paths[path].get);assert.ok(api.paths[path+'/history'].get);assert.match(api.paths[path].post.summary,/automated-source retagging/);
 });

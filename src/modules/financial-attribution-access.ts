@@ -5,18 +5,20 @@ import { ApiError,scopeNonempty } from '../core/policy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),ids=z.array(uuid).max(10000).refine(a=>new Set(a).size===a.length);
 export const attributionAuthorization=z.discriminatedUnion('kind',[
+ z.object({kind:z.literal('manual_journal_attribution'),basis:z.enum(['recorded','reviewed']),journals:ids,allocations:z.array(z.object({journalId:uuid,version:z.number().int().positive().max(2147483647)}).strict()).max(10000)}).strict().refine(p=>{const journals=new Set(p.journals);return(p.basis==='reviewed'||!p.allocations.length)&&new Set(p.allocations.map(a=>a.journalId)).size===p.allocations.length&&p.allocations.every(a=>journals.has(a.journalId));}),
  z.object({kind:z.literal('tuition_attribution'),invoices:ids,recognitions:ids}).strict().refine(p=>!p.recognitions.length||p.invoices.length>0),
  z.object({kind:z.literal('expense_attribution'),bills:ids}).strict(),
  z.object({kind:z.literal('allocated_expense_attribution'),bills:ids,allocations:z.array(z.object({billId:uuid,version:z.number().int().positive().max(2147483647)}).strict()).max(10000)}).strict().refine(p=>{const bills=new Set(p.bills);return new Set(p.allocations.map(a=>a.billId)).size===p.allocations.length&&p.allocations.every(a=>bills.has(a.billId));})
 ]);
-export const attributionReportIds=['finance.tuition-income','finance.expense-costs'] as const;
+export const attributionReportIds=['finance.tuition-income','finance.expense-costs','finance.manual-income-costs'] as const;
 export function attributionReportScopes(ctx:ApiContext,id:string){
- const caps=id==='finance.tuition-income'?['invoices.view','financial-reports.view','accounts.view','ledger.view'] as const:id==='finance.expense-costs'?['expenses.view','financial-reports.view','accounts.view','ledger.view'] as const:null;
+ const caps=id==='finance.manual-income-costs'?['journals.view','financial-reports.view','accounts.view','ledger.view'] as const:id==='finance.tuition-income'?['invoices.view','financial-reports.view','accounts.view','ledger.view'] as const:id==='finance.expense-costs'?['expenses.view','financial-reports.view','accounts.view','ledger.view'] as const:null;
  if(!caps)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');const scopes=caps.map(c=>permissionScope(ctx,c));if(scopes.some(s=>!scopeNonempty(s)))throw new ApiError(403,'FORBIDDEN');return scopes;
 }
 // Trusted SQL aliases/parameter expressions only. The same predicates select
 // original report sources and reauthorize retained files;no caller SQL.
 const hub=(field:string)=>`jsonb_build_object('all',${field} IS NULL,'hubs',CASE WHEN ${field} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(${field}) END)`;
+export const manualJournalSelectionSQL=(scopes:string)=>`NOT EXISTS(SELECT 1 FROM public.finance_journal_lines l LEFT JOIN public.finance_accounts a ON a.academy_id=l.academy_id AND a.id=l.account_id CROSS JOIN jsonb_array_elements(${scopes}) scope(value) WHERE l.academy_id=b.academy_id AND l.journal_id=b.id AND(a.id IS NULL OR public.scope_contains(scope.value,${hub('a.hub_id')}) IS NOT TRUE))`;
 const tuitionTarget=`jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',i.class_id,'hubId',i.hub_id)),'people',jsonb_build_array(jsonb_build_object('id',i.student_id,'hubId',i.hub_id)),'recordContext',jsonb_build_object('classId',i.class_id,'hubId',i.hub_id,'studentId',i.student_id))`;
 export const tuitionInvoiceSelectionSQL=(ownerScopes:string,accountScopes:string)=>`NOT EXISTS(SELECT 1 FROM jsonb_array_elements(${ownerScopes}) s WHERE public.scope_contains(s,${tuitionTarget}) IS NOT TRUE)
  AND NOT EXISTS(SELECT 1 FROM unnest(ARRAY[i.receivable_account,i.consideration_account,i.tax_account]) pick(id) LEFT JOIN public.finance_accounts a ON a.academy_id=i.academy_id AND a.id=pick.id CROSS JOIN jsonb_array_elements(${accountScopes}) s WHERE pick.id IS NOT NULL AND(a.id IS NULL OR public.scope_contains(s,${hub('a.hub_id')}) IS NOT TRUE))`;
@@ -39,7 +41,12 @@ export { expenseAllocationSelectionSQL as attributionRevisionSelectionSQL };
 // source must still be authorized BEFORE its bytes or hash metadata is read.
 // The caller holds the existing policy/topology gates,as other report proofs do.
 export async function requireAttributionResultAccess(ctx:ApiContext,raw:unknown){
- const p=attributionAuthorization.parse(raw),scopes=attributionReportScopes(ctx,p.kind==='tuition_attribution'?'finance.tuition-income':'finance.expense-costs'),owners=JSON.stringify(scopes.slice(0,2)),accounts=JSON.stringify(scopes.slice(1));
+ const parsed=attributionAuthorization.parse(raw);if(parsed.kind==='manual_journal_attribution'){
+  const scopes=attributionReportScopes(ctx,'finance.manual-income-costs'),target=permissionScope(ctx,'journal-attribution.view');if(parsed.basis==='reviewed'){if(!scopeNonempty(target))throw new ApiError(403,'REPORT_SOURCE_ACCESS_CHANGED');scopes.push(target);}
+  const ok=(await ctx.db.query<{ok:boolean}>(`SELECT NOT EXISTS(SELECT 1 FROM unnest($1::uuid[]) wanted(id) WHERE NOT EXISTS(SELECT 1 FROM public.finance_journals b JOIN public.approval_requests p ON p.academy_id=b.academy_id AND p.id=b.approval_id AND p.action='finance.journal.post' AND p.status='applied' WHERE b.id=wanted.id AND b.reverses_id IS NULL AND b.purpose='activity' AND ${manualJournalSelectionSQL('$2::jsonb')})) AND NOT EXISTS(SELECT 1 FROM jsonb_to_recordset($3::jsonb) wanted("journalId" uuid,version integer) WHERE NOT EXISTS(SELECT 1 FROM public.finance_journals b JOIN public.manual_journal_attribution_revisions ar ON ar.academy_id=b.academy_id AND ar.journal_id=b.id AND ar.version=wanted.version WHERE b.id=wanted."journalId" AND ${expenseAllocationSelectionSQL('ar.source_snapshot','$4::jsonb','$5::jsonb','$6::jsonb')})) ok`,[parsed.journals,JSON.stringify(scopes),JSON.stringify(parsed.allocations),JSON.stringify([target]),JSON.stringify(permissionScope(ctx,'classes.view')),JSON.stringify(permissionScope(ctx,'students.view'))])).rows[0].ok;
+  if(!ok)throw new ApiError(403,'REPORT_SOURCE_ACCESS_CHANGED');return;
+ }
+ const p=parsed,scopes=attributionReportScopes(ctx,p.kind==='tuition_attribution'?'finance.tuition-income':'finance.expense-costs'),owners=JSON.stringify(scopes.slice(0,2)),accounts=JSON.stringify(scopes.slice(1));
  const ok=p.kind==='tuition_attribution'?(await ctx.db.query<{ok:boolean}>(`SELECT
   NOT EXISTS(SELECT 1 FROM unnest($1::uuid[]) wanted(id) WHERE NOT EXISTS(SELECT 1 FROM public.tuition_invoices i WHERE i.id=wanted.id AND($5::boolean OR i.hub_id=ANY($6::uuid[])) AND ${tuitionInvoiceSelectionSQL('$3::jsonb','$4::jsonb')}))
   AND NOT EXISTS(SELECT 1 FROM unnest($2::uuid[]) wanted(id) WHERE NOT EXISTS(SELECT 1 FROM public.tuition_recognitions rel WHERE rel.id=wanted.id AND rel.invoice_id=ANY($1::uuid[]) AND ${tuitionRecognitionSelectionSQL('$4::jsonb')})) ok`,[p.invoices,p.recognitions,owners,accounts,ctx.credential.all_hubs,ctx.credential.hub_ids])).rows[0].ok:
