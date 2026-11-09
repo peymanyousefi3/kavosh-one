@@ -4,6 +4,29 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 
+test('native worker review input binds two independent real signing attestations and rejects enrollment or actor overrides',async()=>{
+ const f=await operationsFixture();try{
+  const base={expectedVersion:0,decision:'rejected',documentGrantId:null,auditGrantId:null,workerSignedAt:null,academySignedAt:null,identityAndAuthenticationReviewed:false,contentAndConsentReviewed:false,reason:'Explicit worker evidence decision',requestId:randomUUID(),evidenceId:randomUUID(),requestedBy:f.actors.manager.person},accepted={...base,decision:'accepted',documentGrantId:randomUUID(),auditGrantId:randomUUID(),workerSignedAt:'2026-11-08T01:00:00.000Z',academySignedAt:'2026-11-08T02:00:00.000Z',identityAndAuthenticationReviewed:true,contentAndConsentReviewed:true};
+  const valid=async(value:unknown)=>(await f.pg.query<{valid:boolean}>('SELECT public.work_signature_completion_review_input_valid($1::jsonb) valid',[JSON.stringify(value)])).rows[0].valid;
+  assert.equal(await valid(base),true);assert.equal(await valid(accepted),true);
+  for(const value of [null,{}, {...base,signedAt:null},{...accepted,signedAt:accepted.workerSignedAt},{...base,academySignedAt:accepted.academySignedAt},{...base,workerSignedAt:accepted.workerSignedAt},{...accepted,academySignedAt:null},{...accepted,workerSignedAt:null},{...accepted,academySignedAt:'not-a-time'},{...accepted,documentGrantId:null},{...accepted,identityAndAuthenticationReviewed:false},{...base,paymentCleared:true},{...base,expectedVersion:2147483647}])assert.equal(await valid(value),false,JSON.stringify(value));
+ }finally{await f.pg.close();}
+});
+test('actual228to229 preserves historical people permissions and original evidence/review function identities without backfilling worker decisions',async()=>{
+ const f=await operationsFixture({throughSchema:228});try{
+  const snapshot="SELECT jsonb_build_object('people',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.people p),'permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY role_id,capability) FROM public.role_permissions p),'evidence',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.work_signature_completion_evidence p),'grants',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.work_signature_evidence_download_grants p),'reviews',(SELECT jsonb_agg(to_jsonb(p) ORDER BY evidence_id) FROM public.signature_completion_reviews p)) snapshot";
+  const funcs="SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid IN('public.signature_completion_review_source(uuid,uuid,jsonb)'::regprocedure,'public.work_signature_evidence_download_source(uuid,text,uuid)'::regprocedure,'public.work_signature_completion_source(uuid,uuid)'::regprocedure,'public.record_work_signature_evidence_inspection(uuid,uuid,uuid,text,text,jsonb)'::regprocedure) ORDER BY oid",before=(await f.pg.query(snapshot)).rows,identities=(await f.pg.query(funcs)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/229_work_signature_completion_reviews.sql',import.meta.url),'utf8'));
+  assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,229);assert.deepEqual((await f.pg.query(snapshot)).rows,before);assert.deepEqual((await f.pg.query(funcs)).rows,identities);
+  assert.equal((await f.pg.query('SELECT * FROM public.work_signature_completion_reviews')).rows.length,0);assert.equal((await f.pg.query("SELECT * FROM public.role_permissions WHERE capability='work-signature-completions.review'")).rows.length,0);
+  assert.equal((await f.pg.query("SELECT has_table_privilege('kavosh_runtime','public.outbox_events','SELECT') allowed")).rows[0].allowed,false);
+  assert.equal((await f.pg.query("SELECT has_function_privilege('kavosh_runtime','public.require_work_signature_completion_review()','EXECUTE') allowed")).rows[0].allowed,false);
+  for(const role of ['kavosh_file_worker','kavosh_signature_result_worker','kavosh_signature_completion_worker','kavosh_signature_evidence_worker','kavosh_identity','kavosh_delivery']){await f.pg.exec('SET ROLE '+role);try{
+   await assert.rejects(f.pg.exec('SELECT * FROM public.work_signature_completion_reviews'),/permission denied/i);await assert.rejects(f.pg.query('SELECT public.work_signature_completion_review_source($1,$2,$3::jsonb)',[randomUUID(),f.actors.manager.person,'{}']),/permission denied/i);
+  }finally{await f.pg.exec('RESET ROLE');}}
+ }finally{await f.pg.close();}
+});
+
 test('native review inputs require exact human attestation fields and civil signing dates preserve guardian protection at birthdays and leap-day boundaries',async()=>{
  const f=await operationsFixture();try{
   const base={expectedVersion:0,decision:'rejected',documentGrantId:null,auditGrantId:null,signedAt:null,identityAndAuthenticationReviewed:false,contentAndConsentReviewed:false,reason:'Explicit synthetic evidence decision',requestId:randomUUID(),evidenceId:randomUUID(),requestedBy:f.actors.manager.person},accepted={...base,decision:'accepted',documentGrantId:randomUUID(),auditGrantId:randomUUID(),signedAt:'2026-11-08T00:00:00.000Z',identityAndAuthenticationReviewed:true,contentAndConsentReviewed:true};

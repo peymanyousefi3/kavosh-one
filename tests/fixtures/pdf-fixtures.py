@@ -135,6 +135,7 @@ def signature_vector(key, edit=lambda p: None, change=lambda r: r):
 
 
 signature_vector("signature_layout")
+signature_vector("signature_two_pages", lambda p: p.add_blank_page(page_size=(612, 792)))
 signature_vector("signature_wrong_start", change=lambda r: [1, *r[1:]])
 signature_vector("signature_overlap", change=lambda r: [0, r[2], r[1], r[3]])
 signature_vector("signature_overflow", change=lambda r: [0, r[1], r[2], 9999999999])
