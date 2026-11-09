@@ -4,6 +4,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('notification choices are human self-only,strict and separate from delivery or marketing consent',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/me/notification-preferences';
+ for(const [path,method]of [[root,'get'],[root,'post'],[root+'/history','get'],[root+'/disable','post']])assert.deepEqual(api.paths[path][method].security,[{humanSession:[],academySelection:[]}]);
+ const s=api.paths[root].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties),['expectedVersion','emailEnabled','smsEnabled','locale','acknowledgedNoticeVersion']);assert.equal(s.properties.acknowledgedNoticeVersion.const,1);
+ assert.deepEqual(Object.keys(api.paths[root+'/disable'].post.requestBody.content['application/json'].schema.properties),['expectedVersion']);assert.equal(api.paths[root+'/history'].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(api.paths[root].get.summary,/No contact values,marketing consent or actual external delivery/);
+});
+
 test('actual work agreement context pins saved activity and prepared terms without a client date or approval override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/payroll/engagements/{id}/recorded-time/{entryId}/agreement-context'];assert.ok(p.get);assert.equal(p.post,undefined);const q=p.get.parameters.filter((v:any)=>v.in==='query');assert.equal(q.find((v:any)=>v.name==='entryVersion').required,true);assert.equal(q.find((v:any)=>v.name==='termsVersion').required,true);assert.equal(q.find((v:any)=>v.name==='limit').schema.maximum,20);assert.equal(q.some((v:any)=>['on','signedAt','startsAt','payrollApproved','legalCoverage'].includes(v.name)),false);assert.match(p.get.summary,/not an arbitrary client date|never an arbitrary client date/);assert.match(p.get.summary,/Not terms applicability/);
 });

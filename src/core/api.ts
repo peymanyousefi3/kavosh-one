@@ -217,6 +217,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       const status = academy.rows[0]?.status;
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
+      if(request.method==='POST'&&path==='me/notification-preferences/disable')securityRevocation=true;
       if(request.method==='POST'&&/^bots\/[0-9a-f-]{36}\/credentials\/[0-9a-f-]{36}\/revoke$/i.test(path))securityRevocation=true;
       if(request.method==='POST'&&/^me\/guardian-profile\/corrections\/[0-9a-f-]{36}\/withdraw$/i.test(path))securityRevocation=true;
       if(request.method==='POST'&&/^students\/[0-9a-f-]{36}\/registration-data\/care\/submissions\/[0-9a-f-]{36}\/withdraw$/i.test(path))securityRevocation=true;
