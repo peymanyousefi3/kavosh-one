@@ -67,6 +67,10 @@ async function period(ctx:ApiContext,input:z.infer<typeof reverse>,lock:boolean)
 async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean,checkState=true){
   scope(ctx,'journals.edit');scope(ctx,'journals.view');
   const input=reversing?reversal.parse(raw):create.parse(raw);
+  if(!reversing&&/^re_[A-Za-z0-9]+$/.test(input.reference)){
+    if(lock&&!(await ctx.db.query<{ok:boolean}>("SELECT pg_try_advisory_xact_lock(hashtextextended($1::text||':provider-refund:'||$2,0)) ok",[ctx.credential.academy_id,input.reference])).rows[0].ok)throw new ApiError(409,'PROVIDER_REFUND_REFERENCE_BUSY');
+    if((await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE p.action='finance.provider-refund.record' AND p.payload->>'refundId'=$1 LIMIT 1",[input.reference])).rows.length)throw new ApiError(409,'PROVIDER_REFUND_ALREADY_RECORDED');
+  }
   const source='reversesId' in input?await journal(ctx,input.reversesId):null;
   if(source?.reversesId)throw new ApiError(409,'REVERSAL_OF_REVERSAL_FORBIDDEN');
   if(source&&input.postedOn<source.postedOn)throw new ApiError(400,'CORRECTION_PRECEDES_JOURNAL');
@@ -119,6 +123,7 @@ async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.jou
 }
 async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
  const prepared=await prepare(ctx,true,input,lock,false);
+ if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action='finance.provider-refund.record' LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_REFUND_CORRECTION_WORKFLOW_REQUIRED');
  // Original approval identity exists on historical schemas too. Do not make
  // unrelated legacy corrections depend on a later feature table being present.
  if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action='finance.provider-collection.record' LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_COLLECTION_CORRECTION_WORKFLOW_REQUIRED');

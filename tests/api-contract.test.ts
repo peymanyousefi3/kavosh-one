@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('refund accounting accepts only retained source selection and reviewed date,never supplied money or execution authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/provider-collections/{id}',op=api.paths[base+'/refunds'].post,s=op.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['inspectionId','period','postedOn','reason','refundId']);assert.equal(s.properties.period.additionalProperties,false);assert.match(op.summary,/No caller amount/);assert.match(op.summary,/reviewer-attested/);assert.equal(api.paths[base+'/refunds'].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.deepEqual(api.paths[base+'/refund-source'].get.parameters.map((p:any)=>p.name).sort(),['id','inspectionId','postedOn','refundId']);assert.ok(api.paths['/api/v1/finance/provider-refunds/{id}'].get);assert.equal(api.paths['/api/v1/finance/provider-refunds/{id}'].post,undefined);
+});
+
 test('customer credit preview accepts an optional effective instant but no supplied balances or capacity authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/finance/provider-collections/{id}/application-source'].get;assert.deepEqual(p.parameters.map((v:any)=>v.name).sort(),['appliedAt','id','invoiceId']);assert.equal(p.parameters.find((v:any)=>v.name==='appliedAt').required,false);assert.match(p.summary,/corrections restore capacity only/);for(const key of ['availableCredit','outstandingMinor','capacityOn','sourceStamp','providerReviewRequired'])assert.equal(p.parameters.some((v:any)=>v.name===key),false);
 });

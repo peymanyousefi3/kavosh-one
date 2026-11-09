@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { assertAuditEnvelope,assertGenericCriticalNotice } from './redaction-assertions.ts';
+import { assertAuditEnvelope,assertGenericCriticalNotice,assertPrivateErrorEnvelope } from './redaction-assertions.ts';
+
+test('private errors accept a canonical request ID containing money-like digits but reject all private additions',()=>{
+ const requestId='47fff1f6-f0bb-481c-a8b1-bdaa5412030d',code='REPORT_SOURCE_ACCESS_CHANGED',body={error:{code,requestId}};assert.match(requestId,/12030/);assert.doesNotThrow(()=>assertPrivateErrorEnvelope(body,code));for(const value of [{error:{...body.error,amount:12030}},{...body,sha256:'private'},{error:{...body.error,code:'PRIVATE'}},{error:{...body.error,requestId:'12030'}},{error:{...body.error,message:'PRIVATE source'}}])assert.throws(()=>assertPrivateErrorEnvelope(value,code));
+});
 
 // The first ID is the actual harmless reference that triggered CI42010122277.
 const id='c543000f-7702-4468-974b-4e6347f55f61',expected={version:2,severity:'critical',hasReason:true,effectiveOn:'2026-07-01',classificationCertified:false};

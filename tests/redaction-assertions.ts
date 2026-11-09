@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const instant=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
+export function assertPrivateErrorEnvelope(value:unknown,code:string){
+ assert.ok(value&&typeof value==='object'&&!Array.isArray(value));const body=value as Record<string,unknown>;
+ assert.ok(body.error&&typeof body.error==='object'&&!Array.isArray(body.error));const error=body.error as Record<string,unknown>;
+ assert.equal(typeof error.requestId,'string');assert.match(error.requestId as string,uuid);assert.deepEqual(body,{error:{code,requestId:error.requestId}});
+}
 // Compare the entire allowed envelope, not money-like substrings inside random
 // IDs. Extra private fields and changed public message text must still fail.
 export function assertAuditEnvelope(value:unknown,expected:Record<string,unknown>){
