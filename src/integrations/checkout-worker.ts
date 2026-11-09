@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { jsonBody } from '../core/api.ts';
 import { parseBearer } from '../core/tokens.ts';
 import type { Database } from '../core/database.ts';
-import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection,recordCheckoutFeeInspection } from './checkout-result-worker.ts';
+import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection,recordCheckoutFeeInspection,recordCheckoutRefundInspection } from './checkout-result-worker.ts';
 import { stripeCheckoutDraft,stripeCheckoutTransport,StripeCheckoutError,type StripeCheckoutConnection } from './stripe-checkout.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -75,4 +75,11 @@ export async function inspectCheckoutFees(raw:unknown,sessionId:string,config:St
  });
  const receipt=await recordCheckoutFeeInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,principalInspectionId:principalId,workerId:api.workerId,requestSha256:s.requestSha256,fees:evidence.fees});
  return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,principalInspectionId:principalId,fees:evidence.fees,...receipt};
+}
+export async function inspectCheckoutRefunds(raw:unknown,sessionId:string,after:string|null,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch=fetch){
+ const {t,s,transport}=await recoveryContext(raw,config,api,send),principalId=randomUUID(),id=randomUUID();
+ const evidence=await transport.inspectRefunds(s.draft,sessionId,after,async inspection=>{
+  const principal=await recordCheckoutProviderInspection(api.resultDatabase,{academyId:config.academyId,id:principalId,startId:s.start.id,workerId:api.workerId,requestSha256:s.requestSha256,inspection});if(!principal.recorded)throw new CheckoutWorkerError('source',true);
+ });
+ const receipt=await recordCheckoutRefundInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,principalInspectionId:principalId,workerId:api.workerId,requestSha256:s.requestSha256,page:evidence.page});return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,principalInspectionId:principalId,page:evidence.page,...receipt};
 }

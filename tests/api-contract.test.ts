@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('refund inspection history is read-only,bounded and exposes no supplied provider facts or refund execution API',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/v1/finance/checkout-requests/{id}/attempts/{attemptId}/refund-inspections',read=api.paths[p].get;assert.equal(read.parameters.find((v:any)=>v.name==='limit').schema.maximum,25);assert.equal(api.paths[p].post,undefined);assert.ok(api.paths[p+'/{refundId}'].get);assert.match(read.summary,/not refund absence/);assert.equal(api.paths[p+'/{refundId}'].post,undefined);
+});
+
 test('provider fee expenses accept only an original observation pointer and explicit existing accounting fields,not supplied provider facts',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),s=api.paths['/api/v1/finance/expense-bills'].post.requestBody.content['application/json'].schema,ref=s.properties.providerFee;assert.equal(ref.additionalProperties,false);assert.deepEqual(Object.keys(ref.properties),['inspectionId']);assert.deepEqual(ref.required,['inspectionId']);for(const key of ['feeAmount','transactionId','currency','sourceSnapshot','approved','paid','taxVerified'])assert.equal(ref.properties[key],undefined);assert.equal(s.additionalProperties,false);assert.match(api.paths['/api/v1/finance/expense-bills'].post.summary,/native deduplication/);
 });
