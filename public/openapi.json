@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.317.0",
+    "version": "0.318.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -54664,6 +54664,221 @@
         }
       }
     },
+    "/api/v1/reports/finance/asset-valuation": {
+      "get": {
+        "summary": "One-snapshot permitted posted ASSET balances,original currency precision,current chart classification and approved DIRECT reference prices in an explicitly selected target currency. Intersect valuation/report/ledger/account scopes before counts and totals;global reference-rate/currency rights also required. Signed debit-minus-credit balances,half-even rounding of exact consolidated total ONCE. Missing or withdrawn nonzero prices give incomplete/null total,never invented conversion. Not all-school net worth,formal balance sheet,market verification,trade,posted FX gain/loss or additional expensed-inventory assets. Refuses more than2000selected source accounts;no partial paging.",
+        "parameters": [
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "targetCurrencyId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "rateOn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "maximumAgeDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3660
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "includeZero",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/finance/asset-valuation/export": {
+      "get": {
+        "summary": "One-snapshot permitted posted ASSET balances,original currency precision,current chart classification and approved DIRECT reference prices in an explicitly selected target currency. Intersect valuation/report/ledger/account scopes before counts and totals;global reference-rate/currency rights also required. Signed debit-minus-credit balances,half-even rounding of exact consolidated total ONCE. Missing or withdrawn nonzero prices give incomplete/null total,never invented conversion. Not all-school net worth,formal balance sheet,market verification,trade,posted FX gain/loss or additional expensed-inventory assets. Refuses more than2000selected source accounts;no partial paging. Complete CSV of the same bounded report;4MiB ceiling refuses a partial file,source free text is formula-protected and numeric text stays exact.",
+        "parameters": [
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "targetCurrencyId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "rateOn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "maximumAgeDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3660
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "includeZero",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/finance/balance-sheet": {
       "get": {
         "summary": "Exact posted assets, liabilities, equity and explicitly unclosed posted result at a date; per-currency equation checks and scope limitations, not invented closing entries or FX",
@@ -61040,6 +61255,7 @@
               "type": "string",
               "enum": [
                 "community.achievements",
+                "finance.asset-valuation",
                 "finance.balance-sheet",
                 "finance.bank-reconciliation",
                 "finance.collector-custody",
@@ -61233,6 +61449,7 @@
                         "type": "string",
                         "enum": [
                           "community.achievements",
+                          "finance.asset-valuation",
                           "finance.balance-sheet",
                           "finance.bank-reconciliation",
                           "finance.collector-custody",
@@ -61483,6 +61700,7 @@
                         "type": "string",
                         "enum": [
                           "community.achievements",
+                          "finance.asset-valuation",
                           "finance.balance-sheet",
                           "finance.bank-reconciliation",
                           "finance.collector-custody",

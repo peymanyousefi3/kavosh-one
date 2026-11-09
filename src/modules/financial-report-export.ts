@@ -4,6 +4,7 @@ import { ApiError } from '../core/policy.ts';
 import { lockApprovalWrites } from '../core/approvals.ts';
 import { csvText,csvRow } from '../core/csv.ts';
 import { financialReports,financialReportsContract } from './financial-reports.ts';
+import {completeAssetCurrencyValuationExport} from './asset-currency-valuation.ts';
 import { financialStatements,financialStatementsContract } from './financial-statements.ts';
 import { catalogueReport,configuredReportContext,resolveConfiguredReportContext } from './report-catalogue.ts';
 import type { ResolvedReportWindow } from '../core/report-window.ts';
@@ -61,6 +62,7 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
 }
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
+ if(configuration.reportId==='finance.asset-valuation'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeAssetCurrencyValuationExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='finance.profitability'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeProfitabilityExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='finance.collector-custody'){const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');return completeCollectorCustodyExport({...source,request:new Request(url)},{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='finance.counterparty-statement'){const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');return completeCounterpartyStatementExport({...source,request:new Request(url)},{...provenance,dateWindow:resolvedDateWindow});}
