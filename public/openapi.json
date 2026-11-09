@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.306.0",
+    "version": "0.307.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -53812,7 +53812,7 @@
     },
     "/api/v1/reports/finance/counterparty-statement": {
       "get": {
-        "summary": "One-snapshot dated recorded counterparty statement combining explicit loan/opening/adjustment balances,typed hub/person or explicitly linked organization collector custody and actual payee bills/payments/corrections. Exact separate currencies,running rows,component totals and daily charts;noncash offsets cancel across BOTH subledgers,never counted as another net payment. Any hidden original source context refuses the entire statement,not a misleading partial net. Excludes unattributed journals,unlinked organization custody and unbilled sharing;never matches names. Read-only arithmetic is NOT legal setoff authority or an executed transfer.",
+        "summary": "One-snapshot dated recorded counterparty statement combining explicit loan/opening/adjustment balances,typed hub/person or explicitly linked organization collector custody and actual payee bills/payments/corrections. Exact separate currencies,running rows,component totals and daily charts;noncash offsets cancel across BOTH subledgers,never counted as another net payment. Native whole-source fingerprint stays stable across page/time changes but detects zero-net activity and original context changes. Any hidden original source context refuses the entire statement,not a misleading partial net. Excludes unattributed journals,unlinked organization custody and unbilled sharing;never matches names. Read-only arithmetic is NOT legal setoff authority or an executed transfer.",
         "parameters": [
           {
             "name": "payeeId",

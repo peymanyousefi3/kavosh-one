@@ -336,6 +336,7 @@ test('journal counterparty links cannot override amounts approvals or control ac
  const path=api.paths['/api/v1/finance/journals/{id}/counterparties'];assert.ok(path.get);assert.equal(path.post,undefined);assert.match(path.get.summary,/whole journal\/account\/ledger/);
 });
 test('combined counterparty statements expose bounded source filters without monetary netting or proof overrides',()=>{
+ const reference=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.match(reference.paths['/api/v1/reports/finance/counterparty-statement'].get.summary,/whole-source fingerprint/);
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/reports/finance/counterparty-statement',op=api.paths[path].get;for(const name of ['payeeId','from','through'])assert.ok(op.parameters.some((p:any)=>p.name===name&&p.required));for(const name of ['amount','netBalance','approved','sourceStamp','includePrivate','netting'])assert.equal(op.parameters.some((p:any)=>p.name===name),false);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/BOTH subledgers/);assert.match(op.summary,/NOT legal setoff/);
  const csv=api.paths[path+'/export'].get;assert.ok(csv.responses['200'].content['text/csv']);for(const name of ['limit','afterDate','afterId','afterSource','afterLine'])assert.ok(csv.parameters.find((p:any)=>p.name===name).schema.not);
 });
