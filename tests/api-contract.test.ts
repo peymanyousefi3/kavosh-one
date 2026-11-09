@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('customer credit preview accepts an optional effective instant but no supplied balances or capacity authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/finance/provider-collections/{id}/application-source'].get;assert.deepEqual(p.parameters.map((v:any)=>v.name).sort(),['appliedAt','id','invoiceId']);assert.equal(p.parameters.find((v:any)=>v.name==='appliedAt').required,false);assert.match(p.summary,/corrections restore capacity only/);for(const key of ['availableCredit','outstandingMinor','capacityOn','sourceStamp','providerReviewRequired'])assert.equal(p.parameters.some((v:any)=>v.name===key),false);
+});
+
 test('refund inspection history is read-only,bounded and exposes no supplied provider facts or refund execution API',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/v1/finance/checkout-requests/{id}/attempts/{attemptId}/refund-inspections',read=api.paths[p].get;assert.equal(read.parameters.find((v:any)=>v.name==='limit').schema.maximum,25);assert.equal(api.paths[p].post,undefined);assert.ok(api.paths[p+'/{refundId}'].get);assert.match(read.summary,/not refund absence/);assert.equal(api.paths[p+'/{refundId}'].post,undefined);
 });
