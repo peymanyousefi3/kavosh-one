@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('statement reminder rules expose one strict civil-day timer and native source without money or clock overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),d=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,t=d.properties.statementReminder;
+ assert.equal(t.additionalProperties,false);assert.deepEqual(Object.keys(t.properties).sort(),['daysFromDue','timeZone']);assert.deepEqual([...t.required].sort(),['daysFromDue','timeZone']);assert.equal(t.properties.daysFromDue.minimum,-365);assert.equal(t.properties.daysFromDue.maximum,3650);assert.ok(!d.required.includes('statementReminder'));assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('statement_due'));for(const key of ['paid','amount','sourceStamp','now','recipientId'])assert.equal(t.properties[key],undefined);
+});
+
 test('statement due-source preview accepts only civil-day and zone,never clock,money or review authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/v1/finance/counterparty-statements/{id}/reminder-source',op=api.paths[p].get;assert.equal(api.paths[p].post,undefined);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['daysFromDue','id','timeZone']);for(const k of ['daysFromDue','timeZone'])assert.equal(op.parameters.find((p:any)=>p.name===k).required,true);assert.equal(op.parameters.find((p:any)=>p.name==='daysFromDue').schema.minimum,-365);assert.equal(op.parameters.find((p:any)=>p.name==='daysFromDue').schema.maximum,3650);assert.match(op.summary,/one-snapshot/);assert.match(op.summary,/unmatched-payment review gate/);assert.match(op.summary,/Does not queue notifications/);
 });

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.312.0",
+    "version": "0.313.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5886,7 +5886,8 @@
                 "tuition_due",
                 "expense_due",
                 "payroll_due",
-                "counterparty_statement"
+                "counterparty_statement",
+                "statement_due"
               ]
             }
           }
@@ -6299,6 +6300,27 @@
                       },
                       "expenseReminder": {
                         "description": "One database-clock civil day in the explicitly reviewed time zone,before/on/after supplier or reimbursement bill due date. Whole cost and all retained funding scopes apply. Mixed/global bills require an academy-level rule. One timer per rule.",
+                        "type": "object",
+                        "properties": {
+                          "daysFromDue": {
+                            "type": "integer",
+                            "minimum": -365,
+                            "maximum": 3650
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          }
+                        },
+                        "required": [
+                          "daysFromDue",
+                          "timeZone"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "statementReminder": {
+                        "description": "One local civil day relative to a reviewed statement due date. Unmatched recorded money or uncertain archived membership suppress reminders. Explicit released recipients only;no legal overdue determination or payment execution.",
                         "type": "object",
                         "properties": {
                           "daysFromDue": {
@@ -6852,6 +6874,27 @@
                       },
                       "expenseReminder": {
                         "description": "One database-clock civil day in the explicitly reviewed time zone,before/on/after supplier or reimbursement bill due date. Whole cost and all retained funding scopes apply. Mixed/global bills require an academy-level rule. One timer per rule.",
+                        "type": "object",
+                        "properties": {
+                          "daysFromDue": {
+                            "type": "integer",
+                            "minimum": -365,
+                            "maximum": 3650
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100
+                          }
+                        },
+                        "required": [
+                          "daysFromDue",
+                          "timeZone"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "statementReminder": {
+                        "description": "One local civil day relative to a reviewed statement due date. Unmatched recorded money or uncertain archived membership suppress reminders. Explicit released recipients only;no legal overdue determination or payment execution.",
                         "type": "object",
                         "properties": {
                           "daysFromDue": {

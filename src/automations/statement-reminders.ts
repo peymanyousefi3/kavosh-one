@@ -1,0 +1,17 @@
+import {randomUUID} from 'node:crypto';
+import {record,type ApiContext} from '../core/api.ts';
+import {privacyScopes} from '../core/approvals.ts';
+import type {AutomationDefinition} from '../core/automation-rules.ts';
+import {boundAutomationEvent} from '../modules/automation-events.ts';
+export function watchesStatementReminders(d:AutomationDefinition){return Boolean(d.statementReminder)||d.trigger.eventTypes.some(t=>t==='*'||t==='statement.*'||t==='statement.reminder_due');}
+export async function nextStatementReminder(ctx:ApiContext,subscription:string,lease:string,rule:{id:string;version:number;hub_id:string|null},d:AutomationDefinition){
+ const timing=d.statementReminder;if(!timing||!d.enabled||d.execution.mode!=='automatic')return null;const cursor=(await ctx.db.query<{last_statement_id:string|null}>('SELECT last_statement_id FROM public.statement_reminder_scans WHERE subscription_id=$1',[subscription])).rows[0]?.last_statement_id??null;
+ // A bounded directory,then same-snapshot monetary/permission assessment.
+ // Mixed/global source scopes are never assigned to a guessed single hub.
+ const candidates=(await ctx.db.query<{id:string}>('SELECT h.id FROM public.counterparty_statement_records h JOIN public.counterparty_statement_revisions r ON r.academy_id=h.academy_id AND r.statement_id=h.id AND r.version=h.version WHERE r.state=\'issued\' AND($1::uuid IS NULL OR h.id>$1) ORDER BY h.id LIMIT 100',[cursor])).rows;let last=cursor,eventId:string|null=null;
+ for(const h of candidates){const s=(await ctx.db.query<{source:{hubId:string|null;sourceStamp:string}|null}>(`SELECT s.source FROM public.statement_due_source($1,$2,$3,$4::jsonb) AS s(source) WHERE s.source IS NOT NULL AND($5::timestamptz IS NULL OR statement_timestamp()>=$5) AND($6::timestamptz IS NULL OR statement_timestamp()<=$6) AND NOT EXISTS(SELECT 1 FROM public.statement_reminder_occurrences o WHERE o.rule_id=$7 AND o.statement_id=$1 AND o.days_from_due=$2 AND o.time_zone=$3 AND o.source_stamp=s.source->>'sourceStamp')`,[h.id,timing.daysFromDue,timing.timeZone,JSON.stringify(privacyScopes(ctx)),d.startsAt,d.endsAt,rule.id])).rows[0]?.source;if(!s||(rule.hub_id!==null&&rule.hub_id!==s.hubId)){last=h.id;continue;}
+  const receipt=(await ctx.db.query<{id:string;hub_id:string|null}>('INSERT INTO public.statement_reminder_occurrences(academy_id,id,subscription_id,lease_token,rule_id,rule_version,statement_id,days_from_due,time_zone,request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING RETURNING id,hub_id',[ctx.credential.academy_id,randomUUID(),subscription,lease,rule.id,rule.version,h.id,timing.daysFromDue,timing.timeZone,ctx.requestId])).rows[0];if(!receipt){last=h.id;continue;}
+  await record(ctx.db,ctx.credential,ctx.requestId,'statement.reminder_due',h.id,receipt.hub_id,{reminderReceiptId:receipt.id,ruleId:rule.id,externalRequestMade:false});eventId=(await ctx.db.query<{event_id:string}>('SELECT event_id FROM public.automation_event_sources WHERE statement_reminder_id=$1',[receipt.id])).rows[0]?.event_id??null;if(!eventId)throw Error('STATEMENT_REMINDER_EVENT_REQUIRED');break;
+ }
+ await ctx.db.query('INSERT INTO public.statement_reminder_scans(academy_id,subscription_id,lease_token,last_statement_id) VALUES($1,$2,$3,$4) ON CONFLICT(academy_id,subscription_id) DO UPDATE SET lease_token=excluded.lease_token,last_statement_id=excluded.last_statement_id',[ctx.credential.academy_id,subscription,lease,candidates.length<100&&!eventId?null:last]);return eventId?boundAutomationEvent(ctx,eventId):null;
+}
