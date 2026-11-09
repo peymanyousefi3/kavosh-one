@@ -7,17 +7,20 @@ import { permittedWorkSignatureSend } from './work-signature-sends.ts';
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),empty=z.object({}).strict();
 const paging=z.object({limit:z.coerce.number().int().min(1).max(50).default(20),after:uuid.optional(),state:z.enum(['evidence_recorded','review_required']).optional()}).strict();
 const markers={reviewPending:true,documentAccessGranted:false,providerStatusFreshlyChecked:false,signedByBothPartiesVerified:false,legallyEffective:false,paymentCleared:false,legalValidityCertified:false,malwareFreeVerified:false} as const;
+export async function permittedWorkSignatureEvidence(ctx:ApiContext,requestId:string,inspect=false){
+ const caps=inspect?['work-signature-completions.view','work-signature-completions.inspect']as const:['work-signature-completions.view']as const,scopes=caps.map(cap=>permissionScope(ctx,cap));if(scopes.some(s=>!scopeNonempty(s)))throw new ApiError(403,'FORBIDDEN');
+ const {w}=await permittedWorkSignatureSend(ctx,requestId);for(const scope of scopes)if(!(await ctx.db.query<{ok:boolean}>('SELECT public.work_scope_allows($1::jsonb,$2,$3) ok',[JSON.stringify(scope),w.hub_id,w.worker_id])).rows[0].ok)throw new ApiError(404,'NOT_FOUND');return {w};
+}
 export async function workSignatureCompletions(ctx:ApiContext):Promise<Reply|null>{
  const path=/^payroll\/work-signature-send-requests\/([^/]+)\/completion-evidence(?:\/([^/]+))?$/.exec(ctx.path);if(!path)return null;
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const requestId=uuid.parse(path[1]),id=path[2]?uuid.parse(path[2]):null,params=new URL(ctx.request.url).searchParams;
  if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
  const raw=Object.fromEntries(params),q=id?(empty.parse(raw),{limit:1,after:undefined,state:undefined}):paging.parse(raw);
- await lockApprovalWrites(ctx);const scope=permissionScope(ctx,'work-signature-completions.view');if(!scopeNonempty(scope))throw new ApiError(403,'FORBIDDEN');
+ await lockApprovalWrites(ctx);
  // Independent feature and all actual work/template/private-file scopes are
  // checked BEFORE reading any page. Primary person hub is not work scope.
- const {w}=await permittedWorkSignatureSend(ctx,requestId);
- if(!(await ctx.db.query<{ok:boolean}>('SELECT public.work_scope_allows($1::jsonb,$2,$3) ok',[JSON.stringify(scope),w.hub_id,w.worker_id])).rows[0].ok)throw new ApiError(404,'NOT_FOUND');
+ await permittedWorkSignatureEvidence(ctx,requestId);
  const start=(await ctx.db.query<{id:string}>('SELECT s.id FROM public.work_signature_dispatch_starts s JOIN public.work_signature_send_attempts a ON a.academy_id=s.academy_id AND a.id=s.attempt_id WHERE a.request_id=$1',[requestId])).rows[0];
  if(!start){if(id||q.after)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:[],nextCursor:null,...markers}};}
  if(q.after&&!(await ctx.db.query('SELECT id FROM public.work_signature_completion_evidence WHERE start_id=$1 AND id=$2 AND($3::text IS NULL OR state=$3)',[start.id,q.after,q.state??null])).rows.length)throw new ApiError(404,'NOT_FOUND');
