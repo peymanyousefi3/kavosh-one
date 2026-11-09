@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('tuition income contract separates source recognition from cash tax and total academy profitability',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),route=api.paths['/api/v1/reports/finance/tuition-income'];assert.ok(route.get);assert.equal(route.post,undefined);for(const name of ['from','through','hubIds','studentIds','classIds','accountIds','billToIds','currencyIds','countryIds','recognition'])assert.ok(route.get.parameters.some((p:any)=>p.name===name));assert.deepEqual(route.get.parameters.find((p:any)=>p.name==='recognition').schema.enum,['all','earned','deferred']);assert.equal(route.get.parameters.some((p:any)=>['limit','paid','taxRate','approved'].includes(p.name)),false);assert.match(route.get.summary,/Not remaining deferred balance,all income or academy profit/);
+});
+
 test('expense cost report contract exposes validated read-only source filters and not cash profit or allocation overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),route=api.paths['/api/v1/reports/finance/expense-costs'];assert.ok(route.get);assert.equal(route.post,undefined);for(const name of ['studentIds','classIds','hubIds','countryIds','currencyIds','accountIds','from','through'])assert.ok(route.get.parameters.some((p:any)=>p.name===name));assert.equal(route.get.parameters.some((p:any)=>['limit','paid','allocate','profit','taxRate'].includes(p.name)),false);assert.match(route.get.summary,/Not whole academy profit/);
 });
