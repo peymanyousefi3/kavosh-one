@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { assertRuntimeRole,assertSchemaReady,type Database } from '../core/database.ts';
 import { deliveryRecipientPolicy,deliverySourceFrom } from '../modules/notification-deliveries.ts';
-import { automationEventCurrentSourceSQL,lockAutomationSource,type BoundEvent } from '../modules/automation-events.ts';
+import { automationEventCurrentSourceSQL } from '../modules/automation-events.ts';
 import { emailMessage,smsMessage,MessageDeliveryError,type messageTransport } from '../integrations/message-delivery.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),ids=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
@@ -29,8 +29,8 @@ export async function processOneMessage(database:Database,academies:string[],con
   async function commit(){await db.query('COMMIT');transaction=false;}
   async function finish(outcome:'accepted'|'failed'|'unknown'|'cancelled',providerId:string|null,error:string|null){await begin();const recorded=(await db.query<{ok:boolean}>('SELECT public.finish_notification_delivery($1,$2,$3,$4,$5) ok',[lease.id,lease.lease_token,outcome,providerId,error])).rows[0]?.ok===true;await commit();return {claimed:true,recorded,outcome};}
   await begin();await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,8))',[lease.academy_id]);await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[lease.academy_id]);
-  const bound=(await db.query<Pick<BoundEvent,'id'|'source_kind'|'projection'>>('SELECT event_id id,source_kind,projection FROM public.automation_event_sources WHERE event_id=$1',[lease.event_id])).rows[0];if(bound)await lockAutomationSource(db,bound);
-  if(bound?.source_kind==='approval')await db.query('SELECT p.id FROM public.approval_requests p JOIN public.automation_event_sources e ON e.academy_id=p.academy_id AND e.approval_id=p.id WHERE e.event_id=$1 FOR SHARE OF p',[lease.event_id]);
+  const locked=(await db.query<{ok:boolean}>('SELECT public.lock_notification_delivery_source($1,$2) ok',[lease.id,lease.lease_token])).rows[0]?.ok===true;
+  if(!locked){await commit();return {claimed:true,recorded:false,outcome:'lease_lost' as const};}
   const policy=await deliveryRecipientPolicy(db,lease.person_id),source=policy?(await db.query(`SELECT d.id ${deliverySourceFrom} AND d.id=$6 AND coalesce((${currentSource}),false) AND EXISTS(SELECT 1 FROM public.automation_rules rule JOIN public.automation_rule_revisions v ON v.academy_id=rule.academy_id AND v.rule_id=rule.id AND v.version=rule.version WHERE rule.id=d.rule_id AND rule.version=d.rule_version AND v.definition->'enabled'='true'::jsonb AND v.definition#>>'{execution,mode}'='automatic')`,[...policy,lease.id])).rows[0]:null;
   if(!source){const ok=(await db.query<{ok:boolean}>('SELECT public.finish_notification_delivery($1,$2,\'cancelled\',NULL,$3) ok',[lease.id,lease.lease_token,'SOURCE_OR_AUTHORITY_CHANGED'])).rows[0]?.ok===true;await commit();return {claimed:true,recorded:ok,outcome:'cancelled' as const};}
   if(signal?.aborted){await db.query('ROLLBACK');transaction=false;return {claimed:true,recorded:false,outcome:'preparation_stopped' as const};}

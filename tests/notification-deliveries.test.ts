@@ -181,6 +181,62 @@ check('message service roles cannot impersonate web or reminder workers;API meta
  }
 });
 
+check('isolated sender has no inherited web authority or direct domain writes;column-only overgrants fail its startup gate',async f=>{
+ await f.optIn('staff',['email']);await f.queue(['email']);
+ await f.pg.exec('BEGIN');try{
+  await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);await f.pg.exec('SET LOCAL ROLE kavosh_message_worker');
+  assert.equal((await f.pg.query<{member:boolean}>("SELECT pg_has_role(current_user,'kavosh_runtime','member') member")).rows[0].member,false);
+  const c={query:f.pg.query.bind(f.pg),release(){}};await assertRuntimeRole(c,'message_worker');
+  for(const sql of [
+   "UPDATE public.people SET name='Unapproved' WHERE false",'DELETE FROM public.role_assignments WHERE false',
+   'UPDATE public.approval_requests SET version=version WHERE false','DELETE FROM public.finance_accounts WHERE false',
+   'INSERT INTO public.notification_deliveries(academy_id,id) SELECT NULL,NULL WHERE false',
+   'SELECT payload,credential_snapshot FROM public.approval_requests','SELECT title,body,owner_epoch,contact_epoch FROM public.notification_deliveries',
+   'SELECT public.authenticate_bot(NULL)','SELECT public.revoke_bot(NULL)','SELECT public.lock_bot(NULL)',
+   'SELECT * FROM public.claim_notification_job(NULL)','SELECT * FROM public.notification_delivery_revisions'
+  ]){await f.pg.exec('SAVEPOINT denied');await assert.rejects(f.pg.exec(sql),/permission denied/);await f.pg.exec('ROLLBACK TO SAVEPOINT denied');}
+  await f.pg.exec('RESET ROLE;GRANT UPDATE(name) ON public.people TO kavosh_message_worker;SET LOCAL ROLE kavosh_message_worker');
+  await assert.rejects(assertRuntimeRole(c,'message_worker'),/UNSAFE_DATABASE_ROLE/);
+  await f.pg.exec('RESET ROLE;REVOKE UPDATE(name) ON public.people FROM kavosh_message_worker;GRANT EXECUTE ON FUNCTION public.revoke_bot(uuid) TO kavosh_message_worker;SET LOCAL ROLE kavosh_message_worker');
+  await assert.rejects(assertRuntimeRole(c,'message_worker'),/UNSAFE_DATABASE_ROLE/,'Private mutators must not bypass the table-write check through a direct function grant');
+ }finally{await f.pg.exec('ROLLBACK');}
+ assert.equal((await f.work()).outcome,'accepted');assert.equal(f.sent.length,1);
+});
+
+check('private source locking is fenced by the exact preparing lease and school without granting row-lock write authority',async f=>{
+ await f.optIn('staff',['email']);await f.queue(['email']);
+ const c=await f.database.connect();try{
+  const lease=(await c.query<{id:string;lease_token:string}>('SELECT * FROM public.claim_notification_delivery($1::jsonb)',[JSON.stringify([{academy_id:f.a,channels:['email']}])])).rows[0];assert.ok(lease);
+  await c.query('BEGIN');try{
+   const lock=async(id=lease.id,token=lease.lease_token)=>(await c.query<{ok:boolean}>('SELECT public.lock_notification_delivery_source($1,$2) ok',[id,token])).rows[0].ok;
+   assert.equal(await lock(),false);await c.query("SELECT set_config('app.academy_id',$1,true)",[f.b]);assert.equal(await lock(),false);
+   await c.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);assert.equal(await lock(randomUUID()),false);assert.equal(await lock(lease.id,randomUUID()),false);assert.equal(await lock(),true);
+   if(f.pg.runtime){
+    const source=(await c.query<{approval_id:string}>('SELECT s.approval_id FROM public.notification_deliveries d JOIN public.automation_event_sources s ON s.academy_id=d.academy_id AND s.event_id=d.event_id WHERE d.id=$1',[lease.id])).rows[0];
+    const other=await f.pg.runtime.connect();try{await other.query('BEGIN');await other.query("SELECT set_config('app.academy_id',$1,true),set_config('lock_timeout','25ms',true)",[f.a]);
+     await assert.rejects(other.query('SELECT id FROM public.approval_requests WHERE id=$1 FOR UPDATE',[source.approval_id]),(error:unknown)=>!!error&&typeof error==='object'&&'code'in error&&error.code==='55P03');
+    }finally{await other.query('ROLLBACK');other.release();}
+   }
+   await c.query('SAVEPOINT row_lock');await assert.rejects(c.query('SELECT id FROM public.approval_requests FOR SHARE'),/permission denied/);await c.query('ROLLBACK TO SAVEPOINT row_lock');
+   await c.query("SELECT public.finish_notification_delivery($1,$2,'cancelled',NULL,'TEST_CANCELLED')",[lease.id,lease.lease_token]);assert.equal(await lock(),false);
+   await c.query('COMMIT');
+  }catch(e){await c.query('ROLLBACK');throw e;}
+ }finally{c.release();if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+ assert.equal(f.sent.length,0);assert.equal((await f.work()).claimed,false);
+});
+
+test('actual233to234 upgrade preserves queued jobs and immutable history while removing sender web privileges',async()=>{
+ const f=await fixture({throughSchema:233});try{
+  await f.optIn('staff',['email']);await f.queue(['email']);
+  const tables=['notification_deliveries','notification_delivery_revisions','people','approval_requests','audit_events','outbox_events'];
+  async function snapshot(){const rows=[];for(const t of tables)rows.push((await f.pg.query('SELECT to_jsonb(x) data FROM public.'+t+' x ORDER BY to_jsonb(x)::text')).rows);return rows;}
+  const before=await snapshot();assert.equal((await f.pg.query<{inherited:boolean}>("SELECT pg_has_role('kavosh_message_worker','kavosh_runtime','member') inherited")).rows[0].inherited,true);
+  await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);
+  assert.equal((await f.pg.query<{inherited:boolean}>("SELECT pg_has_role('kavosh_message_worker','kavosh_runtime','member') inherited")).rows[0].inherited,false);
+  assert.equal((await f.work()).outcome,'accepted');assert.equal(f.sent.length,1);
+ }finally{await f.pg.close();}
+});
+
 check('another verified account rebound to the person cannot inherit former private delivery history or contact permission',async f=>{
  await f.optIn('staff',['email']);await f.queue(['email']);const job=(await f.pg.query<{id:string}>('SELECT id FROM public.notification_deliveries')).rows[0],replacement=randomUUID(),session=randomUUID();
  await f.pg.query('INSERT INTO identity."user"(id,name,email,"emailVerified","phoneNumber","phoneNumberVerified","mfaRequired") VALUES($1,\'Synthetic replacement\',\'replacement-delivery@example.test\',true,\'+16479990189\',true,false)',[replacement]);
