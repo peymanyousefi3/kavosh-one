@@ -18391,7 +18391,9 @@
                     "anyOf": [
                       {
                         "type": "string",
-                        "maxLength": 37
+                        "maxLength": 37,
+                        "pattern": "^(0|[1-9]\\d{0,17})(?:\\.\\d{1,18})?$",
+                        "description": "Positive reference rate: one base-currency major unit in quote-currency major units. No exponent notation or binary floating-point calculation."
                       },
                       {
                         "type": "null"

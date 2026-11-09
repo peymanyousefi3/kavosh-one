@@ -41,13 +41,17 @@ check('actual posted asset valuation uses exact signed totals once and never add
  const original=await f.request('reports/finance/trial-balance?through=2026-01-31');assert.equal(original.body.data.currencyConversion,'none');assert.equal(original.body.data.currencies[0].balanced,true);
  const before=await f.request('reports/finance/asset-valuation?through=2026-01-19&rateOn=2026-01-31&targetCurrencyId='+f.currency.id);assert.equal(before.body.data.total.amount,'0.00');assert.equal(before.body.data.entries.length,0);
 });
-test('actual288to289 keeps reviewed original prices,posted balances,audit and native quote guards unchanged',async()=>{
+test('actual288to290 keeps original prices,posted balances,audit and quote guards while registering presets and tightening private approvals',async()=>{
  const f=await fixture(288);try{
   assert.equal((await f.post(f.lines)).response.status,201);assert.equal((await f.rate()).response.status,201);
   const tables=['finance_exchange_rates','finance_journals','finance_journal_lines','audit_events'],before=await Promise.all(tables.map(t=>f.pg.query('SELECT to_jsonb(t) data FROM public.'+t+' t ORDER BY to_jsonb(t)::text'))),functions="SELECT oid,proowner,proacl,proconfig,prosrc FROM pg_proc WHERE oid=ANY(ARRAY['public.guard_exchange_rate()'::regprocedure,'public.complete_exchange_rate()'::regprocedure,'public.exchange_rate_source(jsonb)'::regprocedure]) ORDER BY oid",original=(await f.pg.query(functions)).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/289_asset_currency_valuation.sql',import.meta.url),'utf8'));
   assert.equal((await f.pg.query<{n:number}>('SELECT public.schema_revision() n')).rows[0].n,289);for(const [i,t]of tables.entries())assert.deepEqual((await f.pg.query('SELECT to_jsonb(t) data FROM public.'+t+' t ORDER BY to_jsonb(t)::text')).rows,before[i].rows,t);assert.deepEqual((await f.pg.query(functions)).rows,original);
   assert.equal((await f.report()).body.data.total.amount,'0.01');
+  const approvalSql="SELECT id,payload,review_context,status,reviewer_id,dependency_hash FROM public.approval_requests WHERE action='finance.exchange-rate.record' ORDER BY id",approvals=(await f.pg.query(approvalSql)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/290_reference_reporting_integrity.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query(approvalSql)).rows,approvals);assert.equal((await f.pg.query<{ok:boolean}>("SELECT bool_and(privacy_bindings @> '[{\"capability\":\"currencies.view\",\"scope\":{\"all\":true,\"hubs\":[]}}]'::jsonb) ok FROM public.approval_requests WHERE action='finance.exchange-rate.record'")).rows[0].ok,true);
+  for(const [i,t]of tables.entries())assert.deepEqual((await f.pg.query('SELECT to_jsonb(t) data FROM public.'+t+' t ORDER BY to_jsonb(t)::text')).rows,before[i].rows,t);assert.deepEqual((await f.pg.query(functions)).rows,original);
+  const preset=await f.request('reports/presets',{anchor:{kind:'academy'},definition:{name:'Rolling asset value',reportId:'finance.asset-valuation',parameters:{targetCurrencyId:f.currency.id},dateWindow:{kind:'today',timeZone:'America/Toronto'}},reason:'Synthetic relative through date'});assert.equal(preset.response.status,201,JSON.stringify(preset.body));const run=await f.request('reports/presets/'+preset.body.data.id+'/run');assert.equal(run.response.status,200,JSON.stringify(run.body));assert.equal(run.body.resolvedDateWindow.window.kind,'today');assert.equal(run.body.data.targetCurrency.id,f.currency.id);
  }finally{await f.pg.close();}
 });
 check('missing and withdrawn prices leave total null,known subtotal explicit and zero-only assets need no fabricated quote',async f=>{
@@ -83,4 +87,10 @@ check('central catalogue and configurable presets reuse the same source checks;C
  for(const suffix of ['&limit=1','&amount=5','&complete=true','&maximumAgeDays=3661','&through=2026-01-31','&rateOn=2026-02-30'])assert.equal((await f.report(suffix)).response.status,400,suffix);
  assert.equal((await f.request('reports/finance/asset-valuation',{through:'2026-01-31',targetCurrencyId:f.currency.id})).response.status,405);
  await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.report()).response.status,200);
+});
+if(process.env.TEST_DATABASE_URL)check('brief report/quote correction overlap never mixes currency snapshots within a valuation',async f=>{
+ await f.post(f.lines);const original=(await f.rate()).body.data,started=performance.now();
+ const results=await Promise.all([f.report(),f.rate({supersedesId:original.id,rate:'0.01'}),f.report(),f.report()]);assert.equal(results[1].response.status,201,JSON.stringify(results[1].body));const corrected=results[1].body.data.id;
+ for(const r of [results[0],results[2],results[3]]){assert.equal(r.response.status,200,JSON.stringify(r.body));const ids=new Set(r.body.data.entries.map((e:any)=>e.rate.id));assert.equal(ids.size,1);const [id]=ids;assert.ok(id===original.id||id===corrected);assert.equal(r.body.data.total.amount,id===original.id?'0.01':'0.02');}
+ const after=await f.report();assert.equal(after.body.data.total.amount,'0.02');assert.ok(after.body.data.entries.every((e:any)=>e.rate.id===corrected));console.log(JSON.stringify({measurement:'brief-valuation-quote-overlap',requests:5,elapsedMs:Math.ceil(performance.now()-started)}));
 });

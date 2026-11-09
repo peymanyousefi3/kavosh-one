@@ -68,6 +68,11 @@ check('upper human review, global reference permissions, current currencies and 
  await f.access('bot');const bot=await f.save({base:{id:f.usd.id,version:2},on:'2026-02-02'},'bot');assert.equal(bot.response.status,202);assert.equal((await f.approve(bot.body.approval.id,'bot')).response.status,403);assert.equal((await f.approve(bot.body.approval.id)).response.status,200);
  await f.access('staff',['exchange-rates.view']);assert.equal((await f.convert('', 'staff')).response.status,403);
 });
+check('private quote approvals disappear from detail and lists when global currency-source rights are removed',async f=>{
+ await f.access('staff');await f.access('manager');const pending=await f.save({},'staff');assert.equal(pending.response.status,202);assert.equal((await f.request('approvals/'+pending.body.approval.id,undefined,'manager')).response.status,200);
+ await f.access('manager',['exchange-rates.view','exchange-rates.edit']);assert.equal((await f.request('approvals/'+pending.body.approval.id,undefined,'manager')).response.status,404);
+ const list=await f.request('approvals',undefined,'manager');assert.equal(list.response.status,200);assert.ok(!JSON.stringify(list.body).includes(pending.body.approval.id));assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,404);assert.equal((await f.pg.query('SELECT * FROM public.finance_exchange_rates')).rows.length,0);
+});
 check('a retired currency reference can be withdrawn but cannot acquire a new recorded price',async f=>{
  const first=(await f.save()).body.data;
  assert.equal((await f.request('finance/currencies/'+f.usd.id+'/change',{expectedVersion:1,active:false,reason:'Synthetic retirement'})).response.status,200);
