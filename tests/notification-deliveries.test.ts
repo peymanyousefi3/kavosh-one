@@ -12,6 +12,8 @@ import { processOneNotification } from '../src/automations/notification-worker.t
 import { Temporal } from '@js-temporal/polyfill';
 import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { automationDefinition,ruleSample,simulateRule } from '../src/core/automation-rules.ts';
+import { record } from '../src/core/api.ts';
 
 const root='me/notification-deliveries';
 async function fixture(options:{throughSchema?:number;autoPolicy?:boolean}={}){
@@ -23,7 +25,28 @@ async function fixture(options:{throughSchema?:number;autoPolicy?:boolean}={}){
  async function work(t:MessageTransport|null=transport,academies=[f.a],signal?:AbortSignal){if(options.autoPolicy!==false)await enablePolicy();try{return await processOneMessage(database,academies,a=>a===f.a?t:null,signal);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
  async function optIn(as='staff',channels=['email','sms'],locale='fr'){const old=await f.request('me/notification-preferences',undefined,as),r=await f.request('me/notification-preferences',{expectedVersion:old.body.data.version,emailEnabled:channels.includes('email'),smsEnabled:channels.includes('sms'),locale,acknowledgedNoticeVersion:1},as);assert.ok([200,201].includes(r.response.status),JSON.stringify(r.body));return r;}
  async function queue(channels=['email','sms'],code='OUTBOUND'){
-  const r=await f.rule({actions:[{...f.definition.actions[0],channels,body:{en:'English update',fr:'Mise à jour', 'zh-CN':'通知'}}],execution:{...f.definition.execution,maxDailySms:100}},code),event=await f.source(),result=await f.dispatch(r.id,event.id);assert.equal(result.response.status,201,JSON.stringify(result.body));return {rule:r,event,result};
+  const r=await f.rule({actions:[{...f.definition.actions[0],channels,body:{en:'English update',fr:'Mise à jour', 'zh-CN':'通知'}}],execution:{...f.definition.execution,maxDailySms:100}},code),event=await f.source();
+  if(options.throughSchema&&[233,234,235].includes(options.throughSchema)){
+   // Historical preservation setup uses that schema's real native protocol.
+   // Today's event reader requires later source tables; never spoof readiness
+   // or disable guards to make a current worker run against an old database.
+   const definition=automationDefinition.parse((await f.pg.query<{definition:unknown}>('SELECT definition FROM public.automation_rule_revisions WHERE rule_id=$1 AND version=1',[r.id])).rows[0].definition),sample=ruleSample.parse(event.sample),simulation=simulateRule(definition,f.hub,sample),runId=randomUUID();
+   assert.equal(simulation.eligibleByConfiguration,true);assert.equal(simulation.execution.mode,'automatic');assert.equal(simulation.actions.length,1);
+   const action=simulation.actions[0];assert.equal(action.audience.kind,'people');if(action.audience.kind!=='people')throw Error('HISTORICAL_PEOPLE_FIXTURE_REQUIRED');
+   const c={kind:'human' as const,academy_id:f.a,person_id:f.actors.master.person,token_id:f.actors.master.session,capabilities:[],all_hubs:true,hub_ids:[],allowed:true};
+   await f.pg.exec('BEGIN');try{
+    await f.pg.exec('SET LOCAL ROLE kavosh_runtime');await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);assert.equal((await f.pg.query<{valid:boolean}>('SELECT public.lock_human($1,$2) valid',[c.token_id,f.actors.master.user])).rows[0].valid,true);
+    const outbound=[];for(const person of action.audience.personIds){const pref=(await f.pg.query<{preference:{email:boolean;sms:boolean;locale:'en'|'fr'|'zh-CN';ownerEpoch:string;emailEpoch:string;phoneEpoch:string;version:number}|null}>('SELECT public.notification_delivery_preference($1) preference',[person])).rows[0].preference;if(!pref)continue;
+     const labels=simulateRule(definition,f.hub,sample,pref.locale).actions[0];for(const channel of action.channels){if(channel==='portal'||!pref[channel])continue;outbound.push({person,channel,labels,pref});}}
+    const portal=action.channels.includes('portal')?action.audience.personIds:[],summary={portalNotifications:portal.length,outboundQueued:outbound.length};
+    await f.pg.query("INSERT INTO public.automation_runs(academy_id,id,rule_id,rule_version,event_id,actor_id,outcome,summary) VALUES($1,$2,$3,1,$4,$5,'processed',$6::jsonb)",[f.a,runId,r.id,event.id,c.person_id,JSON.stringify(summary)]);
+    for(const person of portal)await f.pg.query("INSERT INTO public.portal_notifications(academy_id,id,run_id,rule_id,event_id,person_id,action_index,severity,title,body,locale) VALUES($1,$2,$3,$4,$5,$6,0,$7,$8,$9,'en')",[f.a,randomUUID(),runId,r.id,event.id,person,action.effectiveSeverity,action.title,action.body]);
+    for(const {person,channel,labels,pref}of outbound)await f.pg.query('INSERT INTO public.notification_deliveries(academy_id,id,run_id,rule_id,rule_version,event_id,person_id,channel,action_index,title,body,locale,owner_epoch,contact_epoch,preference_version) VALUES($1,$2,$3,$4,1,$5,$6,$7,0,$8,$9,$10,$11,$12,$13)',[f.a,randomUUID(),runId,r.id,event.id,person,channel,labels.title,labels.body,pref.locale,pref.ownerEpoch,channel==='email'?pref.emailEpoch:pref.phoneEpoch,pref.version]);
+    await record({query:f.pg.query.bind(f.pg),release(){}},c,randomUUID(),'automation.dispatched',runId,f.hub,{ruleId:r.id,eventId:event.id,outcome:'processed',...summary,severity:'critical',messageContentRedacted:true});await f.pg.exec('COMMIT');
+    return {rule:r,event,result:{response:new Response(null,{status:201}),body:{data:{id:runId,summary}}}};
+   }catch(error){await f.pg.exec('ROLLBACK');throw error;}
+  }
+  const result=await f.dispatch(r.id,event.id);assert.equal(result.response.status,201,JSON.stringify(result.body));return {rule:r,event,result};
  }
  if(options.autoPolicy!==false&&(!options.throughSchema||options.throughSchema>=236))await enablePolicy();
  return {...f,sent,transport,database,work,optIn,queue,configure};

@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('queued attribution exports reuse existing report jobs with exact source checks and no supplied authority or private manifest',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),s=api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema;
+ for(const id of ['finance.tuition-income','finance.expense-costs'])assert.ok(s.properties.reportId.enum.includes(id));assert.equal(s.additionalProperties,false);for(const key of ['authorizationContext','approved','source','actorId'])assert.equal(s.properties[key],undefined);
+ assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/every captured invoice/);assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/not only filtered lines/);assert.ok(api.paths['/api/v1/reports/presets/{id}/queue'].post);
+});
+
 test('tuition reminders extend existing rule and event APIs with civil-day bounds and no client clock or financial authority overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,timing=definition.properties.tuitionReminder;
  assert.ok(timing);assert.equal(timing.additionalProperties,false);assert.deepEqual(Object.keys(timing.properties),['daysFromDue']);assert.equal(timing.properties.daysFromDue.minimum,-365);assert.equal(timing.properties.daysFromDue.maximum,3650);assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('tuition_due'));assert.match(api.paths['/api/v1/notifications/{id}'].get.summary,/reading never marks payment/);
