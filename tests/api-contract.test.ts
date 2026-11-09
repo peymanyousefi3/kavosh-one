@@ -4,6 +4,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('statement matching accepts only explicit source allocations and dated releases,never paid or bank proof overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/counterparty-statements/{id}',allocate=api.paths[base+'/settlements'].post.requestBody.content['application/json'].schema;
+ assert.equal(allocate.additionalProperties,false);assert.deepEqual(Object.keys(allocate.properties).sort(),['allocatedOn','amount','basis','reason','source','statementVersion']);assert.equal(allocate.properties.basis.const,'net_statement_balance');assert.equal(allocate.properties.source.additionalProperties,false);assert.deepEqual(Object.keys(allocate.properties.source.properties).sort(),['family','journalId','lineNumber']);assert.deepEqual(allocate.properties.source.properties.family.enum,['manual_balance','custody','payable']);
+ const release=api.paths['/api/v1/finance/counterparty-settlements/{id}/release'].post.requestBody.content['application/json'].schema;assert.equal(release.additionalProperties,false);assert.deepEqual(Object.keys(release.properties).sort(),['reason','releasedOn','statementVersion']);
+ const status=api.paths[base+'/settlement-status'].get;assert.deepEqual(status.parameters.map((p:any)=>p.name).sort(),['id','on','version']);assert.equal(status.parameters.find((p:any)=>p.name==='on').required,true);assert.match(status.summary,/One-snapshot/);assert.match(status.summary,/No FX/);assert.ok(api.paths[base+'/settlements'].get);assert.equal(api.paths[base+'/settlements'].delete,undefined);
+});
+
 test('consolidated profitability exposes only bounded source context filters,not supplied money,scope or partial pages',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/reports/finance/profitability'].get.parameters;assert.deepEqual(p.find((p:any)=>p.name==='attributionBasis').schema.enum,['recorded','reviewed']);for(const key of ['approved','amount','authorizationContext','allocationVersion','allHubs','limit','afterId','accountIds'])assert.ok(!p.some((p:any)=>p.name===key));for(const key of ['from','through','hubIds','classIds','studentIds','currencyIds','countryIds','regionIds','cityIds'])assert.ok(p.some((p:any)=>p.name===key));assert.match(api.paths['/api/v1/reports/finance/profitability'].get.summary,/ONE source\/assignment\/ledger snapshot/);
 });
