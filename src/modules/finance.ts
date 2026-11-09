@@ -27,7 +27,7 @@ const listFields={limit:z.coerce.number().int().min(1).max(100).default(50),afte
 const currencyQuery=z.object(listFields).strict(),accountQuery=z.object({...listFields,hubId:uuid.optional(),currencyId:uuid.optional(),kind:kind.optional()}).strict();
 const historyQuery=z.object({limit:listFields.limit,afterVersion:z.coerce.number().int().min(0).max(2_147_483_647).default(0)}).strict();
 type Currency=z.infer<typeof currencyDefinition>&{id:string;code:string;version:number};
-type Account=z.infer<typeof accountDefinition>&{id:string;version:number;hubId:string|null;currencyId:string;currencyVersion:number;unitScale:number};
+type Account=z.infer<typeof accountDefinition>&{id:string;version:number;hubId:string|null;currencyId:string;currencyVersion:number;currencyCode:string;unitScale:number};
 const currencyFieldsSQL='id,code,version,name,symbol,unit_scale AS "unitScale",active,translations,created_by AS "createdBy",created_at AS "createdAt",revised_at AS "revisedAt"';
 const accountFieldsSQL='a.id,a.code,a.version,a.hub_id AS "hubId",a.currency_id AS "currencyId",a.currency_version AS "currencyVersion",a.name,a.description,a.kind,a.operational_role AS "operationalRole",a.normal_balance AS "normalBalance",a.active,a.translations,a.currency_code AS "currencyCode",a.unit_scale AS "unitScale",a.currency_symbol AS "currencySymbol",a.created_by AS "createdBy",a.created_at AS "createdAt",a.revised_at AS "revisedAt"';
 function allowed(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}

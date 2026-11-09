@@ -321,6 +321,11 @@ test('collector offsets expose an explicit noncash settlement without fabricated
  const cash=api.paths['/api/v1/finance/expense-bills/{id}/payments'].post.requestBody.content['application/json'].schema;assert.ok(cash.required.includes('method'));assert.ok(cash.required.includes('paidAt'));assert.equal(cash.properties.collector,undefined);
  assert.match(api.paths['/api/v1/finance/expense-bills/{id}/payment-status'].get.summary,/paid is total settlement/);
 });
+test('collector custody contracts separate paged statement reads from complete CSV without source or money overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/v1/reports/finance/collector-custody',op=api.paths[p].get;
+ for(const name of ['collectorId','holdingAccountId','from','through'])assert.ok(op.parameters.some((p:any)=>p.name===name&&p.required));assert.equal(api.paths[p].post,undefined);for(const name of ['amount','approved','sourceStamp','balance','includePrivate'])assert.ok(!op.parameters.some((p:any)=>p.name===name));
+ const csv=api.paths[p+'/export'].get;assert.ok(csv.responses['200'].content['text/csv']);for(const name of ['limit','afterDate','afterId'])assert.ok(csv.parameters.find((p:any)=>p.name===name).schema.not);assert.match(op.summary,/Not a full hub payable\/loan statement/);
+});
 test('collector capacity documents date and direction without accepting client balances or source proofs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/collectors/{id}/remittance-capacity',q=api.paths[path].get.parameters;
  for(const name of ['holdingAccountId','on','direction'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['amount','available','approved','sourceStamp','activity'])assert.ok(!q.some((p:any)=>p.name===name));assert.deepEqual(q.find((p:any)=>p.name==='direction').schema.enum,['to_academy','to_collector']);assert.match(api.paths['/api/v1/finance/collectors/{id}/remittances'].post.summary,/full dated-timeline capacity/);

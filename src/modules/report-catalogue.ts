@@ -4,6 +4,7 @@ import type { ApiContext,Reply } from '../core/api.ts';
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { permissionScope } from '../core/approvals.ts';
 import { financialReports,financialReportsContract } from './financial-reports.ts';
+import { collectorCustodyReport,collectorCustodyReportContract } from './collector-custody-report.ts';
 import { financialStatements,financialStatementsContract } from './financial-statements.ts';
 import { financialOutlook,financialOutlookContract } from './financial-outlook.ts';
 import { receivablesAging,receivablesAgingContract } from './receivables-aging.ts';
@@ -33,6 +34,7 @@ import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowP
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
 type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
 const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
+ {contracts:collectorCustodyReportContract,handler:collectorCustodyReport,capability:'financial-reports.view',csv:true},
  {contracts:profitabilityReportContract,handler:profitabilityReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:manualIncomeCostReportContract,handler:manualIncomeCostReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:tuitionIncomeReportContract,handler:tuitionIncomeReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
