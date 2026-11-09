@@ -5,6 +5,7 @@ import {test} from 'node:test';
 import {parse} from 'csv-parse/sync';
 import {exchangeRatio,sumReferenceMinor} from '../src/core/exchange.ts';
 import {invoiceFixture} from './invoice-fixture.ts';
+import {upgradeToCurrent} from './migration-upgrade.ts';
 
 test('consolidated reference totals round exact signed source sums once,not each displayed row',()=>{
  const rate=exchangeRatio('0.005'),terms=['100','100'].map(minor=>({minor,sourceScale:2,rate}));assert.equal(sumReferenceMinor(terms,2).amount,'0.01');
@@ -47,10 +48,10 @@ test('actual288to290 keeps original prices,posted balances,audit and quote guard
   const tables=['finance_exchange_rates','finance_journals','finance_journal_lines','audit_events'],before=await Promise.all(tables.map(t=>f.pg.query('SELECT to_jsonb(t) data FROM public.'+t+' t ORDER BY to_jsonb(t)::text'))),functions="SELECT oid,proowner,proacl,proconfig,prosrc FROM pg_proc WHERE oid=ANY(ARRAY['public.guard_exchange_rate()'::regprocedure,'public.complete_exchange_rate()'::regprocedure,'public.exchange_rate_source(jsonb)'::regprocedure]) ORDER BY oid",original=(await f.pg.query(functions)).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/289_asset_currency_valuation.sql',import.meta.url),'utf8'));
   assert.equal((await f.pg.query<{n:number}>('SELECT public.schema_revision() n')).rows[0].n,289);for(const [i,t]of tables.entries())assert.deepEqual((await f.pg.query('SELECT to_jsonb(t) data FROM public.'+t+' t ORDER BY to_jsonb(t)::text')).rows,before[i].rows,t);assert.deepEqual((await f.pg.query(functions)).rows,original);
-  assert.equal((await f.report()).body.data.total.amount,'0.01');
   const approvalSql="SELECT id,payload,review_context,status,reviewer_id,dependency_hash FROM public.approval_requests WHERE action='finance.exchange-rate.record' ORDER BY id",approvals=(await f.pg.query(approvalSql)).rows;
   await f.pg.exec(await readFile(new URL('../db/migrations/290_reference_reporting_integrity.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query(approvalSql)).rows,approvals);assert.equal((await f.pg.query<{ok:boolean}>("SELECT bool_and(privacy_bindings @> '[{\"capability\":\"currencies.view\",\"scope\":{\"all\":true,\"hubs\":[]}}]'::jsonb) ok FROM public.approval_requests WHERE action='finance.exchange-rate.record'")).rows[0].ok,true);
   for(const [i,t]of tables.entries())assert.deepEqual((await f.pg.query('SELECT to_jsonb(t) data FROM public.'+t+' t ORDER BY to_jsonb(t)::text')).rows,before[i].rows,t);assert.deepEqual((await f.pg.query(functions)).rows,original);
+  await upgradeToCurrent(f.pg);assert.equal((await f.report()).body.data.total.amount,'0.01');
   const preset=await f.request('reports/presets',{anchor:{kind:'academy'},definition:{name:'Rolling asset value',reportId:'finance.asset-valuation',parameters:{targetCurrencyId:f.currency.id},dateWindow:{kind:'today',timeZone:'America/Toronto'}},reason:'Synthetic relative through date'});assert.equal(preset.response.status,201,JSON.stringify(preset.body));const run=await f.request('reports/presets/'+preset.body.data.id+'/run');assert.equal(run.response.status,200,JSON.stringify(run.body));assert.equal(run.body.resolvedDateWindow.window.kind,'today');assert.equal(run.body.data.targetCurrency.id,f.currency.id);
  }finally{await f.pg.close();}
 });
