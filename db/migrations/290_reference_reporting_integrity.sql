@@ -4,7 +4,7 @@ DO $$ DECLARE body text;needle text;r record;BEGIN
  FOR r IN SELECT * FROM(VALUES
  ('public.report_preset_static_definition_valid(jsonb)','''finance.counterparty-statement'')','''finance.counterparty-statement'',''finance.asset-valuation'')'),
  ('public.report_preset_definition_valid(jsonb)','WHEN ''finance.counterparty-statement'' THEN ARRAY[''from'',''through'']','WHEN ''finance.counterparty-statement'' THEN ARRAY[''from'',''through''] WHEN ''finance.asset-valuation'' THEN ARRAY[''through'']'),
- ('public.build_approval_privacy_bindings(uuid,text,jsonb,jsonb,jsonb,text)','IF p_action NOT LIKE ''finance.%'' THEN RETURN result;END IF;','IF p_action=''finance.exchange-rate.record'' THEN result=result||jsonb_build_array(jsonb_build_object(''capability'',''currencies.view'',''scope'',jsonb_build_object(''all'',true,''hubs'',''[]''::jsonb)));END IF; IF p_action NOT LIKE ''finance.%'' THEN RETURN result;END IF;')
+ ('public.build_approval_privacy_before_inventory(uuid,text,jsonb,jsonb,jsonb,text)','IF p_action NOT LIKE ''finance.%'' THEN RETURN result;END IF;','IF p_action=''finance.exchange-rate.record'' THEN result=result||jsonb_build_array(jsonb_build_object(''capability'',''currencies.view'',''scope'',jsonb_build_object(''all'',true,''hubs'',''[]''::jsonb)));END IF; IF p_action NOT LIKE ''finance.%'' THEN RETURN result;END IF;')
  ) changes(signature,old_text,new_text) LOOP
   body=pg_get_functiondef(r.signature::regprocedure);needle=r.old_text;
   IF(length(body)-length(replace(body,needle,'')))/length(needle)<>1 THEN RAISE EXCEPTION 'REFERENCE_REPORTING_BASE_CHANGED:%',r.signature;END IF;
