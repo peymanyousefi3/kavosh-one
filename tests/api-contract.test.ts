@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('payroll reviewed report basis is explicit and exports accept no caller proofs or assignment versions',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of['/api/v1/reports/payroll/costs','/api/v1/reports/payroll/costs/export']){const p=api.paths[path].get.parameters,b=p.find((p:any)=>p.name==='attributionBasis');assert.deepEqual(b.schema.enum,['recorded','reviewed']);assert.equal(b.required,false);for(const key of['assignmentVersion','allocationVersion','authorizationContext','approved'])assert.ok(!p.some((p:any)=>p.name===key));}assert.match(api.paths['/api/v1/reports/payroll/costs'].get.summary,/Saved files pin exact assignment versions/);
+});
+
 test('payroll analytical assignments expose versioned source-bound edits without pay or approval overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/payroll/journals/{id}/cost-attribution',s=api.paths[path].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.equal(s.properties.lines.maxItems,200);assert.equal(s.properties.lines.items.properties.targets.maxItems,200);for(const key of ['journalId','amount','approved','payrollRecalculated','sourceKind','actorId','originalApprovalId'])assert.equal(s.properties[key],undefined);assert.match(api.paths[path].post.summary,/Omitted hourly lines retain conserved highest-rate original class splits/);assert.ok(api.paths[path].get);assert.ok(api.paths[path+'/history'].get);
 });
@@ -26,7 +30,7 @@ test('reviewed shared-cost allocation contracts never accept supplied money,appr
 });
 
 test('payroll cost report exposes strict source filters and no monetary authority or partial-page overrides',()=>{
- const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/payroll/costs'].get,names=op.parameters.map((p:any)=>p.name);assert.deepEqual(names,['from','through','hubIds','classIds','studentIds','personIds','accountIds','currencyIds','countryIds','regionIds','cityIds','kind']);for(const key of ['amount','approved','source','actorId','limit','afterId','includePrivate'])assert.ok(!names.includes(key));assert.match(op.summary,/highest-rate hourly allocations/);assert.match(op.summary,/no net pay/);assert.equal(api.paths['/api/v1/reports/payroll/costs'].post,undefined);
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/payroll/costs'].get,names=op.parameters.map((p:any)=>p.name);assert.deepEqual(names,['from','through','attributionBasis','hubIds','classIds','studentIds','personIds','accountIds','currencyIds','countryIds','regionIds','cityIds','kind']);for(const key of ['amount','approved','source','actorId','limit','afterId','includePrivate'])assert.ok(!names.includes(key));assert.match(op.summary,/highest-rate hourly allocations/);assert.match(op.summary,/no net pay/);assert.equal(api.paths['/api/v1/reports/payroll/costs'].post,undefined);
 });
 test('employer costs are an explicit payroll-cost source without expanding gross-earning input kinds or tax authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/reports/payroll/costs','/api/v1/reports/payroll/costs/export'])assert.ok(api.paths[path].get.parameters.find((p:any)=>p.name==='kind').schema.enum.includes('employer_contribution'));assert.ok(!api.paths['/api/v1/reports/payroll/gross-accruals'].get.parameters.find((p:any)=>p.name==='kind').schema.enum.includes('employer_contribution'));assert.match(api.paths['/api/v1/reports/payroll/costs'].get.summary,/no net pay,cash,tax recalculation/);

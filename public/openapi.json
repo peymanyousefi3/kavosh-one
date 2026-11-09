@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.290.0",
+    "version": "0.291.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -37576,7 +37576,7 @@
     },
     "/api/v1/payroll/journals/{id}/cost-attribution": {
       "post": {
-        "summary": "Upper-reviewed versioned payroll analytical cost assignments for original posted gross earnings and employer expense journals only.200line/200target bound,exact weighted original minor units. Omitted hourly lines retain conserved highest-rate original class splits;other omitted lines retain original work/invoice/account contexts;empty restores originals with history. All original source proofs,accounts and old/new target permissions remain required. Separate edit right never grants earning/posting or payment authority. No payroll/tax recalculation or another ledger posting. Report integration remains separate.",
+        "summary": "Upper-reviewed versioned payroll analytical cost assignments for original posted gross earnings and employer expense journals only.200line/200target bound,exact weighted original minor units. Omitted hourly lines retain conserved highest-rate original class splits;other omitted lines retain original work/invoice/account contexts;empty restores originals with history. All original source proofs,accounts and old/new target permissions remain required. Separate edit right never grants earning/posting or payment authority. No payroll/tax recalculation or another ledger posting. Report attributionBasis=reviewed uses approved assignments;original-context reporting remains the default.",
         "parameters": [
           {
             "name": "id",
@@ -56117,7 +56117,7 @@
     },
     "/api/v1/reports/payroll/costs": {
       "get": {
-        "summary": "Exact gross and recorded employer payroll cost flows by class,hub,student,worker,expense account,kind,month and posting/reversal. Saved highest-rate hourly allocations prevent duplicate overlapping pay. All original work and mapped account rights before filters;hourly whole-source classes and tuition original invoice/class rights also apply. Salaries/projects/bonuses remain explicitly unassigned to classes/students unless source records supply that context. Employer contributions reuse reviewed posted expense lines and full original payrun/work/account rights,at their expense-account hub,unassigned to classes/students. Separate currencies;no net pay,cash,tax recalculation,automatic shared-cost split or full profit inference.10000source events/100000allocations/10000groups per dimension/4MiB bound.",
+        "summary": "Exact gross and recorded employer payroll cost flows by class,hub,student,worker,expense account,kind,month and posting/reversal. Saved highest-rate hourly allocations prevent duplicate overlapping pay. All original work and mapped account rights before filters;hourly whole-source classes and tuition original invoice/class rights also apply. Salaries/projects/bonuses remain explicitly unassigned to classes/students unless source records supply that context. Employer contributions reuse reviewed posted expense lines and full original payrun/work/account rights,at their expense-account hub,unassigned to classes/students. Optional attributionBasis=reviewed applies latest approved assignments at generation,including complete original private proofs and every historical target before filters. Unconfigured sources keep original contexts. Saved files pin exact assignment versions;not historical as-of. Default recorded retains the original meanings above. Separate currencies;no net pay,cash,tax recalculation,automatic shared-cost split or full profit inference.10000source events/100000allocations/10000groups per dimension/4MiB bound.",
         "parameters": [
           {
             "name": "from",
@@ -56135,6 +56135,18 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "attributionBasis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "reviewed"
+              ]
             }
           },
           {
@@ -56283,6 +56295,18 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "attributionBasis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "reviewed"
+              ]
             }
           },
           {
