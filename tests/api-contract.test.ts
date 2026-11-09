@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('worker completion metadata stays under original payroll records and has bounded read-only filters without artifact or approval overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/payroll/work-signature-send-requests/{id}/completion-evidence';for(const p of [path,path+'/{evidenceId}']){assert.ok(api.paths[p].get);assert.equal(api.paths[p].post,undefined);assert.equal(api.paths[p].get.parameters.some((p:any)=>['sourceFingerprint','providerSignerId','manifest','signedAt','approved','paymentCleared'].includes(p.name)),false);}const parameters=api.paths[path].get.parameters;assert.equal(parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(parameters.find((p:any)=>p.name==='state').schema.enum,['evidence_recorded','review_required']);assert.match(api.paths[path].get.summary,/current actual work,template and private-file rights before pagination/);
+});
+
 test('work signing observations use the existing bounded event and notification APIs without a signing-completion mutation',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/automations/events'].get,kind=op.parameters.find((p:any)=>p.name==='sourceKind');assert.ok(kind.schema.enum.includes('work_signature'));assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,100);for(const path of ['/api/v1/notifications','/api/v1/notifications/{id}']){assert.ok(api.paths[path].get);assert.equal(api.paths[path].post,undefined);}assert.deepEqual(Object.keys(api.paths['/api/v1/notifications/{id}/read'].post.requestBody.content['application/json'].schema.properties),['locale']);
 });
