@@ -8,9 +8,9 @@ import { paymentConnection } from './stripe-fixture.ts';
 
 test('isolated worker refuses invalid credentials,origins and targets before either backend or provider IO',async()=>{
  const {secrets:_secrets,...identity}=paymentConnection(),config={...identity,origin:'https://academy.example',apiKey:['sk','test',randomBytes(24).toString('hex')].join('_')},target={requestId:randomUUID(),attemptId:randomUUID()},token='kvo_'+randomBytes(32).toString('base64url');let calls=0;
- const send:typeof fetch=async()=>{calls++;throw new Error('UNEXPECTED_IO');};
- for(const api of [{origin:config.origin,token:'invalid'},{origin:'http://academy.example',token},{origin:'https://evil.example',token},{origin:'https://academy.example/path',token},{origin:'https://user:pass@academy.example',token}])await assert.rejects(executeCheckoutAttempt(target,config,api,send),e=>e instanceof CheckoutWorkerError&&e.stage==='configuration');
- await assert.rejects(executeCheckoutAttempt({...target,amount:'1'},config,{origin:config.origin,token},send),e=>e instanceof CheckoutWorkerError&&e.stage==='configuration');assert.equal(calls,0);
+ const send:typeof fetch=async()=>{calls++;throw new Error('UNEXPECTED_IO');},sink={workerId:randomUUID(),resultDatabase:{async connect(){throw new Error('UNEXPECTED_DB');}}};
+ for(const api of [{origin:config.origin,token:'invalid'},{origin:'http://academy.example',token},{origin:'https://evil.example',token},{origin:'https://academy.example/path',token},{origin:'https://user:pass@academy.example',token}])await assert.rejects(executeCheckoutAttempt(target,config,{...api,...sink},send),e=>e instanceof CheckoutWorkerError&&e.stage==='configuration');
+ await assert.rejects(executeCheckoutAttempt({...target,amount:'1'},config,{origin:config.origin,token,...sink},send),e=>e instanceof CheckoutWorkerError&&e.stage==='configuration');assert.equal(calls,0);
 });
 test('operator command defaults off,requires explicit dispatch and never logs secret configuration on failure',async()=>{
  const execute=promisify(execFile),ids=Array.from({length:3},()=>randomUUID()),secret=['sk','test',randomBytes(24).toString('hex')].join('_');

@@ -4,9 +4,11 @@ import { test,before,after } from 'node:test';
 import { checkoutFixture } from './checkout-fixture.ts';
 import { record } from '../src/core/api.ts';
 import type { Connection } from '../src/core/database.ts';
+import { expectedSchemaRevision } from '../src/core/database.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { executeCheckoutAttempt,CheckoutWorkerError } from '../src/integrations/checkout-worker.ts';
 import { buildStripeCheckout,type StripeCheckoutConnection } from '../src/integrations/stripe-checkout.ts';
+import { recordCheckoutTransportReceipt } from '../src/integrations/checkout-result-worker.ts';
 
 const priorOrigin=process.env.APP_ORIGIN;before(()=>{process.env.APP_ORIGIN='https://academy.example';});after(()=>{if(priorOrigin===undefined)delete process.env.APP_ORIGIN;else process.env.APP_ORIGIN=priorOrigin;});
 async function fixture(){const f=await checkoutFixture(),r=await f.prepare();assert.equal(r.response.status,201,JSON.stringify(r.body));const requestId=r.body.data.id,path='finance/checkout-requests/'+requestId;
@@ -25,7 +27,7 @@ check('server-only nonsecret draft and exact durable reservation preserve origin
  const normal=await f.request(f.path+'/attempts/'+a.body.data.id);assert.equal(normal.response.status,200);assert.equal(normal.body.data.draft,undefined);const privateRead=await f.request(f.path+'/attempts/'+a.body.data.id+'/source');assert.equal(privateRead.response.status,200);assert.deepEqual(privateRead.body.data.draft,d.draft);assert.equal(privateRead.body.data.dispatchAuthority,false);
  assert.equal((await f.status()).balance,'113.00');assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.tuition_receipts')).rows[0].n,0);
 });
-for(const scenario of ['accepted','lost_start','lost_provider','lost_observation','wrong_manifest'] as const)check('isolated actual SDK plus native coordination: '+scenario,async f=>{
+for(const scenario of ['accepted','lost_start','lost_provider','lost_observation','lost_receipt','wrong_manifest'] as const)check('isolated actual SDK plus native coordination: '+scenario,async f=>{
  const a=(await f.reserve()).body.data,source=(await f.request(f.path+'/attempts/'+a.id+'/source')).body.data;
  const {secrets:_secrets,...identity}=f.connection,config:StripeCheckoutConnection={...identity,origin:'https://academy.example',apiKey:['sk','test',randomBytes(24).toString('hex')].join('_')},token='kvo_'+randomBytes(32).toString('base64url');
  const built=buildStripeCheckout(source.draft,config),sessionId='cs_test_'+randomBytes(12).toString('hex');let posts=0,backendCalls=0;
@@ -44,9 +46,11 @@ for(const scenario of ['accepted','lost_start','lost_provider','lost_observation
   if(scenario==='lost_provider')throw new Error('PRIVATE '+config.apiKey);
   return Response.json({id:sessionId,object:'checkout.session',livemode:false,mode:'payment',ui_mode:'hosted_page',client_reference_id:f.requestId,metadata:built.params.metadata,currency:'cad',amount_total:5000,amount_subtotal:5000,total_details:{amount_discount:0,amount_shipping:0,amount_tax:0},automatic_tax:{enabled:false},payment_method_types:['card'],status:'open',payment_status:'unpaid',payment_intent:null,expires_at:source.draft.expiresAt,url:'https://checkout.stripe.com/c/pay/'+sessionId});
  };
- const target={requestId:f.requestId,attemptId:a.id},api={origin:config.origin,token};
+ let sinkConnections=0;const resultDatabase={async connect(){if(++sinkConnections===3&&scenario==='lost_receipt')throw new Error('PRIVATE result connection lost');const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_checkout_result_worker');return c;}},target={requestId:f.requestId,attemptId:a.id},api={origin:config.origin,token,workerId:randomUUID(),resultDatabase};
  if(scenario==='lost_start'||scenario==='wrong_manifest')await assert.rejects(executeCheckoutAttempt(target,config,api,send),e=>e instanceof CheckoutWorkerError&&e.stage===(scenario==='lost_start'?'start':'preflight')&&e.reconciliationRequired===(scenario==='lost_start'));
- else{const result=await executeCheckoutAttempt(target,config,api,send);assert.equal(result.outcome,scenario==='lost_provider'?'outcome_unknown':'accepted');assert.equal(result.observationRecorded,scenario!=='lost_observation');assert.equal(result.paymentVerified,false);assert.equal(result.ledgerAdjusted,false);assert.equal(result.automaticRetryAllowed,false);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|apiKey|Bearer/);}
+ else{const result=await executeCheckoutAttempt(target,config,api,send);assert.equal(result.outcome,scenario==='lost_provider'?'outcome_unknown':'accepted');assert.equal(result.transportReceiptRecorded,scenario!=='lost_receipt');assert.equal(result.transportConflict,false);assert.equal(result.observationRecorded,scenario!=='lost_observation');assert.equal(result.paymentVerified,false);assert.equal(result.ledgerAdjusted,false);assert.equal(result.automaticRetryAllowed,false);assert.doesNotMatch(JSON.stringify(result),/PRIVATE|apiKey|Bearer/);assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.checkout_transport_receipts')).rows[0].n,scenario==='lost_receipt'?0:1);
+  if(scenario==='lost_receipt'){const recovered=await recordCheckoutTransportReceipt(resultDatabase,{academyId:f.a,startId:result.startId,workerId:api.workerId,requestSha256:source.requestSha256,state:'accepted',sessionId:result.session!.sessionId,checkoutUrl:result.session!.checkoutUrl});assert.equal(recovered.status,'recorded');assert.equal(posts,1);}
+ }
  assert.equal(posts,scenario==='lost_start'||scenario==='wrong_manifest'?0:1);assert.equal((await f.status()).received,'0.00');
  if(scenario!=='wrong_manifest'){await assert.rejects(executeCheckoutAttempt(target,config,api,send),e=>e instanceof CheckoutWorkerError&&e.stage==='source');assert.equal(posts,scenario==='lost_start'?0:1);assert.equal((await f.cancel(f.requestId)).response.status,409);}
  const before=backendCalls;await assert.rejects(executeCheckoutAttempt(target,config,{...api,origin:'http://academy.example'},send),e=>e instanceof CheckoutWorkerError&&e.stage==='configuration');assert.equal(backendCalls,before);
@@ -114,7 +118,7 @@ if(process.env.TEST_DATABASE_URL)check('four short concurrent reservations and s
  assert.equal(r.filter(v=>v.response.status===201).length,1,JSON.stringify(r.map(v=>v.body)));const a=r.find(v=>v.response.status===201)!.body.data,started=await Promise.all(Array.from({length:4},()=>f.start(a)));assert.equal(started.filter(v=>v.response.status===201).length,1,JSON.stringify(started.map(v=>v.body)));assert.ok(started.filter(v=>v.response.status!==201).every(v=>v.response.status===409));
  assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.payment_checkout_dispatch_starts')).rows[0].n,1);console.log(JSON.stringify({measurement:'brief-durable-checkout-races',reservationRequests:4,startRequests:4,elapsedMs:Math.ceil(performance.now()-at),starts:1,liveProviderRequests:0}));
 });
-check('actual293to294 upgrade preserves approved checkout,invoices,original money and audit while adding start protection',async current=>{
+check('actual293toCurrent upgrade preserves approved checkout,invoices,original money and audit while adding start protection',async current=>{
  const f=await checkoutFixture({throughSchema:293});try{
   await f.access('staff');const p=await f.prepare({},'staff');assert.equal(p.response.status,202,JSON.stringify(p.body));const original=(await f.pg.query<any>('SELECT * FROM public.approval_requests WHERE id=$1',[p.body.approval.id])).rows[0],id=original.target_id;
   const db:Connection={query:<Row>(sql:string,args?:unknown[])=>f.pg.query<Row>(sql,args),release(){}};await f.pg.exec('BEGIN');try{await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);
@@ -122,5 +126,5 @@ check('actual293to294 upgrade preserves approved checkout,invoices,original mone
    await record(db,{token_id:f.actors.master.session,academy_id:f.a,person_id:f.actors.master.person,capabilities:[],all_hubs:true,hub_ids:[],allowed:true,kind:'human'},randomUUID(),'finance.checkout.request',id,f.hub,{approvalId:original.id,severity:'critical',hasReason:true,providerRequestMade:false});await f.pg.query("UPDATE public.approval_requests SET status='applied',reviewer_id=$2,version=2,decided_at=transaction_timestamp() WHERE id=$1",[original.id,f.actors.master.person]);await f.pg.exec('COMMIT');
   }catch(e){await f.pg.exec('ROLLBACK');throw e;}
   const before=(await f.pg.query('SELECT to_jsonb(r) value FROM public.payment_checkout_requests r')).rows[0].value;await upgradeToCurrent(f.pg);assert.deepEqual((await f.pg.query('SELECT to_jsonb(r) value FROM public.payment_checkout_requests r')).rows[0].value,before);assert.equal((await f.request('finance/checkout-requests/'+id)).body.data.state,'approved_unexecuted');assert.equal((await f.request('finance/checkout-requests/'+id+'/dispatch-source')).response.status,200);assert.equal((await f.status()).balance,'113.00');
- }finally{await f.pg.close();}assert.equal((await current.pg.query('SELECT public.schema_revision() n')).rows[0].n,294);
+ }finally{await f.pg.close();}assert.equal((await current.pg.query('SELECT public.schema_revision() n')).rows[0].n,expectedSchemaRevision);
 });

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody } from '../core/api.ts';
 import { parseBearer } from '../core/tokens.ts';
+import type { Database } from '../core/database.ts';
+import { probeCheckoutResultSink,recordCheckoutTransportReceipt } from './checkout-result-worker.ts';
 import { stripeCheckoutDraft,stripeCheckoutTransport,StripeCheckoutError,type StripeCheckoutConnection } from './stripe-checkout.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -14,9 +16,9 @@ export class CheckoutWorkerError extends Error{constructor(readonly stage:'confi
 // activation,provider POST retries,caller money/URLs or private web credentials.
 // A lost start response means NO provider call;the durable start must still be
 // reconciled rather than granted again. Actor notes are not trusted receipts.
-export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutConnection,api:{origin:string;token:string},send:typeof fetch=fetch){
+export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutConnection,api:{origin:string;token:string;resultDatabase:Database;workerId:string},send:typeof fetch=fetch){
  const selected=target.safeParse(raw);let origin:URL;
- try{origin=new URL(api.origin);if(origin.origin!==api.origin||origin.protocol!=='https:'||origin.username||origin.password||origin.origin!==config.origin||!parseBearer('Bearer '+api.token))throw new Error();}catch{throw new CheckoutWorkerError('configuration',false);}
+ try{origin=new URL(api.origin);uuid.parse(api.workerId);if(!api.resultDatabase||origin.origin!==api.origin||origin.protocol!=='https:'||origin.username||origin.password||origin.origin!==config.origin||!parseBearer('Bearer '+api.token))throw new Error();}catch{throw new CheckoutWorkerError('configuration',false);}
  if(!selected.success)throw new CheckoutWorkerError('configuration',false);
  const t=selected.data,base='/api/v1/finance/checkout-requests/'+t.requestId+'/attempts/'+t.attemptId;
  async function call(suffix:string,body?:unknown){
@@ -28,16 +30,19 @@ export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutCo
   if(s.id!==t.attemptId||s.requestId!==t.requestId||s.draft.requestId!==t.requestId||s.idempotencyKey!=='kavosh-checkout-v1:'+config.academyId+':'+t.requestId)throw new Error();
  }catch{throw new CheckoutWorkerError('source',false);}
  let prepared:ReturnType<ReturnType<typeof stripeCheckoutTransport>['prepare']>;
- try{const transport=stripeCheckoutTransport(config,send);await transport.preflight();prepared=transport.prepare(s.draft,s);}catch{throw new CheckoutWorkerError('preflight',false);}
+ try{await probeCheckoutResultSink(api.resultDatabase);const transport=stripeCheckoutTransport(config,send);await transport.preflight();prepared=transport.prepare(s.draft,s);}catch{throw new CheckoutWorkerError('preflight',false);}
  // Only a newly committed exact start response permits THIS process to send.
  // Retries with another key or another process receive409 from the backend.
- try{const r=started.parse(await call('/dispatch',{requestSha256:s.requestSha256,requestBytes:s.requestBytes})).data;if(r.requestId!==t.requestId||r.attemptId!==t.attemptId)throw new Error();}catch{throw new CheckoutWorkerError('start',true);}
+ let startId:string;try{const r=started.parse(await call('/dispatch',{requestSha256:s.requestSha256,requestBytes:s.requestBytes})).data;if(r.requestId!==t.requestId||r.attemptId!==t.attemptId)throw new Error();startId=r.id;}catch{throw new CheckoutWorkerError('start',true);}
  let outcome:'accepted'|'not_attempted'|'rejected'|'outcome_unknown',session:Awaited<ReturnType<typeof prepared.dispatch>>['session']|null=null;
- try{const result=await prepared.dispatch();outcome=result.outcome;session=result.session;}
- catch(e){outcome=e instanceof StripeCheckoutError?e.outcome:'outcome_unknown';}
+ let dispatchEntered=false;
+ try{await probeCheckoutResultSink(api.resultDatabase,{academyId:config.academyId,startId,requestSha256:s.requestSha256});dispatchEntered=true;const result=await prepared.dispatch();outcome=result.outcome;session=result.session;}
+ catch(e){outcome=!dispatchEntered?'not_attempted':e instanceof StripeCheckoutError?e.outcome:'outcome_unknown';}
+ let transportReceiptRecorded=false,transportConflict=false;
+ try{const r=await recordCheckoutTransportReceipt(api.resultDatabase,{academyId:config.academyId,startId,workerId:api.workerId,requestSha256:s.requestSha256,state:outcome,...session?{sessionId:session.sessionId,checkoutUrl:session.checkoutUrl}:{}});transportReceiptRecorded=r.recorded;transportConflict=r.conflict;}catch{/* Recover this WRITE independently;never resend the provider request. */}
  let observationRecorded=false;
  try{const r=z.object({data:z.object({id:uuid,requestId:uuid,attemptId:uuid,state:z.string(),providerVerified:z.literal(false)})}).parse(await call('/dispatch/outcome',{state:outcome,...session?{sessionId:session.sessionId}:{}})).data;
   observationRecorded=r.requestId===t.requestId&&r.attemptId===t.attemptId&&r.state===outcome;
  }catch{/* Never resend the charge because an observation write failed. */}
- return {requestId:t.requestId,attemptId:t.attemptId,outcome,session,observationRecorded,reconciliationRequired:true as const,providerVerified:false as const,paymentVerified:false as const,ledgerAdjusted:false as const,automaticRetryAllowed:false as const};
+ return {requestId:t.requestId,attemptId:t.attemptId,startId,outcome,session,transportReceiptRecorded,transportConflict,observationRecorded,reconciliationRequired:true as const,providerVerified:false as const,paymentVerified:false as const,ledgerAdjusted:false as const,automaticRetryAllowed:false as const};
 }
