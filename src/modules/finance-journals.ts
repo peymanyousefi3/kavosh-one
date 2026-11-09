@@ -34,7 +34,7 @@ function checkPostingState(input:z.infer<typeof create>|z.infer<typeof reversal>
 // ponytail: indexed per-account history scans; use measured date-keyed lines
 // or rollups if larger histories outgrow the interactive query budget.
 export const journalPointLookupSQL=`JOIN LATERAL (
- SELECT h.id,h.posted_on,h.purpose FROM public.finance_journals h
+ SELECT h.id,h.posted_on,h.purpose,h.reverses_id FROM public.finance_journals h
  WHERE h.academy_id=l.academy_id AND h.id=l.journal_id OFFSET 0
 ) j ON true`;
 const header=`j.id,j.purpose,j.closing_run_id AS "closingRunId",j.period_id AS "periodId",j.period_version AS "periodVersion",j.posted_on::text AS "postedOn",j.description,j.reference,j.line_count AS "lineCount",j.reverses_id AS "reversesId",j.posted_by AS "postedBy",j.approval_id AS "approvalId",j.created_at AS "createdAt",

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.293.0",
+    "version": "0.294.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -54029,7 +54029,7 @@
     },
     "/api/v1/reports/finance/profitability": {
       "get": {
-        "summary": "Consolidated exact tuition recognized income,supplier costs,gross plus employer payroll costs and manual operating entries in ONE source/assignment/ledger snapshot. Charts combine hub,class,student,month and source;original whole-source privacy and reviewed target rights apply before all filters. Full authorized ledger operating result and separate income/expense reconciliation remain visible BEFORE context filters;zero net difference alone never certifies source completeness. Unassigned shared costs are explicit,not guessed onto students. Separate currencies and immutable precision;deferred billings,tax,receipts,payments and inventory removal never manufacture profit. Existing per-source limits,10000combined groups/dimension/4MiB. No private documents or new ledger postings.",
+        "summary": "Consolidated exact tuition recognized income,supplier costs,gross plus employer payroll costs and manual operating entries in ONE source/assignment/ledger snapshot. Charts combine hub,class,student,month and source;original whole-source privacy and reviewed target rights apply before all filters. Full authorized ledger operating result and separate income/expense reconciliation remain visible BEFORE context filters;zero net difference alone never certifies source completeness. Same-snapshot posted operating-line counts identify unrepresented or multiply represented entries even when amounts cancel;no restricted source IDs are exposed. Unassigned shared costs are explicit,not guessed onto students. Separate currencies and immutable precision;deferred billings,tax,receipts,payments and inventory removal never manufacture profit. Existing per-source limits,10000combined groups/dimension/4MiB. No private documents or new ledger postings.",
         "parameters": [
           {
             "name": "from",

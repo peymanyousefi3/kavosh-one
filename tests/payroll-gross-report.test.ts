@@ -32,6 +32,9 @@ async function fixture(throughSchema?:number){const f=await workFixture({through
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 const costs='reports/payroll/costs?from=2026-01-01&through=2026-01-31';
+check('consolidated operating-line coverage includes actual salary bonus project and hourly journals',async f=>{
+ const r=await f.request('reports/finance/profitability?from=2026-01-01&through=2026-12-31');assert.equal(r.response.status,200,JSON.stringify(r.body));const c=r.body.data.ledgerReconciliation[0];assert.equal(c.moneyReconciles,true);assert.equal(c.postedOperatingLineCount,'4');assert.equal(c.representedOperatingLineCount,'4');assert.equal(c.sourceLineCoverageComplete,true);assert.equal(r.body.data.requiresSourceReview,false);
+});
 const costParameters={from:'2026-01-01',through:'2026-01-31'};
 check('payroll cost CSVs reuse same-source totals and retain private source manifests through the actual job worker',async f=>{
  const direct=await f.request('reports/payroll/costs/export?'+new URLSearchParams(costParameters));assert.equal(direct.response.status,200,JSON.stringify(direct.body));assert.match(direct.response.headers.get('content-disposition')!,/payroll-costs/);const rows=csv(direct.body);assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='expense')?.amount_minor,'337025');assert.equal(rows.find(r=>r.field==='employerContributionsIncluded')?.value,'true');assert.doesNotMatch(direct.body,/PRIVATE|authorizationContext|sourceId/);
