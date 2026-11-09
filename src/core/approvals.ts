@@ -1,7 +1,7 @@
 import { createHash,randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { jsonBody,loadGrants,mutation,record,type ApiContext,type Reply } from './api.ts';
-import { ApiError,scopeFor,scopeContains,scopeNonempty as nonempty,type Capability,type Credential,type Grant,type Scope } from './policy.ts';
+import { ApiError,scopeFor,scopeContains,scopeNonempty as nonempty,type Capability,type Credential,type Grant,type Scope,type ScopeCredential } from './policy.ts';
 import { payrollPrivateReviewPrefix } from './payroll-private-data.ts';
 
 const uuid=z.string().uuid().transform(value=>value.toLowerCase());
@@ -65,9 +65,10 @@ function stateHash(value:unknown){return createHash('sha256').update(JSON.string
 export async function master(ctx:ApiContext) {
   return ctx.credential.kind==='human'&&(await ctx.db.query('SELECT 1 FROM public.academies WHERE master_person_id=$1',[ctx.credential.person_id])).rows.length===1;
 }
-export function permissionScope(ctx:ApiContext,name:Capability){return scopeFor(ctx.credential,ctx.grants,name);}
+export type ReadPolicyContext={credential:ScopeCredential;grants:Grant[]};
+export function permissionScope(ctx:ReadPolicyContext,name:Capability){return scopeFor(ctx.credential,ctx.grants,name);}
 
-export function privacyScopes(ctx:ApiContext,bindings?:unknown){
+export function privacyScopes(ctx:ReadPolicyContext,bindings?:unknown){
  const required=bindings===undefined?null:new Set<string>();
  if(required&&Array.isArray(bindings))for(const b of bindings){if(!b||typeof b!=='object')continue;if(typeof b.capability==='string')required.add(b.capability);if('calculatedNetSource' in b)for(const cap of ['financial-reports.view','payruns.view','payrun-net.view','payrun-postings.view','payrun-payments.view','work-pay.view','payroll-accruals.view','payroll-adjustments.view','accounts.view','journals.view','payment-methods.view'])required.add(cap);if('fileId' in b)for(const cap of ['files.view','students.view','guardians.view','agreements.view','financial-files.view','work-files.view','work-pay.view'])required.add(cap);}
  const caps=[...new Set(ctx.grants.filter(g=>g.effect==='allow'&&ctx.credential.capabilities.includes(g.capability)&&(!required||required.has(g.capability))).map(g=>g.capability))];
@@ -78,7 +79,7 @@ export function privacyScopes(ctx:ApiContext,bindings?:unknown){
 export const approvalReadSelectionSQL=`($1::boolean OR
  ((p.privacy_capability IS NULL OR public.scope_contains(coalesce($5::jsonb->p.privacy_capability,'{"all":false,"hubs":[]}'::jsonb),p.scope)) AND public.approval_bindings_allow(p.privacy_bindings,$5::jsonb)
  AND(p.requester_id=$2 OR($3::boolean AND public.scope_contains($4::jsonb,p.scope) AND public.is_supervisor($2,p.requester_id)))))`;
-export function approvalReadPolicyParameters(ctx:ApiContext,isMaster:boolean){const s=permissionScope(ctx,'approvals.view');return [isMaster,ctx.credential.person_id,nonempty(s),JSON.stringify(s),JSON.stringify(privacyScopes(ctx))];}
+export function approvalReadPolicyParameters(ctx:ReadPolicyContext,isMaster:boolean){const s=permissionScope(ctx,'approvals.view');return [isMaster,ctx.credential.person_id,nonempty(s),JSON.stringify(s),JSON.stringify(privacyScopes(ctx))];}
 export async function approvalReadParameters(ctx:ApiContext){return approvalReadPolicyParameters(ctx,await master(ctx));}
 
 export async function propose(ctx:ApiContext,registry:ApprovalRegistry,action:string,targetId:string|null,targetVersion:number,input:unknown,privateCommitment?:string):Promise<Reply> {

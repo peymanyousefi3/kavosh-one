@@ -10,6 +10,10 @@ const message={to:'+16475550123',text:'Synthetic operational notice'},email={to:
 const receipt=()=>({sid:'SM'+'c'.repeat(32),account_sid:twilio.accountSid,messaging_service_sid:twilio.messagingServiceSid,to:message.to,status:'accepted',error_code:null});
 const outcome=(value:string)=>((e:unknown)=>e instanceof MessageDeliveryError&&e.outcome===value);
 
+test('message transport refuses a process-wide TLS certificate-validation bypass before any provider IO',()=>{
+ const previous=process.env.NODE_TLS_REJECT_UNAUTHORIZED;try{process.env.NODE_TLS_REJECT_UNAUTHORIZED='0';assert.throws(()=>messageTransport({twilio}),e=>e instanceof MessageDeliveryError&&e.outcome==='not_attempted'&&e.message==='INSECURE_TRANSPORT_ENVIRONMENT');}finally{if(previous===undefined)delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;else process.env.NODE_TLS_REJECT_UNAUTHORIZED=previous;}
+});
+
 test('per-school operational connections are disabled by default and never borrow authentication secrets or another academy connection',()=>{
  const a=randomUUID(),b=randomUUID();assert.equal(configuredOperationalDelivery(a,{SMTP_PASSWORD:'not-an-operational-configuration',TWILIO_AUTH_TOKEN:twilio.authToken}),null);
  const env={OPERATIONAL_DELIVERY_ENABLED:'true',OPERATIONAL_DELIVERY_CONNECTIONS:JSON.stringify([{academyId:a,configuration:{twilio}}])};

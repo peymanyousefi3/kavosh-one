@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('outbound status is a human-only source-authorized metadata read with bounded filters and no delivery override',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/me/notification-deliveries';for(const path of [root,root+'/{id}',root+'/{id}/history']){assert.deepEqual(api.paths[path].get.security,[{humanSession:[],academySelection:[]}]);assert.equal(api.paths[path].post,undefined);}
+ const parameters=api.paths[root].get.parameters;assert.equal(parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.deepEqual(parameters.find((p:any)=>p.name==='channel').schema.enum,['email','sms']);assert.equal(parameters.some((p:any)=>['personId','providerId','approved','delivered','to'].includes(p.name)),false);assert.match(api.paths[root].get.summary,/never confirmed delivery/);
+});
+
 test('notification choices are human self-only,strict and separate from delivery or marketing consent',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/me/notification-preferences';
  for(const [path,method]of [[root,'get'],[root,'post'],[root+'/history','get'],[root+'/disable','post']])assert.deepEqual(api.paths[path][method].security,[{humanSession:[],academySelection:[]}]);

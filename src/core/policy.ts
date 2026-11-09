@@ -99,7 +99,8 @@ export function scopeContains(source:Scope,target:Scope):boolean {
 }
 export function scopeNonempty(scope:Scope){return scope.all||scope.hubs.length>0||Boolean(scope.classes?.length)||Boolean(scope.people?.length)||Boolean(scope.areas?.length);}
 
-export function scopeFor(credential: Credential, grants: Grant[], capability: Capability): Scope {
+export type ScopeCredential=Pick<Credential,'person_id'|'kind'|'capabilities'|'all_hubs'|'hub_ids'>;
+export function scopeFor(credential: ScopeCredential, grants: Grant[], capability: Capability): Scope {
   const relevant = grants.filter(g => g.capability === capability);
   if (!credential.capabilities.includes(capability) || relevant.some(g => g.effect === 'deny' && g.allHubs)) return { all: false, hubs: [] };
   // Same immutable student/class/hub scope semantics,not shared authority:

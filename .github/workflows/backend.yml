@@ -64,6 +64,8 @@ jobs:
         run: pnpm notifications:build
       - name: Compile the separate financial-report daemon without a TypeScript runtime
         run: pnpm reports:build
+      - name: Compile the separate outbound-message process without a TypeScript runtime
+        run: pnpm messages:build
       - name: API contract matches the implemented schemas
         run: pnpm api:generate && git diff --exit-code -- public/openapi.json
       # Routine native logic runs in isolated jobs below. Run42108232836
@@ -108,6 +110,23 @@ jobs:
             const status=readFileSync("/proc/self/status","utf8");if(!/^CapEff:\s+0+$/m.test(status)||!/^NoNewPrivs:\s+1$/m.test(status))throw Error("WORKER_ISOLATION_INVALID");
             for(const name of ["next","tsx"]){try{import.meta.resolve(name);throw Error("UNNECESSARY_RUNTIME_DEPENDENCY");}catch(error){if(error.code!=="ERR_MODULE_NOT_FOUND")throw error;}}
           '
+      - name: Build the minimal non-root outbound-message worker
+        run: docker build --file Dockerfile.message-worker --tag kavosh-messages:ci .
+      - name: Verify outbound worker remains disabled without credentials and needs no web runtime
+        run: |
+          set +e
+          task_message_output=$(docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true kavosh-messages:ci 2>&1)
+          task_message_status=$?
+          set -e
+          test "$task_message_status" -eq 1
+          printf '%s\n' "$task_message_output" | grep -Fx 'Outbound message worker stopped;check isolated configuration without logging credentials or recipients.'
+          docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-messages:ci --input-type=module -e '
+            import pg from "pg";import nodemailer from "nodemailer";import {z} from "zod";
+            import {readFileSync} from "node:fs";
+            if(process.getuid()===0||!pg.Pool||!nodemailer.createTransport||!z.object)throw Error("MESSAGE_WORKER_RUNTIME_INVALID");
+            const status=readFileSync("/proc/self/status","utf8");if(!/^CapEff:\s+0+$/m.test(status)||!/^NoNewPrivs:\s+1$/m.test(status))throw Error("MESSAGE_WORKER_ISOLATION_INVALID");
+            for(const name of ["next","tsx","better-auth"]){try{import.meta.resolve(name);throw Error("UNNECESSARY_MESSAGE_RUNTIME_DEPENDENCY");}catch(error){if(error.code!=="ERR_MODULE_NOT_FOUND")throw error;}}
+          '
       - name: Build VPS container
         run: docker build --tag kavosh-one:ci .
       - name: Run non-root container with a read-only filesystem
@@ -146,6 +165,7 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       NOTIFICATION_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-notifications.js
       REPORT_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-reports.js
+      MESSAGE_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-messages.js
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -157,6 +177,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm notifications:build
       - run: pnpm reports:build
+      - run: pnpm messages:build
       - name: Complete assigned quick-logic group without dropping or duplicating files
         run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
   learning:

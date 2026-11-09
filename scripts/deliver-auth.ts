@@ -7,6 +7,7 @@ import { postgresOptions } from '../src/core/postgres-config.ts';
 import { setTimeout } from 'node:timers/promises';
 
 if(process.env.MIGRATION_DATABASE_URL)throw new Error('MIGRATION_CREDENTIALS_FORBIDDEN_IN_WORKER');
+if(process.env.OPERATIONAL_DELIVERY_CONNECTIONS||process.env.NOTIFICATION_OUTBOUND_DATABASE_URL)throw new Error('SHARED_CREDENTIAL_ENVIRONMENT_FORBIDDEN');
 const key=z.string().min(32).parse(process.env.AUTH_SECRET);
 const pool=new pg.Pool({...postgresOptions(process.env.DELIVERY_DATABASE_URL),max:2,
   connectionTimeoutMillis:3000,statement_timeout:5000,query_timeout:7000});

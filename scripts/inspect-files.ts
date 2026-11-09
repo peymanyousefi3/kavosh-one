@@ -18,7 +18,7 @@ let pool:pg.Pool|undefined;
 const stopping=new AbortController();for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>stopping.abort());
 try {
   if(process.env.FILE_INSPECTION_WORKER_ENABLED!=='true')throw new Error('FILE_WORKER_DISABLED');
-  if(['MIGRATION_DATABASE_URL','DATABASE_URL','IDENTITY_DATABASE_URL','DELIVERY_DATABASE_URL','AUTH_SECRET','EDGE_AUTH_SECRET'].some(name=>process.env[name]))throw new Error('SHARED_CREDENTIAL_ENVIRONMENT_FORBIDDEN');
+  if(['OPERATIONAL_DELIVERY_CONNECTIONS','NOTIFICATION_OUTBOUND_DATABASE_URL','MIGRATION_DATABASE_URL','DATABASE_URL','IDENTITY_DATABASE_URL','DELIVERY_DATABASE_URL','AUTH_SECRET','EDGE_AUTH_SECRET'].some(name=>process.env[name]))throw new Error('SHARED_CREDENTIAL_ENVIRONMENT_FORBIDDEN');
   const imageService=process.env.FILE_IMAGE_VALIDATION_ENABLED==='true'?imageServiceConfiguration.parse({socketPath:process.env.FILE_IMAGE_VALIDATION_SOCKET_PATH}):undefined;
   if(imageService)await assertPrivateImageSocket(imageService.socketPath);
   const pdfService=process.env.FILE_PDF_VALIDATION_ENABLED==='true'?pdfServiceConfiguration.parse({socketPath:process.env.FILE_PDF_VALIDATION_SOCKET_PATH}):undefined;

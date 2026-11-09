@@ -24,6 +24,7 @@ const twilioReceipt=z.object({sid:z.string().regex(/^SM[a-fA-F0-9]{32}$/),accoun
 // No IO at construction. No arbitrary provider URL,TLS downgrade,attachments
 // or message-selected sender. Reused by auth and isolated operational workers.
 export function messageTransport(configuration:MessageConnection,send:typeof fetch=fetch){
+ if(process.env.NODE_TLS_REJECT_UNAUTHORIZED==='0')throw new MessageDeliveryError('not_attempted','INSECURE_TRANSPORT_ENVIRONMENT');
  const config=messageConnection.parse(configuration),smtp=config.smtp,twilio=config.twilio;
  const transport=smtp?nodemailer.createTransport({host:smtp.host,port:smtp.port,secure:smtp.port===465,requireTLS:true,tls:{rejectUnauthorized:true,minVersion:'TLSv1.2'},auth:{user:smtp.user,pass:smtp.password},connectionTimeout:5000,greetingTimeout:5000,socketTimeout:10000,disableFileAccess:true,disableUrlAccess:true}):null;
  return {

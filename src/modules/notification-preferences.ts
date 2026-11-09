@@ -10,7 +10,7 @@ const notice={version:1,purpose:'operational_academy_notifications',text:'Choose
 type Identity={ownerEpoch:string;emailEpoch:string;phoneEpoch:string};
 type Preference={version:number;email_enabled:boolean;sms_enabled:boolean;locale:'en'|'fr'|'zh-CN';email_epoch:string|null;phone_epoch:string|null;notice_version:1;changed_at:string};
 function view(p:Preference|undefined,i:Identity){return {version:p?.version??0,locale:p?.locale??'en',email:{enabled:p?.email_enabled??false,effective:!!p?.email_enabled&&p.email_epoch===i.emailEpoch,renewalRequired:!!p?.email_enabled&&p.email_epoch!==i.emailEpoch},sms:{enabled:p?.sms_enabled??false,effective:!!p?.sms_enabled&&p.phone_epoch===i.phoneEpoch,renewalRequired:!!p?.sms_enabled&&p.phone_epoch!==i.phoneEpoch},changedAt:p?.changed_at??null};}
-const flags={selfOnly:true,portalNoticesMandatory:true,authenticationDeliveryAffected:false,marketingConsentGranted:false,externalDeliveryEnabled:false,externalDeliveryVerified:false};
+const flags={selfOnly:true,portalNoticesMandatory:true,authenticationDeliveryAffected:false,marketingConsentGranted:false,externalDeliveryEnabled:false,externalDeliveryVerified:false,alreadyInFlightMessagesMayStillArrive:true};
 export async function notificationPreferences(ctx:ApiContext):Promise<Reply|null>{
  const m=/^me\/notification-preferences(?:\/(history|disable))?$/.exec(ctx.path);if(!m)return null;
  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_ACCOUNT_REQUIRED');
