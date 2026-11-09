@@ -3,20 +3,22 @@ import { z } from 'zod';
 import { jsonBody } from '../core/api.ts';
 import { parseBearer } from '../core/tokens.ts';
 import type { Database } from '../core/database.ts';
-import { probeCheckoutResultSink,recordCheckoutTransportReceipt } from './checkout-result-worker.ts';
+import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection } from './checkout-result-worker.ts';
 import { stripeCheckoutDraft,stripeCheckoutTransport,StripeCheckoutError,type StripeCheckoutConnection } from './stripe-checkout.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const target=z.object({requestId:uuid,attemptId:uuid}).strict();
 const source=z.object({data:z.object({id:uuid,requestId:uuid,sourceCurrent:z.literal(true),start:z.null(),draft:stripeCheckoutDraft,requestSha256:hash,requestBytes:z.number().int().min(1).max(16384),idempotencyKey:z.string()})});
 const started=z.object({data:z.object({id:uuid,requestId:uuid,attemptId:uuid,state:z.literal('started'),providerVerified:z.literal(false)})});
+const historicalSource=z.object({data:z.object({id:uuid,requestId:uuid,start:z.object({id:uuid}),draft:stripeCheckoutDraft,requestSha256:hash,requestBytes:z.number().int().min(1).max(16384)})});
+type WorkerApi={origin:string;token:string;resultDatabase:Database;workerId:string};
 export class CheckoutWorkerError extends Error{constructor(readonly stage:'configuration'|'source'|'preflight'|'start',readonly reconciliationRequired:boolean){super('CHECKOUT_WORKER_'+stage.toUpperCase()+'_FAILED');}}
 
 // One explicitly selected,already reserved attempt. No polling,automatic
 // activation,provider POST retries,caller money/URLs or private web credentials.
 // A lost start response means NO provider call;the durable start must still be
 // reconciled rather than granted again. Actor notes are not trusted receipts.
-export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutConnection,api:{origin:string;token:string;resultDatabase:Database;workerId:string},send:typeof fetch=fetch){
+function workerContext(raw:unknown,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch){
  const selected=target.safeParse(raw);let origin:URL;
  try{origin=new URL(api.origin);uuid.parse(api.workerId);if(!api.resultDatabase||origin.origin!==api.origin||origin.protocol!=='https:'||origin.username||origin.password||origin.origin!==config.origin||!parseBearer('Bearer '+api.token))throw new Error();}catch{throw new CheckoutWorkerError('configuration',false);}
  if(!selected.success)throw new CheckoutWorkerError('configuration',false);
@@ -26,6 +28,10 @@ export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutCo
   if(response.redirected||response.url&&new URL(response.url).origin!==api.origin||!response.ok){void response.body?.cancel().catch(()=>{});throw new Error('BACKEND_UNAVAILABLE');}
   return jsonBody(new Request(api.origin,{method:'POST',headers:{'content-type':response.headers.get('content-type')??''},body:response.body,duplex:'half',signal} as RequestInit&{duplex:'half'}),32768);
  }
+ return {t,call};
+}
+export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch=fetch){
+ const {t,call}=workerContext(raw,config,api,send);
  let s:z.infer<typeof source>['data'];try{s=source.parse(await call('/source')).data;
   if(s.id!==t.attemptId||s.requestId!==t.requestId||s.draft.requestId!==t.requestId||s.idempotencyKey!=='kavosh-checkout-v1:'+config.academyId+':'+t.requestId)throw new Error();
  }catch{throw new CheckoutWorkerError('source',false);}
@@ -45,4 +51,17 @@ export async function executeCheckoutAttempt(raw:unknown,config:StripeCheckoutCo
   observationRecorded=r.requestId===t.requestId&&r.attemptId===t.attemptId&&r.state===outcome;
  }catch{/* Never resend the charge because an observation write failed. */}
  return {requestId:t.requestId,attemptId:t.attemptId,startId,outcome,session,transportReceiptRecorded,transportConflict,observationRecorded,reconciliationRequired:true as const,providerVerified:false as const,paymentVerified:false as const,ledgerAdjusted:false as const,automaticRetryAllowed:false as const};
+}
+async function recoveryContext(raw:unknown,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch){
+ const {t,call}=workerContext(raw,config,api,send);let s:z.infer<typeof historicalSource>['data'];
+ try{s=historicalSource.parse(await call('/source')).data;if(s.id!==t.attemptId||s.requestId!==t.requestId||s.draft.requestId!==t.requestId)throw new Error();await probeCheckoutResultSink(api.resultDatabase,{academyId:config.academyId,startId:s.start.id,requestSha256:s.requestSha256});}catch{throw new CheckoutWorkerError('source',true);}
+ return {t,s,transport:stripeCheckoutTransport(config,send)};
+}
+export async function discoverCheckoutAttempt(raw:unknown,window:unknown,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch=fetch){
+ const {s,transport}=await recoveryContext(raw,config,api,send);return transport.discover(s.draft,window);
+}
+export async function reconcileCheckoutAttempt(raw:unknown,sessionId:string,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch=fetch){
+ const {t,s,transport}=await recoveryContext(raw,config,api,send),inspection=await transport.inspect(s.draft,sessionId),id=randomUUID();
+ const receipt=await recordCheckoutProviderInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,workerId:api.workerId,requestSha256:s.requestSha256,inspection});
+ return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,inspection,...receipt};
 }

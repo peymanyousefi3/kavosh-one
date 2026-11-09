@@ -61,6 +61,15 @@ function checkedSession(raw:unknown,d:Draft){
 function publicSession(s:z.infer<typeof session>){return {sessionId:s.id,paymentId:s.payment_intent,status:s.status,paymentStatus:s.payment_status,expiresAt:s.expires_at,checkoutUrl:s.url,amount:s.amount_total,currency:s.currency,paymentVerified:false as const};}
 const intent=z.object({id:paymentId,object:z.literal('payment_intent'),livemode:z.boolean(),currency:z.string(),amount:integer,amount_received:integer,metadata:tags,status:z.enum(['requires_payment_method','requires_confirmation','requires_action','processing','requires_capture','canceled','succeeded']),latest_charge:chargeId.nullable()});
 const charge=z.object({id:chargeId,object:z.literal('charge'),livemode:z.boolean(),payment_intent:paymentId,currency:z.string(),amount:integer,amount_captured:integer,amount_refunded:integer,paid:z.boolean(),captured:z.boolean(),disputed:z.boolean(),status:z.enum(['succeeded','pending','failed']),payment_method_details:z.object({type:z.literal('card'),card:z.object({funding:z.enum(['credit','debit','prepaid','unknown'])})})});
+const discoveryWindow=z.object({createdAfter:z.number().int().nonnegative(),createdBefore:z.number().int().nonnegative(),after:sessionId.optional()}).strict().refine(v=>v.createdBefore>=v.createdAfter);
+const discoveryPage=z.object({object:z.literal('list'),url:z.literal('/v1/checkout/sessions'),has_more:z.boolean(),data:z.array(z.object({id:sessionId,object:z.literal('checkout.session'),created:z.number().int().nonnegative(),client_reference_id:z.string().nullable().optional(),metadata:z.record(z.string(),z.string()).nullable().optional()}).passthrough()).max(100)});
+const inspectionBase=z.object({sessionId,paymentId:paymentId.nullable(),bankSettled:z.literal(false),ledgerAdjusted:z.literal(false)});
+const captureFields={paymentId,chargeId,amount:integer.positive(),currency:z.string().regex(/^[a-z]{3}$/),cardFunding:z.enum(['credit','debit','prepaid','unknown']),refundedAmount:integer,disputed:z.boolean()};
+export const stripeCheckoutInspection=z.discriminatedUnion('state',[
+ inspectionBase.extend({state:z.enum(['awaiting_payment','expired']),paymentVerified:z.literal(false)}).strict(),
+ inspectionBase.extend({...captureFields,state:z.literal('requires_review'),paymentVerified:z.literal(false)}).strict(),
+ inspectionBase.extend({...captureFields,state:z.literal('captured'),paymentVerified:z.literal(true),refundedAmount:z.literal(0),disputed:z.literal(false)}).strict()
+]);
 export class StripeCheckoutError extends Error{constructor(readonly outcome:'not_attempted'|'rejected'|'outcome_unknown',code:string){super(code);this.name='StripeCheckoutError';}}
 
 export function stripeCheckoutTransport(configured:StripeCheckoutConnection,send:typeof fetch=fetch){
@@ -104,6 +113,21 @@ export function stripeCheckoutTransport(configured:StripeCheckoutConnection,send
     try{const s=checkedSession(await sdk.checkout.sessions.create(built.params,{idempotencyKey:built.receipt.idempotencyKey}),built.draft);return {outcome:'accepted' as const,session:publicSession(s),bankSettled:false as const};}
     catch(e){const rejected=e instanceof Stripe.errors.StripeError&&[400,401,402,403,404,422].includes(e.statusCode??0);throw new StripeCheckoutError(rejected?'rejected':'outcome_unknown',rejected?'STRIPE_CHECKOUT_REJECTED':'STRIPE_CHECKOUT_OUTCOME_UNKNOWN');}
    }};
+  },
+  // One bounded read-only page per invocation. A lost create response must
+  // never be "recovered" by resending a POST after provider idempotency expiry.
+  // Search windows/cursors are explicit;an empty/bounded search is NOT proof
+  // that nothing happened or permission to create another checkout.
+  async discover(raw:unknown,window:unknown){
+   const d=stripeCheckoutDraft.parse(raw);bound(c,d);const w=discoveryWindow.parse(window);
+   if(w.after&&!w.after.startsWith(c.livemode?'cs_live_':'cs_test_'))throw new ApiError(409,'STRIPE_SESSION_MODE_MISMATCH');
+   try{
+    if(!identityAt||Date.now()-identityAt>60_000)await identify();
+    const page=discoveryPage.parse(await sdk.checkout.sessions.list({created:{gte:w.createdAfter,lte:w.createdBefore},limit:100,...w.after?{starting_after:w.after}:{}}));
+    const ids=page.data.map(v=>v.id);if(new Set(ids).size!==ids.length||w.after&&ids.includes(w.after)||page.has_more&&!ids.length||page.data.some(v=>v.created<w.createdAfter||v.created>w.createdBefore))throw new Error('INVALID_DISCOVERY_PAGE');
+    const matches=page.data.filter(v=>v.client_reference_id===d.requestId||v.metadata?.kavosh_request===d.requestId).map(v=>checkedSession(v,d).id);
+    return {requestId:d.requestId,createdAfter:w.createdAfter,createdBefore:w.createdBefore,examined:ids.length,matchingSessionIds:matches,nextCursor:page.has_more?ids.at(-1)!:null,searchCompleteWithinWindow:!page.has_more,absenceVerified:false as const,paymentVerified:false as const,automaticRetryAllowed:false as const,bankSettled:false as const,ledgerAdjusted:false as const};
+   }catch{throw new StripeCheckoutError('outcome_unknown','STRIPE_CHECKOUT_DISCOVERY_REQUIRES_REVIEW');}
   },
   async inspect(raw:unknown,id:string){
    const d=stripeCheckoutDraft.parse(raw);bound(c,d);const selected=sessionId.parse(id);if(!selected.startsWith(c.livemode?'cs_live_':'cs_test_'))throw new ApiError(409,'STRIPE_SESSION_MODE_MISMATCH');
