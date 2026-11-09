@@ -7,6 +7,7 @@ import { createIdentity,type Delivery } from '../src/auth/config.ts';
 import { IdentityStore } from '../src/auth/store.ts';
 import { identityGateway,verifiedProxyIp,humanResolver,platformHumanResolver } from '../src/auth/gateway.ts';
 import { queuedDelivery,deliverOne,providerDelivery } from '../src/auth/delivery.ts';
+import { MessageDeliveryError } from '../src/integrations/message-delivery.ts';
 import { createApi } from '../src/core/api.ts';
 import { business as businessRoutes } from '../src/modules/business.ts';
 import type { Database } from '../src/core/database.ts';
@@ -387,7 +388,7 @@ test('human identity: real library authentication and protected business access'
       await assert.rejects(f.store.query('SELECT * FROM identity.delivery_outbox'),/permission denied/);
       await f.worker(async worker=>{
         await assert.rejects(worker.query('SELECT * FROM identity."user"'),/permission denied/);
-        assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){throw new Error('synthetic transport failure');}}),true);
+        assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){throw new MessageDeliveryError('rejected','SYNTHETIC_PROVIDER_REJECTION');}}),true);
         assert.equal(await deliverOne(worker,config.secret,f.delivery),false,'retry must back off');
       });
       await f.admin(()=>f.pg.query("UPDATE identity.delivery_outbox SET available_at=now(),locked_until=NULL"));
@@ -410,6 +411,17 @@ test('human identity: real library authentication and protected business access'
         const row=(await f.pg.query<{payload:null;outcome:string}>("SELECT payload,outcome FROM identity.delivery_outbox WHERE outcome='failed'")).rows[0];
         assert.equal(row.payload,null);assert.equal(row.outcome,'failed');
       });
+      await queued.sms({to:master.phone,text:'Synthetic uncertain send'});let uncertainCalls=0;
+      await f.worker(async worker=>{assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){uncertainCalls++;throw new MessageDeliveryError('outcome_unknown','SYNTHETIC_RESPONSE_LOST');}}),true);assert.equal(await deliverOne(worker,config.secret,f.delivery),false);});assert.equal(uncertainCalls,1);
+      await f.admin(async()=>{const failed=(await f.pg.query<{payload:null;attempts:number}>("SELECT payload,attempts FROM identity.delivery_outbox WHERE outcome='failed' ORDER BY created_at DESC LIMIT 1")).rows[0];assert.equal(failed.payload,null);assert.equal(failed.attempts,1);});
+      await queued.sms({to:master.phone,text:'Synthetic abandoned in-flight send'});
+      await f.admin(()=>f.pg.query("UPDATE identity.delivery_outbox SET attempts=1,locked_until=now()-interval '1 second' WHERE outcome IS NULL"));
+      let abandonedCalls=0;await f.worker(async worker=>{assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){abandonedCalls++;}}),false);});assert.equal(abandonedCalls,0);
+      await queued.sms({to:master.phone,text:'Synthetic send finishing after lease expiry'});let lateCalls=0;
+      await f.worker(async worker=>{assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){
+       lateCalls++;await f.admin(()=>f.pg.query("UPDATE identity.delivery_outbox SET locked_until=now()-interval '1 second' WHERE outcome IS NULL"));await f.pg.exec('SET ROLE kavosh_delivery');assert.equal(await deliverOne(worker,config.secret,{...f.delivery,async sms(){lateCalls++;}}),false);
+      }}),true);});assert.equal(lateCalls,1);
+      await f.admin(async()=>{assert.equal((await f.pg.query("SELECT outcome FROM identity.delivery_outbox ORDER BY created_at DESC LIMIT 1")).rows[0].outcome,'failed','late completion must not overwrite another worker terminal outcome');});
     });
     await t.test('expired auth cleanup removes challenges without deleting identities or audit history',async()=>{
       await f.admin(async()=>{
@@ -841,7 +853,7 @@ test('provider configuration fails closed and SMS sends only to fixed endpoint',
   const send:typeof fetch=async (url,options)=>{
     called++;assert.match(String(url),/^https:\/\/api\.twilio\.com\/2010-04-01\/Accounts\/AC[a-f0-9]{32}\/Messages.json$/);
     assert.equal(options?.redirect,'error');assert.ok(options?.signal);
-    return new Response('{}',{status:201});
+    return Response.json({sid:'SM'+'a'.repeat(32),account_sid:'AC'+'a'.repeat(32),messaging_service_sid:'MG'+'a'.repeat(32),to:'+16475550000',status:'accepted',error_code:null},{status:201});
   };
   const delivery=providerDelivery({SMTP_HOST:'smtp.example.test',SMTP_PORT:'465',SMTP_USER:'synthetic',SMTP_PASSWORD:'synthetic',SMTP_FROM:'test@example.test',
     TWILIO_ACCOUNT_SID:'AC'+'a'.repeat(32),TWILIO_AUTH_TOKEN:'synthetic-test-token-000000',TWILIO_MESSAGING_SERVICE_SID:'MG'+'a'.repeat(32)},send);
