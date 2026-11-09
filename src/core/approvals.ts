@@ -69,6 +69,10 @@ export type ReadPolicyContext={credential:ScopeCredential;grants:Grant[]};
 export function permissionScope(ctx:ReadPolicyContext,name:Capability){return scopeFor(ctx.credential,ctx.grants,name);}
 
 export function privacyScopes(ctx:ReadPolicyContext,bindings?:unknown){
+ // Payroll assignment proposals retain one bounded bundle of the original
+ // source approval's proofs. Native validation rejects nested bundles;include
+ // those original capability names when producing a minimal permission map.
+ if(Array.isArray(bindings))bindings=bindings.flatMap(b=>b&&typeof b==='object'&&Array.isArray(b.payrollCostSourceBindings)?[b,...b.payrollCostSourceBindings.slice(0,64)]:[b]);
  const required=bindings===undefined?null:new Set<string>();
  if(required&&Array.isArray(bindings))for(const b of bindings){if(!b||typeof b!=='object')continue;if(typeof b.capability==='string')required.add(b.capability);if('calculatedNetSource' in b)for(const cap of ['financial-reports.view','payruns.view','payrun-net.view','payrun-postings.view','payrun-payments.view','work-pay.view','payroll-accruals.view','payroll-adjustments.view','accounts.view','journals.view','payment-methods.view'])required.add(cap);if('fileId' in b)for(const cap of ['files.view','students.view','guardians.view','agreements.view','financial-files.view','work-files.view','work-pay.view'])required.add(cap);}
  const caps=[...new Set(ctx.grants.filter(g=>g.effect==='allow'&&ctx.credential.capabilities.includes(g.capability)&&(!required||required.has(g.capability))).map(g=>g.capability))];
