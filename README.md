@@ -4,6 +4,8 @@ Private source repository for the multi-academy management platform for Kavosh A
 
 ## Status
 
+Performance CSV downloads now reuse the same live admin/family permissions. Administrative reports also support existing queued generation,reviewed saved presets,relative civil-date windows and scheduled occurrences. Retained files recheck every captured feedback record before exposing bytes or hash metadata;family downloads remain live,published-only and are not queued private archives. This generates reports,not email/SMS delivery. The200feedback/6,000point/4MiB ceiling remains;large-scale chunked aggregation and PDF/XLSX/visual layouts remain unfinished.
+
 Student-performance reports now provide backend trend points,1-5 distributions and exact averages,kept separate by student and pinned rubric version. Administrative filters and saved presets reuse current feedback access;the human family endpoint includes only approved,published,currently authorized child feedback. No private notes,latest-label reinterpretation,missing-score imputation,rankings or UI design. Complete synchronous output is bounded at200feedback records/6,000points/4MiB;larger background reports and visual layouts remain unfinished.
 
 Learning reporting now offers complete CSV downloads for a session's evidence and the central session follow-up report,including exact current admin input reviews,waivers and overdue states. These reuse the existing source permissions and saved presets;they do not approve payroll or certify uploaded media. Full follow-up exports stop at200sessions/200staff per session and4MiB rather than returning a partial file. Learning background exports,PDF/XLSX layouts and UI/UX remain unfinished.

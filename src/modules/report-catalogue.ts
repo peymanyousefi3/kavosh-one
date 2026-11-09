@@ -46,7 +46,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view'},
  {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view',csv:true},
  {contracts:sessionFollowUpContract,handler:sessionFollowUp,capability:'session-evidence.view',csv:true},
- {contracts:studentPerformanceReportContract,handler:studentPerformance,capability:'student-feedback.view'},
+ {contracts:studentPerformanceReportContract,handler:studentPerformance,capability:'student-feedback.view',csv:true,backgroundCsv:true},
  {contracts:achievementReportContract,handler:achievementReport,capability:'achievement-reports.view',csv:true,backgroundCsv:true}
 ];
 export const reportCatalogue:readonly Entry[]=groups.flatMap(g=>g.contracts.map(c=>({id:c.path.slice('/api/v1/reports/'.length).replaceAll('/','.').replace('{id}','by-id'),path:c.path.slice('/api/v1/'.length),summary:c.summary,schema:c.querySchema??z.object({}).strict(),handler:g.handler,capability:g.capability,csv:g.csv??false,backgroundCsv:g.backgroundCsv??false}))).sort((a,b)=>a.id.localeCompare(b.id));

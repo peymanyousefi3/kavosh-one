@@ -16,6 +16,8 @@ import { settlementReportData,payrollSettlementCsv } from '../modules/payroll-se
 import { payrollRemittanceData,payrollRemittanceCsv } from '../modules/payroll-remittance-report.ts';
 import { paidTaxYearReportData,paidTaxYtdCsv } from '../modules/paid-tax-ytd.ts';
 import { t4WorkingPaperData,t4WorkingPaperCsv } from '../modules/t4-working-paper.ts';
+import { studentPerformanceResult } from '../modules/student-performance.ts';
+import { performanceReportCsv } from '../modules/student-performance-export.ts';
 
 export const backgroundFinancialEntryLimit=10000;
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(a=>new Set(a).size===a.length);
@@ -40,6 +42,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    const scheduledOccurrence=(await db.query<{scheduleId:string;dueAt:string;recordedAt:string}>(`SELECT schedule_id "scheduleId",to_char(due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') "dueAt",to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') "recordedAt" FROM public.report_schedule_occurrences WHERE job_id=$1`,[lease.id])).rows[0];
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');const provenance={id:job.preset_id??undefined,version:job.preset_version??undefined,dateWindow:window,scheduledOccurrence,retryOfJobId:job.retry_of_job_id??undefined};let file:Reply,proof:z.infer<typeof reportAuthorizationContext>;
    if(job.configuration.reportId==='community.achievements'){const reply=await achievementReport(source,true);if(!reply?.body||typeof reply.body!=='object'||!('data'in reply.body))throw new Error('ACHIEVEMENT_REPORT_INVALID');const data=reply.body.data as {authorizationContext:unknown};proof=reportAuthorizationContext.parse(data.authorizationContext);file=achievementReportCsv(data,provenance);}
+   else if(job.configuration.reportId==='learning.student-performance'){const data=await studentPerformanceResult(source,true);proof=reportAuthorizationContext.parse(data.data.authorizationContext);file=performanceReportCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.gross-accruals'){const data=await completePayrollGrossReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollGrossCsv(data,provenance,backgroundFinancialEntryLimit);}
    else if(job.configuration.reportId==='payroll.settlements'){const data=await settlementReportData(source,true,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollSettlementCsv(data,provenance,backgroundFinancialEntryLimit);}
    else if(job.configuration.reportId==='payroll.remittances'){const data=await payrollRemittanceData(source,true,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollRemittanceCsv(data,provenance,backgroundFinancialEntryLimit);}
@@ -54,7 +57,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    const saved=(await db.query<{ok:boolean}>('SELECT public.finish_report_job($1,$2,\'succeeded\',NULL,$3,$4,$5::jsonb) ok',[lease.id,lease.lease_token,file.body,file.csv!.filename,JSON.stringify(proof)])).rows[0]?.ok;
    if(!saved)throw new ApiError(409,'REPORT_LEASE_LOST');if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
    await db.query('COMMIT');transaction=false;return {claimed:true,recorded:true,outcome:'succeeded' as const};
-  }catch(error){if(transaction){await db.query('ROLLBACK');transaction=false;}if(error instanceof ApiError){problem=['REPORT_REQUIRES_BACKGROUND_JOB','ACHIEVEMENT_REPORT_REQUIRES_BACKGROUND_JOB','PAYROLL_SETTLEMENT_REPORT_REQUIRES_BACKGROUND_JOB','PAYROLL_REMITTANCE_REPORT_REQUIRES_BACKGROUND_JOB','PAID_TAX_YTD_REQUIRES_BACKGROUND_JOB'].includes(error.code)?'REPORT_OUTPUT_LIMIT_EXCEEDED':error.code;outcome=[400,401,403,404,409,422].includes(error.status)?'cancelled':'retry';}}
+  }catch(error){if(transaction){await db.query('ROLLBACK');transaction=false;}if(error instanceof ApiError){problem=['STUDENT_PERFORMANCE_REQUIRES_BACKGROUND_JOB','REPORT_REQUIRES_BACKGROUND_JOB','ACHIEVEMENT_REPORT_REQUIRES_BACKGROUND_JOB','PAYROLL_SETTLEMENT_REPORT_REQUIRES_BACKGROUND_JOB','PAYROLL_REMITTANCE_REPORT_REQUIRES_BACKGROUND_JOB','PAID_TAX_YTD_REQUIRES_BACKGROUND_JOB'].includes(error.code)?'REPORT_OUTPUT_LIMIT_EXCEEDED':error.code;outcome=[400,401,403,404,409,422].includes(error.status)?'cancelled':'retry';}}
   await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('app.academy_id',$1,true)",[lease.academy_id]);const recorded=(await db.query<{ok:boolean}>('SELECT public.finish_report_job($1,$2,$3,$4,NULL,NULL,NULL) ok',[lease.id,lease.lease_token,outcome,problem])).rows[0]?.ok===true;await db.query('COMMIT');transaction=false;return {claimed:true,recorded,outcome};
  }catch(error){if(transaction)try{await db.query('ROLLBACK');}catch{broken=true;}throw error;}finally{db.release(broken);}
 }

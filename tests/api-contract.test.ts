@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('performance CSV contracts reuse human family boundaries and expose the registered report job without authority overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),family=api.paths['/api/v1/students/{id}/performance/export'],admin=api.paths['/api/v1/reports/learning/student-performance/export'];assert.deepEqual(family.get.security,[{humanSession:[],academySelection:[]}]);assert.ok(family.get.responses['200'].content['text/csv']);assert.ok(admin.get.responses['200'].content['text/csv']);assert.equal(family.post,undefined);assert.equal(admin.post,undefined);assert.equal(family.get.parameters.some((p:any)=>['visibility','studentId','approved','limit'].includes(p.name)),false);const s=api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('learning.student-performance'));assert.equal(s.additionalProperties,false);
+});
+
 test('performance report contracts keep family published-only human access separate from filtered administrative trends',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),family=api.paths['/api/v1/students/{id}/performance'],admin=api.paths['/api/v1/reports/learning/student-performance'];assert.deepEqual(family.get.security,[{humanSession:[],academySelection:[]}]);assert.equal(admin.get.security,undefined);assert.equal(family.post,undefined);assert.equal(admin.post,undefined);assert.equal(family.get.parameters.some((p:any)=>['visibility','studentId','includePrivate','limit'].includes(p.name)),false);assert.deepEqual(admin.get.parameters.find((p:any)=>p.name==='visibility').schema.enum,['all','published','private']);assert.match(admin.get.summary,/PINNED rubric version/);assert.match(family.get.summary,/actually approved and published/);
 });
