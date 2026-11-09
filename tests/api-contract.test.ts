@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('tuition recognition contracts require explicit net earning evidence and expose no tax cash authority or source overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),parent=api.paths['/api/v1/finance/invoices/{id}/recognitions'],voided=api.paths['/api/v1/finance/tuition-recognitions/{id}/void'];assert.ok(parent.get);assert.ok(parent.post);const s=parent.post.requestBody.content['application/json'].schema;for(const k of ['amount','deferredAccount','revenueAccount','earnedOn','postedOn','period','reference','earningReview'])assert.ok(s.required.includes(k));assert.equal(s.additionalProperties,false);for(const k of ['invoiceId','taxRate','cashAccount','approved','sourceSnapshot'])assert.equal(s.properties[k],undefined);assert.equal(voided.post.requestBody.content['application/json'].schema.properties.amount,undefined);assert.match(parent.get.summary,/full tracked NET summary/);assert.match(parent.post.summary,/No payment,tax recalculation/);
+});
+
 test('tuition income contract separates source recognition from cash tax and total academy profitability',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),route=api.paths['/api/v1/reports/finance/tuition-income'];assert.ok(route.get);assert.equal(route.post,undefined);for(const name of ['from','through','hubIds','studentIds','classIds','accountIds','billToIds','currencyIds','countryIds','recognition'])assert.ok(route.get.parameters.some((p:any)=>p.name===name));assert.deepEqual(route.get.parameters.find((p:any)=>p.name==='recognition').schema.enum,['all','earned','deferred']);assert.equal(route.get.parameters.some((p:any)=>['limit','paid','taxRate','approved'].includes(p.name)),false);assert.match(route.get.summary,/Not remaining deferred balance,all income or academy profit/);
 });

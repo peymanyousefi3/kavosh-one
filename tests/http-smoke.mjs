@@ -26,6 +26,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const path of ['finance/invoices/00000000-0000-4000-8000-000000000001/recognitions','finance/tuition-recognitions/00000000-0000-4000-8000-000000000001']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/trackedReleasedNet|source_snapshot|earningReview|stack/);}
   {const r=await fetch(base+'/api/v1/reports/finance/tuition-income?from=2026-01-01&through=2026-12-31');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/earnedInvoiceRevenue|deferredBillings|studentId|stack/);}
   for(const report of ['tuition-income','expense-costs']){const r=await fetch(base+'/api/v1/reports/finance/'+report+'/export?from=2026-01-01&through=2026-12-31');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/earnedInvoiceRevenue|recoverableTax|studentId|stack/);}
   {const r=await fetch(base+'/api/v1/reports/finance/expense-costs?from=2026-01-01&through=2026-12-31');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/recoverableTax|expense|studentId|stack/);}
