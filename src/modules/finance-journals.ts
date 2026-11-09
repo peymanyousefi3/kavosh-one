@@ -119,7 +119,9 @@ async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.jou
 }
 async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
  const prepared=await prepare(ctx,true,input,lock,false);
- if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.provider_collections WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_COLLECTION_CORRECTION_WORKFLOW_REQUIRED');
+ // Original approval identity exists on historical schemas too. Do not make
+ // unrelated legacy corrections depend on a later feature table being present.
+ if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action='finance.provider-collection.record' LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_COLLECTION_CORRECTION_WORKFLOW_REQUIRED');
  if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payrun_payments WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'PAYRUN_PAYMENT_CORRECTION_WORKFLOW_REQUIRED');
  if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payrun_remittances WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'PAYRUN_REMITTANCE_CORRECTION_WORKFLOW_REQUIRED');
  if(prepared.source&&(await ctx.db.query('SELECT 1 FROM public.payrun_net_postings WHERE id=$1 LIMIT 1',[prepared.source.id])).rows.length)throw new ApiError(409,'PAYRUN_NET_POSTING_CORRECTION_WORKFLOW_REQUIRED');

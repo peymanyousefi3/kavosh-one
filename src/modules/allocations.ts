@@ -80,14 +80,14 @@ async function write(ctx:ApiContext,p:Proposal,i:Parent,lines:{installment:numbe
  const r=await receiptRow(ctx,p.target_id);await record(ctx.db,ctx.credential,ctx.requestId,'finance.receipt.allocated',p.target_id,r.hub_id,{beforeVersion:before,afterVersion:v,mode,lineCount:lines.length,approvalId:p.id,severity:'critical',hasReason:true});
  // Receipt approval includes the deterministic initial allocation. It does not
  // grant discretionary allocation editing or access to private revision notes.
- return p.action==='finance.receipt.record'?{version:v,allocated:formatMoney(readMinorUnits(total),i.unit_scale),additionalLedgerPosting:false}:detail(ctx,p.target_id);
+ return ['finance.receipt.record','finance.customer-credit.apply'].includes(p.action)?{version:v,allocated:formatMoney(readMinorUnits(total),i.unit_scale),additionalLedgerPosting:false}:detail(ctx,p.target_id);
 }
 export async function automaticAllocationBasis(ctx:ApiContext,invoiceId:string,amountMinor:string){
  const i=await invoiceRow(ctx,invoiceId);financialRecordAuthority(ctx,i,'receipts.edit');const p=await parent(ctx,i.id),installments=await schedule(ctx,p),other=await applied(ctx,i.id),used=new Map(other.map(l=>[l.installment,readMinorUnits(l.amount)])),lines=oldestDue(installments,used,readMinorUnits(amountMinor));
  lines.sort((a,b)=>a.installment-b.installment);return {parent:p,installments,other,lines};
 }
 export async function allocateApprovedReceipt(ctx:ApiContext,p:Proposal){
- if(ctx.credential.kind!=='human'||p.action!=='finance.receipt.record')throw new ApiError(403,'HUMAN_RECEIPT_APPROVAL_REQUIRED');
+ if(ctx.credential.kind!=='human'||!['finance.receipt.record','finance.customer-credit.apply'].includes(p.action))throw new ApiError(403,'HUMAN_RECEIPT_APPROVAL_REQUIRED');
  const r=await receiptRow(ctx,p.target_id);financialRecordAuthority(ctx,r,'receipts.edit');if(await currentVersion(ctx,r.id))throw new ApiError(409,'ALLOCATION_ALREADY_EXISTS');const b=await automaticAllocationBasis(ctx,r.invoice_id,r.amount_minor);
  return write(ctx,p,b.parent,b.lines,0,'oldest_due','Allocated oldest-due-first as part of the approved receipt');
 }

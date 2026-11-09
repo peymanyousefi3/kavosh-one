@@ -30,7 +30,7 @@ const listQuery=z.object({...paging,hubId:uuid.optional(),studentId:uuid.optiona
 const issuerQuery=z.object({...paging,active:z.enum(['true','false']).transform(v=>v==='true').optional()}).strict();
 const issuerHistoryQuery=z.object({limit:paging.limit,afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
 type Issuer={id:string;hub_id:string|null;prefix:string;padding:number;next_number:string;version:number;definition:z.infer<typeof issuerDefinition>;active:boolean};
-type Invoice={id:string;plan_id:string;plan_version:number;student_id:string;class_id:string;hub_id:string;bill_to_id:string;bill_to_name:string;journal_id:string|null;credit_id:string|null;issuer_id:string;issuer_version:number;issued_at:Date|string;issued_on:string;number:string};
+type Invoice={id:string;plan_id:string;plan_version:number;student_id:string;class_id:string;hub_id:string;bill_to_id:string;bill_to_name:string;journal_id:string|null;credit_id:string|null;issuer_id:string;issuer_version:number;issued_at:Date|string;issued_on:string;number:string;receivable_account:string};
 function allowed(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
 async function issuer(ctx:ApiContext,id:string,edit=false):Promise<Issuer>{
  const s=allowed(ctx,'invoice-issuers.view'),r=(await ctx.db.query<Issuer>('SELECT i.*,r.definition,r.active FROM public.invoice_issuers i JOIN public.invoice_issuer_revisions r ON r.academy_id=i.academy_id AND r.issuer_id=i.id AND r.version=i.version WHERE i.id=$1',[id])).rows[0];
