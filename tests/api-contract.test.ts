@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('reviewed expense basis is explicit and reusable without client allocation versions or source manifests',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/reports/finance/expense-costs','/api/v1/reports/finance/expense-costs/export']){const parameters=api.paths[path].get.parameters,p=parameters.find((p:any)=>p.name==='costBasis');assert.deepEqual(p.schema.enum,['recorded','reviewed']);assert.equal(p.required,false);for(const name of ['allocationVersion','authorizationContext','sourceSnapshot','approved'])assert.equal(parameters.some((p:any)=>p.name===name),false);}assert.match(api.paths['/api/v1/reports/finance/expense-costs'].get.summary,/Default recorded retains original contexts/);
+});
+
 test('reviewed shared-cost allocation contracts never accept supplied money,approval or source proofs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/expense-bills/{id}/cost-allocation',s=api.paths[path].post.requestBody.content['application/json'].schema;
  assert.equal(s.additionalProperties,false);assert.equal(s.properties.expectedVersion.minimum,0);assert.equal(s.properties.lines.maxItems,50);const t=s.properties.lines.items.properties.targets;assert.equal(t.maxItems,200);assert.equal(t.items.additionalProperties,false);for(const k of ['billId','approved','sourceSnapshot','actorId','amount','netMinor'])assert.equal(s.properties[k],undefined);for(const k of ['amount','expenseMinor','approved'])assert.equal(t.items.properties[k],undefined);assert.ok(api.paths[path].get);assert.ok(api.paths[path+'/history'].get);assert.match(api.paths[path].post.summary,/No new posting\/payment/);

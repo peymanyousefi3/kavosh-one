@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.286.0",
+    "version": "0.287.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -17357,7 +17357,7 @@
     },
     "/api/v1/finance/expense-bills/{id}/cost-allocation": {
       "post": {
-        "summary": "Request upper-reviewed replacement of analytical cost splits for immutable bill lines. Integer weights conserve original net, recoverable and nonrecoverable tax separately using stable largest remainders. Omitted lines use original contexts;empty lines restores them all. Up to200targets. No new posting/payment;current original-context reports unchanged until explicit integration.",
+        "summary": "Request upper-reviewed replacement of analytical cost splits for immutable bill lines. Integer weights conserve original net, recoverable and nonrecoverable tax separately using stable largest remainders. Omitted lines use original contexts;empty lines restores them all. Up to200targets. No new posting/payment;Report costBasis=reviewed consumes retained splits;default original-context meaning preserved.",
         "parameters": [
           {
             "name": "id",
@@ -52242,7 +52242,7 @@
     },
     "/api/v1/reports/finance/expense-costs": {
       "get": {
-        "summary": "Exact posted supplier/reimbursement cost assignments by student,class,hub,account,payee,month and posting/reversal. Every original bill context and ledger account must be currently authorized before filters/totals/charts. Separate currencies,declared recoverable tax and dated inverse events;payments/inventory loss never charge expense again. Not whole academy profit or automatic shared-cost allocation.10,000events/100,000line events/10000groups per dimension/4MiB bound.",
+        "summary": "Exact posted supplier/reimbursement cost assignments by student,class,hub,account,payee,month and posting/reversal. Every original bill context and ledger account must be currently authorized before filters/totals/charts. Optional costBasis=reviewed applies the latest approved split at the report snapshot,including every original source and all target permissions before filtering;pinned saved revision proofs never follow later edits. Default recorded retains original contexts. Separate currencies,declared recoverable tax and dated inverse events;payments/inventory loss never charge expense again. Not whole academy profit or automatic shared-cost allocation.10,000events/100,000line events/10000groups per dimension/4MiB bound.",
         "parameters": [
           {
             "name": "from",
@@ -52260,6 +52260,18 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "costBasis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "reviewed"
+              ]
             }
           },
           {
@@ -52390,6 +52402,18 @@
             "schema": {
               "type": "string",
               "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "costBasis",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "recorded",
+                "reviewed"
+              ]
             }
           },
           {
@@ -54679,7 +54703,7 @@
     },
     "/api/v1/reports/jobs/{id}/download": {
       "get": {
-        "summary": "Download retained complete CSV only under current source rights. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
+        "summary": "Download retained complete CSV only under current source rights. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
         "parameters": [
           {
             "name": "id",
