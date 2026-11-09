@@ -6,7 +6,7 @@ import { boldSignWebhookBody } from '../src/integrations/boldsign-inbox.ts';
 import { platformContract } from '../src/platform/api.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.268.0';
+api.info.version='0.270.0';
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
 const phoneChangeDescription='Private signed-session phone recovery. Fresh completed email/phone/MFA sign-in and the real current password start a request (maximum3/hour);an8-digit code is sent only to the current verified email,never returned or stored plaintext. Pending proof expires15minutes,five wrong email guesses exhaust it,and authorization is single-use and bound to the same session/request/target. Authorized permission lasts at most5minutes and still requires the existing new-phone SMS OTP flow. No phone changes before that verification. Completion atomically revokes sessions/trusted-device proofs and records security audit;master identity and mandatory MFA never transfer or weaken. Cancellation removes only the owned request;status contains no approval code/hash/password/source snapshot. No live delivery guarantee.';

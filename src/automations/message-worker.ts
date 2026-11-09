@@ -9,6 +9,7 @@ export type MessageTransport=ReturnType<typeof messageTransport>;
 export type MessageConnections=(academyId:string)=>MessageTransport|null;
 type Lease={id:string;academy_id:string;person_id:string;event_id:string;channel:'email'|'sms';lease_token:string};
 const payloadSchema=z.object({channel:z.enum(['email','sms']),to:z.string(),title:z.string(),body:z.string(),locale:z.enum(['en','fr','zh-CN'])}).strict();
+const deferred=z.object({deferred:z.literal(true)}).strict();
 const acceptance=z.object({provider:z.enum(['smtp','twilio']),providerMessageId:z.string().min(1).max(500).refine(v=>!/[\p{Cc}]/u.test(v)),providerStatus:z.string().min(1).max(64),providerAccepted:z.literal(true),deliveryConfirmed:z.literal(false)}).strict();
 // Exact source policy reused from dispatch/inboxes. Pending approval messages
 // stop once that case changes;source-bound calendar/follow-up notices stop when
@@ -35,6 +36,7 @@ export async function processOneMessage(database:Database,academies:string[],con
   if(!source){const ok=(await db.query<{ok:boolean}>('SELECT public.finish_notification_delivery($1,$2,\'cancelled\',NULL,$3) ok',[lease.id,lease.lease_token,'SOURCE_OR_AUTHORITY_CHANGED'])).rows[0]?.ok===true;await commit();return {claimed:true,recorded:ok,outcome:'cancelled' as const};}
   if(signal?.aborted){await db.query('ROLLBACK');transaction=false;return {claimed:true,recorded:false,outcome:'preparation_stopped' as const};}
   const raw=(await db.query<{data:unknown}>('SELECT public.begin_notification_delivery($1,$2) data',[lease.id,lease.lease_token])).rows[0]?.data;
+  if(deferred.safeParse(raw).success){await commit();return {claimed:true,recorded:false,outcome:'deferred' as const};}
   if(!raw){const status=(await db.query<{status:string}>('SELECT status FROM public.notification_deliveries WHERE id=$1',[lease.id])).rows[0]?.status;await commit();return {claimed:true,recorded:status==='cancelled',outcome:status==='cancelled'?'cancelled' as const:'lease_lost' as const};}
   const payload=payloadSchema.parse(raw);if(payload.channel!==lease.channel)throw new Error('DELIVERY_CHANNEL_CHANGED');
   const email=payload.channel==='email'?emailMessage.parse({to:payload.to,subject:boundedText(payload.title.replace(/[\r\n]/g,' '),200),text:payload.body}):null,sms=payload.channel==='sms'?smsMessage.parse({to:payload.to,text:boundedText(payload.title+'\n'+payload.body,1000)}):null;

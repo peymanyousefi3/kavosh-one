@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('operational send policy exposes only reviewed bounded request limits and no provider or caller authority overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/automations/delivery-policy',op=api.paths[root].post,s=op.requestBody.content['application/json'].schema;
+ assert.deepEqual(Object.keys(s.properties),['expectedVersion','definition','reason']);assert.equal(s.additionalProperties,false);assert.equal(s.properties.definition.additionalProperties,false);assert.deepEqual(Object.keys(s.properties.definition.properties),['enabled','maxDailyEmailRequests','maxDailySmsRequests','maxHourlyRequestsPerRecipient']);assert.equal(s.properties.definition.properties.maxDailySmsRequests.maximum,100000);assert.equal(s.properties.definition.properties.maxHourlyRequestsPerRecipient.maximum,1000);
+ assert.ok(api.paths[root+'/usage'].get);assert.equal(api.paths[root+'/usage'].post,undefined);assert.equal(api.paths[root+'/history'].get.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(op.summary,/bots only propose/);assert.match(api.paths[root+'/usage'].get.summary,/not carrier segments/);
+});
+
 test('delivery supervision is a separately permissioned read-only human or bot API without contact or retry inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/automations/deliveries';
  for(const suffix of ['', '/summary','/{id}','/{id}/history']){const route=api.paths[root+suffix];assert.ok(route.get);assert.equal(route.post,undefined);assert.equal(route.get.security,undefined);assert.equal(route.get.parameters.some((p:any)=>['to','providerId','approved','retry','delivered','leaseToken'].includes(p.name)),false);}

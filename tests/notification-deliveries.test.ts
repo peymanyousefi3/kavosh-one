@@ -14,22 +14,116 @@ import { spawn } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const root='me/notification-deliveries';
-async function fixture(options:{throughSchema?:number}={}){
+async function fixture(options:{throughSchema?:number;autoPolicy?:boolean}={}){
  const f=await notificationFixture(options),sent:{channel:string;to:string;subject?:string;text:string}[]=[];
  const transport:MessageTransport={channels:['email','sms'],async email(m){sent.push({channel:'email',...m});return {provider:'smtp',providerMessageId:'<synthetic-message@example.test>',providerStatus:'accepted',providerAccepted:true,deliveryConfirmed:false};},async sms(m){sent.push({channel:'sms',...m});return {provider:'twilio',providerMessageId:'SM'+'a'.repeat(32),providerStatus:'accepted',providerAccepted:true,deliveryConfirmed:false};}};
  const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_message_worker');return c;}};
- async function work(t:MessageTransport|null=transport,academies=[f.a],signal?:AbortSignal){try{return await processOneMessage(database,academies,a=>a===f.a?t:null,signal);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
+ async function configure(patch:Record<string,unknown>={},as='master'){const before=await f.request('automations/delivery-policy');assert.equal(before.response.status,200,JSON.stringify(before.body));return f.request('automations/delivery-policy',{expectedVersion:before.body.data.version,definition:{enabled:true,maxDailyEmailRequests:1000,maxDailySmsRequests:1000,maxHourlyRequestsPerRecipient:100,...before.body.data.definition,...patch},reason:'Synthetic explicitly reviewed sending policy'},as);}
+ async function enablePolicy(){const current=await f.request('automations/delivery-policy');assert.equal(current.response.status,200,JSON.stringify(current.body));if(current.body.data.version===0)assert.equal((await configure()).response.status,200);}
+ async function work(t:MessageTransport|null=transport,academies=[f.a],signal?:AbortSignal){if(options.autoPolicy!==false)await enablePolicy();try{return await processOneMessage(database,academies,a=>a===f.a?t:null,signal);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}}
  async function optIn(as='staff',channels=['email','sms'],locale='fr'){const old=await f.request('me/notification-preferences',undefined,as),r=await f.request('me/notification-preferences',{expectedVersion:old.body.data.version,emailEnabled:channels.includes('email'),smsEnabled:channels.includes('sms'),locale,acknowledgedNoticeVersion:1},as);assert.ok([200,201].includes(r.response.status),JSON.stringify(r.body));return r;}
  async function queue(channels=['email','sms'],code='OUTBOUND'){
   const r=await f.rule({actions:[{...f.definition.actions[0],channels,body:{en:'English update',fr:'Mise à jour', 'zh-CN':'通知'}}],execution:{...f.definition.execution,maxDailySms:100}},code),event=await f.source(),result=await f.dispatch(r.id,event.id);assert.equal(result.response.status,201,JSON.stringify(result.body));return {rule:r,event,result};
  }
- return {...f,sent,transport,database,work,optIn,queue};
+ if(options.autoPolicy!==false&&(!options.throughSchema||options.throughSchema>=236))await enablePolicy();
+ return {...f,sent,transport,database,work,optIn,queue,configure};
 }
 type F=Awaited<ReturnType<typeof fixture>>;
 const monitoring='automations/deliveries';
 async function allowMonitoring(f:F,role=f.managerRole){await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'notification-deliveries.view','allow')",[f.a,role]);}
 function check(name:string,run:(f:F)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 function noSecrets(v:unknown){assert.doesNotMatch(JSON.stringify(v),/example[.]test|[+]1647|owner_epoch|contact_epoch|lease_token|provider_id|auth_user_id|Mise à jour/);}
+
+test('operational sending defaults off without a reviewed policy and paused queued notices resume without changing consent',async()=>{
+ const f=await fixture({autoPolicy:false});try{
+  await f.optIn('staff',['email']);await f.queue(['email']);assert.equal((await f.work()).claimed,false);assert.equal((await f.request('automations/delivery-policy')).body.data.version,0);assert.equal((await f.pg.query('SELECT * FROM public.operational_send_reservations')).rows.length,0);
+  assert.equal((await f.configure()).response.status,200);assert.equal((await f.work()).outcome,'accepted');assert.equal(f.sent.length,1);
+  assert.equal((await f.configure({enabled:false})).response.status,200);await f.queue(['email'],'PAUSED_NOTICE');assert.equal((await f.work()).claimed,false);assert.equal(f.sent.length,1);assert.equal((await f.pg.query("SELECT count(*)::int n FROM public.notification_deliveries WHERE status='queued'")).rows[0].n,1);
+  assert.equal((await f.configure({enabled:true})).response.status,200);assert.equal((await f.work()).outcome,'accepted');assert.equal(f.sent.length,2);const usage=await f.request('automations/delivery-policy/usage');assert.equal(usage.body.data.emailRequests,'2');assert.equal(usage.body.requestsAreNotCarrierSegments,true);assert.equal(usage.body.chargesCalculated,false);noSecrets(usage.body);
+ }finally{await f.pg.close();}
+});
+
+check('academy daily send limits span different rules and separate email SMS requests without hiding waiting jobs',async f=>{
+ await f.configure({maxDailyEmailRequests:1,maxDailySmsRequests:1});await f.optIn('staff');await f.optIn('manager');await f.queue(['email','sms'],'DAILY_FIRST');await f.queue(['email','sms'],'DAILY_SECOND');
+ let n=0;for(let i=0;i<8;i++){const r=await f.work();if(!r.claimed)break;assert.equal(r.outcome,'accepted');n++;}assert.equal(n,2);assert.equal(f.sent.filter(v=>v.channel==='email').length,1);assert.equal(f.sent.filter(v=>v.channel==='sms').length,1);
+ const usage=await f.request('automations/delivery-policy/usage');assert.equal(usage.body.data.emailRequests,'1');assert.equal(usage.body.data.smsRequests,'1');assert.equal((await f.pg.query("SELECT count(*)::int n FROM public.notification_deliveries WHERE status='queued'")).rows[0].n,6);assert.equal((await f.work()).claimed,false);
+});
+
+check('recipient rolling-hour limit combines channels across rules while other recipients can still receive messages',async f=>{
+ await f.configure({maxHourlyRequestsPerRecipient:1});await f.optIn('staff');await f.optIn('manager');await f.queue(['email','sms'],'HOUR_FIRST');await f.queue(['email','sms'],'HOUR_SECOND');
+ assert.equal((await f.work()).outcome,'accepted');assert.equal((await f.work()).outcome,'accepted');assert.equal((await f.work()).claimed,false);assert.equal(f.sent.length,2);
+ assert.deepEqual((await f.pg.query<{n:string}>('SELECT count(*)::text n FROM public.operational_send_reservations GROUP BY person_id ORDER BY person_id')).rows,[{n:'1'},{n:'1'}]);
+ const person=f.actors.staff.person;assert.equal((await f.pg.query<{ok:boolean}>("SELECT public.operational_send_allowed($1,$2,'email',(SELECT recorded_at+interval '1 hour' FROM public.operational_send_reservations WHERE person_id=$2)) ok",[f.a,person])).rows[0].ok,true,'Exact native hour boundary must not lose microseconds');
+ assert.equal((await f.pg.query<{ok:boolean}>("SELECT public.operational_send_allowed($1,$2,'email',(SELECT recorded_at+interval '59 minutes 59 seconds' FROM public.operational_send_reservations WHERE person_id=$2)) ok",[f.a,person])).rows[0].ok,false);
+});
+
+test('two real preclaimed senders cannot bypass the final native academy cap even when both claims saw free capacity',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture(),clients:Awaited<ReturnType<Database['connect']>>[]=[];try{
+  await f.configure({maxDailyEmailRequests:1});await f.optIn('staff',['email']);await f.optIn('manager',['email']);await f.queue(['email']);
+  const leases:{id:string;lease_token:string}[]=[];for(let i=0;i<2;i++){const c=await f.database.connect();clients.push(c);const lease=(await c.query<{id:string;lease_token:string}>('SELECT * FROM public.claim_notification_delivery($1::jsonb)',[JSON.stringify([{academy_id:f.a,channels:['email']}])])).rows[0];assert.ok(lease);leases.push(lease);}assert.notEqual(leases[0].id,leases[1].id);
+  const begin=async(c:typeof clients[number],lease:typeof leases[number])=>{await c.query('BEGIN');try{await c.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true)",[f.a]);const p=(await c.query<{data:{channel?:string;deferred?:boolean}}>('SELECT public.begin_notification_delivery($1,$2) data',[lease.id,lease.lease_token])).rows[0].data;await c.query('COMMIT');return p;}catch(e){await c.query('ROLLBACK');throw e;}};
+  const result=await Promise.all(clients.map((c,i)=>begin(c,leases[i])));assert.equal(result.filter(p=>p.channel==='email').length,1);assert.equal(result.filter(p=>p.deferred===true).length,1);assert.equal((await f.pg.query('SELECT * FROM public.operational_send_reservations')).rows.length,1);assert.equal(f.sent.length,0,'This checks native handoff reservations,not provider IO');
+ }finally{for(const c of clients){await c.query('ROLLBACK');c.release();}await f.pg.close();}
+});
+
+check('rejected and uncertain provider attempts consume conservative handoff capacity and are never automatically refunded or repeated',async f=>{
+ await f.configure({maxDailyEmailRequests:1});await f.optIn('staff',['email']);await f.queue(['email'],'CAP_REJECTED');let attempts=0;
+ const rejected={...f.transport,async email(){attempts++;throw new MessageDeliveryError('rejected','SYNTHETIC_REJECTION');}};assert.equal((await f.work(rejected)).outcome,'failed');assert.equal(attempts,1);
+ await f.queue(['email'],'CAP_WAITING');assert.equal((await f.work(rejected)).claimed,false);assert.equal(attempts,1);assert.equal((await f.request('automations/delivery-policy/usage')).body.data.emailRequests,'1');
+ await f.configure({maxDailyEmailRequests:2});const uncertain={...f.transport,async email(){attempts++;throw new Error('SYNTHETIC_UNCERTAIN');}};assert.equal((await f.work(uncertain)).outcome,'unknown');assert.equal(attempts,2);assert.equal((await f.request('automations/delivery-policy/usage')).body.data.emailRequests,'2');assert.equal((await f.work(uncertain)).claimed,false);assert.equal(attempts,2);
+});
+
+check('sending policy needs full-school explicit grants and upper human approval with exact versions immutable history and tenant isolation',async f=>{
+ const path='automations/delivery-policy';for(const suffix of ['', '/usage','/history'])assert.equal((await f.request(path+suffix,undefined,'manager')).response.status,403);
+ for(const cap of ['delivery-policy.view','delivery-policy.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.managerRole,cap]);assert.equal((await f.request(path,undefined,'manager')).response.status,403,'A finite hub grant cannot edit a school-wide cap');
+ for(const cap of ['delivery-policy.view','delivery-policy.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.policyRole,cap]);const proposed=await f.configure({maxDailySmsRequests:2},'manager');assert.equal(proposed.response.status,202,JSON.stringify(proposed.body));assert.equal((await f.request(path)).body.data.version,1);assert.equal((await f.approve(proposed.body.approval.id,'manager')).response.status,403);assert.equal((await f.approve(proposed.body.approval.id)).response.status,200);
+ const bot=await f.configure({enabled:false},'bot');assert.equal(bot.response.status,202,JSON.stringify(bot.body));assert.equal((await f.approve(bot.body.approval.id,'bot')).response.status,403);assert.equal((await f.approve(bot.body.approval.id)).response.status,200);assert.equal((await f.request(path)).body.data.version,3);
+ const history=await f.request(path+'/history?limit=1');assert.equal(history.body.data[0].version,1);assert.equal(history.body.nextVersion,1);assert.equal((await f.request(path,undefined,'foreignMaster',{academy:f.b})).body.data.version,0);assert.equal((await f.request(path+'/usage',undefined,'foreignMaster',{academy:f.b})).body.data.emailRequests,'0');
+ for(const sql of ['UPDATE public.operational_send_policy_revisions SET version=version','DELETE FROM public.operational_send_policies'])await assert.rejects(f.pg.exec(sql),/IMMUTABLE|HEAD_REQUIRED/);
+});
+
+check('suppressed handoff reservations roll back sending before any provider request and private ledger and old bypass helper stay inaccessible',async f=>{
+ await f.optIn('staff',['email']);await f.queue(['email'],'RESERVATION_FAILURE');await f.pg.exec('CREATE FUNCTION public.suppress_send_reservation_test() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NULL;END$$;CREATE TRIGGER suppress_send_reservation_test BEFORE INSERT ON public.operational_send_reservations FOR EACH ROW EXECUTE FUNCTION public.suppress_send_reservation_test()');
+ await assert.rejects(f.work(),/SEND_RESERVATION_REQUIRED/);assert.equal(f.sent.length,0);assert.equal((await f.pg.query('SELECT * FROM public.operational_send_reservations')).rows.length,0);assert.equal((await f.pg.query('SELECT status FROM public.notification_deliveries')).rows[0].status,'preparing');
+ await f.pg.exec('DROP TRIGGER suppress_send_reservation_test ON public.operational_send_reservations;DROP FUNCTION public.suppress_send_reservation_test()');await f.queue(['email'],'RESERVATION_RECOVERY');assert.equal((await f.work()).outcome,'accepted');assert.equal(f.sent.length,1);
+ for(const role of ['kavosh_runtime','kavosh_message_worker']){await f.pg.exec('BEGIN');try{await f.pg.exec('SET LOCAL ROLE '+role);for(const sql of ['SELECT * FROM public.operational_send_reservations','SELECT public.begin_notification_delivery_before_limits(NULL,NULL)','SELECT public.operational_send_allowed(NULL,NULL,NULL,NULL)']){await f.pg.exec('SAVEPOINT private');await assert.rejects(f.pg.exec(sql),/permission denied/);await f.pg.exec('ROLLBACK TO SAVEPOINT private');}}finally{await f.pg.exec('ROLLBACK');}}
+});
+
+check('actual worker honors a native capacity deferral when a reviewed limit changes after its real claim',async f=>{
+ await f.optIn('staff',['email']);await f.queue(['email']);const connect=f.database.connect.bind(f.database);let changed=false;
+ f.database.connect=async()=>{const c=await connect();return {async query<Row>(sql:string,params?:unknown[]){const r=await c.query<Row>(sql,params);if(!changed&&sql.startsWith('SELECT * FROM public.claim_notification_delivery')&&r.rows.length){changed=true;assert.equal((await f.configure({maxDailyEmailRequests:0})).response.status,200);await c.query('SET ROLE kavosh_message_worker');}return r;},release(destroy?:boolean){c.release(destroy);}};};
+ const result=await f.work();assert.equal(changed,true);assert.equal(result.outcome,'deferred');assert.equal(result.recorded,false);assert.equal(f.sent.length,0);assert.equal((await f.pg.query('SELECT * FROM public.operational_send_reservations')).rows.length,0);assert.equal((await f.pg.query('SELECT status FROM public.notification_deliveries')).rows[0].status,'preparing');assert.equal((await f.work()).claimed,false);
+});
+
+check('modified native handoff reservation cannot move an attempt outside the quota window or reach the provider',async f=>{
+ await f.optIn('staff',['email']);await f.queue(['email']);await f.pg.exec("CREATE FUNCTION public.modify_send_reservation_test() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.recorded_at=NEW.recorded_at-interval '3 days';RETURN NEW;END$$;CREATE TRIGGER modify_send_reservation_test BEFORE INSERT ON public.operational_send_reservations FOR EACH ROW EXECUTE FUNCTION public.modify_send_reservation_test()");
+ await assert.rejects(f.work(),/SEND_RESERVATION_REQUIRED/);assert.equal(f.sent.length,0);assert.equal((await f.pg.query('SELECT * FROM public.operational_send_reservations')).rows.length,0);assert.equal((await f.pg.query('SELECT status FROM public.notification_deliveries')).rows[0].status,'preparing');assert.equal((await f.request('automations/delivery-policy/usage')).body.data.emailRequests,'0');
+});
+
+check('sending policy strict inputs and suppressed audit rollback preserve exact retry and read-only schools permit pause only',async f=>{
+ const path='automations/delivery-policy',before=(await f.request(path)).body.data,input={expectedVersion:before.version,definition:{...before.definition,maxDailySmsRequests:3},reason:'Synthetic exact sending limit review'},key=randomUUID();
+ for(const patch of [{definition:{...input.definition,maxDailySmsRequests:100001}},{definition:{...input.definition,maxHourlyRequestsPerRecipient:-1}},{definition:{...input.definition,provider:'caller override'}},{approved:true},{expectedVersion:1.5}])assert.equal((await f.request(path,{...input,...patch})).response.status,400);
+ assert.equal((await f.request(path+'?enabled=true')).response.status,400);assert.equal((await f.request(path+'/history?limit=51')).response.status,400);
+ await f.pg.exec("CREATE FUNCTION public.suppress_send_policy_audit_test() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.action='notification.delivery-policy.change' THEN RETURN NULL;END IF;RETURN NEW;END$$;CREATE TRIGGER suppress_send_policy_audit_test BEFORE INSERT ON public.audit_events FOR EACH ROW EXECUTE FUNCTION public.suppress_send_policy_audit_test()");
+ assert.equal((await f.request(path,input,'master',{key})).response.status,503);assert.equal((await f.request(path)).body.data.version,before.version);await f.pg.exec('DROP TRIGGER suppress_send_policy_audit_test ON public.audit_events;DROP FUNCTION public.suppress_send_policy_audit_test()');const saved=await f.request(path,input,'master',{key});assert.equal(saved.response.status,200,JSON.stringify(saved.body));assert.equal((await f.request(path,input,'master',{key})).response.status,409,'As with existing source-checked approvals,an obsolete policy input is not a current-policy receipt');assert.equal((await f.pg.query('SELECT * FROM public.operational_send_policy_revisions')).rows.length,2);
+ const next={...input,expectedVersion:2,definition:{...input.definition,maxDailySmsRequests:4}},nextKey=randomUUID();await f.pg.exec("CREATE FUNCTION public.suppress_send_policy_outbox_test() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.event_type='notification.delivery-policy.change' THEN RETURN NULL;END IF;RETURN NEW;END$$;CREATE TRIGGER suppress_send_policy_outbox_test BEFORE INSERT ON public.outbox_events FOR EACH ROW EXECUTE FUNCTION public.suppress_send_policy_outbox_test()");assert.equal((await f.request(path,next,'master',{key:nextKey})).response.status,503);assert.equal((await f.request(path)).body.data.version,2);await f.pg.exec('DROP TRIGGER suppress_send_policy_outbox_test ON public.outbox_events;DROP FUNCTION public.suppress_send_policy_outbox_test()');assert.equal((await f.request(path,next,'master',{key:nextKey})).response.status,200);
+ await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.configure({enabled:false})).response.status,200);assert.equal((await f.configure({enabled:true})).response.status,403);assert.equal((await f.configure({maxDailyEmailRequests:0})).response.status,403,'A read-only pause must not smuggle unrelated cap changes');assert.equal((await f.request(path)).body.data.definition.enabled,false);
+});
+
+check('upper reviewer can approve an exact pending sending pause in a read-only school without permitting a cap increase',async f=>{
+ for(const cap of ['delivery-policy.view','delivery-policy.edit'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.policyRole,cap]);
+ const pending=await f.configure({enabled:false},'manager');assert.equal(pending.response.status,202,JSON.stringify(pending.body));await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);const approved=await f.approve(pending.body.approval.id);assert.equal(approved.response.status,200,JSON.stringify(approved.body));assert.equal((await f.request('automations/delivery-policy')).body.data.definition.enabled,false);assert.equal((await f.configure({enabled:true})).response.status,403);
+});
+
+test('actual235to236 preserves delivery facts and imports only real historic handoff timestamps without inventing a sending policy',async()=>{
+ const f=await fixture({throughSchema:235,autoPolicy:false});try{
+  await f.optIn('staff',['email']);await f.queue(['email']);await f.pg.exec('BEGIN');try{
+   await f.pg.exec('SET LOCAL ROLE kavosh_message_worker');const lease=(await f.pg.query<{id:string;lease_token:string}>('SELECT * FROM public.claim_notification_delivery($1::jsonb)',[JSON.stringify([{academy_id:f.a,channels:['email']}])])).rows[0];assert.ok(lease);await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);assert.equal((await f.pg.query<{data:{channel:string}}>('SELECT public.begin_notification_delivery($1,$2) data',[lease.id,lease.lease_token])).rows[0].data.channel,'email');assert.equal((await f.pg.query<{ok:boolean}>("SELECT public.finish_notification_delivery($1,$2,'unknown',NULL,'SYNTHETIC_OUTCOME_UNKNOWN') ok",[lease.id,lease.lease_token])).rows[0].ok,true);await f.pg.exec('COMMIT');
+  }catch(e){await f.pg.exec('ROLLBACK');throw e;}
+  const snapshot=async()=>{const rows=[];for(const t of ['notification_deliveries','notification_delivery_revisions','role_permissions','audit_events','outbox_events'])rows.push((await f.pg.query('SELECT to_jsonb(x) data FROM public.'+t+' x ORDER BY to_jsonb(x)::text')).rows);return rows;},before=await snapshot();await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);
+  const reservation=(await f.pg.query<{origin:string;policy_id:string|null;same:boolean}>("SELECT s.origin,s.policy_id,s.recorded_at=(r.definition->>'changedAt')::timestamptz same FROM public.operational_send_reservations s JOIN public.notification_delivery_revisions r ON r.academy_id=s.academy_id AND r.delivery_id=s.delivery_id AND r.definition->>'status'='sending'")).rows;assert.deepEqual(reservation,[{origin:'historical_sending_state',policy_id:null,same:true}]);assert.equal((await f.request('automations/delivery-policy')).body.data.version,0);assert.equal((await f.request('automations/delivery-policy/usage')).body.data.emailRequests,'1');assert.equal((await f.work()).claimed,false);assert.equal(f.sent.length,0);
+ }finally{await f.pg.close();}
+});
 
 check('delivery supervision requires a separate explicit permission and keeps source privacy before metadata counts and paging',async f=>{
  await f.optIn();await f.queue();assert.equal((await f.request(monitoring,undefined,'manager')).response.status,403);assert.equal((await f.request(monitoring,undefined,'bot')).response.status,403);
@@ -185,6 +279,7 @@ check('a failed post-send history commit stays uncertain and is not overwritten 
 
 test('actual class reminder reaches the outbound queue but a later class cancellation prevents sending',async()=>{
  const f=await sessionNotificationFixture('session_guardians');try{
+  assert.equal((await f.request('automations/delivery-policy',{expectedVersion:0,definition:{enabled:true,maxDailyEmailRequests:100,maxDailySmsRequests:0,maxHourlyRequestsPerRecipient:10},reason:'Synthetic explicitly reviewed class reminder policy'})).response.status,200);
   const start=Temporal.Now.zonedDateTimeISO('America/Toronto').add({minutes:4}).with({second:0,millisecond:0,microsecond:0,nanosecond:0}),end=start.add({hours:1}),local=(v:typeof start)=>v.toPlainDateTime().toString({smallestUnit:'minute'});
   assert.equal((await f.changeSession(1,{kind:'reschedule',start:local(start),end:local(end)})).response.status,200);
   assert.equal((await f.request('me/notification-preferences',{expectedVersion:0,emailEnabled:true,smsEnabled:false,locale:'en',acknowledgedNoticeVersion:1},'staff')).response.status,201);
