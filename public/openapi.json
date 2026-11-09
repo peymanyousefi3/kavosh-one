@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.284.0",
+    "version": "0.285.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -55131,7 +55131,7 @@
     },
     "/api/v1/reports/payroll/costs": {
       "get": {
-        "summary": "Exact gross payroll cost flows by class,hub,student,worker,expense account,kind,month and posting/reversal. Saved highest-rate hourly allocations prevent duplicate overlapping pay. All original work and mapped account rights before filters;hourly whole-source classes and tuition original invoice/class rights also apply. Salaries/projects/bonuses remain explicitly unassigned to classes/students unless source records supply that context. Separate currencies;no net pay,cash,employer contributions,automatic shared-cost split or full profit inference.10000source events/100000allocations/10000groups per dimension/4MiB bound.",
+        "summary": "Exact gross and recorded employer payroll cost flows by class,hub,student,worker,expense account,kind,month and posting/reversal. Saved highest-rate hourly allocations prevent duplicate overlapping pay. All original work and mapped account rights before filters;hourly whole-source classes and tuition original invoice/class rights also apply. Salaries/projects/bonuses remain explicitly unassigned to classes/students unless source records supply that context. Employer contributions reuse reviewed posted expense lines and full original payrun/work/account rights,at their expense-account hub,unassigned to classes/students. Separate currencies;no net pay,cash,tax recalculation,automatic shared-cost split or full profit inference.10000source events/100000allocations/10000groups per dimension/4MiB bound.",
         "parameters": [
           {
             "name": "from",
@@ -55254,7 +55254,8 @@
                 "project",
                 "tuition_course",
                 "tuition_session",
-                "tuition_collection"
+                "tuition_collection",
+                "employer_contribution"
               ]
             }
           }
@@ -55401,7 +55402,8 @@
                 "project",
                 "tuition_course",
                 "tuition_session",
-                "tuition_collection"
+                "tuition_collection",
+                "employer_contribution"
               ]
             }
           }
