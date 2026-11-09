@@ -17,6 +17,8 @@ type Result={snapshotAt:string;sourceCount:number;target:{id:string;version:numb
 // Permissions and explicit account filters apply BEFORE source counts and
 // indexed balance lookup. Quotes,target precision and original posted balances
 // share ONE statement snapshot. More than2000selected accounts fails closed.
+// ponytail: synchronous ceiling is2000accounts;larger complete valuations
+// must use requester-bound report jobs rather than truncation or a longer wait.
 const sql=`WITH selected AS MATERIALIZED(${financialAccountSelectionSQL} AND a.kind='asset'),bounded AS MATERIALIZED(SELECT * FROM selected ORDER BY code,id LIMIT 2001),balances AS(
  SELECT a.*,coalesce(l.closing_minor,0) closing_minor FROM bounded a CROSS JOIN LATERAL(
   SELECT sum(CASE WHEN l.side='debit' THEN l.amount_minor ELSE -l.amount_minor END) closing_minor FROM public.finance_journal_lines l ${journalPointLookupSQL} WHERE l.account_id=a.id AND j.posted_on<=$5::date
