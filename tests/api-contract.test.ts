@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('recipient statements require explicit account and pinned edition,no guessed email or content authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/counterparty-statements/{id}/releases',s=api.paths[base].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['reason','recipientId','statementVersion']);assert.ok(api.paths[base].get);const w=api.paths['/api/v1/finance/counterparty-statement-releases/{id}/withdraw'].post.requestBody.content['application/json'].schema;assert.equal(w.additionalProperties,false);assert.deepEqual(Object.keys(w.properties),['reason']);for(const path of ['/api/v1/me/counterparty-statements','/api/v1/me/counterparty-statements/{id}']){assert.ok(api.paths[path].get);assert.equal(api.paths[path].post,undefined);assert.equal(api.paths[path].get.security.some((x:any)=>'botBearer'in x),false);}assert.match(api.paths['/api/v1/me/counterparty-statements/{id}'].get.summary,/later unreleased drafts/);
+});
+
 test('statement matching accepts only explicit source allocations and dated releases,never paid or bank proof overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/finance/counterparty-statements/{id}',allocate=api.paths[base+'/settlements'].post.requestBody.content['application/json'].schema;
  assert.equal(allocate.additionalProperties,false);assert.deepEqual(Object.keys(allocate.properties).sort(),['allocatedOn','amount','basis','reason','source','statementVersion']);assert.equal(allocate.properties.basis.const,'net_statement_balance');assert.equal(allocate.properties.source.additionalProperties,false);assert.deepEqual(Object.keys(allocate.properties.source.properties).sort(),['family','journalId','lineNumber']);assert.deepEqual(allocate.properties.source.properties.family.enum,['manual_balance','custody','payable']);
