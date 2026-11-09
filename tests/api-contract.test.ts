@@ -55,6 +55,12 @@ test('queued attribution exports reuse existing report jobs with exact source ch
  assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/every captured invoice/);assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/not only filtered lines/);assert.ok(api.paths['/api/v1/reports/presets/{id}/queue'].post);
 });
 
+test('expense reminders extend reviewed rules with an explicit time zone and no supplied financial source or payment authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,timing=definition.properties.expenseReminder;
+ assert.ok(timing);assert.equal(timing.additionalProperties,false);assert.deepEqual(Object.keys(timing.properties),['daysFromDue','timeZone']);assert.deepEqual(timing.required,['daysFromDue','timeZone']);assert.equal(timing.properties.daysFromDue.minimum,-365);assert.equal(timing.properties.daysFromDue.maximum,3650);assert.equal(timing.properties.timeZone.maxLength,100);assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('expense_due'));
+ for(const name of ['now','paid','approved','amount','accountId','sourceSnapshot','forceSend'])assert.equal(timing.properties[name],undefined);assert.match(api.paths['/api/v1/notifications/{id}'].get.summary,/supplier\/reimbursement bill/);
+});
+
 test('tuition reminders extend existing rule and event APIs with civil-day bounds and no client clock or financial authority overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),definition=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,timing=definition.properties.tuitionReminder;
  assert.ok(timing);assert.equal(timing.additionalProperties,false);assert.deepEqual(Object.keys(timing.properties),['daysFromDue']);assert.equal(timing.properties.daysFromDue.minimum,-365);assert.equal(timing.properties.daysFromDue.maximum,3650);assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('tuition_due'));assert.match(api.paths['/api/v1/notifications/{id}'].get.summary,/reading never marks payment/);

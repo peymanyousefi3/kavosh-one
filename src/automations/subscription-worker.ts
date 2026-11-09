@@ -13,6 +13,7 @@ import { lockAcademyTopology } from '../modules/academy.ts';
 import { nextSessionReminder } from './session-reminders.ts';
 import { nextSessionFollowUp } from './session-follow-up.ts';
 import { nextTuitionReminder,watchesTuitionReminders } from './tuition-reminders.ts';
+import { nextExpenseReminder,watchesExpenseReminders } from './expense-reminders.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),academies=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
 type Lease={id:string;academy_id:string;lease_token:string};
@@ -34,11 +35,11 @@ export async function processOneSubscription(database:Database,allowedAcademies:
    const ctx:ApiContext={db,credential:c,grants:await loadGrants(db,c),request:new Request('https://internal.invalid'),path:'',requestId:randomUUID()};await lockApprovalWrites(ctx);
    const header=await automationRuleHeader(ctx,sub.rule_id);requireScope(permissionScope(ctx,'automations.execute'),header.hub_id??undefined);
    const revision=await automationRuleRevision(ctx,header),definition=automationDefinition.parse(revision.definition);
-   if(watchesTuitionReminders(definition))await lockFinanceBook(ctx);
+   if(watchesTuitionReminders(definition)||watchesExpenseReminders(definition))await lockFinanceBook(ctx);
    await lockAcademyTopology(ctx);
    const version=(await db.query<{version:number}>('SELECT version FROM public.automation_rules WHERE id=$1 FOR SHARE',[header.id])).rows[0]?.version;if(version!==header.version)throw new ApiError(409,'AUTOMATION_RULE_CHANGED');
-   const event=await nextTuitionReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionFollowUp(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionReminder(ctx,lease.id,lease.lease_token,header,definition)??await pendingSubscriptionEvent(ctx,lease.id,sub.initial_snapshot,sub.activation_transaction);let outcome:'idle'|'ignored'|'queued'=event?'ignored':'idle',jobId:string|null=null;
-   if(event&&(!['session','report_schedule','calendar_event','tuition_due'].includes(event.source_kind)||event.source_current)&&definition.execution.mode==='automatic'&&simulateRule(definition,header.hub_id,ruleSample.parse(event.projection),z.enum(['en','fr','zh-CN']).parse(sub.locale)).eligibleByConfiguration){
+   const event=await nextExpenseReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextTuitionReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionFollowUp(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionReminder(ctx,lease.id,lease.lease_token,header,definition)??await pendingSubscriptionEvent(ctx,lease.id,sub.initial_snapshot,sub.activation_transaction);let outcome:'idle'|'ignored'|'queued'=event?'ignored':'idle',jobId:string|null=null;
+   if(event&&(!['session','report_schedule','calendar_event','tuition_due','expense_due'].includes(event.source_kind)||event.source_current)&&definition.execution.mode==='automatic'&&simulateRule(definition,header.hub_id,ruleSample.parse(event.projection),z.enum(['en','fr','zh-CN']).parse(sub.locale)).eligibleByConfiguration){
     const path='automations/rules/'+header.id+'/queue',request=new Request('https://internal.invalid/api/v1/'+path,{method:'POST',headers:{'content-type':'application/json','idempotency-key':randomUUID()},body:JSON.stringify({eventId:event.id,expectedVersion:header.version,locale:sub.locale})});
     const reply=await notificationJobs({...ctx,path,request});if(!reply||![200,202].includes(reply.status))throw new Error('SUBSCRIPTION_QUEUE_FAILED');jobId=uuid.parse((reply.body as {data:{id:string}}).data.id);outcome='queued';
    }
