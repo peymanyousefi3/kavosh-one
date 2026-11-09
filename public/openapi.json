@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.310.0",
+    "version": "0.311.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5885,7 +5885,8 @@
                 "work_signature",
                 "tuition_due",
                 "expense_due",
-                "payroll_due"
+                "payroll_due",
+                "counterparty_statement"
               ]
             }
           }
@@ -6447,6 +6448,19 @@
                                   "properties": {
                                     "kind": {
                                       "type": "string",
+                                      "const": "statement_recipient"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
                                       "const": "statement_worker"
                                     }
                                   },
@@ -6975,6 +6989,19 @@
                                     "kind": {
                                       "type": "string",
                                       "const": "session_staff"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "kind": {
+                                      "type": "string",
+                                      "const": "statement_recipient"
                                     }
                                   },
                                   "required": [

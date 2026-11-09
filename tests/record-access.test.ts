@@ -3,6 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { scopeFor,scopeContains,scopeAllowsRef,type Scope,type ResourceRef,type Capability } from '../src/core/policy.ts';
+import {readFile} from 'node:fs/promises';
+
+test('actual278to279 closes missing native permission authority while preserving valid scopes and function security',async()=>{
+ const f=await operationsFixture({throughSchema:278});try{const target={all:false,hubs:[],people:[{id:f.actors.staff.person,hubId:f.hub}]},sql="SELECT oid,proowner,proacl,proconfig,provolatile,prolang FROM pg_proc WHERE oid=ANY(ARRAY['public.scope_contains(jsonb,jsonb)'::regprocedure,'public.scope_contains_records(jsonb,jsonb)'::regprocedure]) ORDER BY oid",props=(await f.pg.query(sql)).rows;
+ assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.scope_contains(NULL::jsonb,$1::jsonb) ok',[JSON.stringify(target)])).rows[0].ok,true,'reproduce actual legacy NULL-positive person containment');
+ await f.pg.exec(await readFile(new URL('../db/migrations/279_scope_containment_fail_closed.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query(sql)).rows,props);
+ for(const source of [null,[],1,true,{}, {all:'true',hubs:[]},{all:true,hubs:null},{all:false,hubs:[],people:[]}])assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,$2::jsonb) ok',[source===null?null:JSON.stringify(source),JSON.stringify(target)])).rows[0].ok,false,JSON.stringify(source));
+ assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.scope_contains_records(NULL::jsonb,$1::jsonb) ok',[JSON.stringify(target)])).rows[0].ok,false);assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,NULL::jsonb) ok',[JSON.stringify({all:true,hubs:[]})])).rows[0].ok,false);
+ for(const source of [{all:true,hubs:[]},{all:false,hubs:[f.hub]},{all:false,hubs:[],people:target.people}])assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,$2::jsonb) ok',[JSON.stringify(source),JSON.stringify(target)])).rows[0].ok,true);
+ }finally{await f.pg.close();}
+});
 
 test('selected-student received-report scope retains denials for historical source hubs outside the student current hub',()=>{
  const deniedHub=randomUUID(),currentHub=randomUUID(),student=randomUUID(),classId=randomUUID(),capability='received-reports.view' as const;
