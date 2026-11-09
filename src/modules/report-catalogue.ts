@@ -30,8 +30,8 @@ import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowP
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
 type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
 const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
- {contracts:tuitionIncomeReportContract,handler:tuitionIncomeReport,capability:'financial-reports.view'},
- {contracts:expenseCostReportContract,handler:expenseCostReport,capability:'financial-reports.view'},
+ {contracts:tuitionIncomeReportContract,handler:tuitionIncomeReport,capability:'financial-reports.view',csv:true},
+ {contracts:expenseCostReportContract,handler:expenseCostReport,capability:'financial-reports.view',csv:true},
  {contracts:t4WorkingPaperContract,handler:t4WorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:paidTaxYearReportContract,handler:paidTaxYtd,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:payrollRegisterContract,handler:payrollRegister,capability:'payrun-postings.view',csv:true},

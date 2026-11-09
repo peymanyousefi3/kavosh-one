@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.275.0",
+    "version": "0.276.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -51773,6 +51773,143 @@
         }
       }
     },
+    "/api/v1/reports/finance/expense-costs/export": {
+      "get": {
+        "summary": "Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "classIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "studentIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "payeeIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "countryIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "regionIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "cityIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/finance/outlook": {
       "get": {
         "summary": "Single-statement financial outlook with baseline cash/AR/AP,future journals,horizon-reserved settlements and unmatched cost plans. Optional payrollCash=recorded_net adds exact permitted original wage-liability buckets at approved planned pay dates or explicit report-only payrollDates overrides(not before posting/reopening),after reserving all horizon payments/corrections. Potential same-person selected-currency bill/plan overlap is unscheduled unless payrollOverlap=separate_liabilities explicitly selects that scenario;not automatic matching. Payroll funding banks,unposted/scheduled gross and statutory remittances remain unassigned/excluded. Full source/current geographic rights;not complete cash/accrual forecasting,bank verification or payment authorization.",
@@ -53235,6 +53372,157 @@
         "responses": {
           "200": {
             "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/finance/tuition-income/export": {
+      "get": {
+        "summary": "Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "classIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "studentIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "billToIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "countryIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "regionIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "cityIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "recognition",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "type": "string",
+              "enum": [
+                "all",
+                "earned",
+                "deferred"
+              ]
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "201": {
             "description": "Created within granted rights or master self-approval"

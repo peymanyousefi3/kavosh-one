@@ -10,6 +10,7 @@ import { processOneReport } from '../src/reports/export-worker.ts';
 import { processOneReportSchedule } from '../src/reports/schedule-worker.ts';
 import type { Database } from '../src/core/database.ts';
 import { performanceReportCsv } from '../src/modules/student-performance-export.ts';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 
 async function fixture(throughSchema?:number){
  const f=await reportFixture(throughSchema),student=f.actors.peer.person;
@@ -68,6 +69,10 @@ test('performance CSV migration preserves actual old queued finance jobs and sou
  const f=await fixture(237);try{assert.equal((await f.change()).response.status,200);const q=await f.request('reports/jobs',{reportId:'finance.trial-balance',parameters:{through:'2026-12-31'}});assert.equal(q.response.status,202,JSON.stringify(q.body));const preset=await f.request('reports/presets',{anchor:{kind:'class',id:f.c.id},definition:{name:'Old progress report',reportId:'learning.student-performance',parameters:performanceRange},reason:'Existing reviewed absolute filters'});assert.equal(preset.response.status,201);
  const tables=['student_feedback','student_feedback_revisions','report_jobs','report_job_results','report_presets','report_preset_revisions','audit_events','outbox_events','role_permissions'],before=[];for(const name of tables)before.push((await f.pg.query('SELECT * FROM public.'+name+' ORDER BY 1,2')).rows);const signatures=['public.report_preset_definition_valid(jsonb)','public.report_job_guard()','public.report_job_preset_guard()','public.report_result_context_valid(text,jsonb)'],helpers=(await f.pg.query('SELECT oid,proowner,proacl,proconfig,provolatile FROM pg_proc WHERE oid=ANY($1::regprocedure[]) ORDER BY oid',[signatures])).rows;
  await f.pg.exec(await readFile(new URL('../db/migrations/238_performance_report_jobs.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,238);for(const[i,name]of tables.entries())assert.deepEqual((await f.pg.query('SELECT * FROM public.'+name+' ORDER BY 1,2')).rows,before[i],name);assert.deepEqual((await f.pg.query('SELECT oid,proowner,proacl,proconfig,provolatile FROM pg_proc WHERE oid=ANY($1::regprocedure[]) ORDER BY oid',[signatures])).rows,helpers);
+ // Historical preservation assertions above precede real remaining migrations;
+ // the current worker must still refuse a database left at revision238.
+ await assert.rejects(()=>workPerformance(f),/SCHEMA_NOT_CURRENT/);
+ await upgradeToCurrent(f.pg);
  assert.equal((await workPerformance(f)).outcome,'succeeded');const old=await f.request('reports/jobs/'+q.body.data.id+'/download');assert.equal(old.response.status,200,JSON.stringify(old.body));assert.match(old.body,/posted_trial_balance/);const next=await f.request('reports/jobs',{reportId:'learning.student-performance',parameters:performanceRange});assert.equal(next.response.status,202);assert.equal((await workPerformance(f)).outcome,'succeeded');assert.equal((await f.request('reports/jobs/'+next.body.data.id+'/download')).response.status,200);
  }finally{await f.pg.close();}
 });

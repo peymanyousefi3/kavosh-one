@@ -1,0 +1,41 @@
+import { z } from 'zod';
+import type { ApiContext,Reply } from '../core/api.ts';
+import { ApiError } from '../core/policy.ts';
+import { csvRow,csvText } from '../core/csv.ts';
+import { formatMoneyTotal,readMinorUnits } from '../core/money.ts';
+import type { ResolvedReportWindow } from '../core/report-window.ts';
+import { expenseCostReport,expenseCostReportContract } from './expense-cost-report.ts';
+import { tuitionIncomeReport,tuitionIncomeReportContract } from './tuition-income-report.ts';
+
+const specs={
+ posted_expense_cost_assignments:{measures:['net','tax','recoverableTax','nonRecoverableTax','expense','gross'],dimensions:['hub','class','student','account','payee','month','event'],count:'costLineEvents'},
+ posted_tuition_invoice_attribution:{measures:['netBillings','earnedInvoiceRevenue','deferredBillings','chargedTax','grossBillings'],dimensions:['hub','class','student','account','recognition','month','event'],count:'documentEvents'}
+} as const;
+const money=z.object({minor:z.string().max(256).regex(/^-?\d+$/),amount:z.string().max(300).regex(/^-?\d+(?:\.\d+)?$/)}).strict();
+type Money=z.infer<typeof money>;
+const base={key:z.string().max(100).nullable(),currencyId:z.string().uuid(),currencyCode:z.string().min(1).max(32),unitScale:z.number().int().min(0).max(18)};
+const schema=z.looseObject({report:z.enum(['posted_expense_cost_assignments','posted_tuition_invoice_attribution']),snapshotAt:z.string().min(1).max(100),filters:z.looseObject({from:z.iso.date(),through:z.iso.date()}),currencies:z.array(z.unknown()).max(10000),charts:z.record(z.string(),z.array(z.unknown()).max(10000))});
+type Row={key:string|null;currencyId:string;currencyCode:string;unitScale:number;[key:string]:unknown};
+type Provenance={id:string;version:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}};
+const metadata=['report','snapshotAt','filters','coverage','sourceBasis','dateBasis','geographyBasis','expenseBasis','sharedCostPolicy','currencyConversion','privateBodiesIncluded','payrollIncluded','manualJournalsIncluded','profitDetermined','cashPaidDetermined','inventoryStatusChangesExpense','additionalLedgerPosting','chargedTaxIsRevenue','paymentsIncluded','deferredBalanceDetermined','subsequentRecognitionJournalsIncluded','otherIncomeIncluded'] as const;
+function invalid():never{throw new Error('ATTRIBUTION_EXPORT_INCOMPLETE');}
+// Source handlers already return complete bounded aggregates from one SQL
+// statement. Reuse them;do not sum paginated screens or query money again.
+export function attributionReportCsv(raw:unknown,provenance?:Provenance):Reply{
+ const d=schema.parse(raw),spec=specs[d.report],rowSchema=z.object({...base,[spec.count]:z.number().int().positive().max(100000),...Object.fromEntries(spec.measures.map(k=>[k,money]))}).strict(),currencies=d.currencies.map(r=>rowSchema.parse(r) as Row),charts=Object.fromEntries(Object.entries(d.charts).map(([k,rows])=>[k,rows.map(r=>rowSchema.parse(r) as Row)]));
+ if(Object.keys(charts).length!==spec.dimensions.length||spec.dimensions.some(k=>!charts[k]))invalid();
+ const totals=new Map<string,Row>();
+ function values(r:Row){const amounts=new Map<string,bigint>();for(const k of spec.measures){const v=r[k] as Money,n=readMinorUnits(v.minor);if(formatMoneyTotal(n,r.unitScale)!==v.amount)invalid();amounts.set(k,n);}const n=(k:string)=>amounts.get(k)!;
+  if(d.report==='posted_expense_cost_assignments'?(n('net')+n('tax')!==n('gross')||n('recoverableTax')+n('nonRecoverableTax')!==n('tax')||n('net')+n('nonRecoverableTax')!==n('expense')):(n('netBillings')+n('chargedTax')!==n('grossBillings')||n('earnedInvoiceRevenue')+n('deferredBillings')!==n('netBillings')))invalid();return amounts;
+ }
+ for(const c of currencies){if(c.key!==null||totals.has(c.currencyId))invalid();values(c);totals.set(c.currencyId,c);}
+ for(const dim of spec.dimensions){const seen=new Set<string>(),sums=new Map<string,{count:number;money:Map<string,bigint>}>();for(const r of charts[dim]){const total=totals.get(r.currencyId),key=JSON.stringify([r.currencyId,r.key]);if(!total||total.currencyCode!==r.currencyCode||total.unitScale!==r.unitScale||seen.has(key))invalid();seen.add(key);const sum=sums.get(r.currencyId)??{count:0,money:new Map(spec.measures.map(k=>[k,0n]))};sum.count+=r[spec.count] as number;for(const[k,v]of values(r))sum.money.set(k,sum.money.get(k)!+v);sums.set(r.currencyId,sum);}for(const[id,c]of totals){const sum=sums.get(id);if(!sum||sum.count!==c[spec.count])invalid();for(const k of spec.measures)if(sum.money.get(k)!==readMinorUnits((c[k] as Money).minor))invalid();}}
+ const header=['section','field','value','dimension','group_key','group_assigned','currency_id','currency_code','unit_scale','event_count','amount_minor','amount'],lines:string[]=[];let bytes=3;
+ const append=(row:(string|number|boolean|null|undefined)[])=>{const line=csvRow(Array.from({length:header.length},(_,i)=>row[i]))+'\r\n';bytes+=Buffer.byteLength(line);if(bytes>4_194_304)throw new ApiError(422,'ATTRIBUTION_EXPORT_REQUIRES_BACKGROUND_JOB');lines.push(line);};append(header);
+ const meta=(key:string,value:unknown)=>{if(value!==undefined)append(['metadata',key,csvText(typeof value==='string'?value:JSON.stringify(value))]);};for(const key of metadata)meta(key,d[key]);meta('exportCompleteness','complete_permitted_report_within_limits');meta('numericPrecisionPolicy','Money/minor units are exact decimal text;import as text to preserve precision.');meta('textPolicy','Formula-like free text has a visible text: prefix;source records unchanged.');meta('unassignedPolicy','Blank group with group_assigned=false is recorded unassigned context,not missing money.');if(provenance){meta('presetId',provenance.id);meta('presetVersion',provenance.version);meta('dateWindow',provenance.dateWindow);}
+ const emit=(section:string,dimension:string,r:Row)=>{for(const k of spec.measures){const m=r[k] as Money;append([section,k,'',dimension,r.key===null?'':csvText(r.key),r.key!==null,r.currencyId,csvText(r.currencyCode),r.unitScale,r[spec.count] as number,m.minor,m.amount]);}};for(const c of currencies)emit('currency_total','total',c);for(const dim of spec.dimensions)for(const r of charts[dim])emit('chart',dim,r);
+ return {status:200,body:'\uFEFF'+lines.join(''),csv:{filename:`${d.report==='posted_expense_cost_assignments'?'expense-costs':'tuition-income'}-${d.filters.from}-${d.filters.through}.csv`}};
+}
+export async function completeAttributionExport(ctx:ApiContext,provenance?:Provenance){const r=ctx.path==='reports/finance/expense-costs'?await expenseCostReport(ctx):ctx.path==='reports/finance/tuition-income'?await tuitionIncomeReport(ctx):null;if(!r||r.status!==200||!r.body||typeof r.body!=='object'||!('data'in r.body))throw new Error('ATTRIBUTION_REPORT_INVALID');return attributionReportCsv(r.body.data,provenance);}
+export async function attributionReportExport(ctx:ApiContext):Promise<Reply|null>{if(!/^reports\/finance\/(expense-costs|tuition-income)\/export$/.test(ctx.path))return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const path=ctx.path.slice(0,-7),url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;return completeAttributionExport({...ctx,path,request:new Request(url)});}
+export const attributionReportExportContract=[...expenseCostReportContract,...tuitionIncomeReportContract].map(c=>({path:c.path+'/export',method:'get' as const,summary:'Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.',querySchema:c.querySchema,responseContentType:'text/csv' as const}));
