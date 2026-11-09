@@ -4,13 +4,13 @@ import { test } from 'node:test';
 import Stripe from 'stripe';
 import { verifiedStripeEvent,stripePaymentEventTypes } from '../src/integrations/stripe-event.ts';
 import { configuredStripeWebhook,stripeConnectionTarget } from '../src/integrations/stripe-webhook-config.ts';
-import { paymentConnection,paymentEvent,stripeHeader,stripeTestSecret } from './stripe-fixture.ts';
+import { paymentConnection,paymentEvent,stripeHeader,stripeTestSecret,generateStripeTestSecret } from './stripe-fixture.ts';
 
 test('official SDK verifies exact bytes without credentials or network and extracts no card, money, customer or invoice claims',()=>{
  const c=paymentConnection(),value=paymentEvent(),bytes=Buffer.from(JSON.stringify(value)),header=Stripe.webhooks.generateTestHeaderString({payload:bytes.toString(),secret:stripeTestSecret});
  const p=verifiedStripeEvent(bytes,header,c);assert.equal(p.eventId,value.id);assert.equal(p.resourceId,value.data.object.id);assert.equal(p.payloadBytes,bytes.length);assert.doesNotMatch(JSON.stringify(p),/PRIVATE|customer|99999|academyId|paid|amount/);
  assert.throws(()=>verifiedStripeEvent(Buffer.from(JSON.stringify(value,null,2)),header,c),{code:'INVALID_STRIPE_SIGNATURE'});
- assert.equal(verifiedStripeEvent(bytes,header,{...c,secrets:['whsec_PreviousSyntheticSecret123456789',stripeTestSecret]}).eventId,value.id);
+ assert.equal(verifiedStripeEvent(bytes,header,{...c,secrets:[generateStripeTestSecret(),stripeTestSecret]}).eventId,value.id);
 });
 test('signature parser rejects missing, truncated, stale, future, duplicate and ambiguous timestamps without leaking payload',()=>{
  const c=paymentConnection(),bytes=Buffer.from(JSON.stringify(paymentEvent())),now=Date.now(),seconds=Math.floor(now/1000),valid=stripeHeader(bytes);
@@ -35,5 +35,5 @@ test('payment callback configuration is default-off, exact-versioned and forbids
  const c=paymentConnection(),env={STRIPE_WEBHOOK_ENABLED:'true',STRIPE_WEBHOOK_CONNECTIONS:JSON.stringify([c])};
  assert.equal(configuredStripeWebhook(c.connectionId,{}),null);assert.deepEqual(configuredStripeWebhook(c.connectionId,env),c);assert.equal(configuredStripeWebhook(randomUUID(),env),null);
  const rotated={...c,secrets:['rotated']};assert.equal(stripeConnectionTarget(c),stripeConnectionTarget(rotated));assert.notEqual(stripeConnectionTarget(c),stripeConnectionTarget({...c,academyId:randomUUID()}));
- for(const entries of [[c,c],[c,{...paymentConnection(),secrets:c.secrets}],[c,{...paymentConnection(),accountId:c.accountId,secrets:['whsec_OtherSyntheticSecret123456789']}],[{...c,apiVersion:'2024-01-01'}],[{...c,secrets:['REPLACE_ME']}],[{...c,secrets:[stripeTestSecret,stripeTestSecret]}],[{...c,apiKey:'forbidden'}]])assert.throws(()=>configuredStripeWebhook(c.connectionId,{...env,STRIPE_WEBHOOK_CONNECTIONS:JSON.stringify(entries)}),{code:'STRIPE_WEBHOOK_NOT_CONFIGURED'});
+ for(const entries of [[c,c],[c,{...paymentConnection(),secrets:c.secrets}],[c,{...paymentConnection(),accountId:c.accountId,secrets:[generateStripeTestSecret()]}],[{...c,apiVersion:'2024-01-01'}],[{...c,secrets:['REPLACE_ME']}],[{...c,secrets:[stripeTestSecret,stripeTestSecret]}],[{...c,apiKey:'forbidden'}]])assert.throws(()=>configuredStripeWebhook(c.connectionId,{...env,STRIPE_WEBHOOK_CONNECTIONS:JSON.stringify(entries)}),{code:'STRIPE_WEBHOOK_NOT_CONFIGURED'});
 });
