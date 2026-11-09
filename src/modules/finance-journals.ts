@@ -6,17 +6,18 @@ import { parseMoney,formatMoney,readMinorUnits } from '../core/money.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { accountingDate } from './finance-periods.ts';
 import { lockFinanceBook } from '../core/finance-lock.ts';
+import { journalCounterpartyLines,retainedJournalCounterparties,prepareJournalCounterparties,insertJournalCounterparties,counterpartyJournalReviewer } from './journal-counterparties.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000);
 const line=z.object({accountId:uuid,accountVersion:version,side:z.enum(['debit','credit']),amount:text.max(80),note:text.max(500).default('')}).strict();
 const common={periodId:uuid,periodVersion:version,postedOn:accountingDate,description:text.trim().min(1).max(2000),reference:text.max(200).default(''),reason};
-const create=z.object({...common,purpose:z.enum(['activity','opening','closing']).default('activity').describe('Ordinary activity by default. Opening uses permanent accounts at the period start; closing uses income/expense/equity at its end. Purpose is immutable and inherited by exact reversals.'),lines:z.array(line).min(2).max(200)}).strict();
+const create=z.object({...common,purpose:z.enum(['activity','opening','closing']).default('activity').describe('Ordinary activity by default. Opening uses permanent accounts at the period start; closing uses income/expense/equity at its end. Purpose is immutable and inherited by exact reversals.'),lines:z.array(line).min(2).max(200),counterpartyLines:journalCounterpartyLines.optional()}).strict();
 const reverse=z.object(common).strict();
 const reversal=reverse.extend({reversesId:uuid});
 const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),periodId:uuid.optional(),accountId:uuid.optional(),from:accountingDate.optional(),through:accountingDate.optional()}).strict().refine(v=>!v.from||!v.through||v.from<=v.through);
 type Line={accountId:string;accountVersion:number;side:'debit'|'credit';amountMinor:string;note:string};
-type Account={id:string;hubId:string|null;version:number;active:boolean;kind:string;currencyId:string;currencyVersion:number;unitScale:number};
+type Account={id:string;hubId:string|null;version:number;active:boolean;kind:string;operationalRole:string;currencyId:string;currencyVersion:number;unitScale:number};
 type Period={version:number;state:string;startsOn:string;endsOn:string;closedThrough:string|null};
 function checkPostingState(input:z.infer<typeof create>|z.infer<typeof reversal>,accounts:Pick<Account,'id'|'version'|'active'|'kind'>[],p:Period,reversing:boolean){
   if(p.state!=='open')throw new ApiError(409,'OPEN_PERIOD_REQUIRED');if(p.version!==input.periodVersion)throw new ApiError(409,'PERIOD_CHANGED');if(input.postedOn<p.startsOn||input.postedOn>p.endsOn)throw new ApiError(409,'POSTING_DATE_OUTSIDE_PERIOD');if(p.closedThrough&&input.postedOn<=p.closedThrough)throw new ApiError(409,'FINANCIAL_CLOSED_THROUGH');
@@ -69,7 +70,7 @@ async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean
   if(source?.reversesId)throw new ApiError(409,'REVERSAL_OF_REVERSAL_FORBIDDEN');
   const rawLines=source?source.lines.map(l=>({...l,side:l.side==='debit'?'credit' as const:'debit' as const})):('lines' in input?input.lines:[]);
   const ids=[...new Set(rawLines.map(l=>l.accountId))].sort();
-  const read=async()=>(await ctx.db.query<Account>('SELECT id,hub_id AS "hubId",version,active,kind,currency_id AS "currencyId",currency_version AS "currencyVersion",unit_scale AS "unitScale" FROM public.finance_account_catalogue WHERE id=ANY($1::uuid[]) ORDER BY id',[ids])).rows;
+  const read=async()=>(await ctx.db.query<Account>("SELECT id,hub_id AS \"hubId\",version,active,kind,coalesce(to_jsonb(finance_account_catalogue)->>'operational_role','unclassified') AS \"operationalRole\",currency_id AS \"currencyId\",currency_version AS \"currencyVersion\",unit_scale AS \"unitScale\" FROM public.finance_account_catalogue WHERE id=ANY($1::uuid[]) ORDER BY id",[ids])).rows;
   function permitted(accounts:Account[]){
     if(accounts.length!==ids.length)throw new ApiError(404,'NOT_FOUND');
     for(const a of accounts){try{requireScope(scope(ctx,'journals.view'),a.hubId??undefined);requireScope(scope(ctx,'journals.edit'),a.hubId??undefined);requireScope(scope(ctx,'accounts.view'),a.hubId??undefined);}catch(error){if(error instanceof ApiError&&error.status===403)throw new ApiError(404,'NOT_FOUND');throw error;}}
@@ -85,7 +86,8 @@ async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean
     const key=a.currencyId,normalized=minor*10n**BigInt(18-a.unitScale);totals.set(key,(totals.get(key)??0n)+(l.side==='debit'?normalized:-normalized));lines.push({accountId:l.accountId,accountVersion:l.accountVersion,side:l.side,amountMinor:minor.toString(),note:l.note});
   }
   if([...totals.values()].some(total=>total!==0n))throw new ApiError(400,'JOURNAL_UNBALANCED');
-  return {input,source,accounts,lines,scope:accounts.some(a=>a.hubId===null)?{all:true,hubs:[]}:{all:false,hubs:[...new Set(accounts.map(a=>a.hubId!))].sort()}};
+  const tags=source?await retainedJournalCounterparties(ctx,source.id):('counterpartyLines' in input?input.counterpartyLines:undefined),counterparties=await prepareJournalCounterparties(ctx,tags,accounts,lines,source?.purpose??('purpose' in input?input.purpose:'activity'),true,checkState,Boolean(source));
+  return {input,source,accounts,lines,counterparties,scope:counterparties?.scope??(accounts.some(a=>a.hubId===null)?{all:true,hubs:[]}:{all:false,hubs:[...new Set(accounts.map(a=>a.hubId!))].sort()})};
 }
 async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown,purpose:'request'|'review'){
   const input=reversing?reversal.parse(raw):create.parse(raw),source='reversesId' in input?input.reversesId:null;
@@ -96,7 +98,8 @@ async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown,purpose
   // Only new requests need current posting-state checks. Exact receipts still
   // reauthorize every account before lookup, including after close/retirement.
   if(purpose==='request')checkPostingState(input,accounts,selectedPeriod,reversing);
-  return {journalPurposeVersion:2,period:{version:selectedPeriod.version,state:selectedPeriod.state,starts_on:selectedPeriod.startsOn,ends_on:selectedPeriod.endsOn,closedThrough:selectedPeriod.closedThrough},accounts,
+  const tags=source?await retainedJournalCounterparties(ctx,source):('counterpartyLines' in input?input.counterpartyLines:undefined),counterparties=tags?(await prepare(ctx,reversing,input,false,purpose==='request')).counterparties:undefined;
+  return {journalPurposeVersion:2,...counterparties?{counterparties}:{},period:{version:selectedPeriod.version,state:selectedPeriod.state,starts_on:selectedPeriod.startsOn,ends_on:selectedPeriod.endsOn,closedThrough:selectedPeriod.closedThrough},accounts,
     source:source?{id:source,reversedById:(await ctx.db.query<{id:string}>('SELECT id FROM public.finance_journals WHERE reverses_id=$1',[source])).rows[0]?.id??null}:null};
 }
 async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.journal.reverse'){
@@ -108,6 +111,7 @@ async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.jou
     await ctx.db.query(`INSERT INTO public.finance_journal_lines(academy_id,journal_id,line_number,account_id,account_version,side,amount_minor,note)
       SELECT $1,$2,l.ordinality::smallint,(l.value->>'accountId')::uuid,(l.value->>'accountVersion')::integer,l.value->>'side',(l.value->>'amountMinor')::numeric,l.value->>'note' FROM jsonb_array_elements($3::jsonb) WITH ORDINALITY l(value,ordinality)`,[ctx.credential.academy_id,p.target_id,JSON.stringify(lines)]);
   }catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23505')throw new ApiError(409,'JOURNAL_ALREADY_REVERSED');throw error;}
+  if(!source)await insertJournalCounterparties(ctx,p,prepared.counterparties?.tags);
   await record(ctx.db,ctx.credential,ctx.requestId,source?'finance.journal.reversed':'finance.journal.posted',p.target_id,prepared.scope.hubs.length===1?prepared.scope.hubs[0]:null,{approvalId:p.id,periodId:input.periodId,purpose:source?.purpose??('purpose' in input?input.purpose:'activity'),lineCount:lines.length,reversesId:source?.id??null,severity:'critical',hasReason:true});return journal(ctx,p.target_id);
 }
 async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
@@ -131,16 +135,22 @@ async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
  return prepared;
 }
 export const journalActions:ApprovalRegistry={
-  'finance.journal.post':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,false,input,true,false)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,false,input,purpose),apply},
-  'finance.journal.reverse':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await standaloneReversal(ctx,input,true)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,true,input,purpose),apply}
+  'finance.journal.post':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await prepare(ctx,false,input,true,false)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,false,input,purpose),authorizeReviewer:counterpartyJournalReviewer,apply},
+  'finance.journal.reverse':{requestCapability:'journals.edit',privacyCapability:'journals.edit',createdStatus:201,validate:async(ctx,id,input)=>(await standaloneReversal(ctx,input,true)).scope,dependencies:(ctx,id,input,purpose)=>dependencies(ctx,true,input,purpose),authorizeReviewer:counterpartyJournalReviewer,apply}
 };
 export async function financeJournals(ctx:ApiContext,registry:ApprovalRegistry=journalActions):Promise<Reply|null>{
-  const match=/^finance\/journals(?:\/([^/]+)(?:\/(reverse))?)?$/.exec(ctx.path);if(!match)return null;
+  const match=/^finance\/journals(?:\/([^/]+)(?:\/(reverse|counterparties))?)?$/.exec(ctx.path);if(!match)return null;
+  const search=new URL(ctx.request.url).searchParams;if([...search].length!==new Set(search.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
   const id=match[1]?uuid.parse(match[1]):null,section=match[2];
   if(ctx.request.method==='POST'){
     z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));scope(ctx,'journals.edit');
     if(!id){const input=create.parse(await jsonBody(ctx.request,262144));await prepare(ctx,false,input,false,false);return propose(ctx,registry,'finance.journal.post',null,0,input);}
     if(section!=='reverse')throw new ApiError(405,'METHOD_NOT_ALLOWED');const input={...reverse.parse(await jsonBody(ctx.request)),reversesId:id};await standaloneReversal(ctx,input,false);return propose(ctx,registry,'finance.journal.reverse',null,0,input);
+  }
+  if(ctx.request.method==='GET'&&id&&section==='counterparties'){
+    z.object({}).strict().parse(Object.fromEntries(search));const j=await journal(ctx,id),accounts=(await ctx.db.query<Account>('SELECT id,hub_id AS "hubId",kind,operational_role AS "operationalRole" FROM public.finance_account_catalogue WHERE id=ANY($1::uuid[])',[j.lines.map(l=>l.accountId)])).rows;
+    for(const a of accounts)for(const cap of ['accounts.view','ledger.view','counterparty-balances.view'] as Capability[])requireScope(scope(ctx,cap),a.hubId??undefined);
+    const tags=await retainedJournalCounterparties(ctx,id);await prepareJournalCounterparties(ctx,tags,accounts,j.lines,j.purpose,false,false,true);return {status:200,body:{data:{journalId:id,inheritedFromJournalId:j.reversesId,counterpartyLines:tags??[],classification:tags?'explicit_retained_links':'unattributed',amountsSource:'original_pinned_journal_lines',taxCalculated:false,moneyMovementPerformed:false}}};
   }
   if(ctx.request.method!=='GET'||section)throw new ApiError(405,'METHOD_NOT_ALLOWED');
   if(id){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await journal(ctx,id)}};}
@@ -149,8 +159,9 @@ export async function financeJournals(ctx:ApiContext,registry:ApprovalRegistry=j
 }
 export const journalsContract=[
   {path:'/api/v1/finance/journals',method:'get',summary:'Entirely scope-authorized immutable posted journal headers, filtered before pagination',querySchema:query},
-  {path:'/api/v1/finance/journals',method:'post',summary:'Request upper-human-reviewed exact double-entry posting balanced by pinned currency unit',schema:create},
+  {path:'/api/v1/finance/journals',method:'post',summary:'Request upper-human-reviewed exact double-entry posting balanced by pinned currency unit. Optional explicit counterpartyLines link only non-control asset/liability lines to current named external payees for loans,repayments,opening balances or reviewed adjustments;separate counterparty-balance rights and original payee boundaries apply. No name guessing,additional posting,automatic interest/tax or external money movement.',schema:create},
   {path:'/api/v1/finance/journals/{id}',method:'get',summary:'Read exact amounts and immutable account/currency snapshots of a wholly permitted journal'},
+  {path:'/api/v1/finance/journals/{id}/counterparties',method:'get',summary:'Read explicit retained external hub/person/organization balance-sheet line links under whole journal/account/ledger,counterparty-balance and payee scope. Corrections inherit original links,never guess parties from account labels. No additional journal,tax calculation or external payment.'},
   {path:'/api/v1/finance/journals/{id}/reverse',method:'post',summary:'Request one exact inverse in an open period; original posting is retained and inactive original accounts may be cleared',schema:reverse}
 ] as const;
 export { prepare as prepareJournal,dependencies as journalDependencies,apply as applyJournal };

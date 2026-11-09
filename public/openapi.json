@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.302.0",
+    "version": "0.303.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -21254,7 +21254,7 @@
         }
       },
       "post": {
-        "summary": "Request upper-human-reviewed exact double-entry posting balanced by pinned currency unit",
+        "summary": "Request upper-human-reviewed exact double-entry posting balanced by pinned currency unit. Optional explicit counterpartyLines link only non-control asset/liability lines to current named external payees for loans,repayments,opening balances or reviewed adjustments;separate counterparty-balance rights and original payee boundaries apply. No name guessing,additional posting,automatic interest/tax or external money movement.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -21347,6 +21347,56 @@
                         "accountVersion",
                         "side",
                         "amount"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "counterpartyLines": {
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "lineNumber": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 200
+                        },
+                        "payee": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "version": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 2147483647
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "version"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "category": {
+                          "type": "string",
+                          "enum": [
+                            "loan_advance",
+                            "loan_repayment",
+                            "opening_balance",
+                            "balance_adjustment"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "lineNumber",
+                        "payee",
+                        "category"
                       ],
                       "additionalProperties": false
                     }
@@ -21622,6 +21672,37 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 100
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/finance/journals/{id}/counterparties": {
+      "get": {
+        "summary": "Read explicit retained external hub/person/organization balance-sheet line links under whole journal/account/ledger,counterparty-balance and payee scope. Corrections inherit original links,never guess parties from account labels. No additional journal,tax calculation or external payment.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           }
         ],
