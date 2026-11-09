@@ -5,6 +5,60 @@ import { readFile,readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import pg from 'pg';
 import { receiptFixture } from './receipt-fixture.ts';
+import { invoiceFixture } from './invoice-fixture.ts';
+
+async function reminderFixture(options:Parameters<typeof invoiceFixture>[0]={},futureIssue=false){
+ const f=await invoiceFixture(options);try{
+  const days=(await f.pg.query<{yesterday:string;today:string;tomorrow:string}>("SELECT to_char((statement_timestamp() AT TIME ZONE 'America/Toronto')::date-1,'YYYY-MM-DD') yesterday,to_char(statement_timestamp() AT TIME ZONE 'America/Toronto','YYYY-MM-DD') today,to_char((statement_timestamp() AT TIME ZONE 'America/Toronto')::date+1,'YYYY-MM-DD') tomorrow")).rows[0];
+  const plan=await f.request('finance/tuition-plans/'+f.plan.id+'/change',{...f.planInput,expectedVersion:1,installments:[{...f.planInput.installments[0],dueOn:days.yesterday},{...f.planInput.installments[1],dueOn:days.tomorrow}]});assert.equal(plan.response.status,200,JSON.stringify(plan.body));
+  const issued=await f.issue({planVersion:2,...futureIssue?{issuedAt:days.tomorrow+'T12:00:00Z'}:{}});assert.equal(issued.response.status,201,JSON.stringify(issued.body));const invoice=issued.body.data;
+  const collector=await f.made('finance/collectors',{hubId:f.hub,code:'REMINDER-CASH',kind:'hub',custody:'academy_funds',name:'Synthetic reminder test cash',accounts:[{id:f.cash.id,version:1}],reason:'Synthetic reminder collector'});
+  const pay=(patch:Record<string,unknown>={})=>f.request('finance/invoices/'+invoice.id+'/receipts',{amount:'20',collector:{id:collector.id,version:1},method:{id:f.method.id,version:1},holdingAccount:{id:f.cash.id,version:1},receivedAt:'2026-11-06T12:00:00Z',period:{id:f.period.id,version:1},reference:'',missingEvidenceReason:'Synthetic reviewed exception',taxTreatment:'settle_invoice',allocation:'oldest_due',reason:'Private reminder receipt review',...patch});
+  async function source(installment=1,offset=1,academy:string=f.a){await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[academy]);return(await f.pg.query<{source:Record<string,unknown>|null}>('SELECT public.tuition_reminder_source($1,$2,$3) source',[invoice.id,installment,offset])).rows[0].source;}finally{await f.pg.exec('RESET ROLE');}}
+  return {...f,days,invoice,pay,source};
+ }catch(error){await f.pg.close();throw error;}
+}
+test('tuition reminder source uses class-local due-day offsets and exact outstanding amounts without private finance data',async()=>{
+ const f=await reminderFixture();try{
+  const before=(await f.pg.query('SELECT count(*)::integer n FROM public.finance_journals')).rows[0].n,s=await f.source();assert.ok(s);assert.equal(s.outstandingMinor,'5000');assert.equal(s.reminderOn,f.days.today);assert.equal(s.dueOn,f.days.yesterday);assert.equal(s.daysFromDue,1);assert.equal(s.currencyCode,'CAD');assert.equal(s.unitScale,2);assert.ok(typeof s.sourceStamp==='string'&&/^[a-f0-9]{64}$/.test(s.sourceStamp));assert.deepEqual(await f.source(),s);
+  assert.equal(await f.source(1,0),null);assert.equal(await f.source(1,-1),null);const upcoming=await f.source(2,-1);assert.ok(upcoming);assert.equal(upcoming.outstandingMinor,'6300');assert.equal(upcoming.reminderOn,f.days.today);assert.equal(await f.source(2,0),null);
+  for(const [installment,offset]of [[0,1],[3,1],[1,3651],[1,-366]])assert.equal(await f.source(installment,offset),null);
+  for(const academy of ['',f.b])assert.equal(await f.source(1,1,academy),null);
+  assert.deepEqual(Object.keys(s).sort(),['allocatedMinor','classId','currencyCode','daysFromDue','dueOn','hubId','installment','invoiceId','outstandingMinor','plannedMinor','reminderOn','sourceStamp','studentId','timeZone','unitScale']);assert.doesNotMatch(JSON.stringify(s),/Private|email|phone|reason|account|legalName/);
+  assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.finance_journals')).rows[0].n,before);
+ }finally{await f.pg.close();}
+});
+test('tuition reminder source stops on paid or credited installments and tracks exact partial payments and receipt corrections',async()=>{
+ const f=await reminderFixture();try{
+  const initial=await f.source(),payment=await f.pay();assert.equal(payment.response.status,201,JSON.stringify(payment.body));const partial=await f.source();assert.ok(partial);assert.equal(partial.outstandingMinor,'3000');assert.notEqual(partial.sourceStamp,initial!.sourceStamp);
+  const status=await f.request('finance/invoices/'+f.invoice.id+'/installment-status');assert.equal(status.response.status,200);assert.equal(partial.outstandingMinor,'3000');assert.equal(status.body.data.installments[0].outstanding,'30.00');
+  assert.equal((await f.pay({amount:'30'})).response.status,201);assert.equal(await f.source(),null);assert.ok(await f.source(2,-1));
+  const reversed=await f.request('finance/receipts/'+payment.body.data.id+'/reverse',{period:{id:f.period.id,version:1},postedOn:'2026-11-07',reason:'Reviewed payment correction'});assert.equal(reversed.response.status,201,JSON.stringify(reversed.body));assert.equal((await f.source())!.outstandingMinor,'2000');
+  assert.equal((await f.credit(f.invoice.id)).response.status,201);assert.equal(await f.source(),null);assert.equal(await f.source(2,-1),null);
+ }finally{await f.pg.close();}
+});
+test('tuition reminder source suppresses all due notices until received but unallocated money has been reviewed',async()=>{
+ const f=await reminderFixture();try{
+  assert.ok(await f.source());const payment=await f.pay({amount:'40',allocation:'unallocated'});assert.equal(payment.response.status,201);assert.equal(await f.source(),null);assert.equal(await f.source(2,-1),null);
+  const path='finance/receipts/'+payment.body.data.id+'/allocations';assert.equal((await f.request(path,{expectedVersion:0,mode:'manual',lines:[{installment:2,amount:'40'}],reason:'Explicit reviewed second installment allocation'})).response.status,200);assert.equal((await f.source())!.outstandingMinor,'5000');assert.equal((await f.source(2,-1))!.outstandingMinor,'2300');
+  assert.equal((await f.request(path,{expectedVersion:1,mode:'manual',lines:[],reason:'Reviewed clearing'})).response.status,200);assert.equal(await f.source(),null);
+  await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal(await f.source(),null);
+ }finally{await f.pg.close();}
+});
+test('tuition reminder source never reminds for an invoice whose issue time is still in the future',async()=>{
+ const f=await reminderFixture({},true);try{assert.equal(await f.source(),null);assert.equal(await f.source(2,-1),null);}finally{await f.pg.close();}
+});
+test('tuition reminder source upgrade preserves financial histories and existing snapshot ownership and permissions',async()=>{
+ const f=await reminderFixture({throughSchema:242});try{
+  assert.equal((await f.pay()).response.status,201);const tables=['tuition_invoices','billing_documents','tuition_receipts','tuition_plan_revisions','tuition_installments','receipt_allocation_plans','receipt_allocation_revisions','receipt_allocation_lines','finance_journals','finance_journal_lines','approval_requests','audit_events','outbox_events'],before=[];
+  for(const table of tables)before.push((await f.pg.query('SELECT * FROM public.'+table+' ORDER BY 1,2')).rows);
+  const query="SELECT oid,proowner,proacl,proconfig,prosecdef,provolatile FROM pg_proc WHERE oid='public.tuition_installment_snapshot(uuid)'::regprocedure",authority=(await f.pg.query(query)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/243_tuition_reminder_source.sql',import.meta.url),'utf8'));
+  for(const[index,table]of tables.entries())assert.deepEqual((await f.pg.query('SELECT * FROM public.'+table+' ORDER BY 1,2')).rows,before[index],table);
+  assert.deepEqual((await f.pg.query(query)).rows,authority);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,243);assert.equal((await f.source())!.outstandingMinor,'3000');
+  const rights=(await f.pg.query("SELECT prosecdef,has_function_privilege('kavosh_runtime',oid,'EXECUTE') runtime,has_function_privilege('kavosh_message_worker',oid,'EXECUTE') sender FROM pg_proc WHERE oid='public.tuition_reminder_source(uuid,integer,integer)'::regprocedure")).rows[0];assert.equal(rights.prosecdef,false);assert.equal(rights.runtime,true);assert.equal(rights.sender,false);
+ }finally{await f.pg.close();}
+});
 
 async function fixture(){
  const f=await receiptFixture(),payment=await f.pay({amount:'80'});assert.equal(payment.response.status,201,JSON.stringify(payment.body));const id=payment.body.data.id,path='finance/receipts/'+id+'/allocations';
