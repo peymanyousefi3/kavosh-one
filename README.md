@@ -4,6 +4,8 @@ Private source repository for the multi-academy management platform for Kavosh A
 
 ## Status
 
+Learning reporting now offers complete CSV downloads for a session's evidence and the central session follow-up report,including exact current admin input reviews,waivers and overdue states. These reuse the existing source permissions and saved presets;they do not approve payroll or certify uploaded media. Full follow-up exports stop at200sessions/200staff per session and4MiB rather than returning a partial file. Learning background exports,PDF/XLSX layouts and UI/UX remain unfinished.
+
 The owner authorized continuous backend implementation on 3 November 2026: implementation, tests, review and fixes proceed across milestones without another approval request. Visual UI/UX work still requires owner input. This remains an incomplete backend, not a production-ready academy or accounting platform. `backend-work.json` tracks the full approved scope and remaining dependencies; a passing milestone is not the end of the work.
 
 The owner removed social-media posting, stories, feeds and social commenting from the remaining scope. Ordinary academy profiles, student achievements, certificates and academic reporting remain required; existing private branding/profile foundations are retained.

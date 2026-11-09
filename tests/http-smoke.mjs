@@ -26,6 +26,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const path of ['reports/learning/session-follow-up/export?from=2026-01-01T00:00:00Z&through=2026-01-31T23:59:59Z','reports/learning/sessions/00000000-0000-4000-8000-000000000001/evidence/export']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/sourceDigests|entryId|PRIVATE|stack/);}
   for(const path of ['automations/delivery-policy','automations/delivery-policy/history','automations/delivery-policy/usage']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/maxDailySmsRequests|source_basis|recipientDetails|stack/);}
   {const r=await fetch(base+'/api/v1/automations/delivery-policy',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const path of ['automations/deliveries','automations/deliveries/summary','automations/deliveries/00000000-0000-4000-8000-000000000001','automations/deliveries/00000000-0000-4000-8000-000000000001/history']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/lease_token|provider_id|contact_epoch|recipientPersonId|stack/);}

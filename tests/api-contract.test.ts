@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('learning export contracts advertise complete source-protected CSV without write or pagination inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
+ for(const path of ['/api/v1/reports/learning/session-follow-up/export','/api/v1/reports/learning/sessions/{id}/evidence/export']){const route=api.paths[path];assert.ok(route.get);assert.equal(route.post,undefined);assert.ok(route.get.responses['200'].content['text/csv']);assert.match(route.get.summary,/private/);}
+ const p=api.paths['/api/v1/reports/learning/session-follow-up/export'].get.parameters;assert.ok(p.some((q:any)=>q.name==='from'));assert.ok(p.some((q:any)=>q.name==='classId'));for(const name of ['limit','afterId','afterStartsAt'])assert.equal(p.find((q:any)=>q.name===name).schema.not!==undefined,true);
+});
+
 test('operational send policy exposes only reviewed bounded request limits and no provider or caller authority overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/automations/delivery-policy',op=api.paths[root].post,s=op.requestBody.content['application/json'].schema;
  assert.deepEqual(Object.keys(s.properties),['expectedVersion','definition','reason']);assert.equal(s.additionalProperties,false);assert.equal(s.properties.definition.additionalProperties,false);assert.deepEqual(Object.keys(s.properties.definition.properties),['enabled','maxDailyEmailRequests','maxDailySmsRequests','maxHourlyRequestsPerRecipient']);assert.equal(s.properties.definition.properties.maxDailySmsRequests.maximum,100000);assert.equal(s.properties.definition.properties.maxHourlyRequestsPerRecipient.maximum,1000);

@@ -21,10 +21,13 @@ const sql=`WITH permitted AS MATERIALIZED(${authoritySQL}) SELECT public.session
 
 export async function sessionEvidenceReport(ctx:ApiContext):Promise<Reply|null>{
  const match=/^reports\/learning\/sessions\/([^/]+)\/evidence$/.exec(ctx.path);if(!match)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
- const params=new URL(ctx.request.url).searchParams;if([...params].length)throw new ApiError(400,'INVALID_QUERY');const id=uuid.parse(match[1]);await lockApprovalWrites(ctx);
+ return {status:200,body:{data:await sessionEvidenceData(ctx,uuid.parse(match[1]))}};
+}
+export async function sessionEvidenceData(ctx:ApiContext,id:string){
+ const params=new URL(ctx.request.url).searchParams;if([...params].length)throw new ApiError(400,'INVALID_QUERY');await lockApprovalWrites(ctx);
  const {sourceDigests:_sourceDigests,...r}=await sessionEvidenceSnapshot(ctx,id);
- return {status:200,body:{data:{...r,staff:r.staff.map(s=>({...s,scheduleChanged:s.entryId?s.sessionVersion!==r.sessionVersion:null})),...sessionEvidenceChecks(r),
- expectedStaffBasis:'current_effective_assignments_on_verified_session_local_day',savedTimeBasis:'all_retained_session_time_including_retired_assignments',mediaBasis:'metadata_references_not_verified_uploads',approvalState:'not_determined_by_this_report',payrollEligibility:'not_determined_by_this_report',earnedLiability:'not_determined_by_this_report',permissionsAppliedBeforeProjection:true}}};
+ return {...r,staff:r.staff.map(s=>({...s,scheduleChanged:s.entryId?s.sessionVersion!==r.sessionVersion:null})),...sessionEvidenceChecks(r),
+ expectedStaffBasis:'current_effective_assignments_on_verified_session_local_day',savedTimeBasis:'all_retained_session_time_including_retired_assignments',mediaBasis:'metadata_references_not_verified_uploads',approvalState:'not_determined_by_this_report',payrollEligibility:'not_determined_by_this_report',earnedLiability:'not_determined_by_this_report',permissionsAppliedBeforeProjection:true};
 }
 export const sessionEvidenceReportContract=[{path:'/api/v1/reports/learning/sessions/{id}/evidence',method:'get',summary:'Same-snapshot staff evidence checklist: complete current attendance/report sources, pending media references, each effective staff member and retained delivered time; requires all six source permissions, no private bodies, no payroll approval or earned-liability decision; 200-person synchronous bound'}] as const;
 export async function sessionEvidenceSnapshot(ctx:ApiContext,id:string,extra:Capability[]=[]){
