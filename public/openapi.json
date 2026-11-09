@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.261.0",
+    "version": "0.262.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5316,7 +5316,7 @@
     },
     "/api/v1/automations/events": {
       "get": {
-        "summary": "Read bound approval,audit,session,academy-calendar,report issue,account-security,worker-statement release and private contract-delivery observation events under current original-source rights plus automation rights before paging. Calendar envelopes contain timing/type/status only,not private event text or administrative reasons. Current exact family authority is checked independently of event management. Contract observations require current work/template/file rights and never include signer contacts or confirm completed signing. No private approval payloads or external delivery claims.",
+        "summary": "Read bound approval,audit,session,academy-calendar,report issue,account-security,worker-statement release and private contract-delivery/evidence/review events under current original-source rights plus automation rights before paging. Calendar envelopes contain timing/type/status only,not private event text or administrative reasons. Current exact family authority is checked independently of event management. Contract observations require current work/template/file rights,and evidence events additionally require work completion-view rights and never include signer contacts or confirm completed signing. No private approval payloads or external delivery claims.",
         "parameters": [
           {
             "name": "limit",
@@ -32003,7 +32003,7 @@
     },
     "/api/v1/notifications/{id}": {
       "get": {
-        "summary": "Read own portal notification and linked approval,audit,report issue,worker statement,contract-delivery observation or account-security source only while its underlying record remains authorized",
+        "summary": "Read own portal notification and linked approval,audit,report issue,worker statement,contract-delivery/evidence/review observation or account-security source only while its underlying record remains authorized",
         "parameters": [
           {
             "name": "id",

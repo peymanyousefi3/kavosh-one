@@ -4,6 +4,21 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 
+test('actual229to230 adds no historical notifications and isolates native evidence publishing from web and service roles',async()=>{
+ const f=await operationsFixture({throughSchema:229});try{
+  const snapshot="SELECT jsonb_build_object('people',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.people p),'permissions',(SELECT jsonb_agg(to_jsonb(p) ORDER BY role_id,capability) FROM public.role_permissions p),'sources',(SELECT jsonb_agg(to_jsonb(p)-'work_signature_evidence_id' ORDER BY event_id) FROM public.automation_event_sources p),'notices',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.portal_notifications p),'evidence',(SELECT jsonb_agg(to_jsonb(p)-'origin_transaction' ORDER BY id) FROM public.work_signature_completion_evidence p),'reviews',(SELECT jsonb_agg(to_jsonb(p)-'origin_transaction' ORDER BY evidence_id,version) FROM public.work_signature_completion_review_revisions p)) snapshot";
+  const functions="SELECT oid,proowner,proacl FROM pg_proc WHERE oid IN('public.work_signature_notice_guard()'::regprocedure,'public.capture_audited_automation_event()'::regprocedure,'public.publish_work_signature_alert()'::regprocedure,'public.mandatory_alert_guard()'::regprocedure) ORDER BY oid",before=(await f.pg.query(snapshot)).rows,identities=(await f.pg.query(functions)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/230_work_signature_evidence_notifications.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,230);assert.deepEqual((await f.pg.query(snapshot)).rows,before);assert.deepEqual((await f.pg.query(functions)).rows,identities);
+  for(const role of ['kavosh_runtime','kavosh_file_worker','kavosh_signature_result_worker','kavosh_signature_completion_worker','kavosh_signature_evidence_worker','kavosh_identity','kavosh_delivery']){await f.pg.exec('SET ROLE '+role);try{
+   await assert.rejects(f.pg.query('SELECT public.work_signature_evidence_notice_basis($1,NULL,NULL,pg_current_xact_id())',[randomUUID()]),/permission denied/i);
+   await assert.rejects(f.pg.query('SELECT public.work_signature_inspection_notice_basis($1,pg_current_xact_id())',[randomUUID()]),/permission denied/i);
+   await assert.rejects(f.pg.query('SELECT public.work_signature_evidence_notice_projection($1,$2,pg_current_xact_id())',[randomUUID(),'evidence:'+randomUUID()]),/permission denied/i);
+  }finally{await f.pg.exec('RESET ROLE');}}
+  await f.pg.exec('SET ROLE kavosh_event_policy');try{await assert.rejects(f.pg.exec('SELECT manifest FROM public.work_signature_completion_evidence'),/permission denied/i);await assert.rejects(f.pg.exec('SELECT result FROM public.work_signature_evidence_inspections'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.exec('SET ROLE kavosh_runtime');try{await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.equal((await f.pg.query('SELECT * FROM public.work_signature_evidence_notice_state($1)',[randomUUID()])).rows.length,0);await assert.rejects(f.pg.exec('SELECT origin_transaction FROM public.work_signature_completion_evidence'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+ }finally{await f.pg.close();}
+});
+
 test('native worker review input binds two independent real signing attestations and rejects enrollment or actor overrides',async()=>{
  const f=await operationsFixture();try{
   const base={expectedVersion:0,decision:'rejected',documentGrantId:null,auditGrantId:null,workerSignedAt:null,academySignedAt:null,identityAndAuthenticationReviewed:false,contentAndConsentReviewed:false,reason:'Explicit worker evidence decision',requestId:randomUUID(),evidenceId:randomUUID(),requestedBy:f.actors.manager.person},accepted={...base,decision:'accepted',documentGrantId:randomUUID(),auditGrantId:randomUUID(),workerSignedAt:'2026-11-08T01:00:00.000Z',academySignedAt:'2026-11-08T02:00:00.000Z',identityAndAuthenticationReviewed:true,contentAndConsentReviewed:true};
