@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('counterparty statement background jobs reuse strict configurations without supplied source proofs or money',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/reports/jobs'].post,s=p.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('finance.counterparty-statement'));assert.equal(s.additionalProperties,false);for(const key of ['authorizationContext','sourceManifest','sourceFingerprint','paid','amount','requesterId'])assert.equal(s.properties[key],undefined);assert.match(p.summary,/10000 source and window events/);assert.match(api.paths['/api/v1/reports/jobs/{id}/download'].get.summary,/original event/);
+});
+
 test('statement reminder rules expose one strict civil-day timer and native source without money or clock overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),d=api.paths['/api/v1/automations/rules'].post.requestBody.content['application/json'].schema.properties.definition,t=d.properties.statementReminder;
  assert.equal(t.additionalProperties,false);assert.deepEqual(Object.keys(t.properties).sort(),['daysFromDue','timeZone']);assert.deepEqual([...t.required].sort(),['daysFromDue','timeZone']);assert.equal(t.properties.daysFromDue.minimum,-365);assert.equal(t.properties.daysFromDue.maximum,3650);assert.ok(!d.required.includes('statementReminder'));assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('statement_due'));for(const key of ['paid','amount','sourceStamp','now','recipientId'])assert.equal(t.properties[key],undefined);

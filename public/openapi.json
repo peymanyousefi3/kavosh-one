@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.313.0",
+    "version": "0.314.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -57936,7 +57936,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue a complete manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB retained file ceiling. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
+        "summary": "Queue a complete counterparty-statement (10000 source and window events,10000 bills,4MiB;original contexts and exact opening membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB retained file ceiling. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -57954,6 +57954,7 @@
                   "reportId": {
                     "type": "string",
                     "enum": [
+                      "finance.counterparty-statement",
                       "finance.profitability",
                       "finance.manual-income-costs",
                       "payroll.costs",
@@ -58172,7 +58173,7 @@
     },
     "/api/v1/reports/jobs/{id}/download": {
       "get": {
-        "summary": "Download retained complete CSV only under current source rights. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
+        "summary": "Download retained complete CSV only under current source rights. Counterparty files require every original event to remain in the same dated frame plus whole current source permissions;new money does not retarget retained bytes or hashes. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
         "parameters": [
           {
             "name": "id",
