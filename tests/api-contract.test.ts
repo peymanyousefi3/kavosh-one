@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('expense cost report contract exposes validated read-only source filters and not cash profit or allocation overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),route=api.paths['/api/v1/reports/finance/expense-costs'];assert.ok(route.get);assert.equal(route.post,undefined);for(const name of ['studentIds','classIds','hubIds','countryIds','currencyIds','accountIds','from','through'])assert.ok(route.get.parameters.some((p:any)=>p.name===name));assert.equal(route.get.parameters.some((p:any)=>['limit','paid','allocate','profit','taxRate'].includes(p.name)),false);assert.match(route.get.summary,/Not whole academy profit/);
+});
+
 test('performance CSV contracts reuse human family boundaries and expose the registered report job without authority overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),family=api.paths['/api/v1/students/{id}/performance/export'],admin=api.paths['/api/v1/reports/learning/student-performance/export'];assert.deepEqual(family.get.security,[{humanSession:[],academySelection:[]}]);assert.ok(family.get.responses['200'].content['text/csv']);assert.ok(admin.get.responses['200'].content['text/csv']);assert.equal(family.post,undefined);assert.equal(admin.post,undefined);assert.equal(family.get.parameters.some((p:any)=>['visibility','studentId','approved','limit'].includes(p.name)),false);const s=api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('learning.student-performance'));assert.equal(s.additionalProperties,false);
 });

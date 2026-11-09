@@ -22,12 +22,14 @@ import { pollResults,pollResultsContract } from './poll-results.ts';
 import { sessionEvidenceReport,sessionEvidenceReportContract } from './session-evidence-report.ts';
 import { sessionFollowUp,sessionFollowUpContract } from './session-follow-up.ts';
 import { studentPerformance,studentPerformanceReportContract } from './student-performance.ts';
+import { expenseCostReport,expenseCostReportContract } from './expense-cost-report.ts';
 import { achievementReport,achievementReportContract } from './achievement-report.ts';
 import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowParameters,type ReportDateWindow } from '../core/report-window.ts';
 
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
 type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
 const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
+ {contracts:expenseCostReportContract,handler:expenseCostReport,capability:'financial-reports.view'},
  {contracts:t4WorkingPaperContract,handler:t4WorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:paidTaxYearReportContract,handler:paidTaxYtd,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:payrollRegisterContract,handler:payrollRegister,capability:'payrun-postings.view',csv:true},
