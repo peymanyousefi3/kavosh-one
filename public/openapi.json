@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.369.0",
+    "version": "0.370.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -30329,7 +30329,7 @@
     },
     "/api/v1/finance/provider-dispute-postings/{id}/corrections": {
       "post": {
-        "summary": "Reviewed atomic exact inverse of the current dispute accounting edition plus its evidence-bound replacement. Expected edition,explicit selected accounts and fee treatment;no caller money,provider operation,credit restoration,hold release or destructive rewrite.",
+        "summary": "Reviewed atomic exact inverse of the current dispute accounting edition plus its evidence-bound replacement. Expected edition,explicit selected accounts and fee treatment;no caller money,provider operation,credit restoration,hold release or destructive rewrite. After a recorded loss,only fee changes with unchanged principal/currency/mappings and explicit loss-feature permissions are allowed.",
         "parameters": [
           {
             "name": "id",

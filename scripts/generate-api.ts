@@ -8,7 +8,7 @@ import { platformContract } from '../src/platform/api.ts';
 import { profileShareId } from '../src/profiles/share-id.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.369.0';
+api.info.version='0.370.0';
 api.paths['/api/public/v1/profiles/{id}']={get:{security:[],summary:'Default-off reviewed school/hub and consented student profile JSON. Accepts canonical UUID or22character canonical short sharing ID with the SAME consent,identity and keyed budget gates. Short IDs are not access credentials. Native current-publication,pinned consent,owner,moderation and draft-version gates;no private legal/family/student records,media or HTML rendering. Trusted proxy and keyed per-IP budget required;no-store,not a visual profile page.',parameters:[{name:'id',in:'path',required:true,schema:z.toJSONSchema(profileShareId,{io:'input'})}],responses:{'200':{description:'Reviewed organization or consented student profile,plain text localized content and canonical links only'},'404':{description:'Disabled,unknown,withdrawn or no longer currently published'},'429':{description:'Public read budget exhausted'},'503':{description:'Configuration or isolated reader unavailable'}}}};
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];
