@@ -259,7 +259,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
           if(pause)securityRevocation=(await db.query("SELECT 1 FROM public.operational_send_policies h JOIN public.operational_send_policy_revisions r ON r.academy_id=h.academy_id AND r.policy_id=h.id AND r.version=h.version WHERE h.id=$1 AND h.version=$2 AND r.definition-'enabled'=$3::jsonb-'enabled'",[pause.target_id,pause.target_version,JSON.stringify(pause.definition)])).rows.length===1;
         }
       }
-      if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('community-profile.publish','student-profile.publish') AND payload->>'audience'='unpublished'",[id.parse(readOnlyDecision[1])])).rows.length===1;
+      if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('community-profile.publish','student-profile.publish','worker-profile.publish') AND payload->>'audience'='unpublished'",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if (status === 'read_only' && request.method !== 'GET' && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
