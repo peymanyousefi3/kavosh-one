@@ -16,6 +16,7 @@ import { completePayrollRegisterExport } from './payroll-register.ts';
 import { completePaidTaxYtdExport } from './paid-tax-ytd.ts';
 import { completeT4WorkingPaperExport } from './t4-working-paper.ts';
 import { completeFinancialOutlookExport } from './financial-outlook-export.ts';
+import { completePayrollForecastExport } from './payroll-forecast.ts';
 import { completePayrollRemittanceExport } from './payroll-remittance-report.ts';
 import { completeInventoryExport } from './inventory-report-export.ts';
 import { completeAgingExport } from './aging-report-export.ts';
@@ -64,6 +65,7 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
  if(configuration.reportId==='finance.cash-movements'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return cashMovementExport(context,{...provenance,dateWindow:resolvedDateWindow});}
+ if(configuration.reportId==='payroll.scheduled-costs'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePayrollForecastExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='finance.asset-valuation'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeAssetCurrencyValuationExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='finance.profitability'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeProfitabilityExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='finance.collector-custody'){const {context:source,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(source.request.url);url.searchParams.delete('limit');return completeCollectorCustodyExport({...source,request:new Request(url)},{...provenance,dateWindow:resolvedDateWindow});}

@@ -27,6 +27,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['/export','/export.xlsx']){const r=await fetch(base+'/api/v1/reports/payroll/scheduled-costs'+suffix+'?from=2027-01-01&through=2027-01-31&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/salary|estimatedCost|engagementId|stack/);}
   const learningId='00000000-0000-4000-8000-000000000001';
   for(const suffix of ['','/export','/export.xlsx']){const r=await fetch(base+'/api/v1/reports/finance/cash-movements'+suffix+'?from=2026-01-01&through=2026-12-31');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/openingBalance|cash|PRIVATE|stack/);}
   for(const path of ['reports/finance/trial-balance/export.xlsx?through=2026-12-31','reports/presets/'+learningId+'/export.xlsx','reports/jobs/'+learningId+'/download.xlsx']){const r=await fetch(base+'/api/v1/'+path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/amount_minor|account_id|stack/);}

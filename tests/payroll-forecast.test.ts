@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { workFixture } from './work-fixture.ts';
-import { payrollForecast } from '../src/modules/payroll-forecast.ts';
+import { payrollForecast,payrollForecastCsv } from '../src/modules/payroll-forecast.ts';
+import { parse } from 'csv-parse/sync';
+import { spreadsheetRows } from './spreadsheet-reader.ts';
 import type { ApiContext } from '../src/core/api.ts';
 
 async function fixture(){const f=await workFixture();try{
@@ -12,6 +14,32 @@ async function fixture(){const f=await workFixture();try{
 }catch(error){await f.pg.close();throw error;}}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+
+check('complete scheduled forecast CSV and Excel preserve salary allocations,hourly sources,unpriced cases and saved provenance without posting payroll',async f=>{
+ await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'report-presets.view','allow')",[f.a,f.staffRole]);
+ assert.equal((await f.create({components:[f.hourly,f.salary,f.components.find(c=>c.code==='PROJECT')!]})).response.status,201);
+ const parameters={from:'2027-01-01',through:'2027-01-31',timeZone:'America/Toronto'},path='reports/payroll/scheduled-costs/export?'+new URLSearchParams(parameters),csv=await f.request(path,undefined,'staff');assert.equal(csv.response.status,200,JSON.stringify(csv.body));const rows=parse(csv.body,{columns:true,bom:true}) as Record<string,string>[];
+ assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='knownSubtotal')?.amount,'3020.00');assert.equal(rows.find(r=>r.section==='status'&&r.field==='estimatedTotal')?.value,'unpriced_components_present');assert.equal(rows.filter(r=>r.section==='review').length,1);assert.equal(rows.find(r=>r.section==='review')?.field,'PROJECT_PAYMENT_DATE_REQUIRED');assert.equal(rows.filter(r=>r.section==='salary_payment').length,1);assert.equal(rows.find(r=>r.section==='salary_payment')?.on,'2027-01-31');assert.equal(rows.filter(r=>r.section==='hourly_plan').length,1);assert.equal(rows.filter(r=>r.section==='hourly_segment').length,1);assert.match(rows.find(r=>r.section==='hourly_segment')!.details_json,new RegExp(f.assignment.id));assert.equal(rows.find(r=>r.field==='payrollApproved')?.value,'false');assert.equal(rows.find(r=>r.field==='cashFlowForecast')?.value,'false');
+ const excel=await f.request('reports/payroll/scheduled-costs/export.xlsx?'+new URLSearchParams(parameters),undefined,'staff');assert.equal(excel.response.status,200,JSON.stringify(excel.body));const matrix=spreadsheetRows(excel.body),expected=parse(csv.body,{bom:true}) as string[][];const normalize=(r:string[][])=>r.map((row,i)=>Array.from({length:expected[i].length},(_,j)=>expected[i][1]==='snapshotAt'&&j===2?'SNAPSHOT':row[j]??''));assert.deepEqual(normalize(matrix),normalize(expected));
+ const saved=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Saved scheduled costs',reportId:'payroll.scheduled-costs',parameters},reason:'Reusable forecast download'}),download=await f.request('reports/presets/'+saved.id+'/export',undefined,'staff');assert.equal(download.response.status,200,JSON.stringify(download.body));const savedRows=parse(download.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(savedRows.find(r=>r.field==='presetId')?.value,saved.id);assert.equal(savedRows.find(r=>r.field==='presetVersion')?.value,'1');assert.equal((await f.request('reports/presets/'+saved.id+'/export.xlsx',undefined,'staff')).response.status,200);
+ const entry=(await f.request('reports/catalogue')).body.data.find((r:{id:string})=>r.id==='payroll.scheduled-costs');assert.deepEqual(entry.formats,['json','csv','xlsx']);assert.deepEqual(entry.backgroundJobFormats,[]);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
+});
+check('scheduled forecast downloads enforce live source rights,school isolation and strict inputs before returning any attachment',async f=>{
+ assert.equal((await f.create({components:[f.hourly,f.salary]})).response.status,201);const query='from=2027-01-01&through=2027-01-31&timeZone=UTC',path='reports/payroll/scheduled-costs/export?'+query;
+ const foreign=await f.request(path,undefined,'foreignMaster',{academy:f.b});assert.equal(foreign.response.status,200);assert.doesNotMatch(foreign.body,new RegExp(f.actors.staff.person));
+ for(const suffix of ['&from=2027-01-01','&limit=1','&personId=bad','&amount=0','&snapshotAt=2027-01-01']){const r=await f.request(path+suffix,undefined,'staff');assert.equal(r.response.status,400);assert.equal(r.response.headers.get('content-disposition'),null);}
+ assert.equal((await f.request(path,{},'staff')).response.status,405);
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='work-pay.view'",[f.staffRole]);for(const p of [path,'reports/payroll/scheduled-costs/export.xlsx?'+query]){const denied=await f.request(p,undefined,'staff');assert.equal(denied.response.status,403);assert.equal(denied.response.headers.get('content-disposition'),null);}
+});
+check('scheduled salary exports preserve money beyond spreadsheet numeric precision as exact text',async f=>{
+ const salary='123456789012345678901234567890.12';assert.equal((await f.create({components:[{...f.salary,amount:salary}]})).response.status,201);const query='from=2027-01-01&through=2027-01-31&timeZone=America%2FToronto',csv=await f.request('reports/payroll/scheduled-costs/export?'+query);assert.equal(csv.response.status,200,JSON.stringify(csv.body));const rows=parse(csv.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.section==='salary_payment')?.amount,salary);assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='estimatedTotal')?.amount,salary);
+ const excel=await f.request('reports/payroll/scheduled-costs/export.xlsx?'+query);assert.equal(excel.response.status,200);assert.ok(spreadsheetRows(excel.body).some(row=>row[0]==='salary_payment'&&row[9]===salary));
+});
+check('forecast export validation rejects inconsistent money,missing plans,duplicate currencies and oversized output instead of partial figures',async f=>{
+ assert.equal((await f.create({components:[f.hourly,f.salary]})).response.status,201);const report=(await f.forecast()).body.data;
+ for(const mutate of [(d:any)=>{d.currencies[0].knownSubtotal.amount='0.00';},(d:any)=>{d.currencies[0].salaryPayments=[];},(d:any)=>{d.currencies[0].hourlyPlans=[];},(d:any)=>{d.currencies.push(structuredClone(d.currencies[0]));},(d:any)=>{d.currencies[0].estimatedTotal=null;}]){const d=structuredClone(report);mutate(d);assert.throws(()=>payrollForecastCsv(d));}
+ const oversized=structuredClone(report);oversized.snapshotAt='x'.repeat(4_194_305);assert.throws(()=>payrollForecastCsv(oversized),(e:unknown)=>e instanceof Error&&'code'in e&&e.code==='PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');
+});
 
 check('scheduled cost forecasts persist sources, price unambiguous salary/hourly units exactly and never post earned payroll or payments',async f=>{
  const created=await f.create({components:[f.hourly,f.salary]});assert.equal(created.response.status,201,JSON.stringify(created.body));
@@ -25,6 +53,7 @@ check('scheduled overlapping classes choose only the highest hourly rate across 
  const c=await f.made('classes',{hubId:f.hub,courseId:f.c.course_id,courseVersion:1,name:'Overlapping planned class',mode:'in_person',schedule:{oneOff:[{start:'2027-01-05T10:30',end:'2027-01-05T11:30',disambiguation:'reject'}]}}),a=await f.made('classes/'+c.id+'/staff',{personId:f.actors.staff.person,role:'teacher',startsOn:'2026-01-01',reason:'Configured future staffing'});
  assert.equal((await f.create({code:'SECOND',components:[{...f.hourly,assignment:{id:a.id,version:1},amount:'30'}]})).response.status,201);
  const result=await f.forecast();assert.equal(result.response.status,200,JSON.stringify(result.body));const ccy=result.body.data.currencies[0];assert.equal(ccy.estimatedTotal.amount,'40.00');assert.equal(ccy.hourlyPlans.length,1);assert.equal(ccy.hourlyPlans[0].scheduledMilliseconds,'5400000');assert.equal(ccy.hourlyPlans[0].segments.length,2);
+ const exported=parse(payrollForecastCsv(result.body.data).body as string,{columns:true,bom:true}) as Record<string,string>[];assert.equal(exported.filter(r=>r.section==='hourly_plan').length,1);assert.equal(exported.filter(r=>r.section==='hourly_segment').length,2);assert.equal(exported.find(r=>r.section==='hourly_plan')?.amount,'40.00');const missing=structuredClone(result.body.data);missing.currencies[0].hourlyPlans[0].segments.pop();assert.throws(()=>payrollForecastCsv(missing),/PAYROLL_FORECAST_EXPORT_SEGMENTS_INVALID/);
 });
 check('enrollment-date headcount forecasts use authorized enrollment counts and do not turn missing attendance/project/tuition bases into zero costs',async f=>{
  const head=f.components.find(c=>c.code==='HEAD')!;assert.equal((await f.create({components:[{...head,minimumStudents:1,includedStudents:0},f.components.find(c=>c.code==='FEE'),f.components.find(c=>c.code==='PROJECT')]})).response.status,201);

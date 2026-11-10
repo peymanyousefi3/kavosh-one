@@ -57,7 +57,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:payablesAgingContract,handler:payablesAging,capability:'payables-reports.view',csv:true},
  {contracts:bankReconciliationReportContract,handler:bankReconciliationReport,capability:'financial-reports.view',csv:true},
  {contracts:inventoryReportsContract,handler:inventoryReports,capability:'inventory-reports.view',csv:true},
- {contracts:payrollForecastContract,handler:payrollForecast,capability:'work-pay.view'},
+ {contracts:payrollForecastContract,handler:payrollForecast,capability:'work-pay.view',csv:true},
  {contracts:recordedWorkReportContract,handler:recordedWorkReport,capability:'session-time.view'},
  {contracts:payrollCostReportContract,handler:payrollCostReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},

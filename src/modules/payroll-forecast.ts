@@ -4,7 +4,9 @@ import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
 import { ApiError,scopeNonempty,type Scope } from '../core/policy.ts';
-import { parseMoney,formatMoneyTotal,allocateMoney } from '../core/money.ts';
+import { parseMoney,formatMoneyTotal,allocateMoney,readMinorUnits,roundRatio } from '../core/money.ts';
+import { csvRow,csvText } from '../core/csv.ts';
+import type { ResolvedReportWindow } from '../core/report-window.ts';
 import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type HourlyInterval } from '../core/work-compensation.ts';
 import { payCalendarRange,payCalendarDays,payOccurrencesOn,type PayCycle } from '../core/pay-calendar.ts';
 import { salaryAllocation } from '../core/salary-allocation.ts';
@@ -56,7 +58,7 @@ const componentOn=(r:CompensationRule,on:string)=>on>=r.from&&(r.through===null|
 const key=(...values:(string|number)[])=>createHash('sha256').update(JSON.stringify(values)).digest('hex');
 function selected(terms:Terms[],on:(t:Terms)=>string){let winner:Terms|undefined;for(const t of terms)if(t.effective_on<=on(t)&&(!winner||t.effective_on>winner.effective_on||(t.effective_on===winner.effective_on&&t.version>winner.version)))winner=t;return winner;}
 
-export async function payrollForecast(ctx:ApiContext):Promise<Reply|null>{
+export async function payrollForecast(ctx:ApiContext):Promise<ReturnType<typeof scheduledPayrollForecast>|null>{
  if(ctx.path!=='reports/payroll/scheduled-costs')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params));await lockApprovalWrites(ctx);const source=payrollForecastSource(ctx,q);
  const result=(await ctx.db.query<PayrollForecastSources>(source.sql,source.params)).rows[0];return scheduledPayrollForecast(q,result);
@@ -144,3 +146,38 @@ export function scheduledPayrollForecast(q:z.infer<typeof query>,result:PayrollF
  return {status:200,body:{data:{report:'configured_scheduled_work_costs',...q,snapshotAt:result.snapshot_at,coverage:'visible_configured_sources_only',completeAcademyForecast:false,historyBasis:'current_recorded_terms_and_schedule',sessionRangeBasis:'session_start_in_report_time_zone',rateDateBasis:'session_start_in_work_terms_time_zone',hourlyBasis:'unrounded_scheduled_time_highest_rate_once_per_person_currency',salaryBasis:'versioned_configured_payment_allocation_not_earned_entitlement',timingBasis:'salary_pay_dates_and_hourly_session_dates',cashFlowForecast:false,rounding:'hourly_per_person_currency_once_half_away',currencyConversion:'none',actualTimeOrAttendanceUsed:false,statutoryDeductionsCalculated:false,earnedEntitlementDetermined:false,payrollApproved:false,paymentExecuted:false,currencies}}};
 }
 export const payrollForecastContract=[{path:'/api/v1/reports/payroll/scheduled-costs',method:'get',summary:'Permission-intersected same-snapshot work-cost forecast from pinned compensation and current visible schedules; exact known subtotals and explicit unpriced cases, not earned payroll, actual cash or statutory certification',querySchema:query}] as const;
+
+type ForecastData=ReturnType<typeof scheduledPayrollForecast>['body']['data'];
+type ForecastProvenance={id:string;version:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}};
+export function payrollForecastCsv(data:ForecastData,provenance?:ForecastProvenance):Reply{
+ const header=['section','field','value','currency_id','currency_code','unit_scale','on','source_id','minor','amount','details_json'],rows:(string|number|undefined)[][]=[header];
+ if(data.report!=='configured_scheduled_work_costs'||data.currencies.length>1000||new Set(data.currencies.map(c=>c.currencyId)).size!==data.currencies.length)throw new Error('PAYROLL_FORECAST_EXPORT_INVALID');
+ const meta=(field:string,value:unknown)=>rows.push(['metadata',field,csvText(typeof value==='string'?value:JSON.stringify(value))]);
+ for(const [field,value]of Object.entries(data))if(field!=='currencies'&&value!==undefined)meta(field,value);
+ meta('exportCompleteness','complete_permitted_report_within_source_and_output_limits');meta('numericPrecisionPolicy','money_minor_units_and_amounts_are_exact_strings');meta('textPolicy','Formula-like free text uses a visible text: prefix; stored records are unchanged.');
+ if(provenance){meta('presetId',provenance.id);meta('presetVersion',provenance.version);if(provenance.dateWindow)meta('dateWindow',provenance.dateWindow);}
+ let detailsCount=0;
+ for(const c of data.currencies){
+  const amount=(section:string,field:string,raw:unknown,on?:string,source?:string,details?:unknown)=>{
+   const value=raw as {minor:string;amount:string}|null;if(!value||typeof value.minor!=='string'||value.amount!==formatMoneyTotal(readMinorUnits(value.minor),c.unitScale))throw new Error('PAYROLL_FORECAST_EXPORT_MONEY_INVALID');
+   rows.push([section,field,'',c.currencyId,csvText(c.currencyCode),c.unitScale,on,source,value.minor,value.amount,details===undefined?undefined:csvText(JSON.stringify(details))]);return readMinorUnits(value.minor);
+  };
+  const hourly=amount('currency_total','knownHourlySubtotal',c.knownHourlySubtotal),salary=amount('currency_total','knownSalarySubtotal',c.knownSalarySubtotal),total=amount('currency_total','knownSubtotal',c.knownSubtotal);
+  if(hourly+salary!==total||(c.estimatedTotal===null)!==Boolean(c.unpricedComponents.length))throw new Error('PAYROLL_FORECAST_EXPORT_TOTAL_INVALID');
+  if(c.estimatedTotal===null)rows.push(['status','estimatedTotal','unpriced_components_present',c.currencyId,csvText(c.currencyCode),c.unitScale]);else if(amount('currency_total','estimatedTotal',c.estimatedTotal)!==total)throw new Error('PAYROLL_FORECAST_EXPORT_TOTAL_INVALID');
+  let salarySum=0n,hourlySum=0n;
+  for(const e of c.salaryPayments){const {estimatedCost,...details}=e;salarySum+=amount('salary_payment','estimatedCost',estimatedCost,e.on,e.engagementId,details);detailsCount++;}
+  for(const e of c.hourlyPlans){const {estimatedCost,segments,...details}=e,planCost=amount('hourly_plan','estimatedCost',estimatedCost,undefined,typeof e.personId==='string'?e.personId:undefined,details);hourlySum+=planCost;if(!Array.isArray(segments))throw new Error('PAYROLL_FORECAST_EXPORT_SEGMENTS_INVALID');
+   let milliseconds=0n,numerator=0n,last=-Infinity;
+   for(const segment of segments){const start=Date.parse(segment.startsAt),end=Date.parse(segment.endsAt),rate=readMinorUnits(segment.rateMinor);if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||end<=start||start<last||rate<0n||!segment.source?.assignmentId||!segment.source?.sessionId||!segment.source?.engagementId)throw new Error('PAYROLL_FORECAST_EXPORT_SEGMENTS_INVALID');last=end;milliseconds+=BigInt(end-start);numerator+=rate*BigInt(end-start);rows.push(['hourly_segment','scheduled_rate_and_source','',c.currencyId,csvText(c.currencyCode),c.unitScale,undefined,typeof e.personId==='string'?e.personId:undefined,'','',csvText(JSON.stringify(segment))]);detailsCount++;}
+   if(milliseconds.toString()!==e.scheduledMilliseconds||roundRatio(numerator,3600000n,'half_away')!==planCost)throw new Error('PAYROLL_FORECAST_EXPORT_SEGMENTS_INVALID');
+  }
+  if(salarySum!==salary||hourlySum!==hourly)throw new Error('PAYROLL_FORECAST_EXPORT_TOTAL_INVALID');
+  for(const e of c.unpricedComponents){rows.push(['review',csvText(e.reason),'',c.currencyId,csvText(c.currencyCode),c.unitScale,undefined,e.engagementId,'','',csvText(JSON.stringify(e))]);detailsCount++;}
+ }
+ if(detailsCount>10000)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');
+ const body='\uFEFF'+rows.map(row=>csvRow(Array.from({length:header.length},(_,i)=>row[i]))).join('\r\n')+'\r\n';if(Buffer.byteLength(body)>4_194_304)throw new ApiError(422,'PAYROLL_FORECAST_REQUIRES_BACKGROUND_JOB');return{status:200,body,csv:{filename:`scheduled-work-costs-${data.from}-${data.through}.csv`}};
+}
+export async function completePayrollForecastExport(ctx:ApiContext,provenance?:ForecastProvenance){const reply=await payrollForecast(ctx);if(!reply||reply.status!==200)throw new Error('PAYROLL_FORECAST_EXPORT_SOURCE_INVALID');return payrollForecastCsv(reply.body.data,provenance);}
+export async function payrollForecastExport(ctx:ApiContext):Promise<Reply|null>{if(ctx.path!=='reports/payroll/scheduled-costs/export')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const path='reports/payroll/scheduled-costs',url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;return completePayrollForecastExport({...ctx,path,request:new Request(url,{method:'GET'})});}
+export const payrollForecastExportContract=[{...payrollForecastContract[0],path:payrollForecastContract[0].path+'/export',summary:'Complete source-scoped scheduled-work forecast CSV with exact separate-currency totals,salary dates and allocation details,highest-rate nonduplicated hourly plans and pinned segments,and every unpriced review case. Reuses the original same-snapshot read and current rights;not earned payroll,cash-flow certainty,statutory calculation or payment. Original source limits plus10000detail rows/4MiB fail without partial files;no background forecast export yet. Saved presets retain their exact provenance and resolved dates.',responseContentType:'text/csv' as const}] as const;
