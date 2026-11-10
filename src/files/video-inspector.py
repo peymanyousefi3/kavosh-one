@@ -208,7 +208,12 @@ except Rejected as error:
     result.update(outcome="rejected", reason=str(error), stage=STAGE)
     if hasattr(error, "native_exit_code"):
         result["nativeExitCode"] = error.native_exit_code
-except Exception:
+except Exception as error:
+    # Fixed category only,never exception text,decoder stderr,input or paths.
+    category = type(error).__name__
+    if category not in ("RuntimeError", "FileNotFoundError", "PermissionError", "MemoryError", "OSError", "ValueError", "JSONDecodeError", "TimeoutExpired"):
+        category = "internal_exception"
+    sys.stderr.write("video_inspector_error:" + category)
     sys.exit(1)
 usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
 result["resources"] = {"peakRssKiB": max(1, math.ceil(max(usage.ru_maxrss, children.ru_maxrss) / (1024 if sys.platform == "darwin" else 1))),
