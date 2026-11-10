@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('feature-scoped own-family student selection is human-only and cannot accept actor,student or permission overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/me/students'].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['after','for','limit']);const feature=op.parameters.find((p:any)=>p.name==='for').schema;assert.deepEqual(feature.enum,['registrations','tuition','calendar']);assert.equal(feature.default,'registrations');assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(op.summary,/independent current scope before paging/);assert.match(op.summary,/Master\/admin roles cannot impersonate family/);
+});
 test('achievement asset API bounds exact reviewed files and exposes only human family downloads without caller file selection',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
  const admin=api.paths['/api/v1/achievements/{id}/assets'].post,s=admin.requestBody.content['application/json'].schema;
