@@ -2,6 +2,13 @@ import type { NextConfig } from 'next';
 
 const config: NextConfig = {
   output: 'standalone',
+  outputFileTracingIncludes: {'/*': [
+    './src/reports/xlsx-worker.mjs',
+    './node_modules/write-excel-file/**/*', './node_modules/csv-parse/**/*',
+    './node_modules/.pnpm/write-excel-file@*/node_modules/**/*',
+    './node_modules/.pnpm/csv-parse@*/node_modules/**/*',
+    './node_modules/.pnpm/fflate@*/node_modules/**/*'
+  ]},
   poweredByHeader: false,
   async headers() {
     return [{ source: '/:path*', headers: [

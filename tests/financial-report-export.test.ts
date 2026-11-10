@@ -9,6 +9,16 @@ import { parseMoney,formatMoneyTotal } from '../src/core/money.ts';
 import { expenseFixture } from './expense-fixture.ts';
 import { attributionReportCsv } from '../src/modules/attribution-report-export.ts';
 import { runFixtureReportWorker } from './report-worker-fixture.ts';
+import { spreadsheetRows } from './spreadsheet-reader.ts';
+import { spreadsheetMime } from '../src/reports/spreadsheet.ts';
+import { createHook } from 'node:async_hooks';
+import { createApi } from '../src/core/api.ts';
+import { business } from '../src/modules/business.ts';
+import type { Database } from '../src/core/database.ts';
+
+function workbookRecords(bytes:Uint8Array):Record<string,string>[] {
+ const [columns,...rows]=spreadsheetRows(bytes);return rows.map(row=>Object.fromEntries(columns.map((key,i)=>[key,row[i]??''])));
+}
 
 const attributionRange={from:'2026-01-01',through:'2026-12-31'};
 test('attribution CSV preserves signed long precision separate currencies and unassigned groups and refuses oversized attachments',()=>{
@@ -74,6 +84,34 @@ test('missing rows never become a seemingly complete CSV and oversized data fail
  const accountId=randomUUID(),currencyId=randomUUID(),zero={minor:'0',amount:'0.00'},entry={accountId,chartVersion:1,hubId:randomUUID(),code:'1000',name:'Name',kind:'asset',currencyId,currencyCode:'CAD',unitScale:2,closing:zero,debit:zero,credit:zero},data={report:'posted_trial_balance',through:'2026-12-31',snapshotAt:'2026-11-06 12:00+00',coverage:'scoped_selected_accounts',scopeMayOmitCounterparties:true,currencyConversion:'none',postingBasis:'all_posted_account_lines',accountCount:1,currencies:[],entries:[entry]};
  assert.throws(()=>financialReportCsv({...data,accountCount:2}),/REPORT_REQUIRES_BACKGROUND_JOB/);assert.throws(()=>financialReportCsv({...data,accountCount:financialExportEntryLimit+1,entries:Array(financialExportEntryLimit+1).fill(entry)}),/REPORT_REQUIRES_BACKGROUND_JOB/);
  const huge={minor:'9'.repeat(250),amount:'9'.repeat(250)+'.00'},large={...entry,name:'测'.repeat(200),closing:huge,debit:huge,credit:huge};assert.throws(()=>financialReportCsv({...data,accountCount:financialExportEntryLimit,entries:Array(financialExportEntryLimit).fill(large)}),/REPORT_REQUIRES_BACKGROUND_JOB/);
+});
+test('financial Excel downloads and saved presets preserve complete current scoped sources and exact values with no authority bypass',async()=>{
+ const f=await fixture();try{
+  const amount='123456789012345678901234567890.12';assert.equal((await f.post(amount)).response.status,201);
+  for(let i=0;i<3;i++)await f.account('X'+i);
+  for(const report of ['trial-balance','profit-loss','balance-sheet']){
+   const query=new URLSearchParams({through:'2026-12-31',...report==='trial-balance'?{includeZero:'true'}:{},...report==='profit-loss'?{from:'2026-01-01'}:{}}),path='reports/finance/'+report+'/export',csv=await f.request(path+'?'+query),xlsx=await f.request(path+'.xlsx?'+query);
+   assert.equal(csv.response.status,200);assert.equal(xlsx.response.status,200,JSON.stringify(xlsx.body));assert.equal(xlsx.response.headers.get('content-type'),spreadsheetMime);assert.equal(xlsx.response.headers.get('cache-control'),'private, no-store');assert.equal(Number(xlsx.response.headers.get('content-length')),xlsx.body.byteLength);assert.match(xlsx.response.headers.get('content-disposition')??'',/\.xlsx"$/);assert.match(xlsx.response.headers.get('content-security-policy')??'',/sandbox/);
+   assert.deepEqual(workbookRecords(xlsx.body).filter(r=>r.section!=='metadata'),decoded(csv.body).filter(r=>r.section!=='metadata'));
+  }
+  const saved=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Excel source',reportId:'finance.trial-balance',parameters:{through:'2026-12-31',includeZero:'true',limit:'1'}},reason:'Same saved export scope'}),path='reports/presets/'+saved.id+'/export.xlsx';
+  const savedResult=await f.request(path,undefined,'staff');assert.equal(savedResult.response.status,200);const rows=workbookRecords(savedResult.body);assert.equal(rows.filter(r=>r.section==='account').length,6);assert.equal(metadata(rows).presetId,saved.id);
+  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='ledger.view'",[f.staffRole]);for(const p of [path,'reports/finance/trial-balance/export.xlsx?through=2026-12-31']){const denied=await f.request(p,undefined,'staff');assert.equal(denied.response.status,403);assert.equal(denied.response.headers.get('content-disposition'),null);}
+  for(const query of ['limit=1','through=bad','through=2026-12-31&through=2026-01-01'])assert.equal((await f.request('reports/finance/trial-balance/export.xlsx?'+query)).response.status,400);
+  const foreign=await f.request('reports/finance/trial-balance/export.xlsx?through=2026-12-31',undefined,'foreignMaster',{academy:f.b});assert.equal(foreign.response.status,200);assert.equal(metadata(workbookRecords(foreign.body)).accountCount,'0');
+  await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(path)).response.status,200);
+  const catalogue=await f.request('reports/catalogue');for(const entry of catalogue.body.data)assert.equal(entry.formats.includes('xlsx'),entry.formats.includes('csv'));assert.ok(catalogue.body.data.every((e:any)=>!e.backgroundJobFormats.includes('xlsx')));
+ }finally{await f.pg.close();}
+});
+test('real spreadsheet workers start only after successful commit and connection release; commit failure and invalid replies start none',async()=>{
+ const f=await fixture();let held=0,commits=0,failCommit=false,invalid=false;const observations:{held:number;commits:number}[]=[];
+ const hook=createHook({init(_id,type){if(type==='WORKER')observations.push({held,commits});}});
+ const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():(await f.pg.exec('SET ROLE kavosh_runtime'),{async query<Row>(sql:string,params?:unknown[]){return f.pg.query<Row>(sql,params);},release(){}});held++;let released=false;return {async query<Row>(sql:string,params?:unknown[]){if(sql==='COMMIT'&&failCommit)throw Error('SYNTHETIC_COMMIT_FAILURE');const result=await c.query<Row>(sql,params);if(sql==='COMMIT')commits++;return result;},release(destroy?:boolean){assert.equal(released,false);released=true;held--;c.release(destroy);}};}};
+ const api=createApi(database,async()=>({userId:f.actors.master.user,sessionId:f.actors.master.session,academyId:f.a}),async ctx=>invalid?{status:200,body:'a\nb',xlsx:{filename:'unsafe.xlsx\r\nheader'}}:business(ctx));
+ const path='reports/finance/trial-balance/export.xlsx',raw=()=>api(new Request('https://academy.example/api/v1/'+path+'?through=2026-12-31',{headers:{cookie:'test-resolver-only','x-academy-id':f.a}}),path);
+ try{hook.enable();failCommit=true;assert.equal((await raw()).status,503);assert.equal(observations.length,0);assert.equal(held,0);failCommit=false;invalid=true;assert.equal((await raw()).status,503);assert.equal(observations.length,0);invalid=false;
+  const response=await raw();assert.equal(response.status,200);assert.ok(workbookRecords(new Uint8Array(await response.arrayBuffer())).length>0);assert.deepEqual(observations,[{held:0,commits:1}]);assert.equal(held,0);
+ }finally{hook.disable();if(!f.pg.runtime)await f.pg.exec('RESET ROLE');await f.pg.close();}
 });
 test('actual negative long money stays exact text and is never mistaken for untrusted formula-like text',async()=>{
  const f=await fixture();try{

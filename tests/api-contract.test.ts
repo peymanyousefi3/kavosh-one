@@ -3,6 +3,12 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('Excel aliases retain source parameters and security with a binary response contract',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));let count=0;
+ for(const [path,value]of Object.entries(api.paths)as[string,any][])if(path.startsWith('/api/v1/reports/')&&path.endsWith('/export')&&value.get?.responses['200'].content?.['text/csv']){
+  count++;const alias=api.paths[path+'.xlsx'].get;assert.deepEqual(alias.parameters,value.get.parameters);assert.deepEqual(alias.security,value.get.security);assert.equal(alias.requestBody,undefined);assert.deepEqual(alias.responses['200'].content['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].schema,{type:'string',format:'binary'});
+ }assert.ok(count>20);
+});
 test('academic sharing and weekly ranking contracts separate public detail,verified members and exact reviewed private selections',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),post=api.paths['/api/v1/community/profiles/{id}/academic-release'].post,body=post.requestBody.content['application/json'].schema;assert.equal(body.additionalProperties,false);assert.equal(body.properties.awards.maxItems,100);assert.deepEqual(Object.keys(body.properties.awards.items.properties).sort(),['awardId','awardVersion']);for(const key of ['points','consentGranted','profilePublished','certificatePdfGenerated','actorId'])assert.equal(body.properties[key],undefined);assert.match(post.summary,/Separate academic view\/publish/);
  const member=api.paths['/api/v1/community/published-profiles/{id}/achievements'].get;assert.deepEqual(member.security,[{humanSession:[],academySelection:[]}]);const rank=api.paths['/api/v1/community/academic-rankings'].get;assert.deepEqual(rank.security,[{humanSession:[],academySelection:[]}]);assert.equal(rank.parameters.find((p:any)=>p.name==='weekStart').required,true);assert.equal(rank.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(rank.summary,/before all counts and ranking/);assert.deepEqual(api.paths['/api/public/v1/profiles/{id}/achievements'].get.security,[]);assert.equal(api.paths['/api/public/v1/community/academic-rankings'],undefined);

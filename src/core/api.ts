@@ -6,13 +6,14 @@ import { ApiError, requireScope, scopeFor,scopeNonempty, type Capability, type C
 import { hashToken, parseBearer } from './tokens.ts';
 import type { PayrollPrivateVault } from './payroll-private-data.ts';
 import { videoRangeSchema,isVideoReadPath,type VideoRange } from '../files/video-range.ts';
+import { reportSpreadsheet,spreadsheetMime } from '../reports/spreadsheet.ts';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
 const name = z.string().trim().min(1).max(200);
 const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
-export type Reply = { status: number; body: unknown; csv?:{filename:string};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
+export type Reply = { status: number; body: unknown; csv?:{filename:string};xlsx?:{filename:string};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive';financeBookLocked?:boolean;financeBookExclusive?:boolean;collectorFundLocks?:Set<string>;expenseSettlementSnapshot?:boolean;notificationJobId?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'}] as const;
@@ -274,8 +275,14 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       // Attachments are code-owned GET results only. Do not let a formatter
       // choose arbitrary headers, MIME types, filenames or cache policies.
       if(reply.csv&&(request.method!=='GET'||reply.status!==200||typeof reply.body!=='string'||typeof reply.csv.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename)||Buffer.byteLength(reply.body,'utf8')>4_194_304))throw new Error('INVALID_CSV_REPLY');
+      if(reply.xlsx&&(reply.csv||reply.video||request.method!=='GET'||!/^reports\/.+\/export\.xlsx$/.test(path)||reply.status!==200||typeof reply.body!=='string'||typeof reply.xlsx.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.xlsx$/.test(reply.xlsx.filename)||Buffer.byteLength(reply.body)>4_194_304))throw new Error('INVALID_XLSX_REPLY');
       if(reply.video&&(reply.csv||reply.body!==null||!isVideoReadPath(path)||!['GET','HEAD'].includes(request.method)||!['video/mp4','video/quicktime','video/webm'].includes(reply.video.mime)||typeof reply.video.open!=='function'||!videoRangeSchema.safeParse(reply.video.plan).success||reply.status!==reply.video.plan.status||videoHead&&reply.status!==200))throw new Error('INVALID_VIDEO_REPLY');
       await db.query('COMMIT'); transaction = false;
+      if(reply.xlsx){
+        const connection=db;db=undefined;connection.release();
+        const bytes=await reportSpreadsheet(reply.body as string,c.academy_id+':'+c.person_id,request.signal);
+        return new Response(bytes,{status:200,headers:{...headers,'Cache-Control':'private, no-store','Content-Type':spreadsheetMime,'Content-Length':String(bytes.byteLength),'Content-Disposition':`attachment; filename="${reply.xlsx.filename}"`,'Cross-Origin-Resource-Policy':'same-origin','Content-Security-Policy':"sandbox; default-src 'none'"}});
+      }
       if(reply.video){
         // Never retain an authenticated DB connection/row lock during storage
         // IO or a slow viewer's stream. No caller-controlled response headers.

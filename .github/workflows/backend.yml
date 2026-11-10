@@ -184,6 +184,8 @@ jobs:
           '
       - name: Build VPS container
         run: docker build --tag kavosh-one:ci .
+      - name: Verify the packaged Excel worker with no network or writable filesystem
+        run: docker run --rm --read-only --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-one:ci scripts/spreadsheet-runtime-smoke.mjs
       - name: Run non-root container with a read-only filesystem
         run: docker run --detach --name kavosh-one-ci --publish 127.0.0.1:3198:3000 --read-only --tmpfs /tmp kavosh-one:ci
       - name: Verify the actual standalone container
