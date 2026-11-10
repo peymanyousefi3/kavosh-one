@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { jsonBody } from '../core/api.ts';
 import { parseBearer } from '../core/tokens.ts';
 import type { Database } from '../core/database.ts';
-import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection,recordCheckoutFeeInspection,recordCheckoutRefundInspection } from './checkout-result-worker.ts';
+import { probeCheckoutResultSink,recordCheckoutTransportReceipt,recordCheckoutProviderInspection,recordCheckoutFeeInspection,recordCheckoutRefundInspection,recordCheckoutRefundReturnInspection } from './checkout-result-worker.ts';
 import { stripeCheckoutDraft,stripeCheckoutTransport,StripeCheckoutError,type StripeCheckoutConnection } from './stripe-checkout.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -81,5 +81,11 @@ export async function inspectCheckoutRefunds(raw:unknown,sessionId:string,after:
  const evidence=await transport.inspectRefunds(s.draft,sessionId,after,async inspection=>{
   const principal=await recordCheckoutProviderInspection(api.resultDatabase,{academyId:config.academyId,id:principalId,startId:s.start.id,workerId:api.workerId,requestSha256:s.requestSha256,inspection});if(!principal.recorded)throw new CheckoutWorkerError('source',true);
  });
- const receipt=await recordCheckoutRefundInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,principalInspectionId:principalId,workerId:api.workerId,requestSha256:s.requestSha256,page:evidence.page});return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,principalInspectionId:principalId,page:evidence.page,...receipt};
+ const receipt=await recordCheckoutRefundInspection(api.resultDatabase,{academyId:config.academyId,id,startId:s.start.id,principalInspectionId:principalId,workerId:api.workerId,requestSha256:s.requestSha256,page:evidence.page});return {requestId:t.requestId,attemptId:t.attemptId,startId:s.start.id,principalInspectionId:principalId,requestSha256:s.requestSha256,page:evidence.page,...receipt};
+}
+export async function inspectCheckoutRefundReturn(raw:unknown,sessionId:string,refundId:string,after:string|null,config:StripeCheckoutConnection,api:WorkerApi,send:typeof fetch=fetch){
+ // Persist the verified principal AND entire actual refund page first. A
+ // balance lookup failure must not lose new warnings or invent a complete page.
+ const page=await inspectCheckoutRefunds(raw,sessionId,after,config,api,send);if(!page.recorded)throw new CheckoutWorkerError('source',true);const evidence=await stripeCheckoutTransport(config,send).inspectRefundReturn(page.page,refundId),receipt=await recordCheckoutRefundReturnInspection(api.resultDatabase,{academyId:config.academyId,id:randomUUID(),startId:page.startId,refundInspectionId:page.id,workerId:api.workerId,requestSha256:page.requestSha256,evidence});
+ return {requestId:page.requestId,attemptId:page.attemptId,startId:page.startId,refundInspectionId:page.id,evidence,...receipt};
 }
