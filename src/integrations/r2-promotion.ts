@@ -5,9 +5,10 @@ import { r2Connection,type R2Connection } from './r2-config.ts';
 import { privateR2 } from './r2.ts';
 
 const digest=z.string().regex(/^[a-f0-9]{64}$/),uuid=z.string().uuid().transform(v=>v.toLowerCase());
-const claims=z.object({academyId:uuid,fileId:uuid,storageTargetId:digest,bytes:z.number().int().min(1).max(33_554_432),sha256:digest}).strict();
+export const maximumPromotionBytes=134_217_728;
+const claims=z.object({academyId:uuid,fileId:uuid,storageTargetId:digest,bytes:z.number().int().min(1).max(maximumPromotionBytes),sha256:digest}).strict();
 const optionsSchema=z.object({timeoutMs:z.number().int().min(1).max(600000).default(120000),signal:z.instanceof(AbortSignal).optional()}).strict();
-let active=0;
+let active=0,reservedBytes=0;
 
 // Internal IO adapter,NOT an authorization/scan/approval boundary. Durable
 // source approval and current scoped download authorization remain separate.
@@ -24,9 +25,10 @@ export async function promoteQuarantinedFile(sourceConfiguration:R2Connection,de
  // Different keys still require independent real bucket-scoped IAM review.
  if(sourceConfig.data.accessKeyId===c.accessKeyId||(sourceConfig.data.accountId===c.accountId&&sourceConfig.data.bucket===c.bucket))throw new ApiError(400,'INVALID_FILE_PROMOTION_TARGET');
  if(limits.signal?.aborted)throw new ApiError(503,'FILE_PROMOTION_CANCELLED');
- // ponytail: at most two 32 MiB broker-owned copy buffers per process. Larger media needs
- // separately bounded spool/streaming verification,not an unbounded Buffer.
- if(active>=2)throw new ApiError(503,'FILE_PROMOTION_BUSY');
+ // ponytail: at most two copies and128MiB total broker-owned source buffers.
+ // Admission is byte-weighted and held through actual transport settlement,
+ // not merely caller cancellation. Larger media needs bounded spooling.
+ if(active>=2||reservedBytes+expected.bytes>maximumPromotionBytes)throw new ApiError(503,'FILE_PROMOTION_BUSY');
  const source=privateR2(sourceConfig.data,expected.academyId,handlers?.source),destination=privateR2(c,expected.academyId,handlers?.destination);
  if(source.storageTargetId!==expected.storageTargetId||source.storageTargetId===destination.storageTargetId){source.close();destination.close();throw new ApiError(400,'INVALID_FILE_PROMOTION_TARGET');}
  const client=new S3Client({endpoint:`https://${c.accountId}${c.jurisdiction==='eu'?'.eu':''}.r2.cloudflarestorage.com`,region:'auto',forcePathStyle:true,followRegionRedirects:false,maxAttempts:1,
@@ -35,12 +37,12 @@ export async function promoteQuarantinedFile(sourceConfiguration:R2Connection,de
  const halted=new Promise<never>((_resolve,reject)=>{stop=reject;});
  const cancel=()=>{controller.abort();stop(new ApiError(503,'FILE_PROMOTION_CANCELLED'));};
  const timer=setTimeout(()=>{expired=true;controller.abort();stop(new ApiError(503,'FILE_PROMOTION_TIMEOUT'));},limits.timeoutMs);
- limits.signal?.addEventListener('abort',cancel,{once:true});active++;
+ limits.signal?.addEventListener('abort',cancel,{once:true});active++;reservedBytes+=expected.bytes;let buffer:Buffer|undefined;
  try{
   const operation=async()=>{
    if(limits.signal?.aborted){cancel();throw new Error('CANCELLED');}
    const original=await source.inspectQuarantine(expected.fileId,{bytes:expected.bytes,sha256:expected.sha256},async stream=>{
-    const buffer=Buffer.alloc(expected.bytes);let used=0;for await(const chunk of stream){if(controller.signal.aborted||used+chunk.length>buffer.length)throw new Error('INVALID_SOURCE');used+=chunk.copy(buffer,used);}if(used!==buffer.length)throw new Error('INVALID_SOURCE');return buffer;
+    if(controller.signal.aborted)throw new Error('CANCELLED');buffer=Buffer.alloc(expected.bytes);let used=0;for await(const chunk of stream){if(controller.signal.aborted||used+chunk.length>buffer.length)throw new Error('INVALID_SOURCE');used+=chunk.copy(buffer,used);}if(used!==buffer.length)throw new Error('INVALID_SOURCE');return buffer;
    },limits.timeoutMs,controller.signal);
    if(controller.signal.aborted)throw new Error('CANCELLED');
    let existed=false;
@@ -66,8 +68,10 @@ export async function promoteQuarantinedFile(sourceConfiguration:R2Connection,de
   const pending=operation();
   // A deadline rejects the caller,not an uncooperative transport's pending
   // write. Retain its memory/admission reservation until actual settlement so
-  // repeated cancellation cannot accumulate unbounded 32 MiB request bodies.
-  void pending.then(()=>{active--;},()=>{active--;});
+  // repeated cancellation cannot accumulate unbounded request bodies or erase
+  // bytes while a still-running transport legitimately owns that request.
+  const release=()=>{buffer?.fill(0);active--;reservedBytes-=expected.bytes;};
+  void pending.then(release,release);
   return await Promise.race([pending,halted]);
  }catch(error){
   if(limits.signal?.aborted)throw new ApiError(503,writeAttempted?'FILE_PROMOTION_OUTCOME_UNKNOWN':'FILE_PROMOTION_CANCELLED');

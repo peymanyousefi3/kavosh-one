@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { createServer,request as httpRequest } from 'node:http';
 import { test } from 'node:test';
-import { promoteQuarantinedFile } from '../src/integrations/r2-promotion.ts';
+import { promoteQuarantinedFile,maximumPromotionBytes } from '../src/integrations/r2-promotion.ts';
 
 const academy='8fbe4060-32ec-46a9-a97d-78ea54fe50e6',file='73e6a708-ad23-484b-9b12-91db85854593',content=Buffer.from('Synthetic transport bytes,not a real academy upload.');
 const hash=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
@@ -33,6 +33,17 @@ test('verified promotion uses distinct explicit credentials,one original read,co
 });
 test('an existing conditional-write destination is verified without overwriting or inventing a fresh write',async()=>{
  const f=fixture('existing'),r=await f.run();assert.equal(r.outcome,'existing_verified');assert.equal(f.counts().puts,1);assert.equal(f.counts().cleanReads,1);assert.deepEqual(f.stored(),content);
+});
+test('one video-sized source above32MiB is copied exactly and its broker buffer is erased only after verification',async()=>{
+ const bytes=Buffer.alloc(33_554_433,37),sha=hash(bytes),largeSource={...source,maximumUploadBytes:maximumPromotionBytes},largeDestination={...destination,maximumUploadBytes:maximumPromotionBytes};let owned:Buffer|undefined,stored:Buffer|undefined,reads=0,puts=0;
+ const response=(value:Buffer)=>({response:{statusCode:200,headers:{'content-length':String(value.length),'content-type':'application/octet-stream',etag:'"synthetic-large"'},body:Readable.from([value])}}),start=performance.now();
+ const result=await promoteQuarantinedFile(largeSource,largeDestination,{...input,bytes:bytes.length,sha256:sha},{},{source:{async handle(){reads++;return response(bytes);}},destination:{async handle(req:Request){if(req.method==='PUT'){puts++;assert.equal(req.headers['if-none-match'],'*');assert.ok(Buffer.isBuffer(req.body));owned=req.body;assert.equal(hash(owned),sha);stored=Buffer.from(owned);return{response:{statusCode:200,headers:{},body:Readable.from([])}};}reads++;assert.ok(stored);assert.equal(hash(owned!),sha,'in-flight body must not be erased before verification');return response(stored);}}});
+ assert.equal(result.bytes,bytes.length);assert.equal(result.sha256,sha);assert.equal(result.outcome,'written_verified');assert.equal(reads,2);assert.equal(puts,1);assert.equal(hash(stored!),sha);assert.ok(owned!.every(v=>v===0));console.log(JSON.stringify({case:'one-video-sized-private-copy',bytes:bytes.length,elapsedMs:Math.ceil(performance.now()-start),externalRequests:0}));
+});
+test('video byte admission blocks excess queued bytes before IO without allocating their claimed buffers',async()=>{
+ const c=new AbortController(),largeSource={...source,maximumUploadBytes:maximumPromotionBytes},largeDestination={...destination,maximumUploadBytes:maximumPromotionBytes};let calls=0;const observed:Array<()=>void>=[],waits=[new Promise<void>(r=>observed.push(r)),new Promise<void>(r=>observed.push(r))],handlers={source:{async handle(){observed[calls++]();return new Promise<never>(()=>{});}}};
+ const run=(bytes:number)=>promoteQuarantinedFile(largeSource,largeDestination,{...input,bytes},{signal:c.signal},handlers),first=run(100_000_000);await waits[0];await assert.rejects(run(40_000_000),{code:'FILE_PROMOTION_BUSY'});assert.equal(calls,1);const second=run(20_000_000);await waits[1];assert.equal(calls,2);c.abort();await assert.rejects(first,{code:'FILE_PROMOTION_CANCELLED'});await assert.rejects(second,{code:'FILE_PROMOTION_CANCELLED'});
+ await assert.rejects(run(maximumPromotionBytes+1),{code:'INVALID_FILE_PROMOTION_CONFIGURATION'});assert.equal((await fixture().run()).outcome,'written_verified');
 });
 test('changed original bytes never reach PUT and changed stored bytes cannot pass using a matching ETag',async()=>{
  const sourceChanged=fixture('source_mismatch');await assert.rejects(sourceChanged.run(),{code:'FILE_PROMOTION_SOURCE_MISMATCH',status:409});assert.equal(sourceChanged.counts().puts,0);assert.equal(sourceChanged.counts().cleanReads,0);

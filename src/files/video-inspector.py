@@ -24,7 +24,10 @@ if os.path.realpath(INPUT_DIRECTORY) != INPUT_DIRECTORY or not os.path.isdir(INP
     sys.exit(1)
 if MIME not in ("video/mp4", "video/quicktime", "video/webm"):
     sys.exit(1)
-ENV = {"TZ": "UTC", "LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+# Fixed allocator limit,not inherited caller configuration. A many-core glibc
+# host otherwise reserves multiple large arenas inside the512MiB address cap.
+# https://sourceware.org/glibc/manual/latest/html_node/Malloc-Tunable-Parameters.html
+ENV = {"TZ": "UTC", "LC_ALL": "C", "PATH": "/usr/bin:/bin", "MALLOC_ARENA_MAX": "2"}
 STAGE = "runtime"
 
 
@@ -74,6 +77,10 @@ def run(args, maximum=1048576):
                                 reject("RESOURCE_LIMIT")
                 code = child.wait(timeout=max(0.01, deadline - time.monotonic()))
                 if code != 0:
+                    # FFmpeg propagates AVERROR(EAGAIN) as Unix exit245. Native
+                    # thread/resource admission failure is not bad-file proof.
+                    if code == 245:
+                        raise RuntimeError("VIDEO_NATIVE_RESOURCE_UNAVAILABLE")
                     failure = Rejected("DECODER_REJECTED")
                     failure.native_exit_code = code
                     raise failure
@@ -104,7 +111,7 @@ def screen(path):
     if container == "mov":
         source += ["-enable_drefs", "0", "-use_absolute_path", "0"]
     STAGE = "probe"
-    probe = json.loads(run([FFPROBE, "-v", "error", "-max_alloc", "67108864", "-threads", "1"] + source + [
+    probe = json.loads(run([FFPROBE, "-cpucount", "2", "-v", "error", "-max_alloc", "67108864", "-threads", "1"] + source + [
         "-show_entries", "stream=index,codec_type,codec_name,width,height,avg_frame_rate,duration,channels,sample_rate:format=format_name,duration",
         "-of", "json", path]))
     STAGE = "stream_policy"
@@ -139,7 +146,7 @@ def screen(path):
             reject("STREAM_POLICY")
         audio = {"codec": a["codec_name"], "channels": a["channels"], "sampleRate": int(sample_rate)}
     STAGE = "decode"
-    decoded = run([FFMPEG, "-hide_banner", "-loglevel", "error", "-xerror", "-max_error_rate", "0", "-max_alloc", "67108864",
+    decoded = run([FFMPEG, "-cpucount", "2", "-hide_banner", "-loglevel", "error", "-xerror", "-max_error_rate", "0", "-max_alloc", "67108864",
                    "-threads", "1", "-filter_threads", "1", "-filter_complex_threads", "1", "-err_detect", "explode"] + source + [
         "-noautorotate", "-i", path, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "rawvideo", "-pix_fmt", "yuv420p",
         "-fps_mode:v", "passthrough", "-c:a", "pcm_s16le", "-threads", "1", "-f", "framehash", "-hash", "sha256", "pipe:1"], 8388608)
