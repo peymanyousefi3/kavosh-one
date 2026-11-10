@@ -61,7 +61,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:recordedWorkReportContract,handler:recordedWorkReport,capability:'session-time.view',csv:true,backgroundCsv:true},
  {contracts:payrollCostReportContract,handler:payrollCostReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
- {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view',csv:true},
+ {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view',csv:true,backgroundCsv:true},
  {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view',csv:true},
  {contracts:sessionFollowUpContract,handler:sessionFollowUp,capability:'session-evidence.view',csv:true},
  {contracts:studentPerformanceReportContract,handler:studentPerformance,capability:'student-feedback.view',csv:true,backgroundCsv:true},
@@ -71,10 +71,10 @@ export const reportCatalogue:readonly Entry[]=groups.flatMap(g=>g.contracts.map(
 export const reportId=z.enum(reportCatalogue.map(r=>r.id));
 export function catalogueReport(id:string){const r=reportCatalogue.find(r=>r.id===id);if(!r)throw new ApiError(400,'UNKNOWN_REPORT');return r;}
 export const reportParameters=z.record(z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/).refine(k=>!['constructor','prototype','__proto__'].includes(k)),z.string().max(8000).refine(v=>v.isWellFormed()&&!v.includes('\0'))).refine(v=>Object.keys(v).length<=48&&Buffer.byteLength(JSON.stringify(v),'utf8')<=65536);
-const pathParameters=z.record(z.string().regex(/^id$/),z.string().uuid().transform(v=>v.toLowerCase()));
+export const reportPathParameters=z.record(z.string().regex(/^id$/),z.string().uuid().transform(v=>v.toLowerCase()));
 const cursor=/^(?:after|statementAfter|ledgerAfter)|^snapshot$/i;
 export function reportConfiguration(id:string,parameters:Record<string,string>,path:Record<string,string>,rawWindow?:ReportDateWindow){
- const entry=catalogueReport(id),paths=pathParameters.parse(path);if(entry.path.includes('{id}')!==Boolean(paths.id))throw new ApiError(400,'REPORT_PATH_PARAMETERS_REQUIRED');
+ const entry=catalogueReport(id),paths=reportPathParameters.parse(path);if(entry.path.includes('{id}')!==Boolean(paths.id))throw new ApiError(400,'REPORT_PATH_PARAMETERS_REQUIRED');
  const input=reportParameters.parse(parameters),dateWindow=rawWindow===undefined?undefined:reportDateWindow.parse(rawWindow),spec=dateWindow?reportWindowInputs(id):undefined;
  if(spec?.fields.some(k=>Object.hasOwn(input,k)))throw new ApiError(400,'REPORT_DATE_WINDOW_CONFLICT');if(dateWindow&&spec?.timeZone&&input.timeZone!==undefined&&input.timeZone!==dateWindow.timeZone)throw new ApiError(400,'REPORT_TIME_ZONE_CONFLICT');
  if(Object.keys(input).some(k=>cursor.test(k)))throw new ApiError(400,'REPORT_CURSOR_NOT_A_PRESET');

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { randomUUID,createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { pollResponseFixture,persistNativePollResponse } from './poll-response-fixture.ts';
 import { pollFixture } from './poll-fixture.ts';
@@ -8,12 +8,52 @@ import { pollResultSeries,pollResultsCsv,maximumSynchronousPollResponses } from 
 import { parse } from 'csv-parse/sync';
 import { spreadsheetRows } from './spreadsheet-reader.ts';
 import { ApiError } from '../src/core/policy.ts';
+import { runFixtureReportWorker } from './report-worker-fixture.ts';
+import { pollReportAuthorization } from '../src/modules/poll-report-access.ts';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 
 async function fixture(options:Parameters<typeof pollResponseFixture>[0]={}){
  const f=await pollResponseFixture(options);for(const role of [f.staffRole,f.managerRole])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'poll-results.view','allow')",[f.a,role]);
  return {...f,result:(query='',as='master')=>f.request('reports/learning/polls/'+f.poll.id+query,undefined,as)};
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
+test('queued poll exports pin the requested form,retain exact private source proof and deny revoked downloads',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.submit()).response.status,201);
+  const queued=await f.request('reports/jobs',{reportId:'learning.polls.by-id',parameters:{},pathParameters:{id:f.poll.id}},'staff');assert.equal(queued.response.status,202,JSON.stringify(queued.body));assert.equal(queued.body.data.configuration.parameters.formVersion,'1');
+  assert.equal((await f.changePoll(f.poll.id,{...f.pollInput,expectedVersion:1,state:'published',definition:{...f.pollDefinition,title:'Later form must not replace queued questions'}})).response.status,200);
+  assert.equal((await runFixtureReportWorker(f)).outcome,'succeeded');const path='reports/jobs/'+queued.body.data.id+'/download',file=await f.request(path,undefined,'staff');assert.equal(file.response.status,200,JSON.stringify(file.body));const rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.field==='formVersion')?.value,'1');assert.equal(rows.find(r=>r.field==='includedResponses')?.value,'1');assert.equal(rows.find(r=>r.field==='title')?.value,f.pollDefinition.title);
+  for(const secret of ['PRIVATE parent response',f.student,f.guardian,f.enrollment.id,'authorizationContext','contexts'])assert.ok(!file.body.includes(secret),secret);
+  const retained=(await f.pg.query<{sha256:string;authorization_context:unknown}>('SELECT sha256,authorization_context FROM public.report_job_results WHERE job_id=$1',[queued.body.data.id])).rows[0],proof=pollReportAuthorization.parse(retained.authorization_context);assert.equal(retained.sha256,createHash('sha256').update(file.body).digest('hex'));assert.equal(proof.pollId,f.poll.id);assert.equal(proof.formVersion,1);assert.deepEqual(proof.contexts,[{studentId:f.student,classId:f.c.id,hubId:f.hub}]);
+  for(const bad of [{...proof,extra:true},{...proof,contexts:[...proof.contexts,...proof.contexts]},{...proof,formVersion:0},{...proof,contexts:[{...proof.contexts[0],studentId:'bad'}]}]){assert.equal(pollReportAuthorization.safeParse(bad).success,false);assert.equal((await f.pg.query<{valid:boolean}>('SELECT public.report_result_context_valid($1,$2::jsonb) valid',['learning.polls.by-id',JSON.stringify(bad)])).rows[0].valid,false);}
+  const excel=await f.request(path+'.xlsx',undefined,'staff');assert.equal(excel.response.status,200,JSON.stringify(excel.body));const expected=parse(file.body,{bom:true}) as string[][];assert.deepEqual(spreadsheetRows(excel.body).map((row,i)=>Array.from({length:expected[i].length},(_,j)=>row[j]??'')),expected);
+  assert.equal((await f.submit({expectedVersion:0,formVersion:2,answers:[f.answer[0]]})).response.status,201);assert.equal((await f.request(path,undefined,'staff')).body,file.body);
+  assert.equal((await f.request(path,undefined,'peer')).response.status,404);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='polls.view'",[f.staffRole]);for(const target of [path,path+'.xlsx','reports/jobs/'+queued.body.data.id]){const denied=await f.request(target,undefined,'staff');assert.equal(denied.response.status,403);assert.equal(denied.response.headers.get('content-disposition'),null);}
+ }finally{await f.pg.close();}
+});
+test('queued poll inputs reject missing,foreign and extraneous paths or caller-selected internal controls',async()=>{
+ const f=await fixture();try{
+  const base={reportId:'learning.polls.by-id',parameters:{},pathParameters:{id:f.poll.id}};
+  for(const bad of [{...base,pathParameters:{}},{...base,pathParameters:{id:'bad'}},{...base,pathParameters:{id:f.poll.id,extra:randomUUID()}},{...base,parameters:{background:'true'}},{...base,authorizationContext:{}},{reportId:'finance.trial-balance',parameters:{through:'2026-12-31'},pathParameters:{id:f.poll.id}}]){const r=await f.request('reports/jobs',bad);assert.equal(r.response.status,400,JSON.stringify(r.body));}
+  assert.equal((await f.request('reports/jobs',{...base,pathParameters:{id:randomUUID()}})).response.status,404);assert.equal((await f.pg.query('SELECT id FROM public.report_jobs')).rows.length,0);
+ }finally{await f.pg.close();}
+});
+test('queued poll archives retain unanswered audience contexts and fail closed after partial source revocation',async()=>{
+ const f=await fixture({anchor:{kind:'academy'}});try{
+  const student=f.actors.staff.person,c=await f.makeClass(f.otherHub);assert.equal((await f.request('students',{personId:student,legalName:'Synthetic second poll student',dateOfBirth:'2014-01-01',recruiter:{kind:'academy'}})).response.status,201);const enrollment=await f.request('classes/'+c.id+'/enrollments',{studentId:student,studentProfileVersion:1,joinsOn:'2026-01-02',reason:'Synthetic unanswered poll recipient'});assert.equal(enrollment.response.status,201);
+  assert.equal((await f.changePoll(f.poll.id,{...f.pollInput,anchor:{kind:'academy'},expectedVersion:1,state:'published',recipients:[...f.pollInput.recipients,{enrollmentId:enrollment.body.data.id,enrollmentVersion:1}]})).response.status,200);assert.equal((await f.submit()).response.status,201);
+  const role=await f.request('roles',{name:'Whole original poll sources',permissions:['polls.view','poll-results.view'].map(capability=>({capability,effect:'allow'}))});assert.equal(role.response.status,201);const access='people/'+f.actors.staff.person+'/access',version=(await f.request(access)).body.data.version;assert.equal((await f.request(access,{expectedVersion:version,assignments:[{roleId:role.body.data.id,allHubs:true}]})).response.status,200);
+  const q=await f.request('reports/jobs',{reportId:'learning.polls.by-id',parameters:{},pathParameters:{id:f.poll.id}},'staff');assert.equal(q.response.status,202,JSON.stringify(q.body));assert.equal((await runFixtureReportWorker(f)).outcome,'succeeded');const download='reports/jobs/'+q.body.data.id+'/download';assert.equal((await f.request(download,undefined,'staff')).response.status,200);
+  const proof=pollReportAuthorization.parse((await f.pg.query<{authorization_context:unknown}>('SELECT authorization_context FROM public.report_job_results WHERE job_id=$1',[q.body.data.id])).rows[0].authorization_context);assert.equal(proof.contexts.length,2);assert.ok(proof.contexts.some(s=>s.studentId===student));
+  assert.equal((await f.request(access,{expectedVersion:version+1,assignments:[{roleId:role.body.data.id,allHubs:false,classIds:[f.c.id]}]})).response.status,200);assert.equal((await f.result('','staff')).response.status,200);for(const target of [download,download+'.xlsx','reports/jobs/'+q.body.data.id]){const denied=await f.request(target,undefined,'staff');assert.equal(denied.response.status,403,JSON.stringify(denied.body));assert.equal(denied.body.error.code,'REPORT_SOURCE_ACCESS_CHANGED');}
+ }finally{await f.pg.close();}
+});
+test('saved poll jobs freeze a real form while the reusable preset continues to follow the current form',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.submit()).response.status,201);const preset=await f.request('reports/presets',{anchor:{kind:'class',id:f.c.id},definition:{name:'Current poll aggregate',reportId:'learning.polls.by-id',parameters:{},pathParameters:{id:f.poll.id}},reason:'Reusable poll report'});assert.equal(preset.response.status,201,JSON.stringify(preset.body));const path='reports/presets/'+preset.body.data.id,queue=await f.request(path+'/queue',{expectedVersion:1});assert.equal(queue.response.status,202,JSON.stringify(queue.body));assert.equal(queue.body.data.configuration.parameters.formVersion,'1');
+  assert.equal((await f.changePoll(f.poll.id,{...f.pollInput,expectedVersion:1,state:'published',definition:{...f.pollDefinition,title:'New live preset form'}})).response.status,200);assert.equal((await runFixtureReportWorker(f)).outcome,'succeeded');const file=await f.request('reports/jobs/'+queue.body.data.id+'/download');assert.equal(file.response.status,200);const rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.field==='presetId')?.value,preset.body.data.id);assert.equal(rows.find(r=>r.field==='presetVersion')?.value,'1');assert.equal(rows.find(r=>r.field==='formVersion')?.value,'1');const live=await f.request(path+'/export');assert.equal(live.response.status,200);assert.equal((parse(live.body,{columns:true,bom:true}) as Record<string,string>[]).find(r=>r.field==='formVersion')?.value,'2');
+ }finally{await f.pg.close();}
+});
 function check(name:string,run:(f:Fixture)=>Promise<void>,options:Parameters<typeof fixture>[0]={}){test(name,async()=>{const f=await fixture(options);try{await run(f);}finally{await f.pg.close();}});}
 check('poll CSV and Excel preserve every aggregate and pinned form without exporting private answer bodies or respondents',async f=>{
  assert.equal((await f.submit()).response.status,201);const path='reports/learning/polls/'+f.poll.id+'/export',csv=await f.request(path,undefined,'staff');assert.equal(csv.response.status,200,JSON.stringify(csv.body));const rows=parse(csv.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.section==='summary'&&r.field==='includedResponses')?.value,'1');assert.equal(rows.filter(r=>r.section==='question').length,3);assert.equal(rows.filter(r=>r.section==='choice').length,4);assert.equal(rows.find(r=>r.section==='choice')?.choice_count,'1');assert.equal(rows.find(r=>r.section==='choice')?.percent_of_answering_responses,'100.00');assert.equal(rows.find(r=>r.field==='freeTextIncluded')?.value,'false');for(const secret of ['PRIVATE parent response',f.student,f.guardian,f.enrollment.id,'""recipients"":','changed_by'])assert.ok(!csv.body.includes(secret),secret);
@@ -70,6 +110,13 @@ test('a new recipient class cannot use current audience rights to read another c
 });
 test('the synchronous count boundary fails explicitly without truncating a report denominator',()=>{
  const definition={title:'Survey',description:'',locale:'en' as const,questions:[{id:randomUUID(),kind:'text' as const,prompt:'Notes',required:false,maxLength:20}]},summary={selectedHeads:maximumSynchronousPollResponses,submittedResponses:maximumSynchronousPollResponses,includedResponses:maximumSynchronousPollResponses,excludedResponses:0,withdrawnResponses:0,distinctStudents:1,distinctLastActors:1,distinctIncludedStudents:1,distinctIncludedLastActors:1,configuredAudienceStudents:1};assert.equal(pollResultSeries(definition,{summary,question_counts:[],choice_counts:[]})[0].unansweredResponses,maximumSynchronousPollResponses);assert.throws(()=>pollResultSeries(definition,{summary:{...summary,selectedHeads:maximumSynchronousPollResponses+1},question_counts:[],choice_counts:[]}),e=>e instanceof ApiError&&e.status===422&&e.code==='POLL_RESULTS_REQUIRE_BACKGROUND_JOB');
+});
+test('schema367 preserves populated poll answers,revisions and function authority from schema366',async()=>{
+ const f=await pollFixture(366);try{
+  await f.pollParent();const made=await f.createPoll({...f.pollInput,state:'published'});assert.equal(made.response.status,200,JSON.stringify(made.body));await persistNativePollResponse(f,made.body.data.id,[{questionId:f.pollDefinition.questions[0].id,kind:'single',optionId:f.pollDefinition.questions[0].options![0].id}]);
+  const tables=['polls','poll_revisions','poll_form_revisions','poll_responses','poll_response_revisions'],before=[];for(const table of tables)before.push(await f.pg.query('SELECT to_jsonb(r) data FROM public.'+table+' r ORDER BY to_jsonb(r)::text'));const authoritySQL="SELECT oid,proowner,proacl FROM pg_proc WHERE oid IN('public.report_job_guard()'::regprocedure,'public.report_result_guard()'::regprocedure,'public.report_result_context_valid(text,jsonb)'::regprocedure) ORDER BY oid",authority=(await f.pg.query(authoritySQL)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/367_poll_aggregate_report_jobs.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0].revision,367);for(let i=0;i<tables.length;i++)assert.deepEqual((await f.pg.query('SELECT to_jsonb(r) data FROM public.'+tables[i]+' r ORDER BY to_jsonb(r)::text')).rows,before[i].rows);assert.deepEqual((await f.pg.query(authoritySQL)).rows,authority);await upgradeToCurrent(f.pg);
+ }finally{await f.pg.close();}
 });
 test('schema84 preserves actual schema83 answers and immutable response histories',async()=>{
  const f=await pollFixture(83);try{await f.pollParent();const role=(await f.pg.query<{id:string}>("SELECT id FROM public.roles WHERE name='Own child submitted answers'")).rows[0].id;await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'received-polls.respond','allow')",[f.a,role]);const p=await f.createPoll({...f.pollInput,state:'published'});assert.equal(p.response.status,200);await persistNativePollResponse(f,p.body.data.id,[{questionId:f.pollDefinition.questions[0].id,kind:'single',optionId:f.pollDefinition.questions[0].options![0].id}]);const before=(await f.pg.query('SELECT to_jsonb(r) data FROM public.poll_responses r')).rows,history=(await f.pg.query('SELECT * FROM public.poll_response_revisions')).rows;await f.pg.exec(await readFile(new URL('../db/migrations/084_poll_results.sql',import.meta.url),'utf8'));assert.deepEqual((await f.pg.query('SELECT to_jsonb(r) data FROM public.poll_responses r')).rows,before);assert.deepEqual((await f.pg.query('SELECT * FROM public.poll_response_revisions')).rows,history);}finally{await f.pg.close();}

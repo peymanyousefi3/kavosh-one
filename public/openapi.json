@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.405.0",
+    "version": "0.406.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -70917,7 +70917,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue recorded-hour reports(up to2000time entries/10000terms/2000priced intervals,200priced intervals/person across currencies,10000output rows/4MiB,366civil days),scheduled payroll forecasts(up to1000engagements/10000terms/2000assignments/2000sessions;200hourly intervals/person/currency,2000total intervals,200000salary-reference calendar days,366civil days,10000detail rows/4MiB),or a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
+        "summary": "Queue poll aggregates(up to100000response heads/10000student-class-hub contexts;pathParameters.id required;exact question form pinned at enqueue,no written answers),recorded-hour reports(up to2000time entries/10000terms/2000priced intervals,200priced intervals/person across currencies,10000output rows/4MiB,366civil days),scheduled payroll forecasts(up to1000engagements/10000terms/2000assignments/2000sessions;200hourly intervals/person/currency,2000total intervals,200000salary-reference calendar days,366civil days,10000detail rows/4MiB),or a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -70935,6 +70935,7 @@
                   "reportId": {
                     "type": "string",
                     "enum": [
+                      "learning.polls.by-id",
                       "payroll.recorded-time",
                       "payroll.scheduled-costs",
                       "finance.cash-movements",
@@ -70965,6 +70966,18 @@
                     "additionalProperties": {
                       "type": "string",
                       "maxLength": 8000
+                    }
+                  },
+                  "pathParameters": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^id$"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                     }
                   },
                   "dateWindow": {
@@ -71460,7 +71473,7 @@
     },
     "/api/v1/reports/learning/polls/{id}/export": {
       "get": {
-        "summary": "Complete exact-form scoped poll aggregate CSV:all authorized summary counts,question/option chart series,authored labels and percentage denominators;Empty percentage cells denote missing denominators,not zero percent. Same current polls/results rights,combined selectors and10000response-head cap;4MiB refuses oversized files without partial counts. Formula-safe authored text;NO free-text answers,respondent names,identities or response bodies. Saved preset provenance retained;not a response-detail export or queued report.",
+        "summary": "Complete exact-form scoped poll aggregate CSV:all authorized summary counts,question/option chart series,authored labels and percentage denominators;Empty percentage cells denote missing denominators,not zero percent. Same current polls/results rights,combined selectors and10000response-head cap;4MiB refuses oversized files without partial counts. Formula-safe authored text;NO free-text answers,respondent names,identities or response bodies. Saved preset provenance retained;not a response-detail export export;larger selections may use requester-bound aggregate jobs within their advertised limits.",
         "parameters": [
           {
             "name": "id",
@@ -71535,7 +71548,7 @@
     },
     "/api/v1/reports/learning/polls/{id}/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete exact-form scoped poll aggregate CSV:all authorized summary counts,question/option chart series,authored labels and percentage denominators;Empty percentage cells denote missing denominators,not zero percent. Same current polls/results rights,combined selectors and10000response-head cap;4MiB refuses oversized files without partial counts. Formula-safe authored text;NO free-text answers,respondent names,identities or response bodies. Saved preset provenance retained;not a response-detail export or queued report.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete exact-form scoped poll aggregate CSV:all authorized summary counts,question/option chart series,authored labels and percentage denominators;Empty percentage cells denote missing denominators,not zero percent. Same current polls/results rights,combined selectors and10000response-head cap;4MiB refuses oversized files without partial counts. Formula-safe authored text;NO free-text answers,respondent names,identities or response bodies. Saved preset provenance retained;not a response-detail export export;larger selections may use requester-bound aggregate jobs within their advertised limits.",
         "parameters": [
           {
             "name": "id",
