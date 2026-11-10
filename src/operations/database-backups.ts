@@ -66,8 +66,8 @@ function completed(p:ChildProcessWithoutNullStreams){
  let warning=false,failed=false;p.stderr.on('data',()=>{warning=true;});p.on('error',()=>{failed=true;});
  return new Promise<void>((yes,no)=>p.once('close',code=>code===0&&!warning&&!failed?yes():no(new RecoveryError('RECOVERY_TOOL_FAILED'))));
 }
-function counter(max:number,hash?:ReturnType<typeof createHash>){
- let size=0;return new Transform({transform(chunk:Buffer,_encoding,done){size+=chunk.length;if(size>max)return done(new RecoveryError('RECOVERY_SIZE_LIMIT'));hash?.update(chunk);done(null,chunk);}});
+function counter(max:number,hash?:ReturnType<typeof createHash>,onLimit?:(error:RecoveryError)=>void){
+ let size=0;return new Transform({transform(chunk:Buffer,_encoding,done){size+=chunk.length;if(size>max){const error=new RecoveryError('RECOVERY_SIZE_LIMIT');onLimit?.(error);return done(error);}hash?.update(chunk);done(null,chunk);}});
 }
 async function syncFile(p:string){
  const f=await open(p,constants.O_RDWR|constants.O_NOFOLLOW);try{await f.sync();return await f.stat();}finally{await f.close();}
@@ -80,13 +80,15 @@ async function passwordFile(p:string,line:string){
  try{await f.writeFile(line);success=true;}finally{await f.close();if(!success)await unlink(p).catch(()=>{});}
 }
 async function encryptedDump(i:z.infer<typeof backupInput>,env:NodeJS.ProcessEnv,snapshot:string,file:string,signal:AbortSignal){
- const hash=createHash('sha256'),f=await open(file,'wx',0o600),children:ChildProcessWithoutNullStreams[]=[],tasks:Promise<unknown>[]=[];let success=false;
+ const hash=createHash('sha256'),f=await open(file,'wx',0o600),children:ChildProcessWithoutNullStreams[]=[],tasks:Promise<unknown>[]=[];let success=false,sizeError:RecoveryError|undefined;
  try{
   const dump=spawn(i.pgDump,['--format=custom','--compress=6','--no-password','--no-tablespaces','--lock-wait-timeout=5000','--snapshot='+snapshot],{env:{...env,PGAPPNAME:'kavosh-backup-dump'},signal});children.push(dump);
   const age=spawn(i.age,['--encrypt','--recipient',i.recipient],{env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV??'production',LANG:'C'},signal});children.push(age);
-  tasks.push(completed(dump),completed(age),pipeline(dump.stdout,age.stdin,{signal}),pipeline(age.stdout,counter(i.maximumBytes,hash),f.createWriteStream({autoClose:true}),{signal}));await Promise.all(tasks);
+  tasks.push(completed(dump),completed(age),pipeline(dump.stdout,age.stdin,{signal}),pipeline(age.stdout,counter(i.maximumBytes,hash,error=>{sizeError=error;}),f.createWriteStream({autoClose:true}),{signal}));await Promise.all(tasks);
   const result={sha256:hash.digest('hex'),bytes:(await syncFile(file)).size};success=true;return result;
- }catch(e){if(e instanceof RecoveryError)throw e;throw new RecoveryError('RECOVERY_TOOL_FAILED');}
+ // SIGPIPE/child-close can win Promise.all's rejection race on Linux. Retain
+ // the observed byte-limit cause instead of depending on callback ordering.
+ }catch(e){if(sizeError)throw sizeError;if(e instanceof RecoveryError)throw e;throw new RecoveryError('RECOVERY_TOOL_FAILED');}
  finally{
   for(const p of children)if(p.exitCode===null&&p.signalCode===null)p.kill('SIGTERM');
   const kill=setTimeout(()=>{for(const p of children)if(p.exitCode===null&&p.signalCode===null)p.kill('SIGKILL');},1000);kill.unref();
