@@ -8,7 +8,7 @@ import { permissionScope } from '../core/approvals.ts';
 import { reportTiming,nextReportOccurrence } from '../core/report-timing.ts';
 import { executionReportPreset } from '../modules/report-presets.ts';
 import { reportJobAccess } from '../modules/report-job-access.ts';
-import { enqueueReport } from '../modules/report-jobs.ts';
+import { enqueueReport,financialJobInput } from '../modules/report-jobs.ts';
 import { lockAcademyTopology } from '../modules/academy.ts';
 
 const academies=z.array(z.string().uuid().transform(v=>v.toLowerCase())).min(1).max(1000).refine(v=>new Set(v).size===v.length);
@@ -18,7 +18,7 @@ type Lease={id:string;academy_id:string;lease_token:string};
 export async function processOneReportSchedule(database:Database,allowedAcademies:string[],signal?:AbortSignal){
  const ids=academies.parse(allowedAcademies);if(signal?.aborted)return {claimed:false,recorded:false};const db=await database.connect();let transaction=false,broken=false;
  try{
-  await assertRuntimeRole(db,'automation_worker');await assertSchemaReady(db);const lease=(await db.query<Lease>('SELECT * FROM public.claim_report_schedule($1)',[ids])).rows[0];if(!lease)return {claimed:false,recorded:false};
+  await assertRuntimeRole(db,'automation_worker');await assertSchemaReady(db);const lease=(await db.query<Lease>('SELECT * FROM public.claim_report_schedule($1,$2)',[ids,financialJobInput.shape.reportId.options])).rows[0];if(!lease)return {claimed:false,recorded:false};
   let failure:'paused'|'retry'='retry',problem='PROCESSING_UNAVAILABLE';
   try{
    const c=(await db.query<Credential&{user_id:string|null}>('SELECT * FROM public.report_schedule_actor($1,$2,$3)',[lease.id,lease.lease_token,lease.academy_id])).rows[0];if(!c)throw new ApiError(401,'SCHEDULE_AUTHORIZATION_EXPIRED');if(!c.allowed)throw new ApiError(429,'RATE_LIMITED');

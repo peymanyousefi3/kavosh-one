@@ -19,10 +19,10 @@ import { upgradeToCurrent } from './migration-upgrade.ts';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
 import { historicalReportJob,historicalReportScheduleApproval } from './historical-report-job.ts';
 
-async function fixture(as='staff',maxDelayMinutes=60,throughSchema?:number){const f=await operationsFixture({throughSchema});try{
+async function fixture(as='staff',maxDelayMinutes=60,throughSchema?:number,reportId='finance.trial-balance'){const f=await operationsFixture({throughSchema});try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['report-presets.view','report-presets.edit','report-schedules.view','report-schedules.edit','financial-reports.view','ledger.view','accounts.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
  const due=(await f.pg.query<{due:string}>(`SELECT to_char((date_trunc('minute',clock_timestamp())-interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') due`)).rows[0].due,local=Temporal.Instant.from(due).toZonedDateTimeISO('America/Toronto');
- const p=await f.request('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Automatic previous-month report',reportId:'finance.trial-balance',parameters:{includeZero:'true'},dateWindow:{kind:'previous_month',timeZone:'America/Toronto'}},reason:'Recurring report source'});assert.equal(p.response.status,201,JSON.stringify(p.body));
+ const p=await f.request('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Automatic previous-month report',reportId,parameters:{includeZero:'true'},dateWindow:{kind:'previous_month',timeZone:'America/Toronto'}},reason:'Recurring report source'});assert.equal(p.response.status,201,JSON.stringify(p.body));
  const definition={name:'Daily automatic report',enabled:true,presetVersion:1,timing:{timeZone:'America/Toronto',localTime:local.toPlainTime().toString({smallestUnit:'minute'}),startsOn:'2026-01-01',cycle:{kind:'daily'},maxDelayMinutes}},q=await f.request('reports/presets/'+p.body.data.id+'/schedules',{definition,reason:'Approved recurring report'},as);let s=q;
  let created=q.body.data;
  if(as!=='master'){
@@ -39,6 +39,40 @@ async function fixture(as='staff',maxDelayMinutes=60,throughSchema?:number){cons
  return {...f,id,due,preset:p.body.data,definition:created.definition,stage,database,errors,work,state,stop,occurrences};
  }catch(e){await f.pg.close();throw e;}}
 type F=Awaited<ReturnType<typeof fixture>>;
+test('actual363to364 preserves due schedules and makes legacy schedulers skip new cash types without consuming work',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture('staff',60,363,'finance.cash-movements');try{
+  const tables=['report_schedules','report_schedule_revisions','report_schedule_work','report_presets','report_preset_revisions','approval_requests','audit_events','outbox_events'],before=[];
+  for(const table of tables)before.push((await f.pg.query('SELECT to_jsonb(t) data FROM public.'+table+' t ORDER BY to_jsonb(t)::text')).rows);
+  const identity="SELECT oid::text,proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid='public.claim_report_schedule(uuid[])'::regprocedure",original=(await f.pg.query(identity)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/364_report_scheduler_capabilities.sql',import.meta.url),'utf8'));assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,364);
+  for(const [i,table]of tables.entries())assert.deepEqual((await f.pg.query('SELECT to_jsonb(t) data FROM public.'+table+' t ORDER BY to_jsonb(t)::text')).rows,before[i],table);assert.deepEqual((await f.pg.query(identity)).rows,original);
+  await f.pg.exec('SET ROLE kavosh_automation_worker');try{
+   assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1)',[[f.a]])).rows.length,0);
+   assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],['finance.trial-balance']])).rows.length,0);
+   assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.b],['finance.cash-movements']])).rows.length,0);
+   for(const manifest of [null,[],['finance.cash-movements',null],['finance.cash-movements','finance.cash-movements'],Array(101).fill('finance.cash-movements')])await assert.rejects(f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],manifest]),/INVALID_SUPPORTED_REPORT_LIST/);
+  }finally{await f.pg.exec('RESET ROLE');}
+  assert.equal((await f.pg.query('SELECT * FROM public.report_schedule_work')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.report_jobs')).rows.length,0);
+  await f.pg.exec('SET ROLE kavosh_runtime');try{await assert.rejects(f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],['finance.cash-movements']]),/permission denied/);}finally{await f.pg.exec('RESET ROLE');}
+  const authority=(await f.pg.query("SELECT proowner,prosecdef,proconfig,(SELECT jsonb_agg(jsonb_build_array(grantee,privilege_type,is_grantable) ORDER BY grantee,privilege_type,is_grantable) FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))) acl FROM pg_proc p WHERE oid IN('public.claim_report_schedule(uuid[])'::regprocedure,'public.claim_report_schedule(uuid[],text[])'::regprocedure) ORDER BY oid")).rows;assert.equal(authority.length,2);assert.deepEqual(authority[0],authority[1]);
+  assert.equal((await f.work()).outcome,'queued',JSON.stringify(f.errors));assert.equal((await processOneReport(f.database,[f.a])).outcome,'succeeded',JSON.stringify(f.errors));const receipts=(await f.occurrences()).body.data;assert.equal(receipts.length,1);assert.equal((await f.request('reports/jobs/'+receipts[0].jobId+'/download',undefined,'staff')).response.status,200);
+ }finally{await f.pg.close();}
+});
+test('unsupported schedulers cannot reap exhausted cash work while the compatible broker publishes its one critical issue',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture('staff',60,undefined,'finance.cash-movements');try{
+  const c=await f.database.connect();try{assert.equal((await c.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],['finance.cash-movements']])).rows.length,1);}finally{c.release();}
+  // Owner-only clock/attempt staging simulates a worker crashing on its last
+  // lease. Runtime cannot write these facts; no domain guard is disabled.
+  await f.pg.query("UPDATE public.report_schedule_work SET attempts=5,lease_until=clock_timestamp()-interval '1 second' WHERE schedule_id=$1",[f.id]);
+  const before=(await f.pg.query('SELECT to_jsonb(w) data FROM public.report_schedule_work w')).rows;
+  await f.pg.exec('SET ROLE kavosh_automation_worker');try{
+   assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1)',[[f.a]])).rows.length,0);
+   assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],['finance.trial-balance']])).rows.length,0);
+  }finally{await f.pg.exec('RESET ROLE');}
+  assert.deepEqual((await f.pg.query('SELECT to_jsonb(w) data FROM public.report_schedule_work w')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.report_schedule_issues')).rows.length,0);
+  assert.equal((await f.work()).claimed,false);assert.deepEqual((await f.pg.query('SELECT kind,reason_code FROM public.report_schedule_issues')).rows,[{kind:'attempts_exhausted',reason_code:'ATTEMPTS_EXHAUSTED'}]);assert.equal((await scheduleNotices(f)).length,1);assert.equal((await f.work()).claimed,false);assert.equal((await f.pg.query('SELECT * FROM public.report_schedule_issues')).rows.length,1);
+ }finally{await f.pg.close();}
+});
 function check(name:string,run:(f:F)=>Promise<void>,as='staff',delay=60){test(name,{skip:!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture(as,delay);try{await run(f);}finally{await f.pg.close();}});}
 function intercept(f:F,before:(sql:string,params?:unknown[])=>Promise<void>):Database{return {async connect(){const c=await f.database.connect();return {async query<Row>(sql:string,params?:unknown[]){await before(sql,params);return c.query<Row>(sql,params);},release(destroy?:boolean){c.release(destroy);}};}};}
 check('one current authorized scheduled occurrence queues once,freezes its due clock and generates a truthful retained CSV',async f=>{
