@@ -59,6 +59,7 @@ async function journal(ctx:ApiContext,id:string){
    WHERE l.journal_id=$1 ORDER BY l.line_number`,[id])).rows;
   return {...found,lines:lines.map(l=>{const minor=readMinorUnits(l.amountMinor);return {...l,amountMinor:minor.toString(),amount:formatMoney(minor,l.unitScale)};})};
 }
+export {journal as financeJournalRow};
 async function period(ctx:ApiContext,input:z.infer<typeof reverse>,lock:boolean){
   if(lock)await ctx.db.query('SELECT id FROM public.finance_periods WHERE id=$1 FOR SHARE',[input.periodId]);
   const p=(await ctx.db.query<Period>('SELECT version,state,starts_on::text AS "startsOn",ends_on::text AS "endsOn",(SELECT max(c.ends_on)::text FROM public.finance_periods c WHERE c.active_closing_run_id IS NOT NULL AND c.state=\'closed\') AS "closedThrough" FROM public.finance_periods WHERE id=$1',[input.periodId])).rows[0];

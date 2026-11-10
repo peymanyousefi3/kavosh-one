@@ -4,7 +4,7 @@ export interface Connection {
   release(destroy?: boolean): void;
 }
 export interface Database { connect(): Promise<Connection> }
-export const expectedSchemaRevision=367;
+export const expectedSchemaRevision=368;
 export async function assertSchemaReady(db:Connection) {
   const result=await db.query<{revision:number}>('SELECT public.schema_revision() AS revision');
   if(!Number.isInteger(result.rows[0]?.revision)||result.rows[0].revision<expectedSchemaRevision)throw new Error('SCHEMA_NOT_CURRENT');
