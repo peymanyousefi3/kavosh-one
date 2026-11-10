@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('dispute release requires canonical evidence and cannot accept caller balances,approval or backdated effectiveness',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/finance/provider-collections/{id}/',op=api.paths[root+'dispute-releases'].post,s=op.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['reason','releaseStamp','sourceOn']);assert.match(op.summary,/Upper-human-reviewed/);assert.match(op.summary,/cannot be backdated/);assert.match(op.summary,/refund holds stay independent/);assert.ok(api.paths[root+'dispute-releases'].get);assert.equal(api.paths[root+'dispute-releases'].delete,undefined);assert.deepEqual(api.paths[root+'dispute-release-source'].get.parameters.map((p:any)=>p.name).sort(),['id','on']);assert.ok(api.paths['/api/v1/finance/provider-dispute-releases/{id}'].get);
+});
+
 test('dispute resolution preparation is a strict read-only source and never grants client money,scope or release authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/provider-collections/{id}/dispute-resolution-source',op=api.paths[path].get;assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['id','on']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/ALL posting\/correction privacy rights/);assert.match(op.summary,/never credit release/);assert.match(op.summary,/not historical\/live provider state/);
 });
