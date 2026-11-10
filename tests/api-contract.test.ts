@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('organization publication separates reviewed private controls from default-off anonymous plain-text reads',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),control='/api/v1/community/profiles/{id}/publication',open='/api/public/v1/profiles/{id}',s=api.paths[control].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['audience','expectedProfileVersion','expectedVersion','reason']);assert.deepEqual(s.properties.audience.enum,['public','unpublished']);assert.ok(api.paths[control+'/history'].get);assert.deepEqual(api.paths[open].get.security,[]);assert.equal(api.paths[open].post,undefined);assert.deepEqual(api.paths[open].get.parameters.map((p:any)=>p.name),['id']);assert.match(api.paths[open].get.summary,/no personal\/student data/);assert.match(api.paths[open].get.summary,/not a visual profile page/);
+});
+
 test('owner notification inbox is human-owner only,bounded and read-state mutation accepts no cancellation or content inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/notifications',read=api.paths[base+'/{id}/read'].post,s=read.requestBody.content['application/json'].schema;assert.equal(api.paths[base].get.security.some((v:any)=>'botBearer'in v),false);assert.equal(read.security.some((v:any)=>'botBearer'in v),false);assert.equal(s.additionalProperties,false);assert.deepEqual(s.properties,{});assert.deepEqual(api.paths[base].get.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['afterCreatedAt','afterId','limit','unread']);assert.equal(api.paths[base].post,undefined);assert.equal(api.paths[base+'/{id}/confirm'],undefined);
 });

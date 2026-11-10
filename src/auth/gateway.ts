@@ -1,5 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
-import { isIP } from 'node:net';
+import { verifiedProxyIp } from '../core/trusted-proxy.ts';
+export { verifiedProxyIp } from '../core/trusted-proxy.ts';
 import { z } from 'zod';
 import { isAPIError } from 'better-auth/api';
 import { ApiError } from '../core/policy.ts';
@@ -53,15 +53,6 @@ function safeOutput(value:unknown):unknown {
   if(Array.isArray(value))return value.map(safeOutput);
   if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([key])=>!['token','mfaVerified','mfaRequired'].includes(key)).map(([key,v])=>[key,safeOutput(v)]));
   return value;
-}
-export function verifiedProxyIp(request:Request,config:IdentityConfig) {
-  if(!config.production)return '127.0.0.1';
-  const expected=config.edgeSecret??'', provided=request.headers.get('x-kavosh-edge-key')??'';
-  const a=Buffer.from(expected),b=Buffer.from(provided);
-  if(a.length<32||a.length!==b.length||!timingSafeEqual(a,b))throw new ApiError(403,'UNTRUSTED_PROXY');
-  const ip=request.headers.get('x-kavosh-client-ip')??'';
-  if(!isIP(ip))throw new ApiError(403,'UNTRUSTED_PROXY');
-  return ip;
 }
 export function platformHumanResolver(auth:Identity,store:IdentityStore,config:IdentityConfig) {
   return async(request:Request)=>{
