@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('cash background reports use the existing requester-bound job input without supplied monetary or authorization proofs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),job=api.paths['/api/v1/reports/jobs'].post,s=job.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('finance.cash-movements'));assert.equal(s.additionalProperties,false);for(const key of ['amount','balance','authorizationContext','authorizationHubs','ownerId','supportedReports'])assert.equal(s.properties[key],undefined);assert.match(job.summary,/10000cash accounts\/4MiB/);
+});
 test('cash movement report and exports expose strict dated scope inputs without cash,classification or proof overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/export','/export.xlsx']){const op=api.paths['/api/v1/reports/finance/cash-movements'+suffix].get;assert.ok(op);assert.equal(op.requestBody,undefined);assert.equal(op.parameters.find((p:any)=>p.name==='from').required,true);assert.equal(op.parameters.find((p:any)=>p.name==='through').required,true);for(const name of ['balance','amount','proof','accountVersion','classification','includeHidden'])assert.ok(!op.parameters.some((p:any)=>p.name===name));if(suffix)for(const name of ['limit','afterCode','afterId'])assert.ok(!op.parameters.some((p:any)=>p.name===name&&p.schema.type!=='null'&&p.schema.not===undefined));}
 });

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.399.0",
+    "version": "0.400.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -65823,7 +65823,7 @@
     },
     "/api/v1/reports/finance/cash-movements/export": {
       "get": {
-        "summary": "Complete permitted cash movement CSV,not one screen page;2000account/4MiB limits fail without partial output. Exact strings,separate currencies,current source permissions and all bridge/review warnings retained.",
+        "summary": "Complete permitted cash movement CSV schema2(one account row with exact metric columns;original total/month columns retained),not one screen page;2000account/4MiB limits fail without partial output. Exact strings,separate currencies,current source permissions and all bridge/review warnings retained.",
         "parameters": [
           {
             "name": "from",
@@ -65937,7 +65937,7 @@
     },
     "/api/v1/reports/finance/cash-movements/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete permitted cash movement CSV,not one screen page;2000account/4MiB limits fail without partial output. Exact strings,separate currencies,current source permissions and all bridge/review warnings retained.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete permitted cash movement CSV schema2(one account row with exact metric columns;original total/month columns retained),not one screen page;2000account/4MiB limits fail without partial output. Exact strings,separate currencies,current source permissions and all bridge/review warnings retained.",
         "parameters": [
           {
             "name": "from",
@@ -70917,7 +70917,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue a complete counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
+        "summary": "Queue a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -70935,6 +70935,7 @@
                   "reportId": {
                     "type": "string",
                     "enum": [
+                      "finance.cash-movements",
                       "finance.counterparty-statement",
                       "finance.profitability",
                       "finance.manual-income-costs",
@@ -71154,7 +71155,7 @@
     },
     "/api/v1/reports/jobs/{id}/download": {
       "get": {
-        "summary": "Download retained complete CSV only under current source rights. Counterparty files require every original event to remain in the same dated frame plus whole current source permissions;new money does not retarget retained bytes or hashes. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
+        "summary": "Download retained complete CSV only under current source rights,including the full captured cash-report source scope;new postings never recalculate retained cash balances. Counterparty files require every original event to remain in the same dated frame plus whole current source permissions;new money does not retarget retained bytes or hashes. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
         "parameters": [
           {
             "name": "id",
@@ -71192,7 +71193,7 @@
     },
     "/api/v1/reports/jobs/{id}/download.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Download retained complete CSV only under current source rights. Counterparty files require every original event to remain in the same dated frame plus whole current source permissions;new money does not retarget retained bytes or hashes. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Download retained complete CSV only under current source rights,including the full captured cash-report source scope;new postings never recalculate retained cash balances. Counterparty files require every original event to remain in the same dated frame plus whole current source permissions;new money does not retarget retained bytes or hashes. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
         "parameters": [
           {
             "name": "id",

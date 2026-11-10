@@ -1,11 +1,12 @@
 import { randomUUID,createHash } from 'node:crypto';
 import { z } from 'zod';
+import { completeCashMovementReport,cashMovementCsv } from '../modules/cash-movements.ts';
 import { assertRuntimeRole,assertSchemaReady,type Database } from '../core/database.ts';
 import { loadGrants,record,type ApiContext,type Reply } from '../core/api.ts';
 import { ApiError,type Credential } from '../core/policy.ts';
 import { configuredReportContext,reportConfiguration } from '../modules/report-catalogue.ts';
 import { completeFinancialReport,financialReportCsv } from '../modules/financial-report-export.ts';
-import { requireReportResultAccess,reportAuthorizationContext } from '../modules/report-jobs.ts';
+import { requireReportResultAccess,reportAuthorizationContext,financialJobInput } from '../modules/report-jobs.ts';
 import { executionReportPreset } from '../modules/report-presets.ts';
 import { frozenReportWindow } from '../core/report-window.ts';
 import { lockAcademyTopology } from '../modules/academy.ts';
@@ -32,7 +33,7 @@ type Lease={id:string;academy_id:string;lease_token:string};type Actor=Credentia
 export async function processOneReport(database:Database,allowedAcademies:string[],signal?:AbortSignal){
  const ids=academies.parse(allowedAcademies);if(signal?.aborted)return {claimed:false,recorded:false};const db=await database.connect();let transaction=false,broken=false;
  try{
-  await assertRuntimeRole(db,'automation_worker');await assertSchemaReady(db);const lease=(await db.query<Lease>('SELECT * FROM public.claim_report_job($1)',[ids])).rows[0];if(!lease)return {claimed:false,recorded:false};
+  await assertRuntimeRole(db,'automation_worker');await assertSchemaReady(db);const lease=(await db.query<Lease>('SELECT * FROM public.claim_report_job($1,$2)',[ids,financialJobInput.shape.reportId.options])).rows[0];if(!lease)return {claimed:false,recorded:false};
   let outcome:'cancelled'|'retry'='retry',problem='PROCESSING_UNAVAILABLE';
   try{
    const c=(await db.query<Actor>(`WITH scope_context AS MATERIALIZED(SELECT set_config('app.academy_id',$3,true) academy) SELECT actor.* FROM scope_context CROSS JOIN LATERAL public.report_job_actor($1,CASE WHEN scope_context.academy=$3::text THEN $2::uuid END) actor`,[lease.id,lease.lease_token,lease.academy_id])).rows[0];
@@ -60,6 +61,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    else if(job.configuration.reportId==='payroll.remittances'){const data=await payrollRemittanceData(source,true,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=payrollRemittanceCsv(data,provenance,backgroundFinancialEntryLimit);}
    else if(job.configuration.reportId==='payroll.paid-tax-year-to-date'){const data=await paidTaxYearReportData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=paidTaxYtdCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.t4-working-paper'){const data=await t4WorkingPaperData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=t4WorkingPaperCsv(data,provenance);}
+   else if(job.configuration.reportId==='finance.cash-movements'){const data=await completeCashMovementReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=cashMovementCsv(data,provenance);}
    else{const data=await completeFinancialReport(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=financialReportCsv(data,provenance,backgroundFinancialEntryLimit);}
    await requireReportResultAccess(source,proof);
    if(signal?.aborted)throw new ApiError(503,'WORKER_STOPPED');
