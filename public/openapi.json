@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.397.0",
+    "version": "0.398.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -64555,7 +64555,7 @@
     },
     "/api/v1/reports/community/achievements/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot achievement totals and all six chart series as formula-safe UTF-8 CSV; original intersected report/source permissions,exact points and explicit release/current-status/coverage warnings; no captions,names,raw context or pagination;10,000sources/1,000groups per dimension/4MiB refuse incomplete output",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot achievement totals and all six chart series as formula-safe UTF-8 CSV; original intersected report/source permissions,exact points and explicit release/current-status/coverage warnings; no captions,names,raw context or pagination;10,000sources/1,000groups per dimension/4MiB refuse incomplete output",
         "parameters": [
           {
             "name": "from",
@@ -64888,7 +64888,7 @@
     },
     "/api/v1/reports/finance/asset-valuation/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. One-snapshot permitted posted ASSET balances,original currency precision,current chart classification and approved DIRECT reference prices in an explicitly selected target currency. Intersect valuation/report/ledger/account scopes before counts and totals;global reference-rate/currency rights also required. Signed debit-minus-credit balances,half-even rounding of exact consolidated total ONCE. Missing or withdrawn nonzero prices give incomplete/null total,never invented conversion. Not all-school net worth,formal balance sheet,market verification,trade,posted FX gain/loss or additional expensed-inventory assets. Refuses more than2000selected source accounts;no partial paging. Optional targetCurrencyId resolves explicit selection,then a single selected permitted hub’s existing currency(or the unique permitted hub when no hub filter is supplied),then reviewed school defaults;unconfigured/retired defaults fail explicitly,never guessed CAD. Optional maximumAgeDays uses explicit input,then reviewed school setting,then zero. Settings,hub selection,currency precision,quotes and balances share the same statement snapshot. Defaults never grant source access. Complete CSV of the same bounded report;4MiB ceiling refuses a partial file,source free text is formula-protected and numeric text stays exact.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. One-snapshot permitted posted ASSET balances,original currency precision,current chart classification and approved DIRECT reference prices in an explicitly selected target currency. Intersect valuation/report/ledger/account scopes before counts and totals;global reference-rate/currency rights also required. Signed debit-minus-credit balances,half-even rounding of exact consolidated total ONCE. Missing or withdrawn nonzero prices give incomplete/null total,never invented conversion. Not all-school net worth,formal balance sheet,market verification,trade,posted FX gain/loss or additional expensed-inventory assets. Refuses more than2000selected source accounts;no partial paging. Optional targetCurrencyId resolves explicit selection,then a single selected permitted hub’s existing currency(or the unique permitted hub when no hub filter is supplied),then reviewed school defaults;unconfigured/retired defaults fail explicitly,never guessed CAD. Optional maximumAgeDays uses explicit input,then reviewed school setting,then zero. Settings,hub selection,currency precision,quotes and balances share the same statement snapshot. Defaults never grant source access. Complete CSV of the same bounded report;4MiB ceiling refuses a partial file,source free text is formula-protected and numeric text stays exact.",
         "parameters": [
           {
             "name": "through",
@@ -65205,7 +65205,7 @@
     },
     "/api/v1/reports/finance/balance-sheet/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating",
         "parameters": [
           {
             "name": "through",
@@ -65595,7 +65595,7 @@
     },
     "/api/v1/reports/finance/bank-reconciliation/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete selected reconciliation rows as UTF-8 CSV;defaults to all statuses/prior outstanding,optional status/period-only filters change rows not whole-context summaries/comparisons;current source rights and one snapshot,1,000whole source rows per side/4MiB bound even filtered output;not finalized or externally verified",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete selected reconciliation rows as UTF-8 CSV;defaults to all statuses/prior outstanding,optional status/period-only filters change rows not whole-context summaries/comparisons;current source rights and one snapshot,1,000whole source rows per side/4MiB bound even filtered output;not finalized or externally verified",
         "parameters": [
           {
             "name": "accountId",
@@ -65891,7 +65891,7 @@
     },
     "/api/v1/reports/finance/collector-custody/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot collector custody CSV with totals,every event,daily chart and explicit exclusions. No pagination inputs;2000event/4MiB export ceiling refuses partial files. Current original source permissions remain mandatory.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot collector custody CSV with totals,every event,daily chart and explicit exclusions. No pagination inputs;2000event/4MiB export ceiling refuses partial files. Current original source permissions remain mandatory.",
         "parameters": [
           {
             "name": "collectorId",
@@ -66203,7 +66203,7 @@
     },
     "/api/v1/reports/finance/counterparty-statement/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot counterparty CSV:every recorded source event,component and currency total,daily chart and explicit exclusions. Current source permissions intersect before aggregation;no pagination inputs,automatic netting or FX.2000event/4MiB export ceiling refuses partial files.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot counterparty CSV:every recorded source event,component and currency total,daily chart and explicit exclusions. Current source permissions intersect before aggregation;no pagination inputs,automatic netting or FX.2000event/4MiB export ceiling refuses partial files.",
         "parameters": [
           {
             "name": "payeeId",
@@ -66602,7 +66602,7 @@
     },
     "/api/v1/reports/finance/expense-costs/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
         "parameters": [
           {
             "name": "from",
@@ -67023,7 +67023,7 @@
     },
     "/api/v1/reports/finance/manual-income-costs/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
         "parameters": [
           {
             "name": "from",
@@ -67446,7 +67446,7 @@
     },
     "/api/v1/reports/finance/outlook/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot source-scoped financial-outlook CSV:exact currency totals,all cash-chart points,review flags,scenario overrides and separate scheduled gross totals/unpriced cases/hourly segments/salary allocations. Original current permissions and source/output ceilings apply;4MiB refuses oversized files,never truncates. Preserves explicit forecast limitations;not bank verification,payroll approval or complete accounting. No queued outlook export yet. Optional valuation=reference retains original figures and adds same-statement target-currency totals,daily carry-forward and separate scheduled gross using explicit or reviewed school/hub defaults and approved direct rates at rateOn(or on). Extra currency-valuation rights intersect EVERY source before aggregation;global currency/rate view is also required. Missing or withdrawn nonzero prices give null converted totals and labelled known subtotals. Half-even exact sums round once per measure/day;not future FX prediction,posted revaluation,or additional scheduled-gross cash deductions.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot source-scoped financial-outlook CSV:exact currency totals,all cash-chart points,review flags,scenario overrides and separate scheduled gross totals/unpriced cases/hourly segments/salary allocations. Original current permissions and source/output ceilings apply;4MiB refuses oversized files,never truncates. Preserves explicit forecast limitations;not bank verification,payroll approval or complete accounting. No queued outlook export yet. Optional valuation=reference retains original figures and adds same-statement target-currency totals,daily carry-forward and separate scheduled gross using explicit or reviewed school/hub defaults and approved direct rates at rateOn(or on). Extra currency-valuation rights intersect EVERY source before aggregation;global currency/rate view is also required. Missing or withdrawn nonzero prices give null converted totals and labelled known subtotals. Half-even exact sums round once per measure/day;not future FX prediction,posted revaluation,or additional scheduled-gross cash deductions.",
         "parameters": [
           {
             "name": "on",
@@ -67926,7 +67926,7 @@
     },
     "/api/v1/reports/finance/payables-aging/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete source-scoped aging CSV with exact original currency totals,all records,bands and hub/supplier charts;dated corrections/current approved allocation and whole-bill funding privacy preserved;unknown overdue remains blank;one source snapshot,2,000records/4MiB plus source limits,no page parameters,no new payment or posting",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete source-scoped aging CSV with exact original currency totals,all records,bands and hub/supplier charts;dated corrections/current approved allocation and whole-bill funding privacy preserved;unknown overdue remains blank;one source snapshot,2,000records/4MiB plus source limits,no page parameters,no new payment or posting",
         "parameters": [
           {
             "name": "on",
@@ -68319,7 +68319,7 @@
     },
     "/api/v1/reports/finance/profit-loss/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating",
         "parameters": [
           {
             "name": "through",
@@ -68682,7 +68682,7 @@
     },
     "/api/v1/reports/finance/profitability/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete conserved separate-currency academy profitability CSV from the same combined source/assignment/ledger snapshot,with every chart,unassigned overhead and pre-filter ledger reconciliation warning. Original source and target rights remain mandatory;no private proofs,no caller money,no pagination,no silent truncation.4MiB output bound;not historical-as-of assignment or legal certification.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete conserved separate-currency academy profitability CSV from the same combined source/assignment/ledger snapshot,with every chart,unassigned overhead and pre-filter ledger reconciliation warning. Original source and target rights remain mandatory;no private proofs,no caller money,no pagination,no silent truncation.4MiB output bound;not historical-as-of assignment or legal certification.",
         "parameters": [
           {
             "name": "from",
@@ -69147,7 +69147,7 @@
     },
     "/api/v1/reports/finance/receivables-aging/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete source-scoped aging CSV with exact original currency totals,all records,bands and hub/supplier charts;dated corrections/current approved allocation and whole-bill funding privacy preserved;unknown overdue remains blank;one source snapshot,2,000records/4MiB plus source limits,no page parameters,no new payment or posting",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete source-scoped aging CSV with exact original currency totals,all records,bands and hub/supplier charts;dated corrections/current approved allocation and whole-bill funding privacy preserved;unknown overdue remains blank;one source snapshot,2,000records/4MiB plus source limits,no page parameters,no new payment or posting",
         "parameters": [
           {
             "name": "on",
@@ -69548,7 +69548,7 @@
     },
     "/api/v1/reports/finance/trial-balance/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source-snapshot financial CSV with original intersected source rights,exact currency totals,classification/review/coverage warnings and formula-safe text; no cursors or page limit;2,000entries/4MiB ceiling refuses larger results rather than truncating",
         "parameters": [
           {
             "name": "through",
@@ -69959,7 +69959,7 @@
     },
     "/api/v1/reports/finance/tuition-income/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
         "parameters": [
           {
             "name": "from",
@@ -70420,7 +70420,7 @@
     },
     "/api/v1/reports/inventory/stock/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot stock CSV with current intersected inventory/report scopes,exact rational purchase costs,currency totals and all location/unit charts; unknown costs remain blank,not zero; no formal asset capitalization or extra expense;2,000stock rows/4MiB refuses incomplete output,no page parameters",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot stock CSV with current intersected inventory/report scopes,exact rational purchase costs,currency totals and all location/unit charts; unknown costs remain blank,not zero; no formal asset capitalization or extra expense;2,000stock rows/4MiB refuses incomplete output,no page parameters",
         "parameters": [
           {
             "name": "on",
@@ -70832,6 +70832,45 @@
               "text/csv": {
                 "schema": {
                   "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/jobs/{id}/download.xlsx": {
+      "get": {
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Download retained complete CSV only under current source rights. Counterparty files require every original event to remain in the same dated frame plus whole current source permissions;new money does not retarget retained bytes or hashes. Tuition attribution rechecks every captured invoice and recognition mapped account;expense attribution rechecks every original bill context and journal account,not only filtered lines. Reviewed files also recheck every pinned expense-allocation revision target with current class and student permissions;new revisions never retarget old files. Payroll cost files recheck every captured original work,whole-class,tuition invoice and mapped-account source. Other financial/payroll/achievement/performance manifests retain their own source boundaries. Authorize before bytes or hash metadata;never lend requester or creator permissions.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }
@@ -71312,7 +71351,7 @@
     },
     "/api/v1/reports/learning/session-follow-up/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot session follow-up CSV under all seven current source rights before selection. Includes exact current input reviews,waivers,overdue flags and complete filtered summary,not payroll approval or verified uploads. At most200sessions/200staff per session/4MiB;oversized selections refuse without a partial attachment. No page/cursor parameters,private reasons,report text,students or storage keys.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot session follow-up CSV under all seven current source rights before selection. Includes exact current input reviews,waivers,overdue flags and complete filtered summary,not payroll approval or verified uploads. At most200sessions/200staff per session/4MiB;oversized selections refuse without a partial attachment. No page/cursor parameters,private reasons,report text,students or storage keys.",
         "parameters": [
           {
             "name": "from",
@@ -71500,7 +71539,7 @@
     },
     "/api/v1/reports/learning/sessions/{id}/evidence/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete single-session evidence CSV from the original six-right source snapshot,with exact staff time,durations,currentness and missing/stale check states. No private report/attendance bodies,file keys or source digests;does not decide payroll or certify media uploads.200staff/4MiB bound,no query parameters.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete single-session evidence CSV from the original six-right source snapshot,with exact staff time,durations,currentness and missing/stale check states. No private report/attendance bodies,file keys or source digests;does not decide payroll or certify media uploads.200staff/4MiB bound,no query parameters.",
         "parameters": [
           {
             "name": "id",
@@ -71754,7 +71793,7 @@
     },
     "/api/v1/reports/learning/student-performance/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete source-scoped performance CSV with pinned criteria,all 1-5 distributions,exact average fractions and every included trend point;never an average of a screen page.200feedback/6000points/4MiB bound,formula-safe labels,no notes/private manifest or payroll decision.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete source-scoped performance CSV with pinned criteria,all 1-5 distributions,exact average fractions and every included trend point;never an average of a screen page.200feedback/6000points/4MiB bound,formula-safe labels,no notes/private manifest or payroll decision.",
         "parameters": [
           {
             "name": "from",
@@ -72193,7 +72232,7 @@
     },
     "/api/v1/reports/payroll/costs/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-source financial attribution CSV with exact separate-currency totals and every recorded context dimension;original source/account permissions and all source limits apply. Validates each chart against totals,keeps tax/recognition/cost coverage warnings,no private document bodies,no pagination or new accounting posting.4MiB CSV bound,not full academy profitability.",
         "parameters": [
           {
             "name": "from",
@@ -72664,7 +72703,7 @@
     },
     "/api/v1/reports/payroll/gross-accruals/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot permitted gross-earning CSV with exact currency totals,chart series,all selected allocations,source-review warnings and all original worker/hub/geography rights. No cursor/page limit;2,000allocations/4MiB ceiling rejects partial files. Not net pay,paystub,unpaid balance,withholding or payment approval.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot permitted gross-earning CSV with exact currency totals,chart series,all selected allocations,source-review warnings and all original worker/hub/geography rights. No cursor/page limit;2,000allocations/4MiB ceiling rejects partial files. Not net pay,paystub,unpaid balance,withholding or payment approval.",
         "parameters": [
           {
             "name": "on",
@@ -72923,7 +72962,7 @@
     },
     "/api/v1/reports/payroll/paid-tax-year-to-date/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete private payment-tax-year CSV with exact minor units/amounts,typed employee/employer totals,daily chart rows,recognized payment references and explicit unresolved rows. Same original source rights and500payment/20,000line/4MiB limits;no page truncation,private declarations,official forms or new ledger effects.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete private payment-tax-year CSV with exact minor units/amounts,typed employee/employer totals,daily chart rows,recognized payment references and explicit unresolved rows. Same original source rights and500payment/20,000line/4MiB limits;no page truncation,private declarations,official forms or new ledger effects.",
         "parameters": [
           {
             "name": "through",
@@ -73282,7 +73321,7 @@
     },
     "/api/v1/reports/payroll/register/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete formula-safe payroll register CSV including exact totals,workers,monthly series,signed posting/reversal events and component details;current source permissions and 2,000event/20,000component/4MiB refusal limits. No authority references,private reviews,unposted pay or statutory certification.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete formula-safe payroll register CSV including exact totals,workers,monthly series,signed posting/reversal events and component details;current source permissions and 2,000event/20,000component/4MiB refusal limits. No authority references,private reviews,unposted pay or statutory certification.",
         "parameters": [
           {
             "name": "from",
@@ -73605,7 +73644,7 @@
     },
     "/api/v1/reports/payroll/remittances/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-snapshot permitted remittance-liability CSV with exact currency totals,all selected account buckets and hub/status chart groups,reviewed-preset/date-window provenance and formula-safe text. Direct2,000postings/10,000buckets;requester-bound queued10,000/20,000;both100,000event-lines/4MiB refuse incomplete output,never truncate. Not an official tax filing,paystub or bank confirmation.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-snapshot permitted remittance-liability CSV with exact currency totals,all selected account buckets and hub/status chart groups,reviewed-preset/date-window provenance and formula-safe text. Direct2,000postings/10,000buckets;requester-bound queued10,000/20,000;both100,000event-lines/4MiB refuse incomplete output,never truncate. Not an official tax filing,paystub or bank confirmation.",
         "parameters": [
           {
             "name": "on",
@@ -74016,7 +74055,7 @@
     },
     "/api/v1/reports/payroll/settlements/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete same-statement multi-worker settlement CSV with exact currency totals,all status chart series,all selected worker bundles,filters and coverage warnings. Original whole-source/funding/method/credential rights;no paging,private reviews or receipt contents;2,000postings/4MiB refuses incomplete output. Not a bank statement,official paystub or statutory-remittance report.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete same-statement multi-worker settlement CSV with exact currency totals,all status chart series,all selected worker bundles,filters and coverage warnings. Original whole-source/funding/method/credential rights;no paging,private reviews or receipt contents;2,000postings/4MiB refuses incomplete output. Not a bank statement,official paystub or statutory-remittance report.",
         "parameters": [
           {
             "name": "on",
@@ -74220,7 +74259,7 @@
     },
     "/api/v1/reports/payroll/t4-working-paper/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Complete private formula-safe T4 working-paper CSV with exact mapped field values,print-blank rules,source payment/recognition/profile versions,coverage limits and unassessed-input checklist;opaque reviewed RP-account IDs/editions,never names,SIN,payroll account numbers,official form or CRA filing. Same500payment/4MiB safety limits and original source permissions.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete private formula-safe T4 working-paper CSV with exact mapped field values,print-blank rules,source payment/recognition/profile versions,coverage limits and unassessed-input checklist;opaque reviewed RP-account IDs/editions,never names,SIN,payroll account numbers,official form or CRA filing. Same500payment/4MiB safety limits and original source permissions.",
         "parameters": [
           {
             "name": "profileId",
@@ -75104,7 +75143,7 @@
     },
     "/api/v1/reports/presets/{id}/export.xlsx": {
       "get": {
-        "summary": "Complete text-only Excel workbook from the same protected CSV report; exact money and identifiers remain text, current permissions and full export limits apply. Download a complete current permitted CSV from an active saved configuration for a registered CSV-capable report; current original source permissions and family-specific export limits apply,no page cursor or limit override; directory lists supported formats",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Download a complete current permitted CSV from an active saved configuration for a registered CSV-capable report; current original source permissions and family-specific export limits apply,no page cursor or limit override; directory lists supported formats",
         "parameters": [
           {
             "name": "id",

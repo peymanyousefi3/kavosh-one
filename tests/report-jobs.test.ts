@@ -16,9 +16,19 @@ import { historicalReportJob } from './historical-report-job.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { assertPayrollGrossBounds } from '../src/modules/payroll-gross-report.ts';
 import { ApiError } from '../src/core/policy.ts';
+import { spreadsheetRows } from './spreadsheet-reader.ts';
 
 test('every implemented report job operation is registered in the main generated bot API',async()=>{
  const api=JSON.parse(await readFile(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.equal(reportJobsContract.length,9);for(const endpoint of reportJobsContract){assert.ok(businessContract.includes(endpoint));assert.equal(api.paths[endpoint.path]?.[endpoint.method]?.summary,endpoint.summary);}
+});
+check('retained queued CSV can become Excel without rerunning money or borrowing job owner permissions',async f=>{
+ const queued=await f.queue();assert.equal(queued.response.status,202);const id=queued.body.data.id,path='reports/jobs/'+id+'/download.xlsx';assert.equal((await f.request(path,undefined,'staff')).response.status,409);
+ assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));const csv=await f.download(id),xlsx=await f.request(path,undefined,'staff');assert.equal(csv.response.status,200);assert.equal(xlsx.response.status,200,JSON.stringify(xlsx.body));
+ const expected=parse(csv.body,{bom:true}) as string[][],normalize=(rows:string[][])=>rows.map((row,i)=>Array.from({length:expected[i].length},(_,j)=>row[j]??''));assert.deepEqual(normalize(spreadsheetRows(xlsx.body)),expected);
+ const original=await f.state(id);await f.post('50.00');const later=await f.request(path,undefined,'staff');assert.equal(later.response.status,200);assert.deepEqual(normalize(spreadsheetRows(later.body)),expected);assert.equal((await f.state(id)).body.result.sha256,original.body.result.sha256);assert.equal(createHash('sha256').update(csv.body).digest('hex'),original.body.result.sha256);
+ assert.equal((await f.request(path,undefined,'peer')).response.status,404);assert.equal((await f.request(path,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='ledger.view'",[f.staffRole]);const denied=await f.request(path,undefined,'staff');assert.equal(denied.response.status,403);assert.equal(denied.response.headers.get('content-disposition'),null);
+ await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(path,undefined,'master')).response.status,200);
 });
 
 async function fixture(throughSchema?:number){const f=await operationsFixture({throughSchema});try{

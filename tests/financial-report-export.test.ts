@@ -107,10 +107,12 @@ test('real spreadsheet workers start only after successful commit and connection
  const f=await fixture();let held=0,commits=0,failCommit=false,invalid=false;const observations:{held:number;commits:number}[]=[];
  const hook=createHook({init(_id,type){if(type==='WORKER')observations.push({held,commits});}});
  const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():(await f.pg.exec('SET ROLE kavosh_runtime'),{async query<Row>(sql:string,params?:unknown[]){return f.pg.query<Row>(sql,params);},release(){}});held++;let released=false;return {async query<Row>(sql:string,params?:unknown[]){if(sql==='COMMIT'&&failCommit)throw Error('SYNTHETIC_COMMIT_FAILURE');const result=await c.query<Row>(sql,params);if(sql==='COMMIT')commits++;return result;},release(destroy?:boolean){assert.equal(released,false);released=true;held--;c.release(destroy);}};}};
- const api=createApi(database,async()=>({userId:f.actors.master.user,sessionId:f.actors.master.session,academyId:f.a}),async ctx=>invalid?{status:200,body:'a\nb',xlsx:{filename:'unsafe.xlsx\r\nheader'}}:business(ctx));
+ let needsCsv=false;
+ const api=createApi(database,async()=>({userId:f.actors.master.user,sessionId:f.actors.master.session,academyId:f.a}),async ctx=>invalid?{status:200,body:'a\nb',xlsx:{filename:'unsafe.xlsx\r\nheader'}}:needsCsv?{status:200,body:'a\n'+'x'.repeat(32_768),xlsx:{filename:'report.xlsx'}}:business(ctx));
  const path='reports/finance/trial-balance/export.xlsx',raw=()=>api(new Request('https://academy.example/api/v1/'+path+'?through=2026-12-31',{headers:{cookie:'test-resolver-only','x-academy-id':f.a}}),path);
  try{hook.enable();failCommit=true;assert.equal((await raw()).status,503);assert.equal(observations.length,0);assert.equal(held,0);failCommit=false;invalid=true;assert.equal((await raw()).status,503);assert.equal(observations.length,0);invalid=false;
   const response=await raw();assert.equal(response.status,200);assert.ok(workbookRecords(new Uint8Array(await response.arrayBuffer())).length>0);assert.deepEqual(observations,[{held:0,commits:1}]);assert.equal(held,0);
+  needsCsv=true;const fallback=await raw();assert.equal(fallback.status,422);assert.equal((await fallback.json()).error.code,'SPREADSHEET_REQUIRES_CSV');assert.equal(fallback.headers.get('content-disposition'),null);assert.deepEqual(observations,[{held:0,commits:1},{held:0,commits:2}]);assert.equal(held,0);
  }finally{hook.disable();if(!f.pg.runtime)await f.pg.exec('RESET ROLE');await f.pg.close();}
 });
 test('actual negative long money stays exact text and is never mistaken for untrusted formula-like text',async()=>{

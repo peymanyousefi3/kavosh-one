@@ -275,7 +275,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       // Attachments are code-owned GET results only. Do not let a formatter
       // choose arbitrary headers, MIME types, filenames or cache policies.
       if(reply.csv&&(request.method!=='GET'||reply.status!==200||typeof reply.body!=='string'||typeof reply.csv.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename)||Buffer.byteLength(reply.body,'utf8')>4_194_304))throw new Error('INVALID_CSV_REPLY');
-      if(reply.xlsx&&(reply.csv||reply.video||request.method!=='GET'||!/^reports\/.+\/export\.xlsx$/.test(path)||reply.status!==200||typeof reply.body!=='string'||typeof reply.xlsx.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.xlsx$/.test(reply.xlsx.filename)||Buffer.byteLength(reply.body)>4_194_304))throw new Error('INVALID_XLSX_REPLY');
+      if(reply.xlsx&&(reply.csv||reply.video||request.method!=='GET'||!(/^reports\/.+\/export\.xlsx$/.test(path)||/^reports\/jobs\/[^/]+\/download\.xlsx$/.test(path))||reply.status!==200||typeof reply.body!=='string'||typeof reply.xlsx.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.xlsx$/.test(reply.xlsx.filename)||Buffer.byteLength(reply.body)>4_194_304))throw new Error('INVALID_XLSX_REPLY');
       if(reply.video&&(reply.csv||reply.body!==null||!isVideoReadPath(path)||!['GET','HEAD'].includes(request.method)||!['video/mp4','video/quicktime','video/webm'].includes(reply.video.mime)||typeof reply.video.open!=='function'||!videoRangeSchema.safeParse(reply.video.plan).success||reply.status!==reply.video.plan.status||videoHead&&reply.status!==200))throw new Error('INVALID_VIDEO_REPLY');
       await db.query('COMMIT'); transaction = false;
       if(reply.xlsx){

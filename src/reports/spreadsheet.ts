@@ -23,6 +23,7 @@ export async function reportSpreadsheet(source:string,principal:string,signal:Ab
     const timer=setTimeout(()=>stop(new ApiError(503,'SPREADSHEET_EXPORT_TIMEOUT')),10_000);
     signal.addEventListener('abort',abort,{once:true});
     worker.on('message',message=>{
+      if(message?.error==='SPREADSHEET_REQUIRES_CSV'){stop(new ApiError(422,'SPREADSHEET_REQUIRES_CSV'));return;}
       if(result||!message||!(message.bytes instanceof Uint8Array)||!(message.bytes.buffer instanceof ArrayBuffer)||message.bytes.byteLength<4||message.bytes.byteLength>8_388_608||message.bytes[0]!==80||message.bytes[1]!==75){stop(new ApiError(503,'SPREADSHEET_EXPORT_UNAVAILABLE'));return;}
       result=message.bytes;
     });
