@@ -17,6 +17,7 @@ import autocannon from 'autocannon';
 import { hashPassword } from 'better-auth/crypto';
 import { createPlatformApi } from '../src/platform/api.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
+import { selectMediaRequest } from '../src/server/media-request.ts';
 
 const origin='https://academy.example';
 const config={origin,production:false,secret:'synthetic-test-identity-secret-not-for-production-000000'};
@@ -133,6 +134,15 @@ async function fixture(options:{throughSchema?:number}={}) {
   return {pg,db,store,admin,worker,messages,delivery,request,invitation,signup,verifyEmail,signin,phone,otp,mfa,replaceEmail,business,platform,close,gateway,api,resolvePlatform:platformHumanResolver(auth,store,config)};
 }
 
+test('browser media selector uses real verified identity cookies without custom headers or URL credentials',async()=>{
+ const f=await fixture();try{
+  const user=await f.invitation(),path='files/'+randomUUID()+'/video',url=origin+'/api/media/'+user.academy+'/'+path+'?expectedMetadataVersion=1&copyId='+randomUUID();
+  async function media(method='GET',cookie=[...user.jar].map(([k,v])=>k+'='+v).join('; ')){const selected=selectMediaRequest(new Request(url,{method,headers:{cookie,range:'bytes=0-1'}}),user.academy,path);try{return await f.api(selected.request,path);}finally{if(!f.pg.runtime)await f.pg.exec('SET ROLE kavosh_identity');}}
+  assert.equal((await media()).status,401);await f.signup(user);await f.verifyEmail(user);await f.signin(user);assert.equal((await media()).status,401);await f.phone(user);await f.signin(user);assert.equal((await f.request('/accept-invitation',{invitation:user.token},user.jar)).response.status,200);
+  for(const method of ['GET','HEAD']){const response=await media(method);assert.equal(response.status,403,'verified cookie authenticates but cannot grant file permissions');assert.equal((await response.json()).error.code,'FORBIDDEN');}
+  const cookie=[...user.jar].map(([k,v])=>k+'='+v).join('; ');await f.request('/sign-out',{},user.jar);assert.equal((await media('GET',cookie)).status,401,'revoked real session cannot read media');
+ }finally{await f.close();}
+});
 test('human identity: real library authentication and protected business access',async t=>{
   const f=await fixture();
   t.beforeEach(async()=>{await f.admin(()=>f.pg.query('DELETE FROM identity.auth_budgets'));});

@@ -5,13 +5,14 @@ import { assertRuntimeRole } from './database.ts';
 import { ApiError, requireScope, scopeFor,scopeNonempty, type Capability, type Credential, type Grant, type Scope,type ResourceRef,type AreaRef } from './policy.ts';
 import { hashToken, parseBearer } from './tokens.ts';
 import type { PayrollPrivateVault } from './payroll-private-data.ts';
+import { videoRangeSchema,isVideoReadPath,type VideoRange } from '../files/video-range.ts';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
 const name = z.string().trim().min(1).max(200);
 const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
-export type Reply = { status: number; body: unknown; csv?:{filename:string} };
+export type Reply = { status: number; body: unknown; csv?:{filename:string};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive';financeBookLocked?:boolean;financeBookExclusive?:boolean;collectorFundLocks?:Set<string>;expenseSettlementSnapshot?:boolean;notificationJobId?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'}] as const;
@@ -197,6 +198,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       // Never fall back to a cookie when an invalid Authorization header was sent.
       const human = !token && !request.headers.has('authorization') && request.headers.has('cookie') && resolveHuman ? await resolveHuman(request) : null;
       if (!token && !human) throw new ApiError(401, 'UNAUTHORIZED');
+      const videoHead=request.method==='HEAD'&&isVideoReadPath(path);if(request.method==='HEAD'&&!videoHead)throw new ApiError(405,'METHOD_NOT_ALLOWED');
       db = await database.connect();
       await assertRuntimeRole(db);
       // Autocommitted before domain work so failed requests still consume quota.
@@ -214,7 +216,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       // Freeze geography before identity row locks. This avoids reading records
       // using a hub list expanded before a concurrent move across area boundaries.
       const readOnlyPreview=request.method==='POST'&&(/^(?:students\/[0-9a-f-]{36}\/homework\/[0-9a-f-]{36}\/submission|homework-submissions\/[0-9a-f-]{36})\/versions\/[1-9][0-9]{0,9}\/attachments\/(?:[1-9]|1[0-9]|20)\/download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/(?:published-reports|homework)\/[0-9a-f-]{36}\/media\/[0-9a-f-]{36}\/download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/homework\/[0-9a-f-]{36}\/solutions\/[0-9a-f-]{36}\/(?:media\/[0-9a-f-]{36}|attachments\/(?:[1-9]|1[0-9]|20))\/download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/achievements\/[0-9a-f-]{36}\/assets\/(?:[1-9]|10)\/download-link$/i.test(path)||/^signature-send-requests\/[0-9a-f-]{36}\/completion-evidence\/[0-9a-f-]{36}\/(?:document|audit)\/download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/tuition-invoices\/[0-9a-f-]{36}\/receipts\/[0-9a-f-]{36}\/attachment-download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/registration-data\/care\/(?:reveal|submissions\/[0-9a-f-]{36}\/reveal)$/i.test(path)||/^students\/[0-9a-f-]{36}\/care\/(?:reveal|proposal-reveal)$/i.test(path)||path==='me/community-profile/avatar-download-link'||/^payroll\/private-identities\/[0-9a-f-]{36}\/(?:reveal|proposal-reveal)$/i.test(path)||/^files\/[0-9a-f-]{36}\/download-link$/i.test(path)||/^community\/profiles\/[0-9a-f-]{36}\/avatar-download-link$/i.test(path)||/^payroll\/payruns\/[0-9a-f-]{36}\/net\/(?:contributions-preview|source-contributions-preview)$/i.test(path)||/^payroll\/tax-periods\/[0-9a-f-]{36}\/(?:contributions-preview|taxes-preview)$/i.test(path)||path==='calendar/preview'||/^automations\/rules\/[0-9a-f-]{36}\/(?:preview|event-preview)$/i.test(path)||/^payroll\/engagements\/[0-9a-f-]{36}\/preview$/i.test(path)||/^finance\/tax-codes\/[0-9a-f-]{36}\/preview$/i.test(path)||/^finance\/receipts\/[0-9a-f-]{36}\/allocations\/preview$/i.test(path)||/^finance\/tuition-plans\/[0-9a-f-]{36}\/sharing\/preview$/i.test(path));
-      if(request.method==='GET'||readOnlyPreview){
+      if(request.method==='GET'||videoHead||readOnlyPreview){
         // Match policy writers/domain workers:policy before geography before
         // identity. Taking geography first can deadlock a queued policy writer.
         await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,8))',[c.academy_id]);
@@ -262,7 +264,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       }
       if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action='work.guardian.change' AND payload->>'state'='suspended'",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('community-profile.publish','student-profile.publish','worker-profile.publish') AND payload->>'audience'='unpublished'",[id.parse(readOnlyDecision[1])])).rows.length===1;
-      if (status === 'read_only' && request.method !== 'GET' && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
+      if (status === 'read_only' && request.method !== 'GET'&&!videoHead && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
       const grants=await loadGrants(db,c);
@@ -270,7 +272,16 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       // Attachments are code-owned GET results only. Do not let a formatter
       // choose arbitrary headers, MIME types, filenames or cache policies.
       if(reply.csv&&(request.method!=='GET'||reply.status!==200||typeof reply.body!=='string'||typeof reply.csv.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename)||Buffer.byteLength(reply.body,'utf8')>4_194_304))throw new Error('INVALID_CSV_REPLY');
+      if(reply.video&&(reply.csv||reply.body!==null||!isVideoReadPath(path)||!['GET','HEAD'].includes(request.method)||!['video/mp4','video/quicktime','video/webm'].includes(reply.video.mime)||typeof reply.video.open!=='function'||!videoRangeSchema.safeParse(reply.video.plan).success||reply.status!==reply.video.plan.status||videoHead&&reply.status!==200))throw new Error('INVALID_VIDEO_REPLY');
       await db.query('COMMIT'); transaction = false;
+      if(reply.video){
+        // Never retain an authenticated DB connection/row lock during storage
+        // IO or a slow viewer's stream. No caller-controlled response headers.
+        const connection=db;db=undefined;connection.release();const v=reply.video,p=v.plan;
+        const body=p.status===416?null:await v.open();
+        if(videoHead&&body!==null||!videoHead&&p.status!==416&&!(body instanceof ReadableStream)){if(body instanceof ReadableStream)void body.cancel().catch(()=>{});throw new Error('INVALID_VIDEO_BODY');}
+        return new Response(body,{status:p.status,headers:{...headers,'Cache-Control':'private, no-store','Content-Type':v.mime,'Content-Disposition':'inline','Content-Length':String(p.status===416?0:videoHead?p.total:p.length),'Accept-Ranges':'bytes','ETag':p.etag,'Cross-Origin-Resource-Policy':'same-origin','Referrer-Policy':'no-referrer','Content-Security-Policy':"sandbox; default-src 'none'",...p.status===206?{'Content-Range':`bytes ${p.start}-${p.end}/${p.total}`}:{},...p.status===416?{'Content-Range':`bytes */${p.total}`}:{}}});
+      }
       if(reply.csv)return new Response(reply.body as string,{status:200,headers:{...headers,'Content-Type':'text/csv; charset=utf-8','Content-Disposition':`attachment; filename="${reply.csv.filename}"`,'Content-Security-Policy':"sandbox; default-src 'none'"}});
       return Response.json(reply.body, { status: reply.status, headers });
     } catch (error) {

@@ -26,6 +26,7 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     credentials:{accessKeyId:c.accessKeyId,secretAccessKey:c.secretAccessKey},requestChecksumCalculation:'WHEN_REQUIRED',responseChecksumValidation:'WHEN_REQUIRED',
     ...(handler?{requestHandler:handler}:{})});
   let closed=false;
+  const bodyClosed=(source:Readable)=>source.closed?Promise.resolve():new Promise<void>(resolve=>source.once('close',resolve));
   function key(stage:'quarantine'|'clean'|'signature-evidence',fileId:string) {
     if(closed)throw new ApiError(503,'R2_CONNECTION_CLOSED');
     const id=uuid.safeParse(fileId);if(!id.success)throw new ApiError(400,'INVALID_FILE_ID');
@@ -51,10 +52,10 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
       const cancel=()=>{controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_CANCELLED'));};signal?.addEventListener('abort',cancel,{once:true});
       const deadline=setTimeout(()=>{timedOut=true;controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_TIMEOUT'));},timeoutMs);
       try {
-        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey,...expected.ifMatch?{IfMatch:expected.ifMatch}:{},...selection?{Range:`bytes=${selection.start}-${selection.end}`}:{}}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
+        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey,...expected.ifMatch?{IfMatch:expected.ifMatch}:{},...selection?{Range:`bytes=${selection.start}-${selection.end}`}:{}}),{abortSignal:controller.signal}).then(async response=>{if(controller.signal.aborted&&response.Body instanceof Readable){response.Body.once('error',()=>{});const ended=bodyClosed(response.Body);response.Body.destroy();await ended;}return response;});
         pendingOperations.push(request);
         const response=await Promise.race([request,expired]);
-        if(!(response.Body instanceof Readable))throw new ApiError(502,'R2_INVALID_OBJECT');body=response.Body;
+        if(!(response.Body instanceof Readable))throw new ApiError(502,'R2_INVALID_OBJECT');body=response.Body;body.once('error',()=>{});pendingOperations.push(bodyClosed(body));
         if(!Number.isSafeInteger(response.ContentLength)||response.ContentLength!==transferBytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
         if(selection&&(response.$metadata.httpStatusCode!==206||response.ContentRange!==`bytes ${selection.start}-${selection.end}/${expected.bytes}`||response.ContentEncoding))throw new ApiError(502,'R2_INVALID_OBJECT');
         // Provider ContentType and ETag are metadata, not detected MIME or an

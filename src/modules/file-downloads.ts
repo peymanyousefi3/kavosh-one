@@ -20,7 +20,7 @@ export async function fileDownloads(ctx:ApiContext,connections?:R2DownloadConnec
 }
 // Only server-owned routes supply an authorizer. Each must prove the exact
 // file association and current domain-specific authority before AND after locks.
-export async function issueFileDownload(ctx:ApiContext,id:string,i:z.infer<typeof input>,authorize:(ctx:ApiContext,id:string)=>Promise<DownloadFile>,connections?:R2DownloadConnections):Promise<Reply>{
+export async function fileDeliverySource(ctx:ApiContext,id:string,i:z.infer<typeof input>,authorize:(ctx:ApiContext,id:string)=>Promise<DownloadFile>){
  await authorize(ctx,id);await lockApprovalWrites(ctx);await lockAcademyTopology(ctx);
  // Concurrent viewers share the row lock;metadata/archive writers wait only
  // for local signing,never for an actual file transfer or browser download.
@@ -29,7 +29,11 @@ export async function issueFileDownload(ctx:ApiContext,id:string,i:z.infer<typeo
  const copy=(await ctx.db.query('SELECT route_id FROM public.file_copy_requests WHERE id=$1 AND file_id=$2',[i.copyId,id])).rows[0];if(!copy)throw new ApiError(404,'NOT_FOUND');
  await ctx.db.query('SELECT id FROM public.file_storage_routes WHERE id=$1 FOR SHARE',[copy.route_id]);
  const raw=(await ctx.db.query<{source:unknown}>('SELECT public.file_download_source($1,$2,$3) source',[id,f.version,i.copyId])).rows[0].source;
- if(!raw)throw new ApiError(409,'FILE_DOWNLOAD_NOT_READY');const evaluated=sourceSchema.safeParse(raw);if(!evaluated.success)throw new ApiError(503,'FILE_DOWNLOAD_SOURCE_INVALID');const actual=evaluated.data,configuration=connections?.(ctx.credential.academy_id,actual.destinationTargetId);
+ if(!raw)throw new ApiError(409,'FILE_DOWNLOAD_NOT_READY');const evaluated=sourceSchema.safeParse(raw);if(!evaluated.success)throw new ApiError(503,'FILE_DOWNLOAD_SOURCE_INVALID');const actual=evaluated.data;
+ return{file:f,source:actual};
+}
+export async function issueFileDownload(ctx:ApiContext,id:string,i:z.infer<typeof input>,authorize:(ctx:ApiContext,id:string)=>Promise<DownloadFile>,connections?:R2DownloadConnections):Promise<Reply>{
+ const {file:f,source:actual}=await fileDeliverySource(ctx,id,i,authorize),configuration=connections?.(ctx.credential.academy_id,actual.destinationTargetId);
  if(!configuration)throw new ApiError(503,'R2_DOWNLOAD_NOT_CONFIGURED');const storage=privateR2(configuration,ctx.credential.academy_id);
  try{
   if(storage.storageTargetId!==actual.destinationTargetId)throw new ApiError(503,'R2_DOWNLOAD_NOT_CONFIGURED');if(actual.bytes>storage.maximumUploadBytes)throw new ApiError(409,'FILE_EXCEEDS_DOWNLOAD_LIMIT');

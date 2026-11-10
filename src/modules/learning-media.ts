@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import { isDeepStrictEqual } from 'node:util';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
@@ -7,6 +8,7 @@ import { lockAcademyTopology } from './academy.ts';
 import { authorizeLearningRecipient,receivedLearningSelection } from './learning-recipients.ts';
 import { sessionReportDocument } from './session-reports.ts';
 import { issueFileDownload } from './file-downloads.ts';
+import { issueFileVideo } from './file-videos.ts';
 import type { R2DownloadConnections } from '../integrations/r2-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),empty=z.object({}).strict();
@@ -44,18 +46,19 @@ export async function learningFileBinding(ctx:ApiContext,owner:{classId:string}|
  ORDER BY c.requested_at DESC,c.id DESC LIMIT 1`,[ref.fileId,ref.fileVersion,ownerId,copy??null,ref.mediaKind??null])).rows[0]??null;
 }
 function items(s:Source){return[...s.document.blocks.flatMap(b=>b.kind==='media'?[{kind:'media' as const,key:b.id,caption:b.caption,ref:{fileId:b.fileId,fileVersion:b.fileVersion,mediaKind:b.mediaKind}}]:[]),...s.attachments.map((a,n)=>({kind:'attachments' as const,key:String(n+1),caption:a.caption,ref:{fileId:a.fileId,fileVersion:a.fileVersion}}))];}
-export async function learningMedia(ctx:ApiContext,connections?:R2DownloadConnections):Promise<Reply|null>{
- const m=/^students\/([^/]+)\/(published-reports|homework)\/([^/]+)(?:\/solutions\/([^/]+))?\/(media|attachments)(?:\/([^/]+)\/(download-link))?$/.exec(ctx.path);if(!m)return null;
+export async function learningMedia(ctx:ApiContext,connections?:R2DownloadConnections,handler?:S3ClientConfig['requestHandler']):Promise<Reply|null>{
+ const m=/^students\/([^/]+)\/(published-reports|homework)\/([^/]+)(?:\/solutions\/([^/]+))?\/(media|attachments)(?:\/([^/]+)\/(download-link|video))?$/.exec(ctx.path);if(!m)return null;
  if(m[2]==='published-reports'&&m[4]||m[5]==='attachments'&&!m[4])throw new ApiError(404,'NOT_FOUND');
  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_RECIPIENT_REQUIRED');const p=new URL(ctx.request.url).searchParams;if([...p].length!==new Set(p.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');empty.parse(Object.fromEntries(p));
  const student=uuid.parse(m[1]),parent=uuid.parse(m[3]),solution=m[4]?uuid.parse(m[4]):null,t:Target={student,id:solution??parent,homework:solution?parent:null,kind:solution?'solution':m[2]==='homework'?'homework':'report',base:'students/'+student+'/'+m[2]+'/'+parent+(solution?'/solutions/'+solution:'')};
- if(ctx.request.method==='POST'&&m[7]){
-  empty.parse(await jsonBody(ctx.request));const key=m[5]==='media'?uuid.parse(m[6]):String(attachmentNo.parse(m[6])),s=await targetSource(ctx,t),item=items(s).find(i=>i.kind===m[5]&&i.key===key);if(!item)throw new ApiError(404,'NOT_FOUND');const f=await learningFileBinding(ctx,s,item.ref);if(!f)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');
+ if(m[7]){
+  const video=m[7]==='video';if(video?!['GET','HEAD'].includes(ctx.request.method):ctx.request.method!=='POST')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+  if(!video)empty.parse(await jsonBody(ctx.request));const key=m[5]==='media'?uuid.parse(m[6]):String(attachmentNo.parse(m[6])),s=await targetSource(ctx,t),item=items(s).find(i=>i.kind===m[5]&&i.key===key);if(!item)throw new ApiError(404,'NOT_FOUND');const f=await learningFileBinding(ctx,s,item.ref);if(!f)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');
   const authorize=async(c:ApiContext,id:string)=>{const current=await targetSource(c,t),next=items(current).find(i=>i.kind===m[5]&&i.key===key);if(current.revision!==s.revision||!next||!isDeepStrictEqual(next.ref,item.ref)||id!==item.ref.fileId)throw new ApiError(404,'NOT_FOUND');const actual=await learningFileBinding(c,current,next.ref,f.copy_id);if(!actual)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');return actual;};
-  await record(ctx.db,ctx.credential,ctx.requestId,'learning.media.read',t.id,s.hubId,{studentId:student,sourceKind:t.kind,kind:'download_request',itemKind:item.kind,itemKey:key,privateContentRedacted:true});return issueFileDownload(ctx,f.id,{expectedMetadataVersion:f.version,copyId:f.copy_id},authorize,connections);
+  await record(ctx.db,ctx.credential,ctx.requestId,'learning.media.read',t.id,s.hubId,{studentId:student,sourceKind:t.kind,kind:video?'video_request':'download_request',itemKind:item.kind,itemKey:key,privateContentRedacted:true});return video?issueFileVideo(ctx,f.id,{expectedMetadataVersion:f.version,copyId:f.copy_id},authorize,connections,handler):issueFileDownload(ctx,f.id,{expectedMetadataVersion:f.version,copyId:f.copy_id},authorize,connections);
  }
  if(ctx.request.method!=='GET'||m[7]||m[5]!=='media')throw new ApiError(405,'METHOD_NOT_ALLOWED');const s=await targetSource(ctx,t),data=[];
- for(const item of items(s)){const f=await learningFileBinding(ctx,s,item.ref);data.push({kind:item.kind,key:item.key,caption:item.caption,availability:f?'requestable':'unavailable',...f?{mime:f.mime,bytes:f.bytes,readerConfigured:Boolean(connections?.(ctx.credential.academy_id,f.destination_target)),downloadPath:'/api/v1/'+t.base+'/'+item.kind+'/'+item.key+'/download-link'}:{},retrievalVerified:false});}
+ for(const item of items(s)){const f=await learningFileBinding(ctx,s,item.ref);data.push({kind:item.kind,key:item.key,caption:item.caption,availability:f?'requestable':'unavailable',...f?{mime:f.mime,bytes:f.bytes,readerConfigured:Boolean(connections?.(ctx.credential.academy_id,f.destination_target)),downloadPath:'/api/v1/'+t.base+'/'+item.kind+'/'+item.key+'/download-link',...f.mime.startsWith('video/')?{videoPath:'/api/media/'+ctx.credential.academy_id+'/'+t.base+'/'+item.kind+'/'+item.key+'/video'}:{}}:{},retrievalVerified:false});}
  await record(ctx.db,ctx.credential,ctx.requestId,'learning.media.read',t.id,s.hubId,{studentId:student,sourceKind:t.kind,kind:'directory',rows:data.length,privateContentRedacted:true});return{status:200,body:{data,privateFamilyOnly:true,publiclyPublished:false,mediaContentIncluded:false,videoServingVerified:false,externalRetrievalVerified:false}};
 }
 const readSummary='Current verified self/legal family descriptors for an exact released learning record under existing feature,class/student/hub and original joining-day gates. Captions and opaque item keys only;no raw file/copy IDs,private notes,storage source or bearer URLs. Requestable means existing decoded-image/inspected-PDF or complete UTF-8-text/full-video copy/policy evidence;source text is never executed or rendered,not live retrieval or malware-free certification. Video downloads require full decode evidence and a new explicit video-serving policy;browser playback is not provided by this attachment endpoint.';
@@ -69,3 +72,9 @@ export const learningMediaContract=[
  {path:'/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/media/{blockId}/download-link',method:'post',humanOnly:true,summary:downloadSummary,schema:empty},
  {path:'/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/attachments/{attachmentNo}/download-link',method:'post',humanOnly:true,pathSchemas:{attachmentNo},summary:downloadSummary,schema:empty}
 ] as const;
+export const learningVideoContract=[
+ '/api/v1/students/{id}/published-reports/{publicationId}/media/{blockId}/video',
+ '/api/v1/students/{id}/homework/{homeworkId}/media/{blockId}/video',
+ '/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/media/{blockId}/video',
+ '/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/attachments/{attachmentNo}/video'
+].flatMap(path=>(['get','head']as const).map(method=>({path,method,humanOnly:true as const,videoResponse:true as const,...path.includes('{attachmentNo}')?{pathSchemas:{attachmentNo}}:{},summary:'Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.'})));

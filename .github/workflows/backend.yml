@@ -423,7 +423,7 @@ jobs:
         env:
           TEST_VIDEO_FIXTURE_ENCODER: /usr/bin/ffmpeg
       - name: Quick real full-video/audio decode and adverse-case checks,no live services
-        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts tests/file-video-evidence.test.ts tests/file-video-copies.test.ts tests/file-video-downloads.test.ts tests/family-video-media.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts tests/file-video-evidence.test.ts tests/file-video-copies.test.ts tests/file-video-downloads.test.ts tests/family-video-media.test.ts tests/file-video-streams.test.ts tests/video-transfer.test.ts
         env:
           VIDEO_VALIDATION_TEST_REQUIRED: 'true'
           VIDEO_CODEC_TEST_REQUIRED: 'true'

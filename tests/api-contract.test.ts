@@ -3,6 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('protected video contracts expose cookie-native school aliases and correct GET versus HEAD responses',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));let count=0;
+ for(const [path,value]of Object.entries(api.paths)as[string,any][])if(path.startsWith('/api/v1/')&&path.endsWith('/video')){count++;const alias=api.paths['/api/media/{academyId}'+path.slice('/api/v1'.length)];assert.ok(alias);for(const method of ['get','head']){const op=value[method],browser=alias[method];assert.ok(op);assert.equal(op.requestBody,undefined);assert.equal(browser.parameters.find((p:any)=>p.name==='academyId').required,true);assert.equal(browser.security.some((s:any)=>'academySelection'in s),false);assert.ok(browser.security.some((s:any)=>'humanSession'in s));assert.equal(op.parameters.some((p:any)=>p.name==='Range'),true);if(method==='head'){assert.equal(op.responses['206'],undefined);assert.equal(op.responses['416'],undefined);assert.equal(op.responses['200'].content,undefined);}else{assert.deepEqual(Object.keys(op.responses['206'].content).sort(),['video/mp4','video/quicktime','video/webm']);assert.ok(op.responses['416']);}if(path.includes('/students/'))assert.deepEqual(browser.security,[{humanSession:[]}]);}}
+ assert.equal(count,7);
+});
 test('plain-text serving is opt-in and inspection clients cannot submit trusted structural evidence',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),serving=api.paths['/api/v1/storage/routes'].post.requestBody.content['application/json'].schema.properties.definition.properties.serving.properties.allowedMimeTypes;assert.ok(serving.items.enum.includes('text/plain'));assert.equal(serving.default.includes('text/plain'),false);assert.equal(serving.maxItems,10);const body=api.paths['/api/v1/files/{id}/inspection'].post.requestBody.content['application/json'].schema;assert.equal(body.additionalProperties,false);assert.equal(body.properties.textValidation,undefined);assert.equal(body.properties.safeToServe,undefined);
 });

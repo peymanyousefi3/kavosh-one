@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.394.0",
+    "version": "0.395.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -1713,6 +1713,1486 @@
         "responses": {
           "200": {
             "description": "Process is up"
+          }
+        }
+      }
+    },
+    "/api/media/{academyId}/files/{id}/video": {
+      "get": {
+        "summary": "Authenticated private video bytes,not a bearer URL. Current file/domain rights,exact native decoded-video/copy proof,explicit reviewed video-serving policy and separate reader credentials required on EACH range/HEAD. DB transaction is committed and released before storage IO. Single-range206,unsatisfied416,If-Range and HEAD supported;server pins source ETag internally. No-store,strict video MIME,CORP same-origin;32transfers/process and4/actor,bounded backpressure,cancellation and10minute whole-transfer budget. Existing bytes already received cannot be revoked mid-view;next request rechecks rights. No live provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedMetadataVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "copyId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        },
+        "security": [
+          {
+            "botBearer": []
+          },
+          {
+            "humanSession": []
+          }
+        ]
+      },
+      "head": {
+        "summary": "Authenticated private video bytes,not a bearer URL. Current file/domain rights,exact native decoded-video/copy proof,explicit reviewed video-serving policy and separate reader credentials required on EACH range/HEAD. DB transaction is committed and released before storage IO. Single-range206,unsatisfied416,If-Range and HEAD supported;server pins source ETag internally. No-store,strict video MIME,CORP same-origin;32transfers/process and4/actor,bounded backpressure,cancellation and10minute whole-transfer budget. Existing bytes already received cannot be revoked mid-view;next request rechecks rights. No live provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedMetadataVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "copyId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        },
+        "security": [
+          {
+            "botBearer": []
+          },
+          {
+            "humanSession": []
+          }
+        ]
+      }
+    },
+    "/api/media/{academyId}/homework-submissions/{id}/versions/{version}/attachments/{attachmentNo}/video": {
+      "get": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        },
+        "security": [
+          {
+            "botBearer": []
+          },
+          {
+            "humanSession": []
+          }
+        ]
+      },
+      "head": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        },
+        "security": [
+          {
+            "botBearer": []
+          },
+          {
+            "humanSession": []
+          }
+        ]
+      }
+    },
+    "/api/media/{academyId}/students/{id}/homework/{homeworkId}/media/{blockId}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/media/{academyId}/students/{id}/homework/{homeworkId}/solutions/{solutionId}/attachments/{attachmentNo}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/media/{academyId}/students/{id}/homework/{homeworkId}/solutions/{solutionId}/media/{blockId}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/media/{academyId}/students/{id}/homework/{homeworkId}/submission/versions/{version}/attachments/{attachmentNo}/video": {
+      "get": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/media/{academyId}/students/{id}/published-reports/{publicationId}/media/{blockId}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "publicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,NOT authorization;credential school and current rights are still checked."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "publicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native URL uses its school path selector and host-only session cookie;no custom provider or academy header is needed. Source If-Match stays server-side. No bearer URL is created.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
           }
         }
       }
@@ -16432,6 +17912,180 @@
           },
           "202": {
             "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{id}/video": {
+      "get": {
+        "summary": "Authenticated private video bytes,not a bearer URL. Current file/domain rights,exact native decoded-video/copy proof,explicit reviewed video-serving policy and separate reader credentials required on EACH range/HEAD. DB transaction is committed and released before storage IO. Single-range206,unsatisfied416,If-Range and HEAD supported;server pins source ETag internally. No-store,strict video MIME,CORP same-origin;32transfers/process and4/actor,bounded backpressure,cancellation and10minute whole-transfer budget. Existing bytes already received cannot be revoked mid-view;next request rechecks rights. No live provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedMetadataVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "copyId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Authenticated private video bytes,not a bearer URL. Current file/domain rights,exact native decoded-video/copy proof,explicit reviewed video-serving policy and separate reader credentials required on EACH range/HEAD. DB transaction is committed and released before storage IO. Single-range206,unsatisfied416,If-Range and HEAD supported;server pins source ETag internally. No-store,strict video MIME,CORP same-origin;32transfers/process and4/actor,bounded backpressure,cancellation and10minute whole-transfer budget. Existing bytes already received cannot be revoked mid-view;next request rechecks rights. No live provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "expectedMetadataVersion",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "copyId",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
           },
           "default": {
             "$ref": "#/components/responses/error"
@@ -36910,6 +38564,180 @@
           },
           "202": {
             "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/homework-submissions/{id}/versions/{version}/attachments/{attachmentNo}/video": {
+      "get": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
           },
           "default": {
             "$ref": "#/components/responses/error"
@@ -77457,6 +79285,188 @@
         }
       }
     },
+    "/api/v1/students/{id}/homework/{homeworkId}/media/{blockId}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/students/{id}/homework/{homeworkId}/solutions": {
       "get": {
         "summary": "Verified own-family releases only, current homework assignment and original session-day eligibility",
@@ -77658,6 +79668,208 @@
         }
       }
     },
+    "/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/attachments/{attachmentNo}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/media": {
       "get": {
         "summary": "Current verified self/legal family descriptors for an exact released learning record under existing feature,class/student/hub and original joining-day gates. Captions and opaque item keys only;no raw file/copy IDs,private notes,storage source or bearer URLs. Requestable means existing decoded-image/inspected-PDF or complete UTF-8-text/full-video copy/policy evidence;source text is never executed or rendered,not live retrieval or malware-free certification. Video downloads require full decode evidence and a new explicit video-serving policy;browser playback is not provided by this attachment endpoint.",
@@ -77786,6 +79998,206 @@
           },
           "202": {
             "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/media/{blockId}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "solutionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
           },
           "default": {
             "$ref": "#/components/responses/error"
@@ -78196,6 +80608,210 @@
           },
           "202": {
             "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/homework/{homeworkId}/submission/versions/{version}/attachments/{attachmentNo}/video": {
+      "get": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Exact immutable student-answer revision attachments through the SAME current JSON-reader permission,draft and original-day enrollment gates. Family needs actual current verified self/legal-family authority;staff/bot uses its own current separately scoped homework-submissions.view and explicit drafts permission,never a family impersonation. A later private draft never exposes itself or conceals permitted older submitted work. Only this student-owned student_private content,original pinned file revision and current decoded-image/inspected-PDF or complete UTF-8-text/full-video verified serving evidence. No raw file/copy/source IDs in descriptors,no answer text,private context,credentials or bearer URLs. UTF-8 source is a non-executed attachment,not a preview or code-safety claim. Video requires full decode evidence and an explicit video-serving policy;other formats remain unavailable,not certified safe. Authenticated video GET/HEAD on this EXACT revision only;same draft,current family/staff/bot scope and date gates. No caller file/copy/actor override or bearer URL. DB released before storage IO;single range/If-Range,strict video MIME,no-store,CORP same-origin,bounded cancellation/backpressure. Private draft visibility is never implied by a later submitted version. No live-provider or browser-codec playback certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "homeworkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "attachmentNo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|1[0-9]|20)$"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
           },
           "default": {
             "$ref": "#/components/responses/error"
@@ -79451,6 +82067,188 @@
           },
           "202": {
             "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/published-reports/{publicationId}/media/{blockId}/video": {
+      "get": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "publicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "Authenticated single byte range",
+            "content": {
+              "video/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/quicktime": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "video/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Unsatisfied range;Content-Range:bytes */total,no media body"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "head": {
+        "summary": "Same exact current self/legal-family released learning record,original class/media association,joining-day and current role gates as its JSON reader. Browser-native authenticated single-range video/HEAD,never a bearer URL or caller-selected file/copy/actor. Explicit decoded-video/copy/serving evidence and separate reader required. DB connection is released before IO;each new request rechecks current rights. No-store,CORP same-origin,bounded backpressure/cancellation;not browser-codec or live-provider certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "publicationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "blockId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Single bytes range only;ignored on HEAD."
+          },
+          {
+            "name": "If-Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "description": "Strong measured-content ETag;nonmatching/weak/date values select full response."
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Authenticated full video or HEAD metadata"
           },
           "default": {
             "$ref": "#/components/responses/error"
