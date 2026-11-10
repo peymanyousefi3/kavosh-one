@@ -3,6 +3,19 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('achievement asset API bounds exact reviewed files and exposes only human family downloads without caller file selection',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
+ const admin=api.paths['/api/v1/achievements/{id}/assets'].post,s=admin.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.equal(s.properties.assets.maxItems,10);
+ assert.deepEqual(s.properties.assets.items.properties.kind.enum,['image','certificate']);
+ assert.deepEqual(Object.keys(s.properties.assets.items.properties).sort(),['copyId','fileId','fileVersion','kind','label']);
+ const download=api.paths['/api/v1/students/{id}/achievements/{awardId}/assets/{attachmentNo}/download-link'].post;
+ assert.equal(download.security.some((v:any)=>'botBearer'in v),false);
+ const number=download.parameters.find((v:any)=>v.name==='attachmentNo').schema;
+ assert.equal(number.format,undefined);assert.equal(number.pattern,'^(?:[1-9]|10)$');
+ assert.deepEqual(download.requestBody.content['application/json'].schema.properties,{});
+ assert.match(download.summary,/Available in read-only school/);assert.match(admin.summary,/new editions stale old family release/);
+});
 test('own privacy ward discovery is human-only,bounded and has no actor or identity override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/me/profile-wards'].get;assert.equal(op.security.some((s:any)=>'botBearer'in s),false);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['after','limit']);assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(op.summary,/rechecked before pagination/);assert.match(op.summary,/No administrative permissions required or sufficient/);assert.match(op.summary,/read-only school/);
 });
