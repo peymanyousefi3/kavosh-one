@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('privacy event record is a human read with no caller consent,scope or signing authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/community/profile-privacy-events/{id}',op=api.paths[path].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name),['id']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/current profiles.view and student-profiles.view/);assert.match(op.summary,/Reading never restores consent/);
+});
+
 test('family profile privacy controls are human-only,immediate and purpose-bound without grant or clock overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/profile-consents/{purpose}/withdraw',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;
  assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties),['reason']);assert.deepEqual(op.parameters.find((p:any)=>p.name==='purpose').schema.enum,['public_profile','verified_member_profile']);assert.match(op.summary,/no upper approval/);assert.ok(api.paths[path.replace('/withdraw','/withdrawals')].get);assert.equal(api.paths[path.replace('/withdraw','/grant')],undefined);

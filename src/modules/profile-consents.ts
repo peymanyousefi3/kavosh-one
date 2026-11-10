@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { jsonBody,mutation,record,type ApiContext,type Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
-import { lockApprovalWrites } from '../core/approvals.ts';
+import { lockApprovalWrites,privacyScopes } from '../core/approvals.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { assertSchemaReady } from '../core/database.ts';
 
@@ -17,6 +17,13 @@ async function family(ctx:ApiContext,id:string){
  const b=(await ctx.db.query<{b:Basis|null}>('SELECT public.profile_consent_actor_basis($1,$2) b',[id,ctx.credential.person_id])).rows[0]?.b;if(!b)throw new ApiError(404,'NOT_FOUND');return b;
 }
 export async function profileConsents(ctx:ApiContext):Promise<Reply|null>{
+ const event=/^community\/profile-privacy-events\/([^/]+)$/.exec(ctx.path);
+ if(event){
+  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_PRIVACY_ACTION_REQUIRED');if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');empty.parse(Object.fromEntries(new URL(ctx.request.url).searchParams));const id=uuid.parse(event[1]);await assertSchemaReady(ctx.db);await lockAcademyTopology(ctx);
+  const data=(await ctx.db.query<{data:unknown}>('SELECT public.profile_consent_notice_basis($1) data WHERE public.profile_consent_notice_allows($1,$2::jsonb)',[id,JSON.stringify(privacyScopes(ctx))])).rows[0]?.data;if(data==null)throw new ApiError(404,'NOT_FOUND');
+  const parsed=z.object({studentId:uuid,purpose,version:z.number().int().positive().max(2147483647),withdrawnAt:z.iso.datetime({offset:true}),hubId:uuid.nullable()}).strict().safeParse(data);if(!parsed.success)throw new ApiError(503,'PROFILE_PRIVACY_RECORD_UNAVAILABLE');
+  await record(ctx.db,ctx.credential,ctx.requestId,'profile-privacy-event.read',parsed.data.studentId,parsed.data.hubId,{eventId:id,privateContentRedacted:true});return{status:200,body:{data:parsed.data,privateReasonsIncluded:false,signingEvidenceIncluded:false,consentRestoredByReading:false,publicationStatusIncluded:false}};
+ }
  const m=/^students\/([^/]+)\/profile-consents(?:\/([^/]+)\/(withdraw|withdrawals))?$/.exec(ctx.path);if(!m)return null;
  const id=uuid.parse(m[1]),kind=m[2]?purpose.parse(m[2]):null,params=new URL(ctx.request.url).searchParams;
  if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const raw=Object.fromEntries(params);
@@ -38,6 +45,7 @@ export async function profileConsents(ctx:ApiContext):Promise<Reply|null>{
  await record(ctx.db,ctx.credential,ctx.requestId,'profile-consent.withdrawal.read',id,b.hubId,{kind:'summary',rows:rows.length});return{status:200,body:{studentId:id,data:purpose.options.map(p=>({...states.find(r=>r.purpose===p)!,...rows.find(r=>r.purpose===p)??{version:0,lastWithdrawnAt:null}})),consentGrantEvaluated:true,publicationEvaluated:false,providerFreshlyChecked:false,legalValidityCertified:false}};
 }
 export const profileConsentsContract=[
+ {path:'/api/v1/community/profile-privacy-events/{id}',method:'get',humanOnly:true,summary:'Read one native-bound consent-withdrawal fact with current profiles.view and student-profiles.view scopes. Returns purpose,version,time and student/current hub only;no family reason,actor/session,signature or signing evidence. Reading never restores consent or publishes a profile.'},
  {path:'/api/v1/students/{id}/profile-consents',method:'get',humanOnly:true,summary:'Verified self/current under18 legal family reads purpose-specific withdrawal and native consent-evidence eligibility. Requires selected optional choice,accepted original-bound Live-registry evidence,current legal identity/guardian/age and post-withdrawal dispatch. No source IDs,private signer data,public publication or legal/provider certification.'},
  {path:'/api/v1/students/{id}/profile-consents/{purpose}/withdraw',method:'post',humanOnly:true,pathSchemas:{purpose},summary:'Immediate self/current-guardian privacy withdrawal,no upper approval or editable clocks. Purpose is public_profile or verified_member_profile;empty body is sufficient. Allowed in read-only school. Old signed-document replay cannot clear the immutable withdrawal cutoff. Enrollment is unchanged.',schema:input},
  {path:'/api/v1/students/{id}/profile-consents/{purpose}/withdrawals',method:'get',humanOnly:true,pathSchemas:{purpose},summary:'Current verified self/legal family reads bounded withdrawal history,without private reasons or another guardian identity',querySchema:history}

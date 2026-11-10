@@ -27,6 +27,7 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  {const r=await fetch(base+'/api/v1/community/profile-privacy-events/00000000-0000-4000-8000-000000000001');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/studentId|withdrawnAt|purpose|stack/);}
   {const r=await fetch(base+'/api/v1/community/published-profiles/00000000-0000-4000-8000-000000000001');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/displayName|profileVersion|source_basis|stack/);}
   {const r=await fetch(base+'/api/public/v1/profiles/00000000-0000-4000-8000-000000000001');assert.equal(r.status,404);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/content|displayName|profileVersion|stack/);}
   for(const [path,method]of [['notifications','GET'],['notifications/00000000-0000-4000-8000-000000000001/read','POST']]){const r=await fetch(base+'/api/platform/v1/'+path,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,404);assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual(await r.json(),{error:{code:'NOT_FOUND'}});}
