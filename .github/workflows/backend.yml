@@ -15,6 +15,45 @@ permissions:
 # Keep each checkpoint's evidence. Do not cancel an earlier run when another
 # commit is pushed, including when GitHub is slow to finalize its run status.
 jobs:
+  database-recovery:
+    runs-on: ubuntu-latest
+    container: postgres:17
+    timeout-minutes: 12
+    steps:
+      - name: Install runner tools inside the disposable database-client container
+        run: apt-get update && apt-get install --yes --no-install-recommends ca-certificates curl git xz-utils
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Verify the official pinned encryption tool before execution
+        run: |
+          install -d -m 700 /tmp/kavosh-backup-tools
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o /tmp/kavosh-backup-tools/age.tar.gz
+          echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/kavosh-backup-tools/age.tar.gz' | sha256sum --check --strict
+          tar -xzf /tmp/kavosh-backup-tools/age.tar.gz -C /tmp/kavosh-backup-tools age/age age/age-keygen
+      - name: Start only a disposable loopback PostgreSQL instance
+        run: |
+          install -d -o postgres -g postgres -m 700 /tmp/kavosh-backup-postgres
+          umask 077
+          printf '%s\n' 'synthetic-ci-password' > /tmp/kavosh-backup-ci-password
+          chown postgres:postgres /tmp/kavosh-backup-ci-password
+          runuser -u postgres -- initdb -D /tmp/kavosh-backup-postgres --auth-local=trust --auth-host=scram-sha-256 --pwfile=/tmp/kavosh-backup-ci-password --no-locale -E UTF8
+          runuser -u postgres -- pg_ctl -D /tmp/kavosh-backup-postgres -l /tmp/kavosh-backup-postgres/server.log -o '-h 127.0.0.1 -p 5432' -w start
+      - name: Real encrypted full database restore and adverse-case checks,no live credentials or external delivery
+        run: |
+          pnpm db:recovery:build
+          node .recovery-tool/scripts/database-recovery.js --help
+          RECOVERY_COMPILED_CLI="$PWD/.recovery-tool/scripts/database-recovery.js" PG_DUMP_BIN="$(command -v pg_dump)" PG_RESTORE_BIN="$(command -v pg_restore)" node --import tsx --test tests/database-backups.test.ts
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+          AGE_BIN: /tmp/kavosh-backup-tools/age/age
+          AGE_KEYGEN_BIN: /tmp/kavosh-backup-tools/age/age-keygen
   verify:
     runs-on: ubuntu-latest
     # Run41804739143 hit20m at the final container HTTP check after its full

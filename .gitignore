@@ -10,6 +10,7 @@
 node_modules/
 .next/
 .notification-worker/
+.recovery-tool/
 dist/
 coverage/
 .wrangler/
@@ -18,6 +19,10 @@ coverage/
 data/
 uploads/
 backups/
+*.dump
+*.age
+*.agekey
+*.pgpass
 exports/
 *.sqlite
 *.sqlite3
