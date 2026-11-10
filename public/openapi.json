@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.350.0",
+    "version": "0.351.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -74768,7 +74768,7 @@
     },
     "/api/v1/students/{id}/profile-consents": {
       "get": {
-        "summary": "Verified student or current legal guardian of an under18 student reads purpose-specific withdrawal status. Nondelegable privacy control,not administrative access or a consent/publication grant.",
+        "summary": "Verified self/current under18 legal family reads purpose-specific withdrawal and native consent-evidence eligibility. Requires selected optional choice,accepted original-bound Live-registry evidence,current legal identity/guardian/age and post-withdrawal dispatch. No source IDs,private signer data,public publication or legal/provider certification.",
         "parameters": [
           {
             "name": "id",

@@ -7,6 +7,7 @@ import { test } from 'node:test';
 test('family profile privacy controls are human-only,immediate and purpose-bound without grant or clock overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/profile-consents/{purpose}/withdraw',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;
  assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties),['reason']);assert.deepEqual(op.parameters.find((p:any)=>p.name==='purpose').schema.enum,['public_profile','verified_member_profile']);assert.match(op.summary,/no upper approval/);assert.ok(api.paths[path.replace('/withdraw','/withdrawals')].get);assert.equal(api.paths[path.replace('/withdraw','/grant')],undefined);
+ const summary=api.paths['/api/v1/students/{id}/profile-consents'].get;assert.equal(summary.security.some((v:any)=>'botBearer'in v),false);assert.match(summary.summary,/accepted original-bound Live-registry evidence/);assert.match(summary.summary,/No source IDs/);
 });
 
 test('organization publication separates reviewed private controls from default-off anonymous plain-text reads',()=>{
