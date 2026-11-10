@@ -7,7 +7,7 @@ import { stripeWebhookBody,stripePaymentEventTypes } from '../src/integrations/s
 import { platformContract } from '../src/platform/api.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.348.0';
+api.info.version='0.349.0';
 api.paths['/api/public/v1/profiles/{id}']={get:{security:[],summary:'Default-off reviewed school/hub profile JSON only. Native current-publication,owner,moderation and draft-version gates; no personal/student data,private media or HTML rendering. Trusted proxy and keyed per-IP budget required;no-store,not a visual profile page.',parameters:[{name:'id',in:'path',required:true,schema:{type:'string',format:'uuid'}}],responses:{'200':{description:'Reviewed organization profile,plain text localized content and canonical links only'},'404':{description:'Disabled,unknown,withdrawn or no longer currently published'},'429':{description:'Public read budget exhausted'},'503':{description:'Configuration or isolated reader unavailable'}}}};
 api.info.description='Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store.';
 api.security=[{botBearer:[]},{humanSession:[],academySelection:[]}];

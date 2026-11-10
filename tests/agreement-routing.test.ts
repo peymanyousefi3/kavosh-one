@@ -4,9 +4,31 @@ import { readFile } from 'node:fs/promises';
 import { agreementRouting } from '../src/integrations/boldsign.ts';
 import { migratedTestDatabase } from './database.ts';
 import { operationsFixture } from './operations-fixture.ts';
+import { observeProfileConsentChoices } from '../src/integrations/boldsign-completion.ts';
 const field={id:'Signature1',fieldType:'Signature',isRequired:true,pageNumber:1,bounds:{x:0,y:0,width:100,height:20}};
 const choice={...field,id:'ProfileChoice',fieldType:'CheckBox',isRequired:false,consentPurpose:'public_profile'};
 const v1={version:1,role:'legal_signer',fields:[field]},v2={...v1,version:2,fields:[field,choice]};
+test('native consent evidence agrees with application inspection and never infers a selected choice from missing,locked,required or ambiguous fields',async()=>{
+ const db=await migratedTestDatabase();try{
+  const original=[{id:choice.id,pageNumber:choice.pageNumber,bounds:choice.bounds,purpose:'public_profile' as const}],reported={id:choice.id,type:'checkbox',pageNumber:choice.pageNumber,bounds:choice.bounds,isRequired:false,isReadOnly:false,value:'on'};
+  const cases=[undefined,[],[reported],[{...reported,value:'off'}],[reported,reported],
+   ...[{value:true},{value:'true'},{value:1},{value:'ON'},{value:null},{value:undefined},{isRequired:true},{isRequired:'false'},{isRequired:undefined},{isReadOnly:true},{isReadOnly:undefined},{type:'signature'},{id:'AnotherChoice'},{pageNumber:2},{bounds:{...choice.bounds,x:1}},{bounds:undefined}].map(patch=>[{...reported,...patch}])];
+  for(const fields of cases){const expected=observeProfileConsentChoices(original,fields);const actual=(await db.query<{choices:unknown}>('SELECT public.observe_profile_consent_choices($1::jsonb,$2::jsonb) choices',[JSON.stringify({consentFields:original}),JSON.stringify({signerDetails:[{formFields:fields}]})])).rows[0].choices;assert.deepEqual(actual,expected,JSON.stringify(fields));}
+  assert.deepEqual((await db.query('SELECT public.observe_profile_consent_choices($1::jsonb,$2::jsonb) choices',[JSON.stringify({}),JSON.stringify({signerDetails:[{formFields:[reported]}]})])).rows[0].choices,[]);
+  const two=[...original,{...original[0],id:'MembersChoice',purpose:'verified_member_profile' as const}],fields=[reported,{...reported,id:'MembersChoice',value:'off'}];
+  assert.deepEqual((await db.query('SELECT public.observe_profile_consent_choices($1::jsonb,$2::jsonb) choices',[JSON.stringify({consentFields:two}),JSON.stringify({signerDetails:[{formFields:fields}]})])).rows[0].choices,[{purpose:'public_profile',fieldId:choice.id,choice:'selected'},{purpose:'verified_member_profile',fieldId:'MembersChoice',choice:'declined'}]);
+  for(const role of ['kavosh_runtime','kavosh_signature_completion_worker','kavosh_public_profile_service']){await db.exec('SET ROLE '+role);try{await assert.rejects(db.query('SELECT public.observe_profile_consent_choices($1::jsonb,$2::jsonb)',[JSON.stringify({consentFields:original}),'{}']),/permission denied/);}finally{await db.exec('RESET ROLE');}}
+ }finally{await db.close();}
+});
+test('actual321to322 upgrade preserves original completion ownership,ACLs and existing history without manufacturing consent',async()=>{
+ const f=await operationsFixture({throughSchema:321});try{
+  const identity="SELECT oid,proowner,proacl::text,proconfig,prosecdef FROM pg_proc WHERE oid IN('public.signature_completion_source(uuid,uuid)'::regprocedure,'public.record_signature_completion_evidence(uuid,uuid,text,text,jsonb)'::regprocedure) ORDER BY oid",before=(await f.pg.query(identity)).rows;
+  const history="SELECT jsonb_build_object('bindings',(SELECT jsonb_agg(to_jsonb(b) ORDER BY id) FROM public.agreement_content_bindings b),'publications',(SELECT jsonb_agg(to_jsonb(p) ORDER BY profile_id,version) FROM public.profile_publication_changes p),'people',(SELECT jsonb_agg(to_jsonb(p) ORDER BY id) FROM public.people p)) snapshot",original=(await f.pg.query(history)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/322_profile_consent_evidence.sql',import.meta.url),'utf8'));
+  assert.deepEqual((await f.pg.query(identity)).rows,before);assert.deepEqual((await f.pg.query(history)).rows,original);
+  assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.signature_completion_evidence')).rows[0].n,0);
+ }finally{await f.pg.close();}
+});
 test('native and application routing validators agree on optional choices, strict geometry, required signature and malformed inputs',async()=>{
  const db=await migratedTestDatabase();try{
   const cases:unknown[]=[v1,v2,{...v2,fields:[field,choice,{...choice,id:'MembersChoice',consentPurpose:'verified_member_profile'}]},null,{},[],false,'private',

@@ -28,7 +28,7 @@ export async function agreementFixture(throughSchema?:number,downloadConnections
  const prepare=(body:unknown=input,as='master',key?:string)=>f.request(path,body,as,key?{key}:{});
  return {...f,student,signer,connection:connectionId,c:c.body.data,e:e.body.data,t:t.body.data,relationship:relationship.body.data,input,path,prepare};
 }
-export async function reviewedAgreementContent(f:Awaited<ReturnType<typeof agreementFixture>>,templateId=f.t.id,options:{bytes?:Buffer;inspect?:(bytes:Buffer)=>Promise<InspectionResult>;recordInspection?:(database:Database,academyId:string,result:InspectionResult)=>Promise<void>}={}) {
+export async function reviewedAgreementContent(f:Awaited<ReturnType<typeof agreementFixture>>,templateId=f.t.id,options:{bytes?:Buffer;profileChoices?:boolean;inspect?:(bytes:Buffer)=>Promise<InspectionResult>;recordInspection?:(database:Database,academyId:string,result:InspectionResult)=>Promise<void>}={}) {
  // Default storage/scanner results are synthetic,not a real PDF parse. An
  // explicit inspect callback can run the real parser without claiming cloud
  // upload,live provider verification or current malware clearance.
@@ -41,7 +41,7 @@ export async function reviewedAgreementContent(f:Awaited<ReturnType<typeof agree
  const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{async query<Row>(sql:string,params?:unknown[]){return f.pg.query<Row>(sql,params);},release(){}};await c.query('SET ROLE kavosh_file_worker');return c;}};
  try{if(options.recordInspection)await options.recordInspection(database,f.a,result);else assert.deepEqual(await processOneInspection(database,[f.a],randomUUID(),async()=>result),{claimed:true,recorded:true});}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
  await f.pg.query("UPDATE public.file_upload_grants SET issued_at=date_trunc('second',clock_timestamp())-interval '10 minutes',expires_at=date_trunc('second',clock_timestamp())-interval '5 minutes' WHERE file_id=$1",[fileId]);
- const routing={version:1,role:'legal_signer',fields:[{id:'Signature1',fieldType:'Signature',isRequired:true,pageNumber:1,bounds:{x:20,y:40,width:180,height:35}}]};
+ const routing={version:options.profileChoices?2:1,role:'legal_signer',fields:[{id:'Signature1',fieldType:'Signature',isRequired:true,pageNumber:1,bounds:{x:20,y:40,width:180,height:35}},...options.profileChoices?[{id:'PublicChoice',fieldType:'CheckBox',isRequired:false,consentPurpose:'public_profile',pageNumber:1,bounds:{x:20,y:80,width:20,height:20}}]:[]]};
  const binding=await f.request('agreements/'+templateId+'/content-bindings',{templateVersion:1,fileId,fileVersion:1,inspectionId:scan.body.data.id,attemptNo:1,locale:'en',routing,contentReviewed:true,routingReviewed:true,contentAttestation:'PRIVATE reviewed exact PDF and field layout',reason:'PRIVATE reviewed content'});assert.equal(binding.response.status,201,JSON.stringify(binding.body));
  return {id:binding.body.data.id,fileId,inspectionId:scan.body.data.id,sha256,routing,bytes};
 }

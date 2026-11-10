@@ -45,7 +45,7 @@ const completionProperties=properties.extend({
  signerDetails:z.array(properties.shape.signerDetails.element.extend({
   signerName:z.string().max(200).optional(),signType:z.string().max(40).optional(),
   phoneNumber:z.union([z.string().max(40),z.object({countryCode:z.string().max(5),number:z.string().max(30)})]).nullable().optional(),
-  formFields:z.array(z.object({id:z.string().max(200),type:z.string().max(80),pageNumber:z.number().int().positive().max(1000),bounds:z.object({x:z.number(),y:z.number(),width:z.number().positive(),height:z.number().positive()}).optional()})).max(1000).optional()
+  formFields:z.array(z.object({id:z.string().max(200),type:z.string().max(80),pageNumber:z.number().int().positive().max(1000),bounds:z.object({x:z.number(),y:z.number(),width:z.number().positive(),height:z.number().positive()}).optional(),value:z.unknown().optional(),isRequired:z.unknown().optional(),isReadOnly:z.unknown().optional()})).max(1000).optional()
  })).max(100)
 });
 const templateProperties=z.object({templateId:uuid,title:z.string().max(1000),roles:z.array(z.object({

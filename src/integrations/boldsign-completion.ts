@@ -7,17 +7,28 @@ import { getBoldSignCompletionDocument,getBoldSignDocumentPdf,getBoldSignAuditPd
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
 const signatureField=z.object({id:z.string().min(1).max(200),pageNumber:z.number().int().positive().max(1000),bounds:z.object({x:z.number().min(0).max(20000),y:z.number().min(0).max(20000),width:z.number().positive().max(20000),height:z.number().positive().max(20000)}).strict()}).strict();
-const expected=z.object({academyId:uuid,startId:uuid,signerId:uuid,documentId:uuid,packageId:uuid,attachmentId:uuid,bindingId:uuid,connectionId:uuid,connectionTargetId:hash,documentSha256:hash,sourceFingerprint:hash,region:z.enum(['US','CA','EU','AU']),signatureFields:z.array(signatureField).min(1).max(100).refine(v=>new Set(v.map(f=>f.id)).size===v.length)}).strict();
+const consentFields=z.array(signatureField.extend({purpose:z.enum(['public_profile','verified_member_profile'])}).strict()).min(1).max(2)
+ .refine(v=>new Set(v.map(f=>f.id)).size===v.length&&new Set(v.map(f=>f.purpose)).size===v.length);
+const expected=z.object({academyId:uuid,startId:uuid,signerId:uuid,documentId:uuid,packageId:uuid,attachmentId:uuid,bindingId:uuid,connectionId:uuid,connectionTargetId:hash,documentSha256:hash,sourceFingerprint:hash,region:z.enum(['US','CA','EU','AU']),signatureFields:z.array(signatureField).min(1).max(100).refine(v=>new Set(v.map(f=>f.id)).size===v.length),consentFields:consentFields.optional()}).strict();
 const artifact=z.object({id:uuid,sha256:hash,sizeBytes:z.number().int().min(1).max(10485760)}).strict();
 const retained=z.object({sourceFingerprint:hash,document:artifact,audit:artifact,properties:artifact}).strict();
 export const signatureCompletionSourceSchema=expected;
-export const workSignatureCompletionSourceSchema=expected.omit({signerId:true,packageId:true,attachmentId:true,signatureFields:true}).extend({purpose:z.literal('worker_services'),requestId:uuid,preparationId:uuid,originalSourceFingerprint:hash,
+export const workSignatureCompletionSourceSchema=expected.omit({signerId:true,packageId:true,attachmentId:true,signatureFields:true,consentFields:true}).extend({purpose:z.literal('worker_services'),requestId:uuid,preparationId:uuid,originalSourceFingerprint:hash,
  parties:z.array(z.object({role:z.enum(['worker','academy_representative']),signerId:uuid,signatureFields:expected.shape.signatureFields}).strict()).length(2)
  .refine(v=>new Set(v.map(p=>p.role)).size===2&&new Set(v.map(p=>p.signerId)).size===2&&v.reduce((n,p)=>n+p.signatureFields.length,0)<=100&&new Set(v.flatMap(p=>p.signatureFields.map(f=>f.id))).size===v.reduce((n,p)=>n+p.signatureFields.length,0))}).strict();
 export type SignatureCompletionSource=z.infer<typeof expected>;
 export type WorkSignatureCompletionSource=z.infer<typeof workSignatureCompletionSourceSchema>;
 type Expected=SignatureCompletionSource;
 type Projection=Awaited<ReturnType<typeof getBoldSignCompletionDocument>>['properties'];
+// Observed checkbox selection is evidence,NOT effective consent/publication.
+// Missing,ambiguous,required or locked choices cannot be treated as an opt-in.
+export function observeProfileConsentChoices(original:NonNullable<SignatureCompletionSource['consentFields']>,fields:Projection['signerDetails'][number]['formFields']){
+ return original.map(o=>{
+  const matches=fields?.filter(f=>f.id===o.id)??[],f=matches[0];
+  const exact=matches.length===1&&f.type.toLowerCase()==='checkbox'&&f.pageNumber===o.pageNumber&&isDeepStrictEqual(f.bounds,o.bounds)&&f.isRequired===false&&f.isReadOnly===false;
+  return {purpose:o.purpose,fieldId:o.id,choice:exact&&f.value==='on'?'selected' as const:exact&&f.value==='off'?'declined' as const:'unverified' as const};
+ });
+}
 type Artifact={bytes:Buffer;sha256:string;sizeBytes:number};
 export type SignatureCompletionArtifacts={document:Artifact;audit:Artifact;properties:Artifact};
 // Retention must be independently configured private durable storage,not merely
@@ -58,7 +69,8 @@ function inspectDocument(p:Projection,e:{documentId:string},metadata:Record<stri
 function inspect(p:Projection,e:Expected){
  if(!inspectDocument(p,e,{kavoshPackageId:e.packageId,kavoshContentAttachmentId:e.attachmentId,kavoshContentBindingId:e.bindingId,kavoshDocumentSha256:e.documentSha256}))return null;
  if(p.signerDetails.length!==1)throw new ApiError(409,'BOLDSIGN_COMPLETION_SOURCE_MISMATCH');const s=inspectSigner(p.signerDetails[0],e.signatureFields);
- if(p.isDeleted!==false||p.enablePrintAndSign!==false||p.enableReassign!==false)if(!s.reasons.includes('provider_flags_incomplete'))s.reasons.unshift('provider_flags_incomplete');return s;
+ if(p.isDeleted!==false||p.enablePrintAndSign!==false||p.enableReassign!==false)if(!s.reasons.includes('provider_flags_incomplete'))s.reasons.unshift('provider_flags_incomplete');
+ return {...s,...e.consentFields?{profileConsentObservations:observeProfileConsentChoices(e.consentFields,p.signerDetails[0].formFields)}:{}};
 }
 function inspectWork(p:Projection,e:WorkSignatureCompletionSource){
  if(!inspectDocument(p,e,{kavoshWorkPreparationId:e.preparationId,kavoshWorkContentBindingId:e.bindingId,kavoshDocumentSha256:e.documentSha256}))return null;
