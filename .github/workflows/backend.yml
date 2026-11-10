@@ -379,3 +379,35 @@ jobs:
         run: node --import tsx --test --test-concurrency=1 tests/clamav.test.ts tests/clamav-database.test.ts tests/r2-inspection.test.ts tests/clamav-engine.test.ts
         env:
           TEST_CLAMD_BINARY: /usr/sbin/clamd
+  video-parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install assembly compiler only on the disposable build runner
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends nasm
+      - name: Build the exact verified-source decoder without network protocols or external codec libraries
+        run: |
+          node scripts/build-video-runtime.mjs > "$RUNNER_TEMP/kavosh-video-runtime.json"
+          node --input-type=module - <<'JS'
+          import {readFileSync,appendFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          import {execFileSync} from 'node:child_process';
+          const r=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'kavosh-video-runtime.json'),'utf8'));
+          const python=execFileSync('python',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim();
+          appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\n');
+          JS
+      - name: Quick real full-video/audio decode and adverse-case checks,no live services
+        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts
+        env:
+          VIDEO_VALIDATION_TEST_REQUIRED: 'true'
