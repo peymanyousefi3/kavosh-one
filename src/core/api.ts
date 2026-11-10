@@ -79,11 +79,15 @@ export async function assignmentGrantsForPeople(db:Connection,personIds:string[]
 }
 
 export async function record(db: Connection, c: Credential, requestId: string, action: string, entityId: string, hubId: string | null, changes: unknown) {
-  if(c.kind==='human') await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes)
-    VALUES ($1,$2,$3,$4,'human',$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
-  else await db.query(`INSERT INTO public.audit_events (academy_id,id,actor_id,credential_id,request_id,action,entity_id,hub_id,changes)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, [c.academy_id, randomUUID(), c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
-  await db.query(`INSERT INTO public.outbox_events (academy_id,id,event_type,entity_id,request_id) VALUES ($1,$2,$3,$4,$5)`, [c.academy_id, randomUUID(), action, entityId, requestId]);
+  const auditId=randomUUID(),outboxId=randomUUID();
+  // A literal acknowledgement needs no additional SELECT privileges on either
+  // protected table,and works through adapters that do not expose command tags.
+  const audit=c.kind==='human'?await db.query<{recorded:number}>(`INSERT INTO public.audit_events (academy_id,id,actor_id,session_id,actor_kind,request_id,action,entity_id,hub_id,changes)
+    VALUES ($1,$2,$3,$4,'human',$5,$6,$7,$8,$9::jsonb) RETURNING 1 AS recorded`, [c.academy_id, auditId, c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]):await db.query<{recorded:number}>(`INSERT INTO public.audit_events (academy_id,id,actor_id,credential_id,request_id,action,entity_id,hub_id,changes)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING 1 AS recorded`, [c.academy_id, auditId, c.person_id, c.token_id, requestId, action, entityId, hubId, JSON.stringify(changes)]);
+  if(audit.rows.length!==1||audit.rows[0].recorded!==1)throw new Error('AUDIT_PERSISTENCE_REQUIRED');
+  const outbox=await db.query<{recorded:number}>(`INSERT INTO public.outbox_events (academy_id,id,event_type,entity_id,request_id) VALUES ($1,$2,$3,$4,$5) RETURNING 1 AS recorded`, [c.academy_id, outboxId, action, entityId, requestId]);
+  if(outbox.rows.length!==1||outbox.rows[0].recorded!==1)throw new Error('OUTBOX_PERSISTENCE_REQUIRED');
 }
 
 export async function mutation(context:ApiContext,input:unknown,work:()=>Promise<Reply>,authorizeReplay?:(reply:Reply)=>Promise<void>):Promise<Reply> {
