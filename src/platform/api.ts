@@ -17,9 +17,17 @@ const planDuplicate=invitation.extend({name}).strict();
 const planHistory=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),beforeVersion:z.coerce.number().int().positive().max(2147483647).optional()}).strict();
 const subscriptionAssignment=z.object({expectedVersion:z.number().int().min(0).max(2147483647),planId:id,planVersion:z.number().int().positive().max(2147483647),startsAt:z.string().datetime({precision:3}).regex(/^[12]/),expiresAt:z.string().datetime({precision:3}).regex(/^[12]/).nullable(),reason}).strict();
 const freeExemption=z.object({expectedVersion:z.number().int().min(1).max(2147483647),confirmAcademyId:id,permanent:z.literal(true),reason}).strict();
+const cancellationRequest=z.object({expectedVersion:z.number().int().min(0).max(2147483647),reason}).strict();
+const cancellationWithdrawal=z.object({expectedVersion:z.literal(1),reason}).strict();
+const cancellationConfirmation=cancellationWithdrawal.extend({expectedSubscriptionVersion:z.number().int().min(0).max(2147483647),confirmAcademyId:id}).strict();
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations/{cancellationId}/confirm',method:'post',summary:'Verified owner confirms only after the original native30-day wait and explicitly reviews the current subscription version; restrict operation to read-only without overriding suspension; preserves records and never deletes,cancels provider payments or issues refunds',schema:cancellationConfirmation},
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations',method:'get',summary:'Owner-only bounded cancellation request and withdrawal history; requests do not cancel access or delete data',querySchema:paging},
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations',method:'post',summary:'Record one pending request against the exact school subscription version,including unassigned version0; reviewAfter uses the native clock plus720hours; no backdating,access change,cancellation or deletion',schema:cancellationRequest},
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations/{cancellationId}',method:'get',summary:'Read one school-bound cancellation case with its original recorded waiting period'},
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations/{cancellationId}/withdraw',method:'post',summary:'Withdraw an exact still-pending request with protected history; never rewrite its waiting clock or cancel a replacement request',schema:cancellationWithdrawal},
  {path:'/api/platform/v1/academies/{id}/subscription/free-exemption',method:'get',summary:'Owner-only proof of the explicitly registered primary free academy; never infer an exemption from a school name'},
  {path:'/api/platform/v1/academies/{id}/subscription/free-exemption',method:'post',summary:'Permanently bind Kavosh’s one primary free academy to an explicitly confirmed ID and current active non-expiring zero-price assignment; cannot transfer or remove; later paid,expiring or future-start assignments are blocked; does not charge or activate',schema:freeExemption},
  {path:'/api/platform/v1/academies/{id}/subscription',method:'get',summary:'Read pinned school subscription and current native-clock access status; does not verify payment'},
@@ -65,9 +73,19 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const target=/^academies\/([a-f0-9-]{36})(\/(?:change|master-invitation(?:\/revoke)?))?$/.exec(path);
    const planTarget=/^plans\/([a-f0-9-]{36})(\/(?:change|duplicate|history))?$/.exec(path);
    const subscriptionTarget=/^academies\/([a-f0-9-]{36})\/subscription(?:\/(history|assign|free-exemption))?$/.exec(path);
+   const cancellationTarget=/^academies\/([a-f0-9-]{36})\/subscription\/cancellations(?:\/([a-f0-9-]{36})(?:\/(withdraw|confirm))?)?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(subscriptionTarget){
+   if(cancellationTarget){
+    const academyId=id.parse(cancellationTarget[1]),cancellationId=cancellationTarget[2]?id.parse(cancellationTarget[2]):undefined;
+    if(request.method==='GET'&&!cancellationTarget[3]){
+     if(cancellationId){if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId,cancellationId};operation='cancellations.get';}
+     else{const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');input={...paging.parse(Object.fromEntries(pairs)),academyId};operation='cancellations.list';}
+    }else if(request.method==='POST'&&(!cancellationId||cancellationTarget[3]==='withdraw'||cancellationTarget[3]==='confirm')){
+     if(url.search)throw new ApiError(400,'INVALID_QUERY');key=id.parse(request.headers.get('idempotency-key'));const raw=await jsonBody(request);
+     input=cancellationId?{...(cancellationTarget[3]==='confirm'?cancellationConfirmation.parse(raw):cancellationWithdrawal.parse(raw)),academyId,cancellationId}:{...cancellationRequest.parse(raw),academyId};operation=cancellationId?(cancellationTarget[3]==='confirm'?'cancellations.confirm':'cancellations.withdraw'):'cancellations.request';
+    }else throw new ApiError(405,'METHOD_NOT_ALLOWED');
+   }else if(subscriptionTarget){
     const academyId=id.parse(subscriptionTarget[1]),suffix=subscriptionTarget[2];
     if(request.method==='GET'&&suffix!=='assign'){
      const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
@@ -134,6 +152,8 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
     if(message==='PLATFORM_OWNER_REQUIRED'){status=403;code=message;}
     else if(message==='PLATFORM_ACADEMY_NOT_FOUND'||message==='PLATFORM_PLAN_NOT_FOUND'){status=404;code=message;}
     else if(message==='PLATFORM_PLAN_VERSION_CHANGED'){status=409;code=message;}
+    else if(message==='PLATFORM_CANCELLATION_NOT_FOUND'){status=404;code=message;}
+    else if(['PLATFORM_CANCELLATION_ALREADY_PENDING','PLATFORM_CANCELLATION_ALREADY_DECIDED','PLATFORM_CANCELLATION_WAITING_PERIOD'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_SUBSCRIPTION_VERSION_CHANGED','PLATFORM_SUBSCRIPTION_UNCHANGED','PLATFORM_PLAN_NOT_CURRENT'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_FREE_ACADEMY_PROTECTED','PLATFORM_FREE_ACADEMY_ALREADY_BOUND','PLATFORM_FREE_ACADEMY_ACTIVE_FREE_REQUIRED'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_IDEMPOTENCY_CONFLICT','PLATFORM_ACADEMY_VERSION_CHANGED','PLATFORM_MASTER_VERIFICATION_REQUIRED','PLATFORM_PROVISIONING_REENTRY_FORBIDDEN','PLATFORM_MASTER_INVITATION_UNAVAILABLE','PLATFORM_INVITATION_NO_LONGER_CURRENT','PLATFORM_INVITATION_REISSUE_REQUIRED'].includes(message)){status=409;code=message;}

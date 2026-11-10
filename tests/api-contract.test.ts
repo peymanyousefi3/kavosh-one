@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('school cancellation contracts pin waiting-period intent and require current explicit owner review without client clocks or deletion authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/academies/{id}/subscription/cancellations',s=api.paths[base].post.requestBody.content['application/json'].schema,confirm=api.paths[base+'/{cancellationId}/confirm'].post,c=confirm.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['expectedVersion','reason']);assert.equal(s.properties.expectedVersion.minimum,0);assert.deepEqual(Object.keys(c.properties).sort(),['confirmAcademyId','expectedSubscriptionVersion','expectedVersion','reason']);assert.equal(c.properties.expectedVersion.const,1);assert.equal(c.properties.expectedSubscriptionVersion.minimum,0);assert.equal(confirm.security.some((v:any)=>'botBearer'in v),false);assert.ok(confirm.parameters.some((p:any)=>p.name==='cancellationId'&&p.in==='path'&&p.required));for(const k of ['requestedAt','reviewAfter','now','force','deletionPerformed','paid'])assert.equal(c.properties[k],undefined);assert.ok(api.paths[base+'/{cancellationId}/withdraw'].post);assert.equal(api.paths[base+'/{cancellationId}'].delete,undefined);
+});
+
 test('permanent primary-school exemption needs an explicit confirmed identity and current subscription version,not a guessed brand or payment input',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/platform/v1/academies/{id}/subscription/free-exemption',op=api.paths[p].post,s=op.requestBody.content['application/json'].schema;
  assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['confirmAcademyId','expectedVersion','permanent','reason']);assert.equal(s.properties.permanent.const,true);assert.equal(s.properties.expectedVersion.minimum,1);assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.ok(api.paths[p].get);assert.equal(api.paths[p].delete,undefined);for(const k of ['name','free','paid','amountMinor'])assert.equal(s.properties[k],undefined);
