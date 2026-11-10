@@ -231,6 +231,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       const status = academy.rows[0]?.status;
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
+      if(status==='read_only'&&request.method==='POST'&&/^people\/[0-9a-f-]{36}\/work-guardians\/[0-9a-f-]{36}$/i.test(path))securityRevocation=z.object({state:z.literal('suspended')}).passthrough().safeParse(await jsonBody(request.clone())).success;
       if(request.method==='POST'&&path==='me/notification-preferences/disable')securityRevocation=true;
       if(request.method==='POST'&&/^(?:students\/[0-9a-f-]{36}|me)\/profile-consents\/(?:public_profile|verified_member_profile)\/withdraw$/i.test(path))securityRevocation=true;
       if(status==='read_only'&&request.method==='POST'&&/^(?:students\/[0-9a-f-]{36}|me)\/profile-visibility$/i.test(path))securityRevocation=z.object({audience:z.literal('members')}).passthrough().safeParse(await jsonBody(request.clone())).success;
@@ -259,6 +260,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
           if(pause)securityRevocation=(await db.query("SELECT 1 FROM public.operational_send_policies h JOIN public.operational_send_policy_revisions r ON r.academy_id=h.academy_id AND r.policy_id=h.id AND r.version=h.version WHERE h.id=$1 AND h.version=$2 AND r.definition-'enabled'=$3::jsonb-'enabled'",[pause.target_id,pause.target_version,JSON.stringify(pause.definition)])).rows.length===1;
         }
       }
+      if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action='work.guardian.change' AND payload->>'state'='suspended'",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('community-profile.publish','student-profile.publish','worker-profile.publish') AND payload->>'audience'='unpublished'",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if (status === 'read_only' && request.method !== 'GET' && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
