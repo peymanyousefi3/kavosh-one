@@ -4,9 +4,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
-test('school subscription visibility is a separate academy-scoped read capability with stable history pagination and no mutation or tenant override',()=>{
+test('school subscription visibility remains separately permissioned with stable history and no summary mutation or tenant override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/academy/subscription',summary=api.paths[base].get,history=api.paths[base+'/cancellations'].get;
- assert.equal(summary['x-capability'],'academy-subscription.view');assert.ok((summary.security??api.security).some((s:any)=>'botBearer'in s));assert.match(summary.summary,/Own academy/);assert.equal(api.paths[base].post,undefined);assert.equal(api.paths[base+'/cancellations'].post,undefined);assert.deepEqual(history.parameters.map((p:any)=>p.name).sort(),['afterId','afterRequestedAt','limit']);assert.ok(api.paths[base+'/cancellations/{id}'].get);assert.equal(api.paths[base+'/cancellations/{id}/confirm'],undefined);for(const op of[summary,history])assert.equal(op.parameters.some((p:any)=>p.name==='academyId'),false);
+ assert.equal(summary['x-capability'],'academy-subscription.view');assert.ok((summary.security??api.security).some((s:any)=>'botBearer'in s));assert.match(summary.summary,/Own academy/);assert.equal(api.paths[base].post,undefined);assert.equal(api.paths[base+'/cancellations'].post['x-capability'],'academy-subscription.request');assert.deepEqual(history.parameters.map((p:any)=>p.name).sort(),['afterId','afterRequestedAt','limit']);assert.ok(api.paths[base+'/cancellations/{id}'].get);assert.equal(api.paths[base+'/cancellations/{id}/confirm'],undefined);for(const op of[summary,history])assert.equal(op.parameters.some((p:any)=>p.name==='academyId'),false);
+});
+
+test('own-school cancellation contracts require exact versions and master review,without clocks,payment or owner-confirmation authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/academy/subscription/cancellations';
+ for(const path of [base,base+'/{id}/withdraw']){const op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;assert.equal(op['x-capability'],'academy-subscription.request');assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['expectedVersion','reason']);assert.ok((op.security??api.security).some((v:any)=>'botBearer'in v));}
+ assert.equal(api.paths[base].post.requestBody.content['application/json'].schema.properties.expectedVersion.minimum,0);assert.equal(api.paths[base+'/{id}/withdraw'].post.requestBody.content['application/json'].schema.properties.expectedVersion.const,1);assert.equal(api.paths[base+'/{id}/confirm'],undefined);assert.equal(api.paths[base+'/{id}'].delete,undefined);assert.match(api.paths[base].post.summary,/clock starts on approval/);
 });
 
 test('school cancellation contracts pin waiting-period intent and require current explicit owner review without client clocks or deletion authority',()=>{

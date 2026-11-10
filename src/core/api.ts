@@ -232,6 +232,8 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
       if(request.method==='POST'&&path==='me/notification-preferences/disable')securityRevocation=true;
+      if(request.method==='POST'&&/^academy\/subscription\/cancellations(?:\/[0-9a-f-]{36}\/withdraw)?$/i.test(path))securityRevocation=true;
+      if(status==='read_only'&&request.method==='POST'&&/^approvals\/[0-9a-f-]{36}\/withdraw$/i.test(path))securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('academy.subscription.cancel-request','academy.subscription.cancel-withdraw')",[id.parse(path.split('/')[1])])).rows.length===1;
       if(status==='read_only'&&request.method==='POST'&&path==='automations/delivery-policy'){
         const pause=z.object({expectedVersion:z.number().int().positive(),definition:z.object({enabled:z.literal(false)}).passthrough(),reason:z.string()}).strict().safeParse(await jsonBody(request.clone()));
         if(pause.success)securityRevocation=(await db.query("SELECT 1 FROM public.operational_send_policies h JOIN public.operational_send_policy_revisions r ON r.academy_id=h.academy_id AND r.policy_id=h.id AND r.version=h.version WHERE h.version=$1 AND r.definition-'enabled'=$2::jsonb-'enabled'",[pause.data.expectedVersion,JSON.stringify(pause.data.definition)])).rows.length===1;
@@ -246,7 +248,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       // or apply unrelated approvals. Select the stored action,never a body flag.
       const readOnlyDecision=status==='read_only'&&request.method==='POST'?/^approvals\/([0-9a-f-]{36})\/decide$/i.exec(path):null;
       if(readOnlyDecision){
-        const approvalId=id.parse(readOnlyDecision[1]);securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND(action='human-invitation.revoke' OR(action='person.status' AND payload->'enabled'='false'::jsonb) OR(action='community-profile.moderate' AND payload->'restricted'='true'::jsonb))",[approvalId])).rows.length===1;
+        const approvalId=id.parse(readOnlyDecision[1]);securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND(action IN('academy.subscription.cancel-request','academy.subscription.cancel-withdraw','human-invitation.revoke') OR(action='person.status' AND payload->'enabled'='false'::jsonb) OR(action='community-profile.moderate' AND payload->'restricted'='true'::jsonb))",[approvalId])).rows.length===1;
         if(!securityRevocation){
           // Resolve the actual new action before referring to its schema,so
           // old-schema recovery/moderation decisions keep their original flow.

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID,randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 import test from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
@@ -9,6 +10,101 @@ import { upgradeToCurrent } from './migration-upgrade.ts';
 
 const definition={name:'Synthetic free academy',description:'Reference terms only',currencyCode:'CAD',unitScale:2,amountMinor:'0',periodMonths:1,graceDays:30,active:true};
 const instant=(days:number)=>new Date(Date.now()+days*86400000).toISOString();
+test('school-side cancellation waits for its actual master,starts its native clock on approval,and withdraws without changing access',async()=>{
+ const f=await fixture();try{
+  const root='academy/subscription/cancellations',input={expectedVersion:0,reason:'Synthetic school cancellation request'};
+  assert.equal((await f.schoolRequest(root,input,'manager')).response.status,403);
+  for(const cap of ['academy-subscription.view','academy-subscription.request'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.policyRole,cap]);
+  const key=randomUUID(),proposed=await f.schoolRequest(root,input,'bot',{key});assert.equal(proposed.response.status,202,JSON.stringify(proposed.body));assert.deepEqual((await f.schoolRequest(root,input,'bot',{key})).body,proposed.body);
+  assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,0);
+  assert.equal((await f.approve(proposed.body.approval.id,'manager')).response.status,404,'Hub-only reviewer cannot see a whole-academy case');
+  for(const cap of ['approvals.view','approvals.review'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.policyRole,cap]);
+  assert.equal((await f.approve(proposed.body.approval.id,'manager')).response.status,403,'Even a whole-academy supervisor cannot replace the school master');
+  // Permission expansion changes the proposal authority snapshot. Remove these
+  // test-only grants before the real master reviews the original proposal.
+  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability IN('approvals.view','approvals.review')",[f.policyRole]);
+  const before=Date.now(),approved=await f.approve(proposed.body.approval.id);assert.equal(approved.response.status,200,JSON.stringify(approved.body));const data=approved.body.data.data;
+  assert.equal(data.status,'pending');assert.ok(Date.parse(data.requestedAt)>=before-1000);assert.equal(Date.parse(data.reviewAfter)-Date.parse(data.requestedAt),30*86400000);
+  assert.equal((await f.schoolRequest('academy/subscription')).body.data.latestCancellation.id,data.id);
+  assert.equal((await f.schoolRequest(root,input)).response.status,409);
+  const link=(await f.pg.query<any>('SELECT * FROM public.school_cancellation_approvals WHERE approval_id=$1',[proposed.body.approval.id])).rows[0];assert.equal(link.requester_id,f.bot);assert.equal(link.reviewer_id,f.owner.person);
+  const withdrawKey=randomUUID(),withdraw=await f.schoolRequest(root+'/'+data.id+'/withdraw',{expectedVersion:1,reason:'Synthetic school withdraw'},'master',{key:withdrawKey});assert.equal(withdraw.response.status,200,JSON.stringify(withdraw.body));assert.equal(withdraw.body.data.data.status,'withdrawn');assert.deepEqual((await f.schoolRequest(root+'/'+data.id+'/withdraw',{expectedVersion:1,reason:'Synthetic school withdraw'},'master',{key:withdrawKey})).body,withdraw.body);
+  assert.equal((await f.schoolRequest('academy/subscription')).body.data.operationalStatus,'active');assert.equal((await f.pg.query('SELECT * FROM public.school_cancellation_approvals')).rows.length,2);
+ }finally{await f.pg.close();}
+});
+test('school-side cancellation permits only narrow read-only actions and rejects stale approvals,foreign cases and forged clocks',async()=>{
+ const f=await fixture();try{
+  const root='academy/subscription/cancellations';for(const cap of ['academy-subscription.view','academy-subscription.request'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.policyRole,cap]);
+  const proposed=await f.schoolRequest(root,{expectedVersion:0,reason:'Synthetic draft before source change'},'manager');assert.equal(proposed.response.status,202);
+  const plan=(await f.create()).body.data.id;assert.equal((await f.request('academies/'+f.a+'/subscription/assign',{expectedVersion:0,planId:plan,planVersion:1,startsAt:instant(-1),expiresAt:null,reason:'Synthetic changed source'})).response.status,200);
+  const stale=await f.approve(proposed.body.approval.id);assert.equal(stale.response.status,409);assert.equal(stale.body.approval.status,'stale');assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,0);
+  assert.equal((await f.request('academies/'+f.a+'/change',{expectedVersion:1,status:'read_only',reason:'Synthetic read-only school'})).response.status,200);
+  assert.equal((await f.schoolRequest('roles',f.roleInput)).response.status,403);
+  assert.equal((await f.schoolRequest(root,{expectedVersion:1,reason:'Synthetic forged clock',requestedAt:instant(-60)})).response.status,400);
+  const draft=await f.schoolRequest(root,{expectedVersion:1,reason:'Synthetic withdrawn draft'},'manager');assert.equal(draft.response.status,202);const draftWithdraw=await f.schoolRequest('approvals/'+draft.body.approval.id+'/withdraw',{expectedVersion:1,reason:'Synthetic requester changes mind'},'manager');assert.equal(draftWithdraw.response.status,200,JSON.stringify(draftWithdraw.body));assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,0);
+  const pending=await f.schoolRequest(root,{expectedVersion:1,reason:'Synthetic read-only request'},'manager');assert.equal(pending.response.status,202,JSON.stringify(pending.body));const applied=await f.approve(pending.body.approval.id);assert.equal(applied.response.status,200,JSON.stringify(applied.body));const id=applied.body.data.data.id;
+  assert.equal((await f.schoolRequest(root+'/'+id+'/withdraw',{expectedVersion:1,reason:'Synthetic foreign attempt'},'foreignMaster',{academy:f.b})).response.status,404);
+  const withdrawn=await f.schoolRequest(root+'/'+id+'/withdraw',{expectedVersion:1,reason:'Synthetic read-only withdrawal'});assert.equal(withdrawn.response.status,200,JSON.stringify(withdrawn.body));assert.equal(withdrawn.body.data.data.status,'withdrawn');
+  assert.equal((await f.schoolRequest('academy/subscription')).body.data.effectiveStatus,'read_only');
+ }finally{await f.pg.close();}
+});
+test('school cancellation missing durable effects roll back approval,case,receipt and idempotency key before retry',async()=>{
+ const f=await fixture();try{
+  const root='academy/subscription/cancellations';
+  for(const [schema,table]of [['public','school_cancellation_approvals'],['platform_private','school_cancellation_requests'],['platform_private','audit_events'],['platform_private','request_receipts']]as const){
+   await f.pg.exec(`CREATE FUNCTION public.synthetic_skip_school_cancel() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL;END $$;CREATE TRIGGER synthetic_skip BEFORE INSERT ON ${schema}.${table} FOR EACH ROW EXECUTE FUNCTION public.synthetic_skip_school_cancel()`);
+   const before=[];for(const table of ['platform_private.school_cancellation_requests','public.school_cancellation_approvals','public.approval_requests'])before.push((await f.pg.query('SELECT * FROM '+table+' ORDER BY 1,2')).rows);
+   const key=randomUUID(),input={expectedVersion:0,reason:'Synthetic atomic school cancellation'},failed=await f.schoolRequest(root,input,'master',{key});assert.equal(failed.response.status,503,JSON.stringify(failed.body));
+   for(const [index,table]of ['platform_private.school_cancellation_requests','public.school_cancellation_approvals','public.approval_requests'].entries())assert.deepEqual((await f.pg.query('SELECT * FROM '+table+' ORDER BY 1,2')).rows,before[index]);
+   await f.pg.exec(`DROP TRIGGER synthetic_skip ON ${schema}.${table};DROP FUNCTION public.synthetic_skip_school_cancel()`);
+   const retried=await f.schoolRequest(root,input,'master',{key});assert.equal(retried.response.status,200,JSON.stringify(retried.body));const withdrawn=await f.schoolRequest(root+'/'+retried.body.data.data.id+'/withdraw',{expectedVersion:1,reason:'Synthetic cleanup between failpoints'});assert.equal(withdrawn.response.status,200);
+  }
+ }finally{await f.pg.close();}
+});
+test('school cancellation short native concurrent requests create one open case without lock-upgrade deadlock',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{const start=performance.now(),body={expectedVersion:0,reason:'Synthetic concurrent school requests'},[a,b]=await Promise.all([f.schoolRequest('academy/subscription/cancellations',body),f.schoolRequest('academy/subscription/cancellations',body)]);assert.deepEqual([a.response.status,b.response.status].sort(),[200,409]);assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,1);console.info('School cancellation concurrent requests ms:',Math.round(performance.now()-start));}finally{await f.pg.close();}
+});
+test('school cancellation native gateway rejects wrong reviewer and missing session,and applied approvals cannot omit their durable case',async()=>{
+ const f=await fixture();try{
+  for(const cap of ['academy-subscription.view','academy-subscription.request'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,f.policyRole,cap]);
+  const root='academy/subscription/cancellations',input={expectedVersion:0,reason:'Synthetic native authority check'},proposed=await f.schoolRequest(root,input,'bot');assert.equal(proposed.response.status,202);const approval=proposed.body.approval.id;
+  await f.pg.exec('SET ROLE kavosh_runtime');try{
+   await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
+   await assertRuntimeRole({query:<Row>(sql:string,args?:unknown[])=>f.pg.query<Row>(sql,args),release(){}});
+   await assert.rejects(f.pg.query('SELECT public.apply_school_cancellation($1,$2,$3)',[approval,f.actors.manager.person,f.actors.manager.session]),/SCHOOL_MASTER_REVIEW_REQUIRED/);
+   await assert.rejects(f.pg.query('SELECT public.apply_school_cancellation($1,$2,$3)',[approval,f.owner.person,randomUUID()]),/SCHOOL_MASTER_REVIEW_REQUIRED/);
+   await assert.rejects(f.pg.query("UPDATE public.approval_requests SET status='applied',version=version+1,reviewer_id=$2,reason='Synthetic forged decision',decided_at=now() WHERE id=$1",[approval,f.owner.person]),/SCHOOL_CANCELLATION_APPROVAL_EFFECTS_MISSING/);
+   await assert.rejects(f.pg.query('INSERT INTO public.school_cancellation_approvals(academy_id,approval_id,case_id,action,requester_id,reviewer_id) VALUES($1,$2,$3,$4,$5,$6)',[f.a,approval,randomUUID(),'academy.subscription.cancel-request',f.bot,f.owner.person]),/permission denied/);
+  }finally{await f.pg.exec('RESET ROLE');}
+  assert.equal((await f.pg.query<any>('SELECT status FROM public.approval_requests WHERE id=$1',[approval])).rows[0].status,'pending');assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,0);
+  await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'academy-subscription.request','deny')",[f.a,f.managerRole]);assert.equal((await f.schoolRequest(root,input,'bot')).response.status,403);
+  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='academy-subscription.request'",[f.managerRole]);assert.equal((await f.approve(approval)).response.status,200);
+  await f.pg.exec('SET ROLE kavosh_runtime');try{
+   await assert.rejects(f.pg.query("UPDATE public.approval_requests SET payload=jsonb_set(payload,'{reason}','\"Synthetic changed after approval\"'::jsonb) WHERE id=$1",[approval]),/permission denied/);
+   await assert.rejects(f.pg.query("UPDATE public.approval_requests SET action='role.create' WHERE id=$1",[approval]),/permission denied/);
+   await assert.rejects(f.pg.query("UPDATE public.approval_requests SET status='pending',reviewer_id=NULL,reason=NULL,decided_at=NULL WHERE id=$1",[approval]),/SCHOOL_CANCELLATION_APPROVAL_SOURCE_IMMUTABLE/);
+  }finally{await f.pg.exec('RESET ROLE');}
+  await assert.rejects(f.pg.query("UPDATE public.approval_requests SET payload=jsonb_set(payload,'{reason}','\"Synthetic privileged rewrite\"'::jsonb) WHERE id=$1",[approval]),/SCHOOL_CANCELLATION_APPROVAL_SOURCE_IMMUTABLE/);
+  await assert.rejects(f.pg.query("UPDATE public.approval_requests SET action='role.create' WHERE id=$1",[approval]),/SCHOOL_CANCELLATION_APPROVAL_SOURCE_IMMUTABLE/);
+  assert.equal((await f.pg.query<any>('SELECT payload FROM public.approval_requests WHERE id=$1',[approval])).rows[0].payload.reason,input.reason);
+ }finally{await f.pg.close();}
+});
+test('school and platform cancellation writes share one short native serialization boundary',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{
+  const start=performance.now(),root='academy/subscription/cancellations',ownerRoot='academies/'+f.a+'/subscription/cancellations',input={expectedVersion:0,reason:'Synthetic cross-boundary race'};
+  const [school,owner]=await Promise.all([f.schoolRequest(root,input),f.request(ownerRoot,input)]);assert.equal([school.response.status,owner.response.status].filter(v=>v===409).length,1);assert.ok(school.response.status===200||owner.response.status===201);const cases=(await f.pg.query<any>('SELECT id FROM platform_private.school_cancellation_requests')).rows;assert.equal(cases.length,1);
+  const id=cases[0].id,withdraw={expectedVersion:1,reason:'Synthetic cross-boundary withdrawal'},[x,y]=await Promise.all([f.schoolRequest(root+'/'+id+'/withdraw',withdraw),f.request(ownerRoot+'/'+id+'/withdraw',withdraw)]);assert.deepEqual([x.response.status,y.response.status].sort(),[200,409]);assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_decisions')).rows.length,1);assert.equal((await f.schoolRequest('academy/subscription')).body.data.operationalStatus,'active');console.info('School/platform cancellation race ms:',Math.round(performance.now()-start));
+ }finally{await f.pg.close();}
+});
+test('actual314 school cancellation approval upgrade preserves private history and existing credential ceilings',async()=>{
+ const f=await fixture({throughSchema:314});try{
+  const old=(await f.pg.query<any>("SELECT platform_private.request($1,$2,'cancellations.request',$3,$4::jsonb) result",[f.owner.user,f.owner.session,randomUUID(),JSON.stringify({academyId:f.a,expectedVersion:0,reason:'Synthetic existing cancellation'})])).rows[0].result;assert.equal(old.status,201);
+  const before=(await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows,credentials=(await f.pg.query('SELECT id,capabilities,all_hubs FROM auth_private.credentials')).rows;
+  await upgradeToCurrent(f.pg);assert.deepEqual((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows,before);assert.deepEqual((await f.pg.query('SELECT id,capabilities,all_hubs FROM auth_private.credentials')).rows,credentials);assert.equal((await f.pg.query('SELECT * FROM public.school_cancellation_approvals')).rows.length,0);
+  const withdrawn=await f.schoolRequest('academy/subscription/cancellations/'+old.body.data.id+'/withdraw',{expectedVersion:1,reason:'Synthetic post-upgrade school withdrawal'});assert.equal(withdrawn.response.status,200,JSON.stringify(withdrawn.body));assert.equal(withdrawn.body.data.data.status,'withdrawn');
+  for(const cap of ['academy-subscription.view','academy-subscription.request'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.policyRole,cap]);assert.equal((await f.schoolRequest('academy/subscription/cancellations',{expectedVersion:0,reason:'Synthetic old key ceiling'},'bot')).response.status,403);
+ }finally{await f.pg.close();}
+});
 async function fixture(options:{throughSchema?:number}={}){
  const f=await operationsFixture(options);try{
   const owner=f.actors.master;await f.pg.query('SELECT platform_private.register_owner($1,$2)',[owner.user,'Synthetic verified platform owner']);
@@ -317,7 +413,7 @@ test('subscription reader role contamination fails runtime safety and an actual 
 test('actual313to314 upgrade preserves school identity finance and credential ceilings while exposing only the newly permissioned own-school views',async()=>{
  const f=await fixture({throughSchema:313});try{
   const tables=['public.academies','public.people','public.role_permissions','public.role_assignments','public.finance_journals','auth_private.credentials','platform_private.audit_events','platform_private.request_receipts'],snapshot=async()=>{const rows=[];for(const t of tables)rows.push((await f.pg.query('SELECT to_jsonb(x) r FROM '+t+' x ORDER BY to_jsonb(x)::text')).rows);return rows;},before=await snapshot(),sql="SELECT oid,proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid=ANY(ARRAY['platform_private.request(uuid,uuid,text,uuid,jsonb)'::regprocedure,'public.authenticate_bot(text)'::regprocedure,'public.lock_human(uuid,uuid)'::regprocedure]) ORDER BY oid",identity=(await f.pg.query(sql)).rows;
-  await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(sql)).rows,identity);const cap=(await f.pg.query<any>("SELECT sensitive,scope_kinds FROM public.capability_catalog WHERE name='academy-subscription.view'")).rows[0];assert.equal(cap.sensitive,true);assert.deepEqual(cap.scope_kinds,['academy']);assert.equal((await f.schoolRequest('academy/subscription')).response.status,200);assert.equal((await f.schoolRequest('academy/subscription',undefined,'staff')).response.status,403);
+  await f.pg.exec(await readFile(new URL('../db/migrations/314_school_subscription_visibility.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(sql)).rows,identity);await upgradeToCurrent(f.pg);const cap=(await f.pg.query<any>("SELECT sensitive,scope_kinds FROM public.capability_catalog WHERE name='academy-subscription.view'")).rows[0];assert.equal(cap.sensitive,true);assert.deepEqual(cap.scope_kinds,['academy']);assert.equal((await f.schoolRequest('academy/subscription')).response.status,200);assert.equal((await f.schoolRequest('academy/subscription',undefined,'staff')).response.status,403);
   await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'academy-subscription.view','allow')",[f.a,f.policyRole]);assert.equal((await f.schoolRequest('academy/subscription',undefined,'manager')).response.status,200);assert.equal((await f.schoolRequest('academy/subscription',undefined,'bot')).response.status,403,'An existing token ceiling must not silently gain the new capability');
  }finally{await f.pg.close();}
 });
