@@ -31,3 +31,11 @@ export async function fixture(base?:Awaited<ReturnType<typeof operationsFixture>
  const copy=(item:Awaited<ReturnType<typeof file>>,patch:Record<string,unknown>={},as='master',key?:string)=>f.request('files/'+item.id+'/copies',{...item.input,...patch},as,{key});
  return {...f,route,bytes,file,copy,expire,database};
 }
+// Use the actual old native entrypoint,not a current worker or faked readiness.
+export async function historicalImage(f:Awaited<ReturnType<typeof fixture>>,revision:358|359){
+ assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,revision);
+ const made=await f.request('files',{anchor:{kind:'hub',id:f.hub},name:'Historical image',claimedMimeType:'image/png',expectedBytes:f.bytes.length,expectedSha256:hash(f.bytes)});assert.equal(made.response.status,201);const id=made.body.data.id,grant=await f.request('files/'+id+'/upload-link',{expectedMetadataVersion:1}),inspection=await f.request('files/'+id+'/inspection',{expectedMetadataVersion:1,grantId:grant.body.data.id});assert.equal(inspection.response.status,202);
+ const now=Date.now(),observation={formatVersion:1,engineVersion:'1.5.4',databaseVersion:30001,databaseCreatedAt:new Date(Math.floor((now-60000)/1000)*1000).toISOString().replace('.000Z','Z'),observedAt:new Date(now).toISOString(),observedBeforeAt:new Date(now).toISOString(),timeZone:'UTC',maximumAgeSeconds:172800},signature=await detectContentSignature(f.bytes),image=await validateImage(f.bytes,'image/png'),c=await f.database.connect();
+ try{const job=(await c.query('SELECT * FROM public.claim_file_inspection($1,$2,30)',[[f.a],randomUUID()])).rows[0];assert.equal((await c.query('SELECT public.finish_file_inspection($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb,NULL,NULL,NULL) recorded',[f.a,inspection.body.data.id,job.lease_token,'no_detection','MEASURED_NO_DETECTION',f.bytes.length,hash(f.bytes),'"historical-image"','application/octet-stream',JSON.stringify(signature),JSON.stringify(image),JSON.stringify(observation)])).rows[0].recorded,true);}finally{c.release();if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+ await f.expire(id);return{id,grantId:grant.body.data.id,input:{fileVersion:1,inspectionId:inspection.body.data.id,attemptNo:1,routeId:f.route.id,routeVersion:1}};
+}

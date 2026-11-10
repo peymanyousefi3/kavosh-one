@@ -10,7 +10,7 @@ import type { R2DownloadConnections } from '../integrations/r2-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const input=z.object({expectedMetadataVersion:version,copyId:uuid}).strict();
-const sourceSchema=z.object({fileId:uuid,fileVersion:version,copyId:uuid,destinationTargetId:digest,destinationEtag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),bytes:z.number().int().min(1).max(33554432),sha256:digest,mime:z.enum(['image/jpeg','image/png','image/webp','image/gif','image/avif','application/pdf','text/plain']),maximumLinkSeconds:z.number().int().min(1).max(60)});
+const sourceSchema=z.object({fileId:uuid,fileVersion:version,copyId:uuid,destinationTargetId:digest,destinationEtag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),bytes:z.number().int().min(1).max(134217728),sha256:digest,mime:z.enum(['image/jpeg','image/png','image/webp','image/gif','image/avif','application/pdf','text/plain','video/mp4','video/quicktime','video/webm']),maximumLinkSeconds:z.number().int().min(1).max(60)}).refine(v=>v.mime.startsWith('video/')||v.bytes<=33554432);
 const receipt=z.object({id:uuid,fileId:uuid,fileVersion:version,copyId:uuid,issuedAt:z.iso.datetime(),expiresAt:z.iso.datetime(),sourceFingerprint:digest}).strict();
 type DownloadFile=Pick<Awaited<ReturnType<typeof permittedFile>>,'version'|'archived'|'effective_hub_id'>&{receiptId?:string};
 export async function fileDownloads(ctx:ApiContext,connections?:R2DownloadConnections):Promise<Reply|null>{

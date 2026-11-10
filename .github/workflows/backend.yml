@@ -423,7 +423,7 @@ jobs:
         env:
           TEST_VIDEO_FIXTURE_ENCODER: /usr/bin/ffmpeg
       - name: Quick real full-video/audio decode and adverse-case checks,no live services
-        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts tests/file-video-evidence.test.ts tests/file-video-copies.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts tests/file-video-evidence.test.ts tests/file-video-copies.test.ts tests/file-video-downloads.test.ts tests/family-video-media.test.ts
         env:
           VIDEO_VALIDATION_TEST_REQUIRED: 'true'
           VIDEO_CODEC_TEST_REQUIRED: 'true'
@@ -443,9 +443,8 @@ jobs:
           --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64
           --tmpfs /run/kavosh-video:rw,noexec,nosuid,nodev,size=1m,uid=10003,gid=10001,mode=0750
           --tmpfs /tmp:rw,noexec,nosuid,nodev,size=160m,uid=10003,gid=10001,mode=0700
+          --mount "type=bind,source=$RUNNER_TEMP/kavosh-video-codec-fixtures,target=/fixtures,readonly"
           kavosh-video:ci
-      - name: Copy public synthetic codec fixtures into the isolated test container,never actual academy media
-        run: docker cp "$RUNNER_TEMP/kavosh-video-codec-fixtures" kavosh-video-ci:/tmp/codec-fixtures
       - name: Verify actual decoder PIE,kernel controls,private socket,complete decode and temp cleanup
         run: docker exec kavosh-video-ci node scripts/video-service-smoke.mjs
       - name: Verify graceful video service shutdown

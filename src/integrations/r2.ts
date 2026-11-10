@@ -10,6 +10,7 @@ import { r2Connection as connection,type R2Connection } from './r2-config.ts';
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const uploadMetadata=z.object({contentType:z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/),bytes:z.number().int().positive().safe()}).strict();
 const inspectionClaims=z.object({bytes:z.number().int().min(1).max(4_294_967_296),sha256:z.string().regex(/^[a-fA-F0-9]{64}$/).transform(v=>v.toLowerCase()).optional(),ifMatch:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/).optional()}).strict();
+const byteRange=z.object({start:z.number().int().nonnegative().safe(),end:z.number().int().nonnegative().safe()}).strict();
 
 // Official SDK, fixed R2 endpoint, explicit credentials (no metadata-service or
 // environment credential fallback). No network is needed to sign a link.
@@ -39,33 +40,35 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     if(end<=Date.now())throw new ApiError(410,'FILE_LINK_EXPIRED');
     return {expiresIn:value,signingDate,expiresAt:new Date(end).toISOString()};
   }
-  async function inspectStored<T>(stage:'quarantine'|'clean'|'signature-evidence',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void) {
+  async function inspectStored<T>(stage:'quarantine'|'clean'|'signature-evidence',fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void,selection?:z.infer<typeof byteRange>) {
       const objectKey=key(stage,fileId),input=inspectionClaims.safeParse(claims);
       if(!input.success||input.data.bytes>c.maximumUploadBytes)throw new ApiError(400,'INVALID_INSPECTION_CLAIMS');
+      if(selection&&(!byteRange.safeParse(selection).success||stage!=='clean'||!input.data.ifMatch||input.data.sha256!==undefined||selection.end<selection.start||selection.end>=input.data.bytes))throw new ApiError(400,'INVALID_PRIVATE_BYTE_RANGE');
       if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>600000)throw new ApiError(400,'INVALID_INSPECTION_TIMEOUT');
       if(signal?.aborted)throw new ApiError(502,'R2_INSPECTION_CANCELLED');
-      const expected=input.data,controller=new AbortController();let body:Readable|undefined,meter:Transform|undefined,timedOut=false;const pendingOperations:Promise<unknown>[]=[];
+      const expected=input.data,transferBytes=selection?selection.end-selection.start+1:expected.bytes,controller=new AbortController();let body:Readable|undefined,meter:Transform|undefined,timedOut=false;const pendingOperations:Promise<unknown>[]=[];
       let expire!:(reason:ApiError)=>void;const expired=new Promise<never>((_resolve,reject)=>{expire=reject;});
       const cancel=()=>{controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_CANCELLED'));};signal?.addEventListener('abort',cancel,{once:true});
       const deadline=setTimeout(()=>{timedOut=true;controller.abort();body?.destroy();meter?.destroy();expire(new ApiError(502,'R2_INSPECTION_TIMEOUT'));},timeoutMs);
       try {
-        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey,...expected.ifMatch?{IfMatch:expected.ifMatch}:{}}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
+        const request=client.send(new GetObjectCommand({Bucket:c.bucket,Key:objectKey,...expected.ifMatch?{IfMatch:expected.ifMatch}:{},...selection?{Range:`bytes=${selection.start}-${selection.end}`}:{}}),{abortSignal:controller.signal}).then(response=>{if(controller.signal.aborted&&response.Body instanceof Readable)response.Body.destroy();return response;});
         pendingOperations.push(request);
         const response=await Promise.race([request,expired]);
         if(!(response.Body instanceof Readable))throw new ApiError(502,'R2_INVALID_OBJECT');body=response.Body;
-        if(!Number.isSafeInteger(response.ContentLength)||response.ContentLength!==expected.bytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
+        if(!Number.isSafeInteger(response.ContentLength)||response.ContentLength!==transferBytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
+        if(selection&&(response.$metadata.httpStatusCode!==206||response.ContentRange!==`bytes ${selection.start}-${selection.end}/${expected.bytes}`||response.ContentEncoding))throw new ApiError(502,'R2_INVALID_OBJECT');
         // Provider ContentType and ETag are metadata, not detected MIME or an
         // independently verified hash. No complete content buffer is retained.
         const provider=z.object({etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),contentType:z.string().min(1).max(200).regex(/^[\x20-\x7e]+$/)}).safeParse({etag:response.ETag,contentType:response.ContentType});
         if(!provider.success)throw new ApiError(502,'R2_INVALID_OBJECT');
         if(expected.ifMatch&&provider.data.etag!==expected.ifMatch)throw new ApiError(409,'FILE_ETAG_MISMATCH');
         const hash=createHash('sha256');let bytes=0,ended=false;
-        meter=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;if(bytes>expected.bytes){callback(new ApiError(409,'FILE_SIZE_MISMATCH'));return;}hash.update(chunk);callback(null,chunk);}});
+        meter=new Transform({highWaterMark:65536,transform(chunk:Buffer,_encoding,callback){bytes+=chunk.length;if(bytes>transferBytes){callback(new ApiError(409,'FILE_SIZE_MISMATCH'));return;}hash.update(chunk);callback(null,chunk);}});
         meter.once('end',()=>{ended=true;});const source=meter;
         const transfer=pipeline(body,meter),inspection=(async()=>{const result=await inspect(source,controller.signal);if(!ended)throw new ApiError(502,'R2_INCOMPLETE_INSPECTION');return result;})();
         pendingOperations.push(transfer,inspection);
         const [,result]=await Promise.race([Promise.all([transfer,inspection]),expired]);
-        if(bytes!==expected.bytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
+        if(bytes!==transferBytes)throw new ApiError(409,'FILE_SIZE_MISMATCH');
         const sha256=hash.digest('hex');if(expected.sha256&&sha256!==expected.sha256)throw new ApiError(409,'FILE_HASH_MISMATCH');
         return {bytes,sha256,provider:provider.data,inspection:result};
       }catch(error){
@@ -82,6 +85,12 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     // Optional lifecycle observer lets buffering callers retain admission until
     // actual IO/inspection settlement,not merely a timeout's early rejection.
     inspectClean<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('clean',fileId,claims,inspect,timeoutMs,signal,observeResources);},
+    // Exact conditional single-range read of a verified clean object only.
+    // Returned hash/bytes describe THIS RANGE,never the full file or a scan.
+    async inspectCleanRange<T>(fileId:string,claims:{bytes:number;ifMatch:string},range:z.infer<typeof byteRange>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){
+      const checked=z.object({bytes:z.number().int().min(1).max(134217728),ifMatch:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict().safeParse(claims),selected=byteRange.safeParse(range);if(!checked.success||!selected.success)throw new ApiError(400,'INVALID_PRIVATE_BYTE_RANGE');
+      return inspectStored('clean',fileId,checked.data,inspect,timeoutMs,signal,observeResources,selected.data);
+    },
     // Worker-only full-byte inspection. Attachment signing below is separate
     // and requires its own native audited grant and explicit reviewed policy.
     inspectSignatureEvidence<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=30000,signal?:AbortSignal,observeResources?:(settled:Promise<unknown>)=>void){return inspectStored('signature-evidence',fileId,claims,inspect,timeoutMs,signal,observeResources);},
