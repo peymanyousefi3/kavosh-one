@@ -42,6 +42,10 @@ async function processSigning(purpose:'unified_enrollment'|'worker_services',raw
   await probeSignatureResultSink(services.resultDatabase,undefined,purpose);
   const source=sources.parse(await services.api.source(t.requestId,t.copyId,o.signal)).data;
   if(source.original.academyId!==t.academyId||source.original.copyId!==t.copyId)throw new Error('WRONG_SOURCE');
+  // Guardian contacts may be previewed and reserved,but the complete original
+  // three-party completion/review protocol is not enabled yet. No storage or
+  // provider IO,even if an operator attests the account settings.
+  if(work&&source.draft.routing.version===3)return result('guardian_dispatch_disabled',{sendAttempted:false,receiptStored:false,reconciliationRequired:false});
   const provider=boldSignConnectionSchema.safeParse(services.providers(t.academyId,source.connection.id,source.connection.targetId));
   if(!provider.success||provider.data.region!==source.connection.region)throw new Error('PROVIDER_NOT_CONFIGURED');
   const reader=services.readers(t.academyId,source.original.storageTargetId);if(!reader)throw new Error('READER_NOT_CONFIGURED');

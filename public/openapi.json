@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.379.0",
+    "version": "0.380.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -56021,7 +56021,7 @@
     },
     "/api/v1/payroll/work-agreements/{id}/send-requests": {
       "post": {
-        "summary": "Propose time-bounded two-party worker signing intention for the exact approved private PDF,current verified parties and explicitly reviewed academy-representative legal name,never inferred from a display name. Upper independent human review,except existing master self-approval. Does not send,sign,clear payroll or establish legal effect.",
+        "summary": "Propose time-bounded required-party worker signing intention for the exact approved private PDF,current verified parties and explicitly reviewed academy-representative legal name,never inferred from a display name. Upper independent human review,except existing master self-approval. Version3 pins the same three-party guardian framework and separate guardian privacy rights;actual starts remain disabled until completion/review support is proven. Does not send,sign,clear payroll or establish legal effect.",
         "parameters": [
           {
             "name": "id",
@@ -56309,7 +56309,7 @@
     },
     "/api/v1/payroll/work-signature-send-requests/{id}/attempts/{attemptId}/dispatch": {
       "post": {
-        "summary": "Consume a worker reservation once with mandatory current exact original-copy/policy fingerprint and matching attested manifest. Start replay always409,never another send. Preserve both dispatch-time signers privately;no byte measurement,provider call,signature or payroll clearance.",
+        "summary": "Consume a worker reservation once with mandatory current exact original-copy/policy fingerprint and matching attested manifest. Start replay always409,never another send. Guardian starts remain explicitly disabled until all-three-party completion support. Preserve original dispatch-time signers privately;no byte measurement,provider call,signature or payroll clearance.",
         "parameters": [
           {
             "name": "id",
@@ -57150,7 +57150,7 @@
     },
     "/api/v1/payroll/work-signature-send-requests/{id}/dispatch-source": {
       "get": {
-        "summary": "Audited private two-party draft under explicit work-signatures.execute plus current work/template/file rights. Names come from reviewed terms/intention,not display names;both original verified contacts must still match. Optional original copy is a current native descriptor,not retrieved bytes,safety clearance or provider authority. No key or external request.",
+        "summary": "Audited private required-party draft under explicit work-signatures.execute plus current work/template/file rights. Names come from reviewed terms/intention,not display names;all required original verified contacts must still match. Guardian projection also needs separate current guardian permissions and independently current approved authority;version3 may be previewed/reserved but starts are disabled. Optional original copy is a current native descriptor,not retrieved bytes,safety clearance or provider authority. No key or external request.",
         "parameters": [
           {
             "name": "id",
