@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('worker consent routing supports explicit version2 questions without consent or publication override inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/payroll/work-agreements/{id}/content'].post,s=op.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(s.properties.routing.properties.version.anyOf.map((v:any)=>v.const),[1,2]);assert.equal(s.properties.routing.properties.parties.minItems,2);assert.equal(s.properties.routing.properties.parties.maxItems,2);for(const key of ['consentGranted','teacherPublished','approved','signerId','completed'])assert.equal(s.properties[key],undefined);assert.match(op.summary,/SAME document/);assert.match(op.summary,/both signatures stay required/);assert.match(op.summary,/never grants consent or publication/);
+});
 
 test('disputed-loss recovery source is a scoped read-only plan without caller amounts,accounts,approval or posting authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/provider-dispute-losses/{id}/recovery-source',op=api.paths[path].get;assert.equal(op['x-capability'],'dispute-losses.view');assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['id','postedOn']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/without a second cash movement/);assert.match(op.summary,/No posting/);
