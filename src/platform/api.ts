@@ -10,9 +10,20 @@ const change=z.object({expectedVersion:z.number().int().positive().max(214748364
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),after:id.optional()}).strict();
 const invitation=z.object({expectedVersion:z.number().int().positive().max(2147483647),reason}).strict();
 const revokeInvitation=invitation.extend({invitationRequestKey:id}).strict();
+const planDefinition=z.object({name,description:z.string().max(2000),currencyCode:z.string().regex(/^[A-Z]{3}$/),unitScale:z.number().int().min(0).max(18),amountMinor:z.string().regex(/^(0|[1-9][0-9]{0,37})$/),periodMonths:z.number().int().min(1).max(36),graceDays:z.number().int().min(0).max(365),active:z.boolean()}).strict();
+const planCreate=z.object({definition:planDefinition,reason}).strict();
+const planChange=planCreate.extend({expectedVersion:z.number().int().positive().max(2147483647)}).strict();
+const planDuplicate=invitation.extend({name}).strict();
+const planHistory=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),beforeVersion:z.coerce.number().int().positive().max(2147483647).optional()}).strict();
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/plans',method:'get',summary:'Owner-only subscription reference-price catalogue; does not charge or grant school access',querySchema:paging},
+ {path:'/api/platform/v1/plans',method:'post',summary:'Create a subscription plan with exact money units and immutable edition history; zero-priced plans supported',schema:planCreate},
+ {path:'/api/platform/v1/plans/{id}',method:'get',summary:'Read current platform subscription plan terms'},
+ {path:'/api/platform/v1/plans/{id}/history',method:'get',summary:'Read bounded immutable subscription plan editions',querySchema:planHistory},
+ {path:'/api/platform/v1/plans/{id}/change',method:'post',summary:'Version-checked subscription plan edit or archive through active=false; never reprice existing agreements',schema:planChange},
+ {path:'/api/platform/v1/plans/{id}/duplicate',method:'post',summary:'Duplicate an exact current plan edition under a new name, retaining source history',schema:planDuplicate},
  {path:'/api/platform/v1/academies',method:'get',summary:'Audited platform-owner school directory',querySchema:paging},
  {path:'/api/platform/v1/academies',method:'post',summary:'Provision a school with one pending master; does not bypass verified invitation onboarding',schema:provision},
  {path:'/api/platform/v1/academies/{id}',method:'get',summary:'Audited platform-owner school and master directory details'},
@@ -45,9 +56,22 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const session=await resolve(request);if(!session)throw new ApiError(401,'HUMAN_SESSION_REQUIRED');
    id.parse(session.userId);id.parse(session.sessionId);
    const target=/^academies\/([a-f0-9-]{36})(\/(?:change|master-invitation(?:\/revoke)?))?$/.exec(path);
+   const planTarget=/^plans\/([a-f0-9-]{36})(\/(?:change|duplicate|history))?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(request.method==='GET'&&(path==='academies'||path==='audit')){
+   if(request.method==='GET'&&(path==='plans'||planTarget)){
+    const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
+    if(path==='plans'){input=paging.parse(Object.fromEntries(pairs));operation='plans.list';}
+    else if(planTarget![2]==='/history'){input={...planHistory.parse(Object.fromEntries(pairs)),planId:id.parse(planTarget![1])};operation='plans.history';}
+    else if(!planTarget![2]){if(url.search)throw new ApiError(400,'INVALID_QUERY');input={planId:id.parse(planTarget![1])};operation='plans.get';}
+    else throw new ApiError(405,'METHOD_NOT_ALLOWED');
+   }else if(request.method==='POST'&&(path==='plans'||planTarget)){
+    if(url.search)throw new ApiError(400,'INVALID_QUERY');key=id.parse(request.headers.get('idempotency-key'));const body=await jsonBody(request);
+    if(path==='plans'){input=planCreate.parse(body);operation='plans.create';}
+    else if(planTarget![2]==='/change'){input={...planChange.parse(body),planId:id.parse(planTarget![1])};operation='plans.change';}
+    else if(planTarget![2]==='/duplicate'){input={...planDuplicate.parse(body),planId:id.parse(planTarget![1])};operation='plans.duplicate';}
+    else throw new ApiError(405,'METHOD_NOT_ALLOWED');
+   }else if(request.method==='GET'&&(path==='academies'||path==='audit')){
     const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
     input=paging.parse(Object.fromEntries(pairs));operation=path==='audit'?'audit.list':'academies.list';
    }else if(request.method==='GET'&&target&&!target[2]){
@@ -64,7 +88,7 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
      if(revoking){revokeInput={...parsed as z.infer<typeof revokeInvitation>,academyId,tokenHash};input=revokeInput;operation='academies.master-invitation.revoke';}
      else{privateInvitation=token;inviteInput={...parsed,academyId,tokenHash};input=inviteInput;operation='academies.master-invitation';}
     }else{input=path==='academies'?provision.parse(body):{...change.parse(body),academyId:id.parse(target![1])};operation=path==='academies'?'academies.provision':'academies.change';}
-   }else throw new ApiError(path==='academies'||path==='audit'||target?405:404,path==='academies'||path==='audit'||target?'METHOD_NOT_ALLOWED':'NOT_FOUND');
+   }else throw new ApiError(path==='plans'||planTarget||path==='academies'||path==='audit'||target?405:404,path==='plans'||planTarget||path==='academies'||path==='audit'||target?'METHOD_NOT_ALLOWED':'NOT_FOUND');
    db=await database.connect();await assertSchemaReady(db);await assertPlatformRole(db);
    if((await db.query<{allowed:boolean}>('SELECT platform_private.consume_request_budget($1,$2) AS allowed',[session.userId,session.sessionId])).rows[0]?.allowed!==true)throw new ApiError(429,'RATE_LIMITED');
    await db.query('BEGIN');transaction=true;
@@ -88,7 +112,8 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    else if(error&&typeof error==='object'&&'message' in error){
     const message=String(error.message);
     if(message==='PLATFORM_OWNER_REQUIRED'){status=403;code=message;}
-    else if(message==='PLATFORM_ACADEMY_NOT_FOUND'){status=404;code=message;}
+    else if(message==='PLATFORM_ACADEMY_NOT_FOUND'||message==='PLATFORM_PLAN_NOT_FOUND'){status=404;code=message;}
+    else if(message==='PLATFORM_PLAN_VERSION_CHANGED'){status=409;code=message;}
     else if(['PLATFORM_IDEMPOTENCY_CONFLICT','PLATFORM_ACADEMY_VERSION_CHANGED','PLATFORM_MASTER_VERIFICATION_REQUIRED','PLATFORM_PROVISIONING_REENTRY_FORBIDDEN','PLATFORM_MASTER_INVITATION_UNAVAILABLE','PLATFORM_INVITATION_NO_LONGER_CURRENT','PLATFORM_INVITATION_REISSUE_REQUIRED'].includes(message)){status=409;code=message;}
     else if(message==='INVALID_PLATFORM_INPUT'){status=400;code=message;}
    }

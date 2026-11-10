@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.337.0",
+    "version": "0.338.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -2131,6 +2131,444 @@
               "type": "string",
               "format": "uuid",
               "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/plans": {
+      "get": {
+        "summary": "Owner-only subscription reference-price catalogue; does not charge or grant school access",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a subscription plan with exact money units and immutable edition history; zero-priced plans supported",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/idempotency"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "definition": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "currencyCode": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{3}$"
+                      },
+                      "unitScale": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 18
+                      },
+                      "amountMinor": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,37})$"
+                      },
+                      "periodMonths": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 36
+                      },
+                      "graceDays": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 365
+                      },
+                      "active": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "description",
+                      "currencyCode",
+                      "unitScale",
+                      "amountMinor",
+                      "periodMonths",
+                      "graceDays",
+                      "active"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "definition",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/plans/{id}": {
+      "get": {
+        "summary": "Read current platform subscription plan terms",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/plans/{id}/change": {
+      "post": {
+        "summary": "Version-checked subscription plan edit or archive through active=false; never reprice existing agreements",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "definition": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      "currencyCode": {
+                        "type": "string",
+                        "pattern": "^[A-Z]{3}$"
+                      },
+                      "unitScale": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 18
+                      },
+                      "amountMinor": {
+                        "type": "string",
+                        "pattern": "^(0|[1-9][0-9]{0,37})$"
+                      },
+                      "periodMonths": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 36
+                      },
+                      "graceDays": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 365
+                      },
+                      "active": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "description",
+                      "currencyCode",
+                      "unitScale",
+                      "amountMinor",
+                      "periodMonths",
+                      "graceDays",
+                      "active"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  }
+                },
+                "required": [
+                  "definition",
+                  "reason",
+                  "expectedVersion"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/plans/{id}/duplicate": {
+      "post": {
+        "summary": "Duplicate an exact current plan edition under a new name, retaining source history",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "reason",
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/plans/{id}/history": {
+      "get": {
+        "summary": "Read bounded immutable subscription plan editions",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "beforeVersion",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
             }
           }
         ],

@@ -4,6 +4,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('platform subscription catalogue is owner-session-only with strict exact prices, versioned edits and bounded history,not charge authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/plans',post=api.paths[base].post,s=post.requestBody.content['application/json'].schema,d=s.properties.definition;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['definition','reason']);assert.equal(d.additionalProperties,false);assert.equal(d.properties.amountMinor.type,'string');assert.equal(d.properties.unitScale.maximum,18);assert.equal(d.properties.graceDays.maximum,365);
+ assert.equal(post.security.some((v:any)=>'botBearer'in v),false);assert.ok(api.paths[base+'/{id}/change'].post.requestBody.content['application/json'].schema.required.includes('expectedVersion'));
+ assert.deepEqual(Object.keys(api.paths[base+'/{id}/duplicate'].post.requestBody.content['application/json'].schema.properties).sort(),['expectedVersion','name','reason']);assert.ok(api.paths[base+'/{id}/history'].get.parameters.some((p:any)=>p.name==='beforeVersion'));assert.equal(api.paths[base+'/{id}'].delete,undefined);
+});
+
 test('refund return accounting accepts only retained evidence,date,period and reason,not caller money or restored status',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/finance/provider-refunds/{id}',s=api.paths[root+'/returns'].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['period','postedOn','reason','returnInspectionId']);assert.deepEqual(api.paths[root+'/return-source'].get.parameters.map((v:any)=>v.name).sort(),['id','postedOn','returnInspectionId']);assert.equal(api.paths[root+'/return-source'].post,undefined);assert.equal(api.paths['/api/v1/finance/provider-refund-returns/{id}'].post,undefined);assert.match(api.paths[root+'/returns'].post.summary,/Full original refund reconciliation is still required/);
 });
