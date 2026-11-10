@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('refund reviews require exact retained pages and a rechecked source stamp,not supplied money or cleared-status authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/finance/provider-collections/{id}',s=api.paths[root+'/refund-reviews'].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['inspectionIds','reason','sourceStamp']);assert.equal(s.properties.inspectionIds.maxItems,100);assert.equal(api.paths[root+'/refund-review-source'].post,undefined);assert.ok(api.paths['/api/v1/finance/provider-credit-reviews/{id}'].get);assert.match(api.paths[root+'/refund-reviews'].post.summary,/never moves funds/);
+});
+
 test('exact provider warning deep links are protected reads with no source or accounting authority inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/checkout-requests/{id}/attempts/{attemptId}/inspections/{inspectionId}',read=api.paths[path].get;assert.deepEqual(read.parameters.map((p:any)=>p.name).sort(),['attemptId','id','inspectionId']);assert.equal(api.paths[path].post,undefined);assert.match(read.summary,/not a live balance/);
 });

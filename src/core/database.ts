@@ -4,7 +4,7 @@ export interface Connection {
   release(destroy?: boolean): void;
 }
 export interface Database { connect(): Promise<Connection> }
-export const expectedSchemaRevision=305;
+export const expectedSchemaRevision=306;
 export async function assertSchemaReady(db:Connection) {
   const result=await db.query<{revision:number}>('SELECT public.schema_revision() AS revision');
   if(!Number.isInteger(result.rows[0]?.revision)||result.rows[0].revision<expectedSchemaRevision)throw new Error('SCHEMA_NOT_CURRENT');
@@ -32,7 +32,7 @@ export async function assertRuntimeRole(db: Connection,purpose:'web'|'automation
         WHERE n.nspname='public' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE')
         AND p.oid<>ALL(array_remove(ARRAY[to_regprocedure('public.claim_notification_delivery(jsonb)'),to_regprocedure('public.begin_notification_delivery(uuid,uuid)'),
           to_regprocedure('public.finish_notification_delivery(uuid,uuid,text,text,text)'),to_regprocedure('public.lock_notification_delivery_source(uuid,uuid)'),
-          to_regprocedure('public.account_security_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.report_comment_human_verified(uuid)'),to_regprocedure('public.checkout_notice_allows(uuid,jsonb)'),
+          to_regprocedure('public.account_security_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.report_comment_human_verified(uuid)'),to_regprocedure('public.checkout_notice_allows(uuid,jsonb)'),to_regprocedure('public.checkout_notice_current(uuid)'),
           to_regprocedure('public.work_signature_evidence_notice_state(uuid)'),to_regprocedure('public.tuition_reminder_notice_current(uuid)'),
           to_regprocedure('public.tuition_reminder_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.expense_reminder_notice_current(uuid)'),to_regprocedure('public.expense_reminder_notice_allows(uuid,jsonb)'),to_regprocedure('public.payroll_reminder_notice_current(uuid)'),to_regprocedure('public.payroll_reminder_notice_allows(uuid,jsonb)'),to_regprocedure('public.statement_reminder_notice_current(uuid)'),to_regprocedure('public.statement_reminder_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.counterparty_notice_current(uuid)'),to_regprocedure('public.counterparty_notice_allows(uuid,uuid,jsonb)')],NULL)::oid[])))
       AND NOT EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname='identity' AND has_schema_privilege(current_user,n.oid,'usage'))
