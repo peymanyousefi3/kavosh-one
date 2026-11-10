@@ -15,6 +15,7 @@ export const profitabilityCoverageSQL=`WITH selected AS MATERIALIZED(${financial
  UNION ALL SELECT 'supplier',value::uuid FROM jsonb_array_elements_text((SELECT "authorizationContext"->'bills' FROM baseline_supplier))
  UNION ALL SELECT 'tuition_invoice',value::uuid FROM jsonb_array_elements_text((SELECT "authorizationContext"->'invoices' FROM baseline_tuition))
  UNION ALL SELECT 'tuition_recognition',value::uuid FROM jsonb_array_elements_text((SELECT "authorizationContext"->'recognitions' FROM baseline_tuition))
+ UNION ALL SELECT 'provider_dispute',value::uuid FROM jsonb_array_elements_text((SELECT "authorizationContext"->'postings' FROM baseline_provider))
  UNION ALL SELECT 'payroll_'||(value->>'kind'),(value->>'sourceId')::uuid FROM jsonb_array_elements((SELECT "authorizationContext"->'sources' FROM baseline_payroll))
 ),claims AS MATERIALIZED(
  SELECT l.academy_id,l.journal_id,l.line_number,o.family,o.source_id FROM operating l
