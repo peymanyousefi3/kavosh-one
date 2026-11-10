@@ -6,7 +6,6 @@ import { propose,master,permissionScope,lockApprovalWrites,type ApprovalRegistry
 import { ApiError,scopeContains,type Capability,type Scope } from '../core/policy.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { authorizeLearningRecipient } from './learning-recipients.ts';
-import { permittedPerson } from './students.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().min(1).max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0'));
 const body=text.pipe(z.string().trim().min(1).max(10000)).refine(v=>Buffer.byteLength(v,'utf8')<=32000,'Comment exceeds 32000 UTF-8 bytes');
@@ -24,7 +23,7 @@ async function staffAuthority(ctx:ApiContext,s:Source,cap:Capability='report-com
 }
 async function memberOn(ctx:ApiContext,s:Source,on:string){return Boolean((await ctx.db.query('SELECT 1 FROM public.class_enrollments WHERE class_id=$1 AND student_id=$2 AND enabled AND joins_on<=$3::date AND(leaves_on IS NULL OR leaves_on>=$3::date)',[s.classId,s.studentId,on])).rows.length);}
 async function familyAuthority(ctx:ApiContext,s:Source,write=false,on?:string){
- await authorizeLearningRecipient(ctx,s.studentId,'received-comments.view');await permittedPerson(ctx,s.studentId,'received-reports.view');
+ await authorizeLearningRecipient(ctx,s.studentId,'received-comments.view');await authorizeLearningRecipient(ctx,s.studentId,'received-reports.view');
  for(const cap of ['received-comments.view','received-reports.view',...write?['received-comments.write']:[]] as Capability[])if(!scopeContains(permissionScope(ctx,cap),target(s)))throw new ApiError(404,'NOT_FOUND');
  if(!s.active||!s.eligible||on&&!await memberOn(ctx,s,on))throw new ApiError(404,'NOT_FOUND');if(write&&!(await ctx.db.query<{allowed:boolean}>('SELECT public.report_comment_family($1,$2) allowed',[s.studentId,ctx.credential.person_id])).rows[0].allowed)throw new ApiError(403,'CURRENT_FAMILY_WRITER_REQUIRED');
 }

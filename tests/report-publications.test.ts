@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { reportFixture } from './report-fixture.ts';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 
-async function fixture(){
- const f=await reportFixture(),student=f.actors.peer.person,guardian=f.actors.staff.person;
+async function fixture(throughSchema?:number){
+ const f=await reportFixture(throughSchema),student=f.actors.peer.person,guardian=f.actors.staff.person;
  assert.equal((await f.save()).response.status,201);
  assert.equal((await f.request('students',{personId:student,legalName:'PRIVATE linked student',dateOfBirth:'2014-03-20',recruiter:{kind:'academy'}})).response.status,201);
  assert.equal((await f.request('guardians',{personId:guardian,legalName:'PRIVATE linked guardian'})).response.status,201);
@@ -22,6 +23,15 @@ async function fixture(){
 }
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>,nativeOnly=false){test(name,{skip:nativeOnly&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+test('actual355to356 preserves published learning records and role assignments while declaring supported family class scopes',async()=>{
+ const f=await fixture(355);try{const made=await f.publish();assert.equal(made.response.status,201,JSON.stringify(made.body));const snapshot=async()=>({publications:(await f.pg.query('SELECT * FROM public.report_publications ORDER BY id')).rows,permissions:(await f.pg.query('SELECT * FROM public.role_permissions ORDER BY role_id,capability')).rows,assignments:(await f.pg.query('SELECT * FROM public.role_assignments ORDER BY id')).rows,people:(await f.pg.query('SELECT * FROM public.assignment_people ORDER BY assignment_id,person_id')).rows,classes:(await f.pg.query('SELECT * FROM public.assignment_classes ORDER BY assignment_id,class_id')).rows}),before=await snapshot(),functions=await f.pg.query("SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid=ANY(ARRAY['public.scope_contains(jsonb,jsonb)'::regprocedure,'public.report_recipient(uuid,uuid)'::regprocedure]) ORDER BY oid");await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual(await f.pg.query("SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid=ANY(ARRAY['public.scope_contains(jsonb,jsonb)'::regprocedure,'public.report_recipient(uuid,uuid)'::regprocedure]) ORDER BY oid"),functions);const rows=(await f.pg.query<{name:string;scope_kinds:string[]}>("SELECT name,scope_kinds FROM public.capability_catalog WHERE name=ANY($1::text[]) ORDER BY name",[['received-reports.view','received-homework.view','received-submissions.view','received-submissions.drafts','received-grades.view','received-solutions.view','received-comments.view','received-comments.write','received-polls.view','received-polls.respond','homework-submissions.submit']])).rows;assert.equal(rows.length,11);assert.ok(rows.every(r=>r.scope_kinds.includes('class')&&new Set(r.scope_kinds).size===r.scope_kinds.length));assert.equal((await f.received(made.body.data.id)).response.status,200);}finally{await f.pg.close();}
+});
+check('family learning uses exact class grants and explicit class denials instead of the student primary hub',async f=>{
+ const duplicate=await f.received(undefined,'staff','?limit=1&limit=2');assert.equal(duplicate.response.status,400);assert.equal(duplicate.body.error.code,'DUPLICATE_QUERY');
+ const made=await f.publish();assert.equal(made.response.status,201,JSON.stringify(made.body));const id=made.body.data.id,access='people/'+f.guardian+'/access',assign=async(assignments:unknown[])=>{const version=(await f.request(access)).body.data.version;const r=await f.request(access,{expectedVersion:version,assignments});assert.equal(r.response.status,200,JSON.stringify(r.body));};
+ const deny=await f.request('roles',{name:'Hide one family report class',permissions:[{capability:'received-reports.view',effect:'deny'}]});assert.equal(deny.response.status,201);await assign([{roleId:f.parentRole,allHubs:false,personIds:[f.student]},{roleId:deny.body.data.id,allHubs:false,classIds:[f.c.id]}]);const hidden=await f.received(id);assert.equal(hidden.response.status,404,JSON.stringify(hidden.body));assert.deepEqual((await f.received()).body.data,[]);
+ await f.pg.query('UPDATE public.people SET hub_id=$2 WHERE id=$1',[f.student,f.otherHub]);await assign([{roleId:f.parentRole,allHubs:false,classIds:[f.c.id]}]);const allowed=await f.received(id);assert.equal(allowed.response.status,200,JSON.stringify(allowed.body));assert.equal(allowed.body.data.document.blocks[0].text,f.document.blocks[0].text);assert.equal((await f.received()).body.data.length,1);assert.equal((await f.request('students/'+f.student,undefined,'staff')).response.status,403);
+});
 check('upper-reviewed publication delivers frozen text/captions only to a linked scoped parent, not draft or file authority',async f=>{
  assert.deepEqual((await f.received()).body.data,[]);const pending=await f.publish(f.pubInput,'manager');assert.equal(pending.response.status,202,JSON.stringify(pending.body));assert.equal((await f.approve(pending.body.approval.id,'manager')).response.status,403);
  const start=performance.now(),made=await f.approve(pending.body.approval.id);assert.equal(made.response.status,200,JSON.stringify(made.body));console.log(JSON.stringify({case:'reviewed-parent-publication',elapsedMs:Math.round(performance.now()-start)}));

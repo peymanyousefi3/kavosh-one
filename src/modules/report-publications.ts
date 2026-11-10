@@ -54,12 +54,12 @@ async function received(ctx:ApiContext,studentId:string,id?:string):Promise<Repl
  const params=Object.fromEntries(new URL(ctx.request.url).searchParams),q=id?(empty.parse(params),null):receivedQuery.parse(params);
  // Shared policy lock keeps API family/access/enrollment/withdrawal changes
  // from committing halfway through this authorized response construction.
- const {s,selected}=await authorizeLearningRecipient(ctx,studentId);
+ const {s}=await authorizeLearningRecipient(ctx,studentId);
  const rows=(await ctx.db.query<{id:string;document?:Document;on:string}&Record<string,unknown>>(`SELECT p.id,p.session_id,p.report_version,p.created_at,c.name AS class_name,p.context#>>'{source,session,on}' AS on,p.context#>>'{source,session,timeZone}' AS time_zone,
   p.context#>>'{report,document,title}' AS title,p.context#>>'{report,document,locale}' AS locale${id?",p.context#>'{report,document}' AS document":''}
   FROM public.report_publications p JOIN public.classes c ON c.academy_id=p.academy_id AND c.id=p.class_id
   WHERE public.report_publication_active(p.id) AND ${receivedLearningSelection}
-  ORDER BY (p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $10`,[studentId,ctx.credential.person_id,id??null,s.all,selected,s.hubs,s.excludedHubs??[],q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
+  ORDER BY (p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $7`,[studentId,ctx.credential.person_id,id??null,JSON.stringify(s),q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
  if(id){if(!rows[0])throw new ApiError(404,'NOT_FOUND');const {document,...header}=rows[0];return {status:200,body:{data:{...header,document:parentDocument(document!),mediaServingEnabled:false,externalDeliveryVerified:false,payrollApproved:false}}};}
  return {status:200,body:{studentId,data:rows.slice(0,q!.limit),nextCursor:rows.length>q!.limit?{beforeOn:rows[q!.limit-1].on,after:rows[q!.limit-1].id}:null}};
 }

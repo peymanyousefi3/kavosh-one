@@ -71,11 +71,11 @@ export const homeworkActions:ApprovalRegistry=Object.fromEntries(['homework.reco
 function receivedDocument(d:Document){return {...d,blocks:d.blocks.map(b=>b.kind==='text'?b:{id:b.id,kind:b.kind,mediaKind:b.mediaKind,caption:b.caption,availability:'unavailable'})};}
 export { receivedDocument as receivedHomeworkDocument };
 async function received(ctx:ApiContext,studentId:string,id?:string):Promise<Reply>{
- if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=Object.fromEntries(new URL(ctx.request.url).searchParams),q=id?(empty.parse(params),null):receivedLearningQuery.parse(params),{s,selected}=await authorizeLearningRecipient(ctx,studentId,'received-homework.view');
+ if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=Object.fromEntries(new URL(ctx.request.url).searchParams),q=id?(empty.parse(params),null):receivedLearningQuery.parse(params),{s}=await authorizeLearningRecipient(ctx,studentId,'received-homework.view');
  const rows=(await ctx.db.query<{id:string;on:string;document?:Document}&Record<string,unknown>>(`SELECT p.id,p.session_id,p.version,p.due_at,p.accept_late,p.context#>>'{source,session,on}' AS on,p.context#>>'{source,session,timeZone}' time_zone,p.document->>'title' title,p.document->>'locale' locale,c.name class_name${id?',p.document':''}
  FROM public.homeworks p JOIN public.classes c ON c.academy_id=p.academy_id AND c.id=p.class_id JOIN public.approval_requests a ON a.academy_id=p.academy_id AND a.id=p.approval_id
  WHERE p.state='published' AND p.recipient_ids @> ARRAY[$1::uuid] AND a.status='applied' AND a.reviewer_id=p.changed_by AND a.target_id=p.id AND a.action IN('homework.record','homework.edit') AND ${receivedLearningSelection}
- ORDER BY(p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $10`,[studentId,ctx.credential.person_id,id??null,s.all,selected,s.hubs,s.excludedHubs??[],q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
+ ORDER BY(p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $7`,[studentId,ctx.credential.person_id,id??null,JSON.stringify(s),q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
  if(id){const r=rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:{...r,document:receivedDocument(r.document!),mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:true,solutionsAvailable:true}}};}
  return {status:200,body:{studentId,data:rows.slice(0,q!.limit),nextCursor:rows.length>q!.limit?{beforeOn:rows[q!.limit-1].on,after:rows[q!.limit-1].id}:null}};
 }
