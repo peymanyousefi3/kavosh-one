@@ -8,6 +8,8 @@ import { assertSchemaReady } from '../core/database.ts';
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),purpose=z.enum(['public_profile','verified_member_profile']),empty=z.object({}).strict();
 const input=z.object({reason:z.string().trim().min(1).max(2000).refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f-\u009f]/.test(v)).default('Profile sharing withdrawn')}).strict();
 const history=z.object({afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0),limit:z.coerce.number().int().min(1).max(20).default(10)}).strict();
+const wardQuery=z.object({after:uuid.optional(),limit:z.coerce.number().int().min(1).max(50).default(20)}).strict();
+const ward=z.object({personId:uuid,subjectKind:z.enum(['student','person']),displayName:z.string().min(1).max(200)}).strict();
 export const profileVisibilitySchema=z.object({version:z.number().int().min(0).max(2147483647),audience:z.enum(['public','members'])}).strict();
 const visibilityInput=z.object({expectedVersion:z.number().int().min(0).max(2147483646),audience:profileVisibilitySchema.shape.audience}).strict();
 const privacyChange=z.union([z.object({purpose,version:z.number().int().positive().max(2147483647),withdrawnAt:z.iso.datetime({offset:true}),hubId:uuid.nullable()}).strict(),z.object({audience:profileVisibilitySchema.shape.audience,version:z.number().int().positive().max(2147483647),changedAt:z.iso.datetime({offset:true}),hubId:uuid.nullable()}).strict()]);
@@ -26,6 +28,22 @@ async function family(ctx:ApiContext,id:string,allowPerson=false,workerOnly=fals
  return b;
 }
 export async function profileConsents(ctx:ApiContext):Promise<Reply|null>{
+ if(ctx.path==='me/profile-wards'){
+  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_PRIVACY_ACTION_REQUIRED');if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=wardQuery.parse(Object.fromEntries(params));await assertSchemaReady(ctx.db);await lockApprovalWrites(ctx);await lockAcademyTopology(ctx);
+  // Narrow own-guardian discovery,not a family roster or an administrative
+  // permission grant. Reuse the SAME current authority as the privacy actions
+  // before paging;an older approved revision must never revive a suspended one.
+  const rows=(await ctx.db.query(`WITH candidates AS MATERIALIZED(
+   SELECT student_id id FROM public.family_relationships WHERE guardian_id=$1
+   UNION SELECT worker_id id FROM public.work_guardian_revisions WHERE guardian_id=$1),
+  authorized AS MATERIALIZED(SELECT c.id,public.profile_consent_actor_basis(c.id,$1) basis FROM candidates c WHERE c.id<>$1)
+  SELECT p.id "personId",CASE WHEN s.person_id IS NULL THEN 'person' ELSE 'student' END "subjectKind",CASE WHEN s.person_id IS NULL THEN w.legal_name ELSE coalesce(s.preferred_name,s.legal_name) END "displayName"
+  FROM authorized a JOIN public.people p ON p.id=a.id LEFT JOIN public.student_profiles s ON s.academy_id=p.academy_id AND s.person_id=p.id
+  LEFT JOIN LATERAL(SELECT i.legal_name FROM public.work_identity_revisions i WHERE s.person_id IS NULL AND i.academy_id=p.academy_id AND i.person_id=p.id ORDER BY i.version DESC LIMIT 1) w ON true
+  WHERE a.basis->>'authority'='current_guardian' AND p.kind='human' AND p.status IN('active','pending') AND($2::uuid IS NULL OR p.id>$2) ORDER BY p.id LIMIT $3`,[ctx.credential.person_id,q.after??null,q.limit+1])).rows;
+  const parsed=z.array(ward).max(51).safeParse(rows);if(!parsed.success)throw new ApiError(503,'PROFILE_WARD_DIRECTORY_UNAVAILABLE');await record(ctx.db,ctx.credential,ctx.requestId,'profile-consent.read',ctx.credential.person_id,null,{kind:'ward_directory',rows:Math.min(parsed.data.length,q.limit)});
+  return{status:200,body:{data:parsed.data.slice(0,q.limit).map(p=>({...p,privacyPath:'/api/v1/'+(p.subjectKind==='student'?'students/':'people/')+p.personId+'/profile-consents',visibilityPath:'/api/v1/'+(p.subjectKind==='student'?'students/':'people/')+p.personId+'/profile-visibility'})),nextCursor:parsed.data.length>q.limit?parsed.data[q.limit-1].personId:null,ownCurrentWardsOnly:true,consentGranted:false,portalAccessGranted:false,signingEvidenceIncluded:false}};
+ }
  const selfRoute=/^me\/profile-(?:visibility(?:\/history)?|consents(?:\/[^/]+\/(?:withdraw|withdrawals))?)$/.test(ctx.path);
  const workerRoute=/^people\/([^/]+)\/profile-(?:visibility(?:\/history)?|consents(?:\/[^/]+\/(?:withdraw|withdrawals))?)$/.test(ctx.path),personRoute=selfRoute||workerRoute;
  if(personRoute&&ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_PRIVACY_ACTION_REQUIRED');
@@ -74,6 +92,7 @@ export async function profileConsents(ctx:ApiContext):Promise<Reply|null>{
  await record(ctx.db,ctx.credential,ctx.requestId,'profile-consent.withdrawal.read',id,b.hubId,{kind:'summary',rows:rows.length});return{status:200,body:{[subjectKey]:id,data:purpose.options.map(p=>({...states.find(r=>r.purpose===p)!,...rows.find(r=>r.purpose===p)??{version:0,lastWithdrawnAt:null}})),consentGrantEvaluated:true,publicationEvaluated:false,providerFreshlyChecked:false,legalValidityCertified:false}};
 }
 export const profileConsentsContract=[
+ {path:'/api/v1/me/profile-wards',method:'get',humanOnly:true,summary:'Bounded verified human discovery of their own current under18 legal wards for privacy controls. Canonical student and nonstudent-worker authority is rechecked before pagination;student identity takes precedence. Minimal display label and privacy paths only,no DOB,contacts,authority/approval IDs,signing evidence or other guardians. No administrative permissions required or sufficient,no actor override,no consent or general portal-access grant;available in read-only school.',querySchema:wardQuery},
  {path:'/api/v1/people/{id}/profile-consents',method:'get',humanOnly:true,summary:'Verified nonstudent worker or their current approved under18 work guardian reads only purpose eligibility and withdrawal status. No administrative grants required or sufficient;current student records must use the student path. No legal identity,guardian identity,private approval/source pointers or signature data.'},
  {path:'/api/v1/people/{id}/profile-consents/{purpose}/withdraw',method:'post',humanOnly:true,pathSchemas:{purpose},summary:'Immediate verified self/current approved minor-worker guardian withdrawal through the SAME immutable privacy cutoff,audit and mandatory upper alerts. No upper approval,restoration,enrollment or administrator impersonation;available in read-only school.',schema:input},
  {path:'/api/v1/people/{id}/profile-consents/{purpose}/withdrawals',method:'get',humanOnly:true,pathSchemas:{purpose},summary:'Bounded purpose withdrawal history for current verified self/work guardian,without private reasons,other actor identities or signing evidence.',querySchema:history},

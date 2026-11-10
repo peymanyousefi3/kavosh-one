@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('own privacy ward discovery is human-only,bounded and has no actor or identity override',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/me/profile-wards'].get;assert.equal(op.security.some((s:any)=>'botBearer'in s),false);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['after','limit']);assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(op.summary,/rechecked before pagination/);assert.match(op.summary,/No administrative permissions required or sufficient/);assert.match(op.summary,/read-only school/);
+});
 test('nonstudent guardian privacy routes are human-only negative controls without administrative or identity override inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/people/{id}/profile-';for(const path of [root+'visibility',root+'visibility/history',root+'consents',root+'consents/{purpose}/withdraw',root+'consents/{purpose}/withdrawals'])for(const op of Object.values(api.paths[path])as any[])assert.equal(op.security.some((s:any)=>'botBearer'in s),false);const withdraw=api.paths[root+'consents/{purpose}/withdraw'].post,visibility=api.paths[root+'visibility'].post;assert.match(withdraw.summary,/SAME immutable privacy cutoff/);assert.match(withdraw.summary,/read-only school/);assert.equal(withdraw.requestBody.content['application/json'].schema.additionalProperties,false);assert.deepEqual(Object.keys(withdraw.requestBody.content['application/json'].schema.properties),['reason']);assert.match(visibility.summary,/never grants consent or publishes/);
 });
