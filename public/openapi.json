@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.338.0",
+    "version": "0.339.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -2093,6 +2093,206 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/academies/{id}/subscription": {
+      "get": {
+        "summary": "Read pinned school subscription and current native-clock access status; does not verify payment",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/academies/{id}/subscription/assign": {
+      "post": {
+        "summary": "Owner assigns exact current active plan terms; expectedVersion=0 for first assignment; null expiry only for a zero-price plan; expired/scheduled schools become read-only without overriding manual suspension; no charge or payment proof",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "planId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "planVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "startsAt": {
+                    "type": "string",
+                    "allOf": [
+                      {
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      },
+                      {
+                        "pattern": "^[12]"
+                      }
+                    ]
+                  },
+                  "expiresAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "allOf": [
+                          {
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                          },
+                          {
+                            "pattern": "^[12]"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "planId",
+                  "planVersion",
+                  "startsAt",
+                  "expiresAt",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/academies/{id}/subscription/history": {
+      "get": {
+        "summary": "Bounded immutable school subscription editions",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "beforeVersion",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
         "responses": {
           "200": {
             "description": "Audited current directory data or version-checked change"

@@ -22,6 +22,16 @@ async function fixture(){const f=await notificationFixture();try{
  return {...f,database,workerErrors,work,queue,state,ready};
 }catch(error){await f.pg.close();throw error;}}
 type F=Awaited<ReturnType<typeof fixture>>;
+test('an expired school subscription cancels already queued notification work without delivering or losing retained records',async()=>{
+ const f=await fixture();try{
+  const rule=await f.rule(),event=await f.source(),q=await f.queue(rule.id,event.id,'staff');assert.equal(q.response.status,202);
+  const owner=f.actors.master;await f.pg.query('SELECT platform_private.register_owner($1,$2)',[owner.user,'Synthetic verified platform owner']);
+  const native=async(operation:string,input:unknown)=>(await f.pg.query<any>('SELECT platform_private.request($1,$2,$3,$4,$5::jsonb) r',[owner.user,owner.session,operation,randomUUID(),JSON.stringify(input)])).rows[0].r;
+  const plan=await native('plans.create',{definition:{name:'Synthetic expiring plan',description:'',currencyCode:'CAD',unitScale:2,amountMinor:'1000',periodMonths:1,graceDays:0,active:true},reason:'Synthetic plan'});
+  await native('subscriptions.assign',{academyId:f.a,expectedVersion:0,planId:plan.body.data.id,planVersion:1,startsAt:new Date(Date.now()-86400000*2).toISOString(),expiresAt:new Date(Date.now()-86400000).toISOString(),reason:'Synthetic expired school'});
+  const result=await f.work();assert.equal(result.outcome,'cancelled',JSON.stringify(f.workerErrors));assert.equal(result.recorded,true);const state=await f.state(q.body.data.id);assert.equal(state.status,'cancelled');assert.equal(state.last_error,'ACADEMY_UNAVAILABLE');assert.equal((await f.pg.query('SELECT * FROM public.automation_runs')).rows.length,0);assert.equal((await f.pg.query("SELECT * FROM public.portal_notifications WHERE origin='automation'")).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.automation_event_sources WHERE event_id=$1',[event.id])).rows.length,1);
+ }finally{await f.pg.close();}
+});
 function check(name:string,run:(f:F)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 check('a durable immediate job delivers through the existing engine and preserves initiator, retry receipts and private metadata boundaries',async f=>{
  const r=await f.rule(),event=await f.source(),key=randomUUID(),queued=await f.queue(r.id,event.id,'staff',key);assert.equal(queued.response.status,202,JSON.stringify(queued.body));assert.equal(queued.body.delivered,false);assert.equal((await f.pg.query('SELECT * FROM public.portal_notifications WHERE origin=$$automation$$')).rows.length,0);assert.doesNotMatch(JSON.stringify(queued.body),/credential_id|user_id|lease_token|lease_until|token_hash|enqueue_request_id/);

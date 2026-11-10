@@ -15,9 +15,13 @@ const planCreate=z.object({definition:planDefinition,reason}).strict();
 const planChange=planCreate.extend({expectedVersion:z.number().int().positive().max(2147483647)}).strict();
 const planDuplicate=invitation.extend({name}).strict();
 const planHistory=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),beforeVersion:z.coerce.number().int().positive().max(2147483647).optional()}).strict();
+const subscriptionAssignment=z.object({expectedVersion:z.number().int().min(0).max(2147483647),planId:id,planVersion:z.number().int().positive().max(2147483647),startsAt:z.string().datetime({precision:3}).regex(/^[12]/),expiresAt:z.string().datetime({precision:3}).regex(/^[12]/).nullable(),reason}).strict();
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/subscription',method:'get',summary:'Read pinned school subscription and current native-clock access status; does not verify payment'},
+ {path:'/api/platform/v1/academies/{id}/subscription/history',method:'get',summary:'Bounded immutable school subscription editions',querySchema:planHistory},
+ {path:'/api/platform/v1/academies/{id}/subscription/assign',method:'post',summary:'Owner assigns exact current active plan terms; expectedVersion=0 for first assignment; null expiry only for a zero-price plan; expired/scheduled schools become read-only without overriding manual suspension; no charge or payment proof',schema:subscriptionAssignment},
  {path:'/api/platform/v1/plans',method:'get',summary:'Owner-only subscription reference-price catalogue; does not charge or grant school access',querySchema:paging},
  {path:'/api/platform/v1/plans',method:'post',summary:'Create a subscription plan with exact money units and immutable edition history; zero-priced plans supported',schema:planCreate},
  {path:'/api/platform/v1/plans/{id}',method:'get',summary:'Read current platform subscription plan terms'},
@@ -57,9 +61,19 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    id.parse(session.userId);id.parse(session.sessionId);
    const target=/^academies\/([a-f0-9-]{36})(\/(?:change|master-invitation(?:\/revoke)?))?$/.exec(path);
    const planTarget=/^plans\/([a-f0-9-]{36})(\/(?:change|duplicate|history))?$/.exec(path);
+   const subscriptionTarget=/^academies\/([a-f0-9-]{36})\/subscription(?:\/(history|assign))?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(request.method==='GET'&&(path==='plans'||planTarget)){
+   if(subscriptionTarget){
+    const academyId=id.parse(subscriptionTarget[1]),suffix=subscriptionTarget[2];
+    if(request.method==='GET'&&suffix!=='assign'){
+     const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
+     if(suffix==='history'){input={...planHistory.parse(Object.fromEntries(pairs)),academyId};operation='subscriptions.history';}
+     else{if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId};operation='subscriptions.get';}
+    }else if(request.method==='POST'&&suffix==='assign'){
+     if(url.search)throw new ApiError(400,'INVALID_QUERY');key=id.parse(request.headers.get('idempotency-key'));input={...subscriptionAssignment.parse(await jsonBody(request)),academyId};operation='subscriptions.assign';
+    }else throw new ApiError(405,'METHOD_NOT_ALLOWED');
+   }else if(request.method==='GET'&&(path==='plans'||planTarget)){
     const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
     if(path==='plans'){input=paging.parse(Object.fromEntries(pairs));operation='plans.list';}
     else if(planTarget![2]==='/history'){input={...planHistory.parse(Object.fromEntries(pairs)),planId:id.parse(planTarget![1])};operation='plans.history';}
@@ -114,6 +128,7 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
     if(message==='PLATFORM_OWNER_REQUIRED'){status=403;code=message;}
     else if(message==='PLATFORM_ACADEMY_NOT_FOUND'||message==='PLATFORM_PLAN_NOT_FOUND'){status=404;code=message;}
     else if(message==='PLATFORM_PLAN_VERSION_CHANGED'){status=409;code=message;}
+    else if(['PLATFORM_SUBSCRIPTION_VERSION_CHANGED','PLATFORM_SUBSCRIPTION_UNCHANGED','PLATFORM_PLAN_NOT_CURRENT'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_IDEMPOTENCY_CONFLICT','PLATFORM_ACADEMY_VERSION_CHANGED','PLATFORM_MASTER_VERIFICATION_REQUIRED','PLATFORM_PROVISIONING_REENTRY_FORBIDDEN','PLATFORM_MASTER_INVITATION_UNAVAILABLE','PLATFORM_INVITATION_NO_LONGER_CURRENT','PLATFORM_INVITATION_REISSUE_REQUIRED'].includes(message)){status=409;code=message;}
     else if(message==='INVALID_PLATFORM_INPUT'){status=400;code=message;}
    }

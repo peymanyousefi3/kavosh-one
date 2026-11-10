@@ -204,7 +204,9 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if(human)c.kind='human';
       if (!c.allowed) throw new ApiError(429, 'RATE_LIMITED');
       await db.query('BEGIN'); transaction = true;
-      await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)", [c.academy_id]);
+      // Separate from permission locks: no shared-to-exclusive policy upgrade.
+      // Freeze subscription terms before identity locks or any status decision.
+      await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true),pg_advisory_xact_lock_shared(hashtextextended($1,310))", [c.academy_id]);
       // Freeze geography before identity row locks. This avoids reading records
       // using a hub list expanded before a concurrent move across area boundaries.
       const readOnlyPreview=request.method==='POST'&&(/^signature-send-requests\/[0-9a-f-]{36}\/completion-evidence\/[0-9a-f-]{36}\/(?:document|audit)\/download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/tuition-invoices\/[0-9a-f-]{36}\/receipts\/[0-9a-f-]{36}\/attachment-download-link$/i.test(path)||/^students\/[0-9a-f-]{36}\/registration-data\/care\/(?:reveal|submissions\/[0-9a-f-]{36}\/reveal)$/i.test(path)||/^students\/[0-9a-f-]{36}\/care\/(?:reveal|proposal-reveal)$/i.test(path)||path==='me/community-profile/avatar-download-link'||/^payroll\/private-identities\/[0-9a-f-]{36}\/(?:reveal|proposal-reveal)$/i.test(path)||/^files\/[0-9a-f-]{36}\/download-link$/i.test(path)||/^community\/profiles\/[0-9a-f-]{36}\/avatar-download-link$/i.test(path)||/^payroll\/payruns\/[0-9a-f-]{36}\/net\/(?:contributions-preview|source-contributions-preview)$/i.test(path)||/^payroll\/tax-periods\/[0-9a-f-]{36}\/(?:contributions-preview|taxes-preview)$/i.test(path)||path==='calendar/preview'||/^automations\/rules\/[0-9a-f-]{36}\/(?:preview|event-preview)$/i.test(path)||/^payroll\/engagements\/[0-9a-f-]{36}\/preview$/i.test(path)||/^finance\/tax-codes\/[0-9a-f-]{36}\/preview$/i.test(path)||/^finance\/receipts\/[0-9a-f-]{36}\/allocations\/preview$/i.test(path)||/^finance\/tuition-plans\/[0-9a-f-]{36}\/sharing\/preview$/i.test(path));
@@ -215,10 +217,13 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
         await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
       }
       const lock = human
-        ? await db.query<{ valid: boolean }>('SELECT public.lock_human($1,$2) AS valid',[human.sessionId,human.userId])
-        : await db.query<{ valid: boolean }>('SELECT public.lock_bot($1) AS valid', [c.token_id]);
+        ? await db.query<{ valid: boolean;revision:number }>('SELECT public.lock_human($1,$2) AS valid,public.schema_revision() AS revision',[human.sessionId,human.userId])
+        : await db.query<{ valid: boolean;revision:number }>('SELECT public.lock_bot($1) AS valid,public.schema_revision() AS revision', [c.token_id]);
       if (!lock.rows[0]?.valid) throw new ApiError(401, 'UNAUTHORIZED');
-      const academy = await db.query<{ status: string }>('SELECT status FROM public.academies WHERE id=$1', [c.academy_id]);
+      // Legacy schemas have no subscription terms to enforce. Select their
+      // actual revision,not a failed-query fallback;310+ must use the native gate.
+      if(!Number.isInteger(lock.rows[0].revision))throw new Error('INVALID_SCHEMA_REVISION');
+      const academy = await db.query<{ status: string }>(lock.rows[0].revision>=310?'SELECT public.effective_academy_status(status,subscription_terms) AS status FROM public.academies WHERE id=$1':'SELECT status FROM public.academies WHERE id=$1', [c.academy_id]);
       const status = academy.rows[0]?.status;
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
