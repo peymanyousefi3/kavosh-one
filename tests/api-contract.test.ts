@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('platform cancellation review queue is owner-only with paired deadline cursors and no supplied clock or mutation authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/platform/v1/subscription-cancellations',op=api.paths[path].get,parameters=op.parameters.filter((p:any)=>p.in==='query');assert.deepEqual(parameters.map((p:any)=>p.name).sort(),['academyId','afterId','afterReviewAfter','limit','readiness']);assert.equal(parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.deepEqual(parameters.find((p:any)=>p.name==='readiness').schema.enum,['all','waiting','ready']);assert.equal(op.security.some((s:any)=>'botBearer'in s),false);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/not a snapshot or automatic confirmation/);
+});
+
 test('school subscription visibility remains separately permissioned with stable history and no summary mutation or tenant override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/academy/subscription',summary=api.paths[base].get,history=api.paths[base+'/cancellations'].get;
  assert.equal(summary['x-capability'],'academy-subscription.view');assert.ok((summary.security??api.security).some((s:any)=>'botBearer'in s));assert.match(summary.summary,/Own academy/);assert.equal(api.paths[base].post,undefined);assert.equal(api.paths[base+'/cancellations'].post['x-capability'],'academy-subscription.request');assert.deepEqual(history.parameters.map((p:any)=>p.name).sort(),['afterId','afterRequestedAt','limit']);assert.ok(api.paths[base+'/cancellations/{id}'].get);assert.equal(api.paths[base+'/cancellations/{id}/confirm'],undefined);for(const op of[summary,history])assert.equal(op.parameters.some((p:any)=>p.name==='academyId'),false);

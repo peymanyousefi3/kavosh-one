@@ -20,9 +20,11 @@ const freeExemption=z.object({expectedVersion:z.number().int().min(1).max(214748
 const cancellationRequest=z.object({expectedVersion:z.number().int().min(0).max(2147483647),reason}).strict();
 const cancellationWithdrawal=z.object({expectedVersion:z.literal(1),reason}).strict();
 const cancellationConfirmation=cancellationWithdrawal.extend({expectedSubscriptionVersion:z.number().int().min(0).max(2147483647),confirmAcademyId:id}).strict();
+const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),academyId:id.optional(),readiness:z.enum(['all','waiting','ready']).default('all'),afterReviewAfter:z.iso.datetime({offset:true}).optional(),afterId:id.optional()}).strict().refine(v=>(v.afterReviewAfter===undefined)===(v.afterId===undefined));
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/subscription-cancellations',method:'get',summary:'Verified platform-owner review queue of pending school cancellations ordered by original review deadline/id; native clock readiness,optional school and bounded paired cursor. Live queue,not a snapshot or automatic confirmation,charge or deletion.',querySchema:cancellationQueue},
  {path:'/api/platform/v1/academies/{id}/subscription/cancellations/{cancellationId}/confirm',method:'post',summary:'Verified owner confirms only after the original native30-day wait and explicitly reviews the current subscription version; restrict operation to read-only without overriding suspension; preserves records and never deletes,cancels provider payments or issues refunds',schema:cancellationConfirmation},
  {path:'/api/platform/v1/academies/{id}/subscription/cancellations',method:'get',summary:'Owner-only bounded cancellation request and withdrawal history; requests do not cancel access or delete data',querySchema:paging},
  {path:'/api/platform/v1/academies/{id}/subscription/cancellations',method:'post',summary:'Record one pending request against the exact school subscription version,including unassigned version0; reviewAfter uses the native clock plus720hours; no backdating,access change,cancellation or deletion',schema:cancellationRequest},
@@ -76,7 +78,9 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const cancellationTarget=/^academies\/([a-f0-9-]{36})\/subscription\/cancellations(?:\/([a-f0-9-]{36})(?:\/(withdraw|confirm))?)?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(cancellationTarget){
+   if(path==='subscription-cancellations'){
+    if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');input=cancellationQueue.parse(Object.fromEntries(pairs));operation='cancellations.queue';
+   }else if(cancellationTarget){
     const academyId=id.parse(cancellationTarget[1]),cancellationId=cancellationTarget[2]?id.parse(cancellationTarget[2]):undefined;
     if(request.method==='GET'&&!cancellationTarget[3]){
      if(cancellationId){if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId,cancellationId};operation='cancellations.get';}

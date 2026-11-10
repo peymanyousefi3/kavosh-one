@@ -10,6 +10,58 @@ import { upgradeToCurrent } from './migration-upgrade.ts';
 
 const definition={name:'Synthetic free academy',description:'Reference terms only',currencyCode:'CAD',unitScale:2,amountMinor:'0',periodMonths:1,graceDays:30,active:true};
 const instant=(days:number)=>new Date(Date.now()+days*86400000).toISOString();
+test('platform cancellation queue separates native ready and waiting cases,pages original deadlines and never changes access',async()=>{
+ const f=await fixture();try{
+  const old=await historicalCancellation(f),fresh=await f.request('academies/'+f.b+'/subscription/cancellations',{expectedVersion:0,reason:'Synthetic waiting school'});assert.equal(fresh.response.status,201);
+  const first=await f.request('subscription-cancellations?limit=1');assert.equal(first.response.status,200,JSON.stringify(first.body));assert.equal(first.response.headers.get('cache-control'),'no-store');assert.equal(first.body.data.length,1);assert.equal(first.body.data[0].cancellation.id,old.id);assert.equal(first.body.data[0].reviewReady,true);assert.equal(first.body.requiresOwnerConfirmation,true);assert.equal(first.body.cancellationPerformed,false);assert.equal(first.body.data[0].academy.subscriptionVersion,0);assert.ok(first.body.nextCursor);
+  const next=await f.request('subscription-cancellations?limit=1&'+new URLSearchParams(first.body.nextCursor));assert.equal(next.response.status,200,JSON.stringify(next.body));assert.deepEqual(next.body.data.map((r:any)=>r.cancellation.id),[fresh.body.data.id]);assert.equal(next.body.nextCursor,null);assert.equal(next.body.data[0].reviewReady,false);
+  const ready=await f.request('subscription-cancellations?readiness=ready');assert.deepEqual(ready.body.data.map((r:any)=>r.cancellation.id),[old.id]);assert.ok(Date.parse(ready.body.asOf)>=Date.parse(old.reviewAfter));assert.deepEqual((await f.request('subscription-cancellations?readiness=waiting')).body.data.map((r:any)=>r.cancellation.id),[fresh.body.data.id]);assert.deepEqual((await f.request('subscription-cancellations?academyId='+f.b)).body.data.map((r:any)=>r.cancellation.id),[fresh.body.data.id]);
+  assert.ok((await f.pg.query<any>('SELECT status FROM public.academies')).rows.every(r=>r.status==='active'));
+  const confirmed=await f.request('academies/'+f.a+'/subscription/cancellations/'+old.id+'/confirm',{expectedVersion:1,expectedSubscriptionVersion:0,confirmAcademyId:f.a,reason:'Synthetic explicit queue review'});assert.equal(confirmed.response.status,200);assert.equal((await f.request('subscription-cancellations?readiness=ready')).body.data.length,0);
+  assert.equal((await f.schoolRequest('academy/subscription/cancellations/'+fresh.body.data.id+'/withdraw',{expectedVersion:1,reason:'Synthetic second school withdrawal'},'foreignMaster',{academy:f.b})).response.status,200);
+  assert.equal((await f.request('subscription-cancellations')).body.data.length,0);assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,2);
+ }finally{await f.pg.close();}
+});
+test('platform cancellation queue is owner-only,strictly bounded,and requires both original deadline cursor fields',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.request('subscription-cancellations',undefined,'foreignMaster')).response.status,403);assert.equal((await f.schoolRequest('subscription-cancellations')).response.status,404);
+  for(const q of ['limit=0','limit=101','limit=1&limit=2','readiness=force','now=2000-01-01T00:00:00Z','afterId='+randomUUID(),'afterReviewAfter='+encodeURIComponent(instant(0)),'academyId=invalid'])assert.equal((await f.request('subscription-cancellations?'+q)).response.status,400,q);
+  assert.equal((await f.request('subscription-cancellations?academyId='+randomUUID())).response.status,404);assert.equal((await f.request('subscription-cancellations',{})).response.status,405);
+  await f.pg.exec('SET ROLE kavosh_platform_service');try{
+   await assert.rejects(f.pg.query('SELECT platform_private.cancellation_queue($1,$2,$3::jsonb)',[f.owner.user,f.owner.session,'{}']),/permission denied/);
+   for(const input of [{limit:101},{limit:'1'},{readiness:'force'},{afterReviewAfter:instant(0)},{afterReviewAfter:'2026-02-31T00:00:00Z',afterId:randomUUID()},{now:instant(-100)}])await assert.rejects(f.pg.query("SELECT platform_private.request($1,$2,'cancellations.queue',NULL,$3::jsonb)",[f.owner.user,f.owner.session,JSON.stringify(input)]),/INVALID_PLATFORM_INPUT/);
+  }finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.query('UPDATE identity.session SET "mfaVerified"=false WHERE id=$1',[f.owner.session]);assert.equal((await f.request('subscription-cancellations')).response.status,403);
+ }finally{await f.pg.close();}
+});
+test('platform cancellation queue keeps tied deadlines ordered by id without dropping the next school',async()=>{
+ const f=await fixture();try{
+  const requestedAt=instant(-31),a=await historicalCancellation(f,{requestedAt}),b=await historicalCancellation(f,{requestedAt,academyId:f.b}),expected=[a.id,b.id].sort();
+  const first=await f.request('subscription-cancellations?readiness=ready&limit=1');assert.equal(first.response.status,200);assert.equal(first.body.data[0].cancellation.id,expected[0]);assert.ok(first.body.nextCursor);
+  const last=await f.request('subscription-cancellations?readiness=ready&limit=1&'+new URLSearchParams(first.body.nextCursor));assert.equal(last.response.status,200,JSON.stringify(last.body));assert.equal(last.body.data[0].cancellation.id,expected[1]);assert.equal(last.body.nextCursor,null);
+ }finally{await f.pg.close();}
+});
+test('a reviewed queue entry cannot cancel a school after its master has withdrawn that case',async()=>{
+ const f=await fixture();try{
+  const old=await historicalCancellation(f),queue=await f.request('subscription-cancellations?readiness=ready');assert.equal(queue.response.status,200);const entry=queue.body.data[0];assert.equal(entry.cancellation.id,old.id);
+  assert.equal((await f.schoolRequest('academy/subscription/cancellations/'+old.id+'/withdraw',{expectedVersion:1,reason:'Synthetic master withdraws while owner reviews'})).response.status,200);
+  const stale=await f.request('academies/'+f.a+'/subscription/cancellations/'+old.id+'/confirm',{expectedVersion:entry.cancellation.version,expectedSubscriptionVersion:entry.academy.subscriptionVersion,confirmAcademyId:f.a,reason:'Synthetic stale queue review'});assert.equal(stale.response.status,409);assert.equal(stale.body.error.code,'PLATFORM_CANCELLATION_ALREADY_DECIDED');assert.equal((await f.request('subscription-cancellations')).body.data.length,0);assert.equal((await f.schoolRequest('academy/subscription')).body.data.operationalStatus,'active');
+ }finally{await f.pg.close();}
+});
+test('actual315 platform queue upgrade preserves school cancellation proofs,source guards and credential authority',async()=>{
+ const f=await fixture({throughSchema:315});try{
+  const old=await historicalCancellation(f),tables=['public.academies','public.people','auth_private.credentials','public.approval_requests','public.school_cancellation_approvals','platform_private.school_cancellation_requests','platform_private.school_cancellation_decisions','platform_private.audit_events','platform_private.request_receipts'],snapshot=async()=>{const rows=[];for(const t of tables)rows.push((await f.pg.query('SELECT to_jsonb(x) r FROM '+t+' x ORDER BY to_jsonb(x)::text')).rows);return rows;},before=await snapshot(),sql="SELECT oid,proowner,proacl,proconfig FROM pg_proc WHERE oid=ANY(ARRAY['platform_private.request(uuid,uuid,text,uuid,jsonb)'::regprocedure,'public.apply_school_cancellation(uuid,uuid,uuid)'::regprocedure,'public.guard_school_cancellation_approval_source()'::regprocedure]) ORDER BY oid",functions=(await f.pg.query(sql)).rows;
+  await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(sql)).rows,functions);const queue=await f.request('subscription-cancellations');assert.equal(queue.response.status,200,JSON.stringify(queue.body));assert.equal(queue.body.data[0].cancellation.id,old.id);
+ }finally{await f.pg.close();}
+});
+test('platform cancellation queue refuses to return sensitive results when its read audit is suppressed',async()=>{
+ const f=await fixture();try{
+  await historicalCancellation(f);const before=(await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows;
+  await f.pg.exec("CREATE FUNCTION platform_private.synthetic_skip_queue_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='platform.subscription.cancellations.queue.read' THEN RETURN NULL;END IF;RETURN NEW;END $$;CREATE TRIGGER synthetic_skip BEFORE INSERT ON platform_private.audit_events FOR EACH ROW EXECUTE FUNCTION platform_private.synthetic_skip_queue_audit()");
+  assert.equal((await f.request('subscription-cancellations')).response.status,503);assert.deepEqual((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows,before);
+  await f.pg.exec('DROP TRIGGER synthetic_skip ON platform_private.audit_events;DROP FUNCTION platform_private.synthetic_skip_queue_audit()');assert.equal((await f.request('subscription-cancellations')).response.status,200);
+ }finally{await f.pg.close();}
+});
 test('school-side cancellation waits for its actual master,starts its native clock on approval,and withdraws without changing access',async()=>{
  const f=await fixture();try{
   const root='academy/subscription/cancellations',input={expectedVersion:0,reason:'Synthetic school cancellation request'};
@@ -119,11 +171,11 @@ async function fixture(options:{throughSchema?:number}={}){
 }
 // Synthetic historical state,not API backdating,clock replacement or a claim
 // that30days elapsed during this test. Every native FK/effect guard stays on.
-async function historicalCancellation(f:Awaited<ReturnType<typeof fixture>>){
+async function historicalCancellation(f:Awaited<ReturnType<typeof fixture>>,options:{academyId?:string;requestedAt?:string}={}){
  const id=randomUUID(),key=randomUUID(),audit=randomUUID(),reason='Synthetic historical cancellation fixture';await f.pg.exec('BEGIN');try{
-  await f.pg.query("INSERT INTO platform_private.school_cancellation_requests(id,academy_id,source_version,requested_at,review_after,actor_user_id,session_id,request_key,audit_id) SELECT $1,a.id,a.subscription_version,t.at_time,t.at_time+interval '720 hours',$3,$4,$5,$6 FROM public.academies a CROSS JOIN(SELECT clock_timestamp()-interval '31 days' at_time)t WHERE a.id=$2",[id,f.a,f.owner.user,f.owner.session,key,audit]);
-  const data=(await f.pg.query<any>('SELECT original_data d FROM platform_private.school_cancellation_cases WHERE id=$1',[id])).rows[0].d,input={academyId:f.a,expectedVersion:data.requestedSubscriptionVersion,reason},result={status:201,body:{data,schoolAccessChanged:false,cancellationPerformed:false,deletionPerformed:false,chargesPerformed:false}};
-  await f.pg.query("INSERT INTO platform_private.audit_events(id,actor_user_id,session_id,request_key,action,academy_id,after_data,reason,created_at) SELECT $1,$2,$3,$4,'platform.subscription.cancellation.requested',$5,$6::jsonb,$7,requested_at FROM platform_private.school_cancellation_requests WHERE id=$8",[audit,f.owner.user,f.owner.session,key,f.a,JSON.stringify(data),reason,id]);
+  await f.pg.query("INSERT INTO platform_private.school_cancellation_requests(id,academy_id,source_version,requested_at,review_after,actor_user_id,session_id,request_key,audit_id) SELECT $1,a.id,a.subscription_version,t.at_time,t.at_time+interval '720 hours',$3,$4,$5,$6 FROM public.academies a CROSS JOIN(SELECT coalesce($7::timestamptz,clock_timestamp()-interval '31 days') at_time)t WHERE a.id=$2",[id,options.academyId??f.a,f.owner.user,f.owner.session,key,audit,options.requestedAt??null]);
+  const data=(await f.pg.query<any>('SELECT original_data d FROM platform_private.school_cancellation_cases WHERE id=$1',[id])).rows[0].d,input={academyId:options.academyId??f.a,expectedVersion:data.requestedSubscriptionVersion,reason},result={status:201,body:{data,schoolAccessChanged:false,cancellationPerformed:false,deletionPerformed:false,chargesPerformed:false}};
+  await f.pg.query("INSERT INTO platform_private.audit_events(id,actor_user_id,session_id,request_key,action,academy_id,after_data,reason,created_at) SELECT $1,$2,$3,$4,'platform.subscription.cancellation.requested',$5,$6::jsonb,$7,requested_at FROM platform_private.school_cancellation_requests WHERE id=$8",[audit,f.owner.user,f.owner.session,key,options.academyId??f.a,JSON.stringify(data),reason,id]);
   await f.pg.query("INSERT INTO platform_private.request_receipts(user_id,request_key,fingerprint,result,created_at) SELECT $1,$2,encode(sha256(convert_to(jsonb_build_object('operation','cancellations.request','input',$3::jsonb)::text,'UTF8')),'hex'),$4::jsonb,requested_at FROM platform_private.school_cancellation_requests WHERE id=$5",[f.owner.user,key,JSON.stringify(input),JSON.stringify(result),id]);await f.pg.exec('COMMIT');return data;
  }catch(e){await f.pg.exec('ROLLBACK');throw e;}
 }
