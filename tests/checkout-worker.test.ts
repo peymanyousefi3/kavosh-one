@@ -14,7 +14,7 @@ test('isolated worker refuses invalid credentials,origins and targets before eit
 });
 test('operator command defaults off,requires explicit dispatch and never logs secret configuration on failure',async()=>{
  const execute=promisify(execFile),ids=Array.from({length:3},()=>randomUUID()),secret=['sk','test',randomBytes(24).toString('hex')].join('_');
- for(const args of [[...ids,'--dispatch'],ids])await assert.rejects(execute(process.execPath,['--import','tsx','scripts/dispatch-checkout.ts',...args],{timeout:5000,env:{NODE_ENV:'test',PATH:process.env.PATH,STRIPE_CHECKOUT_TRANSPORT_ENABLED:'false',STRIPE_CHECKOUT_CONNECTIONS:secret,CHECKOUT_WORKER_TOKEN:secret}}),e=>{
+ for(const args of [[...ids,'--dispatch'],ids,[...ids,'--inspect-disputes','cs_test_synthetic'],[...ids,'--inspect-dispute-balance','cs_test_synthetic','du_synthetic','txn_synthetic']])await assert.rejects(execute(process.execPath,['--import','tsx','scripts/dispatch-checkout.ts',...args],{timeout:5000,env:{NODE_ENV:'test',PATH:process.env.PATH,STRIPE_CHECKOUT_TRANSPORT_ENABLED:'false',STRIPE_CHECKOUT_CONNECTIONS:secret,CHECKOUT_WORKER_TOKEN:secret}}),e=>{
   const r=e as Error&{stdout:string;stderr:string};assert.equal(r.stdout,'');assert.match(r.stderr,/Checkout dispatch did not finish/);assert.ok(!r.stderr.includes(secret));return true;
  });
 });
