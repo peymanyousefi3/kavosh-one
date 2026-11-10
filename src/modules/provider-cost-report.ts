@@ -11,7 +11,7 @@ export const providerCostAuthorization=z.object({postings:ids}).strict();
 // Original approval bindings retain every original financial account and
 // invoice context. Current class/student rights are additional,not a shortcut
 // through a broad financial account or a selected report filter.
-const permitted=`p.status='applied' AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct','finance.provider-dispute.loss')
+const permitted=`p.status='applied' AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct','finance.provider-dispute.loss','finance.provider-dispute.recover-loss')
  AND public.approval_bindings_allow(p.privacy_bindings,$3::jsonb)
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) scope(value) WHERE public.scope_contains(scope.value,p.scope) IS NOT TRUE)
  AND public.scope_contains($5::jsonb,jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',cl.id,'hubId',cl.hub_id))))

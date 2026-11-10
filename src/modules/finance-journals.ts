@@ -127,7 +127,7 @@ async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.jou
 }
 async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
  const prepared=await prepare(ctx,true,input,lock,false);
- if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct','finance.provider-dispute.loss') LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_DISPUTE_CORRECTION_WORKFLOW_REQUIRED');
+ if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct','finance.provider-dispute.loss','finance.provider-dispute.recover-loss') LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_DISPUTE_CORRECTION_WORKFLOW_REQUIRED');
  if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action='finance.provider-refund.record' LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_REFUND_CORRECTION_WORKFLOW_REQUIRED');
  // Original approval identity exists on historical schemas too. Do not make
  // unrelated legacy corrections depend on a later feature table being present.
