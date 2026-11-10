@@ -138,6 +138,7 @@ export async function families(ctx:ApiContext,registry:ApprovalRegistry=familyAc
   }
   throw new ApiError(405,'METHOD_NOT_ALLOWED');
 }
+export { relation as permittedFamilyRelationship };
 export const familiesContract=[
   {path:'/api/v1/students/{id}/guardians',method:'get',summary:'Private approved/suspended family associations and current identity verification status; not an access grant',querySchema:listQuery},
   {path:'/api/v1/students/{id}/guardians',method:'post',summary:'Request a family association; upper human approval or master self-approval required',schema:createInput},

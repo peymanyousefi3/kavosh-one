@@ -31,7 +31,7 @@ export const workSignatureCompletionReviewActions:ApprovalRegistry={'work.signat
   // upper reviewer. Approval callbacks execute with the reviewer's identity.
   return {record:before,source:await source(ctx,i,i.requestedBy)};
  }catch(error){if(purpose==='review'&&error instanceof ApiError&&[403,404,409].includes(error.status))return {unavailable:error.code};throw error;}},
- async authorizeReviewer(ctx,p){const i=payload.parse(p.payload),{w}=await authority(ctx,i);await authorizeWorkAgreementReviewer(ctx,{engagementId:w.engagement_id,templateId:w.template_id,academySignerId:w.academy_signer_id,guardianId:w.input.guardianId});},
+ async authorizeReviewer(ctx,p){const i=payload.parse(p.payload),{w}=await authority(ctx,i);await authorizeWorkAgreementReviewer(ctx,{engagementId:w.engagement_id,templateId:w.template_id,academySignerId:w.academy_signer_id,guardianId:w.input.guardianId,guardianRelationshipId:w.input.guardianRelationshipId});},
  async apply(ctx,p){
   if(ctx.credential.kind!=='human'||p.requester_kind!=='human')throw new ApiError(403,'HUMAN_EVIDENCE_REVIEW_REQUIRED');const i=payload.parse(p.payload),s=(p.review_context as {source:Record<string,unknown>}).source;
   if(i.expectedVersion===0)await ctx.db.query('INSERT INTO public.work_signature_completion_reviews(academy_id,evidence_id,input,source,requested_by,changed_by,approval_id) VALUES($1,$2,$3::jsonb,$4::jsonb,$5,$6,$7)',[ctx.credential.academy_id,i.evidenceId,JSON.stringify(i),JSON.stringify(s),p.requester_id,ctx.credential.person_id,p.id]);

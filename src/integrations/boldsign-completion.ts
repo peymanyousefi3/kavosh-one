@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { parsePhoneNumberWithError } from 'libphonenumber-js/max';
 import { ApiError } from '../core/policy.ts';
+import { workGuardianAuthoritySchema,workGuardianMetadata } from './boldsign-send-request.ts';
 import { getBoldSignCompletionDocument,getBoldSignDocumentPdf,getBoldSignAuditPdf,type BoldSignConnection } from './boldsign.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),hash=z.string().regex(/^[a-f0-9]{64}$/);
@@ -14,11 +15,11 @@ const artifact=z.object({id:uuid,sha256:hash,sizeBytes:z.number().int().min(1).m
 const retained=z.object({sourceFingerprint:hash,document:artifact,audit:artifact,properties:artifact}).strict();
 export const signatureCompletionSourceSchema=expected;
 const workParty=z.object({role:z.enum(['worker','academy_representative','legal_guardian']),signerId:uuid,signatureFields:expected.shape.signatureFields,consentFields:consentFields.optional()}).strict();
-const guardianAuthority=z.object({personId:uuid,version:z.number().int().positive().max(2147483647),approvalId:uuid,profileVersion:z.number().int().positive().max(2147483647),workerIdentityVersion:z.number().int().positive().max(2147483647),workerIdentityApprovalId:uuid}).strict();
+const guardianAuthority=workGuardianAuthoritySchema;
 export const workSignatureCompletionSourceSchema=expected.omit({signerId:true,packageId:true,attachmentId:true,signatureFields:true,consentFields:true}).extend({purpose:z.literal('worker_services'),requestId:uuid,preparationId:uuid,originalSourceFingerprint:hash,
  parties:z.array(workParty).min(2).max(3),guardianAuthority:guardianAuthority.optional()}).strict().superRefine((s,ctx)=>{
  const roles=s.parties.map(p=>p.role),fields=s.parties.flatMap(p=>[...p.signatureFields,...(p.consentFields??[])]),guardian=s.parties.find(p=>p.role==='legal_guardian');
- if(new Set(roles).size!==s.parties.length||new Set(s.parties.map(p=>p.signerId)).size!==s.parties.length||!roles.includes('worker')||!roles.includes('academy_representative')||fields.length>100||new Set(fields.map(f=>f.id)).size!==fields.length||Boolean(guardian)!==Boolean(s.guardianAuthority)||guardian&&guardian.signerId!==s.guardianAuthority?.personId||s.parties.some(p=>p.consentFields&&p.role!==(guardian?'legal_guardian':'worker')))ctx.addIssue({code:'custom',message:'Exact independent original parties and guardian authority required'});
+ if(new Set(roles).size!==s.parties.length||new Set(s.parties.map(p=>p.signerId)).size!==s.parties.length||!roles.includes('worker')||!roles.includes('academy_representative')||fields.length>100||new Set(fields.map(f=>f.id)).size!==fields.length||Boolean(guardian)!==Boolean(s.guardianAuthority)||guardian&&guardian.signerId!==s.guardianAuthority?.personId||s.parties.some(p=>p.consentFields&&(p.role!==(guardian?'legal_guardian':'worker')||s.guardianAuthority&&'identitySource'in s.guardianAuthority)))ctx.addIssue({code:'custom',message:'Exact independent original parties and guardian authority required'});
 });
 export type SignatureCompletionSource=z.infer<typeof expected>;
 export type WorkSignatureCompletionSource=z.infer<typeof workSignatureCompletionSourceSchema>;
@@ -79,7 +80,9 @@ function inspect(p:Projection,e:Expected){
 }
 function inspectWork(p:Projection,e:WorkSignatureCompletionSource){
  const a=e.guardianAuthority,n=e.parties.length;
- if(!inspectDocument(p,e,{kavoshWorkPreparationId:e.preparationId,kavoshWorkContentBindingId:e.bindingId,kavoshDocumentSha256:e.documentSha256,...a?{kavoshWorkGuardianId:a.personId,kavoshWorkGuardianAuthorityVersion:String(a.version),kavoshWorkGuardianAuthorityApprovalId:a.approvalId,kavoshWorkGuardianProfileVersion:String(a.profileVersion),kavoshWorkerIdentityVersion:String(a.workerIdentityVersion),kavoshWorkerIdentityApprovalId:a.workerIdentityApprovalId}:{}}))return null;
+ const incompatible=a&&'identitySource'in a?['kavoshWorkerIdentityVersion','kavoshWorkerIdentityApprovalId']:['kavoshWorkIdentitySource','kavoshWorkStudentRelationshipId','kavoshWorkStudentProfileVersion'];
+ if(incompatible.some(k=>Object.hasOwn(p.metaData??{},k)))throw new ApiError(409,'BOLDSIGN_COMPLETION_SOURCE_MISMATCH');
+ if(!inspectDocument(p,e,{kavoshWorkPreparationId:e.preparationId,kavoshWorkContentBindingId:e.bindingId,kavoshDocumentSha256:e.documentSha256,...a?workGuardianMetadata(a):{}}))return null;
  if(p.signerDetails.length!==n||new Set(p.signerDetails.map(s=>s.id)).size!==n||new Set(p.signerDetails.map(s=>s.signerEmail.toLowerCase())).size!==n)throw new ApiError(409,'BOLDSIGN_COMPLETION_SOURCE_MISMATCH');
  const candidates=p.signerDetails.map(s=>({...inspectSigner(s,null),fields:s.formFields?.filter(f=>f.type.toLowerCase()==='signature').sort((a,b)=>a.id.localeCompare(b.id)),...(e.parties.some(p=>p.consentFields)?{consentFields:s.formFields?.filter(f=>f.type.toLowerCase()==='checkbox')}:{})})).sort((a,b)=>a.providerSignerId.localeCompare(b.providerSignerId));
  return {candidates,reasons:p.isDeleted!==false||p.enablePrintAndSign!==false||p.enableReassign!==false?['provider_flags_incomplete']:[]};
