@@ -3,6 +3,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('released learning media API is human-only and never accepts caller file,copy or actor overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
+ for(const root of ['/api/v1/students/{id}/published-reports/{publicationId}','/api/v1/students/{id}/homework/{homeworkId}','/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}']){
+  const get=api.paths[root+'/media'].get,post=api.paths[root+'/media/{blockId}/download-link'].post;for(const op of [get,post])assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);assert.deepEqual(post.requestBody.content['application/json'].schema.properties,{});assert.equal(post.requestBody.content['application/json'].schema.additionalProperties,false);assert.match(get.summary,/Video remains unavailable/);assert.match(post.summary,/every retry/);
+ }
+ const op=api.paths['/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}/attachments/{attachmentNo}/download-link'].post,s=op.parameters.find((p:any)=>p.name==='attachmentNo').schema;assert.equal(s.pattern,'^(?:[1-9]|1[0-9]|20)$');assert.equal(s.format,undefined);assert.deepEqual(op.requestBody.content['application/json'].schema.properties,{});
+});
 test('feature-scoped own-family student selection is human-only and cannot accept actor,student or permission overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/me/students'].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['after','for','limit']);const feature=op.parameters.find((p:any)=>p.name==='for').schema;assert.deepEqual(feature.enum,['registrations','tuition','calendar','reports','homework','feedback','performance','achievements','polls']);assert.equal(feature.default,'registrations');assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.match(op.summary,/independent current scope before paging/);assert.match(op.summary,/Master\/admin roles cannot impersonate family/);
 });

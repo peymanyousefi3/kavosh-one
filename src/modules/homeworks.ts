@@ -76,7 +76,7 @@ async function received(ctx:ApiContext,studentId:string,id?:string):Promise<Repl
  FROM public.homeworks p JOIN public.classes c ON c.academy_id=p.academy_id AND c.id=p.class_id JOIN public.approval_requests a ON a.academy_id=p.academy_id AND a.id=p.approval_id
  WHERE p.state='published' AND p.recipient_ids @> ARRAY[$1::uuid] AND a.status='applied' AND a.reviewer_id=p.changed_by AND a.target_id=p.id AND a.action IN('homework.record','homework.edit') AND ${receivedLearningSelection}
  ORDER BY(p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $7`,[studentId,ctx.credential.person_id,id??null,JSON.stringify(s),q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
- if(id){const r=rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:{...r,document:receivedDocument(r.document!),mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:true,solutionsAvailable:true}}};}
+ if(id){const r=rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:{...r,document:receivedDocument(r.document!),mediaPath:'/api/v1/students/'+studentId+'/homework/'+id+'/media',mediaContentIncluded:false,mediaServingEnabled:false,externalDeliveryVerified:false,submissionAvailable:true,gradingAvailable:true,solutionsAvailable:true}}};}
  return {status:200,body:{studentId,data:rows.slice(0,q!.limit),nextCursor:rows.length>q!.limit?{beforeOn:rows[q!.limit-1].on,after:rows[q!.limit-1].id}:null}};
 }
 export async function homeworks(ctx:ApiContext,registry:ApprovalRegistry=homeworkActions):Promise<Reply|null>{

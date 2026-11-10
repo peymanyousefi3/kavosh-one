@@ -60,7 +60,7 @@ async function received(ctx:ApiContext,studentId:string,id?:string):Promise<Repl
   FROM public.report_publications p JOIN public.classes c ON c.academy_id=p.academy_id AND c.id=p.class_id
   WHERE public.report_publication_active(p.id) AND ${receivedLearningSelection}
   ORDER BY (p.context#>>'{source,session,on}')::date DESC,p.id DESC LIMIT $7`,[studentId,ctx.credential.person_id,id??null,JSON.stringify(s),q?.beforeOn??null,q?.after??null,id?1:q!.limit+1])).rows;
- if(id){if(!rows[0])throw new ApiError(404,'NOT_FOUND');const {document,...header}=rows[0];return {status:200,body:{data:{...header,document:parentDocument(document!),mediaServingEnabled:false,externalDeliveryVerified:false,payrollApproved:false}}};}
+ if(id){if(!rows[0])throw new ApiError(404,'NOT_FOUND');const {document,...header}=rows[0];return {status:200,body:{data:{...header,document:parentDocument(document!),mediaPath:'/api/v1/students/'+studentId+'/published-reports/'+id+'/media',mediaContentIncluded:false,mediaServingEnabled:false,externalDeliveryVerified:false,payrollApproved:false}}};}
  return {status:200,body:{studentId,data:rows.slice(0,q!.limit),nextCursor:rows.length>q!.limit?{beforeOn:rows[q!.limit-1].on,after:rows[q!.limit-1].id}:null}};
 }
 export async function reportPublications(ctx:ApiContext,registry:ApprovalRegistry=reportPublicationActions):Promise<Reply|null>{

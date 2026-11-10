@@ -27,6 +27,12 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  const learningId='00000000-0000-4000-8000-000000000001';
+  for(const root of ['students/'+learningId+'/published-reports/'+learningId,'students/'+learningId+'/homework/'+learningId,'students/'+learningId+'/homework/'+learningId+'/solutions/'+learningId]){
+    for(const [path,method] of [[root+'/media','GET'],[root+'/media/'+learningId+'/download-link','POST'],...root.includes('/solutions/')?[[root+'/attachments/1/download-link','POST']]:[]]){
+      const r=await fetch(base+'/api/v1/'+path,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/fileId|copyId|destination|X-Amz|stack/);
+    }
+  }
   for(const [suffix,methods]of [['profile-consents',['GET']],['profile-consents/public_profile/withdraw',['POST']],['profile-consents/public_profile/withdrawals',['GET']],['profile-visibility',['GET','POST']],['profile-visibility/history',['GET']]])for(const method of methods){const r=await fetch(base+'/api/v1/people/00000000-0000-4000-8000-000000000001/'+suffix,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/guardianId|GuardianApprovalId|Fingerprint|source_basis|stack/);}
   {const r=await fetch(base+'/api/v1/people/00000000-0000-4000-8000-000000000001/work-guardians?limit=1');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/guardianId|authorityReviewed|guardianVerified|reason|stack/);}
   for(const [suffix,methods]of [['',['GET','POST']],['/history',['GET']]])for(const method of methods){const r=await fetch(base+'/api/v1/people/00000000-0000-4000-8000-000000000001/work-guardians/00000000-0000-4000-8000-000000000002'+suffix,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/guardianId|authorityReviewed|reason|source_basis|stack/);}
