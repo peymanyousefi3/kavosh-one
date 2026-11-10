@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('recorded-hour queue documents bounded sources and accepts no caller evidence or approval override',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/jobs'].post,s=op.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('payroll.recorded-time'));assert.equal(s.additionalProperties,false);for(const key of ['authorizationContext','attendanceUsed','rosterUsed','payrollApproved','sourceBudget'])assert.equal(s.properties[key],undefined);assert.match(op.summary,/2000time entries\/10000terms\/2000priced intervals/);assert.match(op.summary,/200priced intervals\/person across currencies/);
+});
 test('queued payroll forecast is a bounded requester-bound report kind without caller budget or source-proof overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/jobs'].post,s=op.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('payroll.scheduled-costs'));assert.equal(s.additionalProperties,false);for(const key of ['background','sourceBudget','authorizationContext','classes','engagements'])assert.equal(s.properties[key],undefined);assert.match(op.summary,/1000engagements\/10000terms\/2000assignments\/2000sessions/);assert.match(op.summary,/200hourly intervals\/person\/currency/);
 });
