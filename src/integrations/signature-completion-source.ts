@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 import { assertSchemaReady,type Connection,type Database } from '../core/database.ts';
-import { signatureCompletionSourceSchema,workSignatureCompletionSourceSchema } from './boldsign-completion.ts';
+import { signatureCompletionSourceSchema,workSignatureCompletionSourceSchema,type WorkSignaturePartyRole } from './boldsign-completion.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const target=z.object({academyId:uuid,startId:uuid}).strict();
@@ -45,8 +45,8 @@ export async function loadWorkSignatureCompletionSource(database:Database,raw:un
   if(value===null)return null;return workSignatureCompletionSourceSchema.parse(value);
  });
 }
-export async function matchWorkSignatureCompletionSigner(database:Database,rawSource:unknown,role:'worker'|'academy_representative',rawObserved:unknown){
- const s=workSignatureCompletionSourceSchema.safeParse(rawSource),o=observed.safeParse(rawObserved);if(!s.success||!o.success||!['worker','academy_representative'].includes(role))throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_COMPARISON');
+export async function matchWorkSignatureCompletionSigner(database:Database,rawSource:unknown,role:WorkSignaturePartyRole,rawObserved:unknown){
+ const s=workSignatureCompletionSourceSchema.safeParse(rawSource),o=observed.safeParse(rawObserved);if(!s.success||!o.success||!s.data.parties.some(p=>p.role===role))throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_COMPARISON');
  return read(database,async c=>{const result=(await c.query<{name_matches:boolean;email_matches:boolean;phone_matches:boolean}>('SELECT * FROM public.work_signature_completion_signer_matches($1,$2,$3,$4,$5,$6,$7)',[s.data.academyId,s.data.startId,s.data.sourceFingerprint,role,o.data.name,o.data.email,o.data.phone])).rows[0];
   return result?{nameMatches:result.name_matches===true,emailMatches:result.email_matches===true,phoneMatches:result.phone_matches===true}:null;
  });

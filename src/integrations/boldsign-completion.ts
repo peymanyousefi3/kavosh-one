@@ -13,11 +13,16 @@ const expected=z.object({academyId:uuid,startId:uuid,signerId:uuid,documentId:uu
 const artifact=z.object({id:uuid,sha256:hash,sizeBytes:z.number().int().min(1).max(10485760)}).strict();
 const retained=z.object({sourceFingerprint:hash,document:artifact,audit:artifact,properties:artifact}).strict();
 export const signatureCompletionSourceSchema=expected;
+const workParty=z.object({role:z.enum(['worker','academy_representative','legal_guardian']),signerId:uuid,signatureFields:expected.shape.signatureFields,consentFields:consentFields.optional()}).strict();
+const guardianAuthority=z.object({personId:uuid,version:z.number().int().positive().max(2147483647),approvalId:uuid,profileVersion:z.number().int().positive().max(2147483647),workerIdentityVersion:z.number().int().positive().max(2147483647),workerIdentityApprovalId:uuid}).strict();
 export const workSignatureCompletionSourceSchema=expected.omit({signerId:true,packageId:true,attachmentId:true,signatureFields:true,consentFields:true}).extend({purpose:z.literal('worker_services'),requestId:uuid,preparationId:uuid,originalSourceFingerprint:hash,
- parties:z.array(z.object({role:z.enum(['worker','academy_representative']),signerId:uuid,signatureFields:expected.shape.signatureFields}).strict()).length(2)
- .refine(v=>new Set(v.map(p=>p.role)).size===2&&new Set(v.map(p=>p.signerId)).size===2&&v.reduce((n,p)=>n+p.signatureFields.length,0)<=100&&new Set(v.flatMap(p=>p.signatureFields.map(f=>f.id))).size===v.reduce((n,p)=>n+p.signatureFields.length,0))}).strict();
+ parties:z.array(workParty).min(2).max(3),guardianAuthority:guardianAuthority.optional()}).strict().superRefine((s,ctx)=>{
+ const roles=s.parties.map(p=>p.role),fields=s.parties.flatMap(p=>[...p.signatureFields,...(p.consentFields??[])]),guardian=s.parties.find(p=>p.role==='legal_guardian');
+ if(new Set(roles).size!==s.parties.length||new Set(s.parties.map(p=>p.signerId)).size!==s.parties.length||!roles.includes('worker')||!roles.includes('academy_representative')||fields.length>100||new Set(fields.map(f=>f.id)).size!==fields.length||Boolean(guardian)!==Boolean(s.guardianAuthority)||guardian&&guardian.signerId!==s.guardianAuthority?.personId||s.parties.some(p=>p.consentFields&&p.role!==(guardian?'legal_guardian':'worker')))ctx.addIssue({code:'custom',message:'Exact independent original parties and guardian authority required'});
+});
 export type SignatureCompletionSource=z.infer<typeof expected>;
 export type WorkSignatureCompletionSource=z.infer<typeof workSignatureCompletionSourceSchema>;
+export type WorkSignaturePartyRole=WorkSignatureCompletionSource['parties'][number]['role'];
 type Expected=SignatureCompletionSource;
 type Projection=Awaited<ReturnType<typeof getBoldSignCompletionDocument>>['properties'];
 // Observed checkbox selection is evidence,NOT effective consent/publication.
@@ -41,7 +46,7 @@ type Services=EvidenceServices<Expected>&{
  // caller booleans. No known historical binding => null,never a guessed match.
  matchSigner:(source:Expected,observed:SignerObservation)=>Promise<SignerMatch>;
 };
-type WorkServices=EvidenceServices<WorkSignatureCompletionSource>&{matchSigner:(source:WorkSignatureCompletionSource,role:'worker'|'academy_representative',observed:SignerObservation)=>Promise<SignerMatch>};
+type WorkServices=EvidenceServices<WorkSignatureCompletionSource>&{matchSigner:(source:WorkSignatureCompletionSource,role:WorkSignaturePartyRole,observed:SignerObservation)=>Promise<SignerMatch>};
 type Bounded=<T>(p:Promise<T>)=>Promise<T>;
 let active=0;
 function phone(value:Projection['signerDetails'][number]['phoneNumber']){
@@ -73,9 +78,10 @@ function inspect(p:Projection,e:Expected){
  return {...s,...e.consentFields?{profileConsentObservations:observeProfileConsentChoices(e.consentFields,p.signerDetails[0].formFields)}:{}};
 }
 function inspectWork(p:Projection,e:WorkSignatureCompletionSource){
- if(!inspectDocument(p,e,{kavoshWorkPreparationId:e.preparationId,kavoshWorkContentBindingId:e.bindingId,kavoshDocumentSha256:e.documentSha256}))return null;
- if(p.signerDetails.length!==2||new Set(p.signerDetails.map(s=>s.id)).size!==2||new Set(p.signerDetails.map(s=>s.signerEmail.toLowerCase())).size!==2)throw new ApiError(409,'BOLDSIGN_COMPLETION_SOURCE_MISMATCH');
- const candidates=p.signerDetails.map(s=>({...inspectSigner(s,null),fields:s.formFields?.filter(f=>f.type.toLowerCase()==='signature').sort((a,b)=>a.id.localeCompare(b.id))})).sort((a,b)=>a.providerSignerId.localeCompare(b.providerSignerId));
+ const a=e.guardianAuthority,n=e.parties.length;
+ if(!inspectDocument(p,e,{kavoshWorkPreparationId:e.preparationId,kavoshWorkContentBindingId:e.bindingId,kavoshDocumentSha256:e.documentSha256,...a?{kavoshWorkGuardianId:a.personId,kavoshWorkGuardianAuthorityVersion:String(a.version),kavoshWorkGuardianAuthorityApprovalId:a.approvalId,kavoshWorkGuardianProfileVersion:String(a.profileVersion),kavoshWorkerIdentityVersion:String(a.workerIdentityVersion),kavoshWorkerIdentityApprovalId:a.workerIdentityApprovalId}:{}}))return null;
+ if(p.signerDetails.length!==n||new Set(p.signerDetails.map(s=>s.id)).size!==n||new Set(p.signerDetails.map(s=>s.signerEmail.toLowerCase())).size!==n)throw new ApiError(409,'BOLDSIGN_COMPLETION_SOURCE_MISMATCH');
+ const candidates=p.signerDetails.map(s=>({...inspectSigner(s,null),fields:s.formFields?.filter(f=>f.type.toLowerCase()==='signature').sort((a,b)=>a.id.localeCompare(b.id)),...(e.parties.some(p=>p.consentFields)?{consentFields:s.formFields?.filter(f=>f.type.toLowerCase()==='checkbox')}:{})})).sort((a,b)=>a.providerSignerId.localeCompare(b.providerSignerId));
  return {candidates,reasons:p.isDeleted!==false||p.enablePrintAndSign!==false||p.enableReassign!==false?['provider_flags_incomplete']:[]};
 }
 
@@ -83,7 +89,7 @@ function inspectWork(p:Projection,e:WorkSignatureCompletionSource){
 // toggle. Its expected binding MUST come from an owned original-bound start
 // and conflict-free provider receipt. Nothing here creates/sends/retries a
 // signing request or grants admission. Persistence/review follows separately.
-async function reconcileCompletion<S extends {documentId:string;region:BoldSignConnection['region'];sourceFingerprint:string},P extends {reasons:string[]}>(config:BoldSignConnection,e:S,services:EvidenceServices<S>,inspect:(p:Projection,e:S)=>P|null,verify:(e:S,p:P,bounded:Bounded)=>Promise<{providerSignerId?:string;providerSigners?:{role:string;providerSignerId:string}[];reviewReasons?:string[]}>,options:{signal?:AbortSignal;timeoutMs?:number}){
+async function reconcileCompletion<S extends {documentId:string;region:BoldSignConnection['region'];sourceFingerprint:string},P extends {reasons:string[]}>(config:BoldSignConnection,e:S,services:EvidenceServices<S>,inspect:(p:Projection,e:S)=>P|null,verify:(e:S,p:P,bounded:Bounded)=>Promise<{providerSignerId?:string;providerSigners?:{role:string;providerSignerId:string}[];reviewReasons?:string[];profileConsentObservations?:({role:WorkSignaturePartyRole}&ReturnType<typeof observeProfileConsentChoices>[number])[]}>,options:{signal?:AbortSignal;timeoutMs?:number}){
  const freeze=(v:unknown)=>{if(v&&typeof v==='object'){for(const child of Object.values(v))freeze(child);Object.freeze(v);}};freeze(e);
  const timeout=options.timeoutMs??30000;if(!Number.isInteger(timeout)||timeout<1||timeout>30000)throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_DEADLINE');
  if(config.region!==e.region)throw new ApiError(503,'SIGNATURE_COMPLETION_CONNECTION_MISMATCH');if(active>=2)throw new ApiError(503,'SIGNATURE_COMPLETION_BUSY');
@@ -105,7 +111,7 @@ async function reconcileCompletion<S extends {documentId:string;region:BoldSignC
   if(receipt.sourceFingerprint!==e.sourceFingerprint||new Set([receipt.document.id,receipt.audit.id,receipt.properties.id]).size!==3||(['document','audit','properties'] as const).some(k=>{const actual=k==='document'?document:k==='audit'?audit:latest;return receipt[k].sha256!==actual.sha256||receipt[k].sizeBytes!==actual.sizeBytes;}))throw new ApiError(409,'SIGNATURE_COMPLETION_RETENTION_MISMATCH');
   if(Object.values(artifacts).some(a=>createHash('sha256').update(a.bytes).digest('hex')!==a.sha256))throw new ApiError(409,'SIGNATURE_COMPLETION_RETENTION_MISMATCH');
   const reasons=verified.reviewReasons??after.reasons;
-  return {state:reasons.length?'review_required' as const:'evidence_recorded' as const,completionReported:true,reviewReasons:reasons,evidence:receipt,...verified.providerSignerId?{providerSignerId:verified.providerSignerId}:{providerSigners:verified.providerSigners},evidenceRetained:true,admissionCleared:false,legalValidityCertified:false,malwareFreeVerified:false,providerMutationPerformed:false};
+  return {state:reasons.length?'review_required' as const:'evidence_recorded' as const,completionReported:true,reviewReasons:reasons,evidence:receipt,...verified.providerSignerId?{providerSignerId:verified.providerSignerId}:{providerSigners:verified.providerSigners},...verified.profileConsentObservations?{profileConsentObservations:verified.profileConsentObservations}:{},evidenceRetained:true,admissionCleared:false,legalValidityCertified:false,malwareFreeVerified:false,providerMutationPerformed:false};
  }catch(error){if(error instanceof ApiError)throw error;throw new ApiError(502,'SIGNATURE_COMPLETION_UNAVAILABLE');}
  finally{clearTimeout(timer);options.signal?.removeEventListener('abort',cancel);abort.signal.removeEventListener('abort',onAbort);const release=()=>{for(const b of buffers)b.fill(0);active--;};if(resources.size)void Promise.allSettled([...resources]).then(release);else release();}
 }
@@ -120,16 +126,16 @@ export async function reconcileEnrollmentCompletion(config:BoldSignConnection,ra
 export async function reconcileWorkCompletion(config:BoldSignConnection,raw:unknown,services:WorkServices,options:{signal?:AbortSignal;timeoutMs?:number}={}){
  const parsed=workSignatureCompletionSourceSchema.safeParse(raw);if(!parsed.success)throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_SOURCE');
  const result=await reconcileCompletion(config,parsed.data,services,inspectWork,async(e,before,bounded)=>{
-  const chosen=new Set<string>(),signers:{role:string;providerSignerId:string}[]=[],reasons=[...before.reasons];
+  const chosen=new Set<string>(),signers:{role:string;providerSignerId:string}[]=[],reasons=[...before.reasons],observations:({role:WorkSignaturePartyRole}&ReturnType<typeof observeProfileConsentChoices>[number])[]=[];
   for(const party of e.parties){const matches:typeof before.candidates=[];
    for(const candidate of before.candidates){let match;try{match=await bounded(services.matchSigner(e,party.role,{name:candidate.name,email:candidate.email,phone:candidate.phone}));}catch{throw new ApiError(503,'SIGNATURE_SIGNER_HISTORY_UNAVAILABLE');}
     if(!match)throw new ApiError(409,'SIGNATURE_SIGNER_HISTORY_UNAVAILABLE');if(match.nameMatches===true&&match.emailMatches===true&&(candidate.phone===null||match.phoneMatches===true))matches.push(candidate);
    }
    if(matches.length!==1||chosen.has(matches[0].providerSignerId))throw new ApiError(409,'BOLDSIGN_COMPLETION_SIGNER_MISMATCH');const candidate=matches[0];chosen.add(candidate.providerSignerId);
    if(candidate.fields&&(new Set(candidate.fields.map(f=>f.id)).size!==candidate.fields.length||candidate.fields.length!==party.signatureFields.length||candidate.fields.some(f=>{const field=party.signatureFields.find(o=>o.id===f.id);return !field||f.pageNumber!==field.pageNumber||f.bounds!==undefined&&!isDeepStrictEqual(f.bounds,field.bounds);})))throw new ApiError(409,'BOLDSIGN_COMPLETION_SOURCE_MISMATCH');
-   reasons.push(...candidate.reasons.map(r=>party.role+':'+r));signers.push({role:party.role,providerSignerId:candidate.providerSignerId});
+   reasons.push(...candidate.reasons.map(r=>party.role+':'+r));signers.push({role:party.role,providerSignerId:candidate.providerSignerId});if(party.consentFields)observations.push(...observeProfileConsentChoices(party.consentFields,candidate.consentFields).map(o=>({role:party.role,...o})));
   }
-  return {providerSigners:signers,reviewReasons:reasons};
+  return {providerSigners:signers,reviewReasons:reasons,...observations.length?{profileConsentObservations:observations}:{}};
  },options);
  return {...result,purpose:'worker_services' as const,signedByBothPartiesVerified:false,legallyEffective:false,paymentCleared:false};
 }
