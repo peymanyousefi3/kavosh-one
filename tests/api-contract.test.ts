@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family visibility preferences require exact versions and cannot supply consent,publishing,actor or signature facts',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/profile-visibility',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(Object.keys(s.properties).sort(),['audience','expectedVersion']);assert.equal(s.additionalProperties,false);assert.deepEqual(s.properties.audience.enum,['public','members']);assert.equal(s.properties.expectedVersion.minimum,0);assert.ok(api.paths[path+'/history'].get);assert.match(op.summary,/never publishes or restores consent/);assert.match(op.summary,/read-only school/);
+});
+
 test('privacy event record is a human read with no caller consent,scope or signing authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/community/profile-privacy-events/{id}',op=api.paths[path].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name),['id']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/current profiles.view and student-profiles.view/);assert.match(op.summary,/Reading never restores consent/);
 });

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.353.0",
+    "version": "0.354.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -12614,7 +12614,7 @@
     },
     "/api/v1/community/profile-privacy-events/{id}": {
       "get": {
-        "summary": "Read one native-bound consent-withdrawal fact with current profiles.view and student-profiles.view scopes. Returns purpose,version,time and student/current hub only;no family reason,actor/session,signature or signing evidence. Reading never restores consent or publishes a profile.",
+        "summary": "Read one native-bound consent-withdrawal or visibility-choice fact with current profiles.view and student-profiles.view scopes. Returns purpose or audience,version,time and student/current hub only;no family reason,actor/session,signature or signing evidence. Reading never restores consent or publishes a profile.",
         "parameters": [
           {
             "name": "id",
@@ -13569,7 +13569,7 @@
         }
       },
       "post": {
-        "summary": "Upper-reviewed exact-version sharing. Organizations use profiles.publish and public/unpublished only. Students require separate student-profiles.view/publish plus profile view and actual purpose consent for public/members;unpublished needs no positive consent. Old organization roles/tokens gain no student rights. Every read rechecks pinned consent and draft edition;no media.",
+        "summary": "Upper-reviewed exact-version sharing. Organizations use profiles.publish and public/unpublished only. Students require separate student-profiles.view/publish plus profile view and actual purpose consent for public/members;unpublished needs no positive consent. Old organization roles/tokens gain no student rights. Every public read rechecks the exact pinned family visibility choice,consent and draft edition;private preference may immediately restrict an already-reviewed public edition to authorized verified members without republishing or a new signature;no media.",
         "parameters": [
           {
             "name": "id",
@@ -74975,6 +74975,170 @@
                 "public_profile",
                 "verified_member_profile"
               ]
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/profile-visibility": {
+      "get": {
+        "summary": "Verified student/current under18 legal family reads a default-private visibility choice. No administrative role is required;choice is not signed consent or a publication status.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Verified self/current under18 legal family records an exact-version public or members visibility preference. Private stops public access immediately and is allowed in read-only school. Public needs current signed purpose consent and a new exact upper publication review;changing preference alone never publishes or restores consent. Same explicit audience is a no-op;every real change retains a native critical alert.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "audience": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "members"
+                    ]
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "audience"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/students/{id}/profile-visibility/history": {
+      "get": {
+        "summary": "Verified self/current legal family reads bounded immutable choice history without another actor/session identity or private source basis",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
             }
           },
           {
