@@ -8,10 +8,10 @@ import type { S3ClientConfig } from '@aws-sdk/client-s3';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const taskSchema=z.object({academyId:uuid,checkId:uuid,copyId:uuid,fileId:uuid,leaseToken:uuid,attemptNo:z.number().int().min(1).max(5),sourceFingerprint:digest,
- expectedBytes:z.number().int().min(1).max(33554432),expectedSha256:digest,destinationTargetId:digest}).strict();
+ expectedBytes:z.number().int().min(1).max(134217728),expectedSha256:digest,destinationTargetId:digest}).strict();
 export type CopyCheckTask=z.infer<typeof taskSchema>;
 export const copyCheckResult=z.discriminatedUnion('outcome',[
- z.object({outcome:z.literal('verified'),bytes:z.number().int().min(1).max(33554432),sha256:digest,destination:z.object({storageTargetId:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict()}).strict(),
+ z.object({outcome:z.literal('verified'),bytes:z.number().int().min(1).max(134217728),sha256:digest,destination:z.object({storageTargetId:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict()}).strict(),
  z.object({outcome:z.enum(['unavailable','mismatch'])}).strict()
 ]);
 export type CopyCheckResult=z.infer<typeof copyCheckResult>;

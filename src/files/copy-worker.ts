@@ -8,11 +8,11 @@ import type { R2Connection } from '../integrations/r2-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),digest=z.string().regex(/^[a-f0-9]{64}$/);
 const taskSchema=z.object({academyId:uuid,copyId:uuid,fileId:uuid,leaseToken:uuid,attemptNo:z.number().int().min(1).max(5),sourceFingerprint:digest,
- expectedBytes:z.number().int().min(1).max(33554432),expectedSha256:digest,sourceTargetId:digest,destinationTargetId:digest}).strict();
+ expectedBytes:z.number().int().min(1).max(134217728),expectedSha256:digest,sourceTargetId:digest,destinationTargetId:digest}).strict();
 export type CopyTask=z.infer<typeof taskSchema>;
 const endpoint=z.object({storageTargetId:digest,etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/)}).strict();
 export const copyResult=z.discriminatedUnion('outcome',[
- z.object({outcome:z.enum(['written_verified','existing_verified']),bytes:z.number().int().min(1).max(33554432),sha256:digest,source:endpoint,destination:endpoint}).strict(),
+ z.object({outcome:z.enum(['written_verified','existing_verified']),bytes:z.number().int().min(1).max(134217728),sha256:digest,source:endpoint,destination:endpoint}).strict(),
  z.object({outcome:z.enum(['unavailable','source_mismatch','destination_mismatch','outcome_unknown'])}).strict()
 ]);
 export type CopyResult=z.infer<typeof copyResult>;
