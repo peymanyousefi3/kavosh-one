@@ -1,13 +1,14 @@
 import { chmod,lstat } from 'node:fs/promises';
 import { createPdfValidationServer } from '../src/files/pdf-service.ts';
 import { assertIsolatedPdfRuntime,pdfServiceSocket,pdfServicePython } from '../src/files/pdf-runtime.ts';
+import { privateParserUmask } from '../src/files/isolated-runtime.ts';
 
 let server:ReturnType<typeof createPdfValidationServer>|undefined;
 try{
  await assertIsolatedPdfRuntime();
  // Do not unlink an occupied path, even a stale socket we did not create.
  try{await lstat(pdfServiceSocket);throw new Error('SOCKET_ALREADY_EXISTS');}catch(error){if(!(error&&typeof error==='object'&&'code' in error&&error.code==='ENOENT'))throw error;}
- process.umask(0o117);server=createPdfValidationServer({pythonPath:pdfServicePython});
+ process.umask(privateParserUmask);server=createPdfValidationServer({pythonPath:pdfServicePython});
  await new Promise<void>((resolve,reject)=>{server!.once('error',reject);server!.listen(pdfServiceSocket,()=>{server!.removeListener('error',reject);resolve();});});
  await chmod(pdfServiceSocket,0o660);
  server.on('error',()=>{console.error('pdf_service_runtime_error');process.exitCode=1;server?.closeAllConnections();server?.close();});

@@ -1,6 +1,10 @@
 import { readFile,open,lstat } from 'node:fs/promises';
 import { networkInterfaces } from 'node:os';
 
+// Private files0600/directories0700. A socket-only0117mask removes owner
+// directory traversal;grant the socket's reviewed0660mode explicitly instead.
+export const privateParserUmask=0o077;
+
 // Production refuses to substitute a boolean "sandbox=true" assertion for
 // observable kernel/runtime controls. OCI configuration must still be reviewed
 // and tested; these checks are not a promise of protection from kernel exploits.
