@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('cash movement report and exports expose strict dated scope inputs without cash,classification or proof overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/export','/export.xlsx']){const op=api.paths['/api/v1/reports/finance/cash-movements'+suffix].get;assert.ok(op);assert.equal(op.requestBody,undefined);assert.equal(op.parameters.find((p:any)=>p.name==='from').required,true);assert.equal(op.parameters.find((p:any)=>p.name==='through').required,true);for(const name of ['balance','amount','proof','accountVersion','classification','includeHidden'])assert.ok(!op.parameters.some((p:any)=>p.name===name));if(suffix)for(const name of ['limit','afterCode','afterId'])assert.ok(!op.parameters.some((p:any)=>p.name===name&&p.schema.type!=='null'&&p.schema.not===undefined));}
+});
 test('Excel aliases retain source parameters and security with a binary response contract',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));let count=0;
  for(const [path,value]of Object.entries(api.paths)as[string,any][])if(path.startsWith('/api/v1/reports/')&&path.endsWith('/export')&&value.get?.responses['200'].content?.['text/csv']){

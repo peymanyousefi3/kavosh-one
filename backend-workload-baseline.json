@@ -7,6 +7,9 @@
   "backendIntegrationsTestingAndDeploymentIncluded": true,
   "isMeasuredHoursOrTestCoverage": false,
   "isReleaseAcceptance": false,
+  "status": "historical_baseline_not_a_current_measurement",
+  "reassessmentRequired": true,
+  "statusNote": "The 75/25 figures below were assessed on 2026-11-09 and were subsequently repeated without a fresh workload calculation. Do not present them as a freshly measured current percentage. Preserve the original scope and weights; document a new reassessment before publishing updated percentages. Dated implementation and verification evidence is recorded separately in backend-work.json.",
   "basis": "Workload weights and completed points are engineering judgments based on the approved scope and current implementation/evidence register. They are not counts of features, migrations, commits or passing tests. The full approved backend remains unfinished.",
   "groups": [
     { "id": "foundation", "name": "Identity, permissions and core security", "totalPoints": 15, "completedPoints": 14 },
