@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('own profile privacy is human-only without caller identity,consent,publication or clock authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/me/profile-visibility','/api/v1/me/profile-consents','/api/v1/me/profile-visibility/history','/api/v1/me/profile-consents/{purpose}/withdraw','/api/v1/me/profile-consents/{purpose}/withdrawals'])for(const op of Object.values(api.paths[path])as any[])assert.equal(op.security.some((s:any)=>'botBearer'in s),false);
+ const v=api.paths['/api/v1/me/profile-visibility'].post.requestBody.content['application/json'].schema,w=api.paths['/api/v1/me/profile-consents/{purpose}/withdraw'].post.requestBody.content['application/json'].schema;assert.equal(v.additionalProperties,false);assert.equal(w.additionalProperties,false);assert.deepEqual(Object.keys(v.properties).sort(),['audience','expectedVersion']);assert.deepEqual(Object.keys(w.properties),['reason']);assert.match(api.paths['/api/v1/me/profile-consents'].get.summary,/does NOT evaluate positive consent/);assert.match(api.paths['/api/v1/me/profile-consents/{purpose}/withdraw'].post.summary,/read-only school/);assert.match(api.paths['/api/v1/me/profile-visibility'].post.summary,/never signed consent or publication/);
+});
 test('worker consent routing supports explicit version2 questions without consent or publication override inputs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/payroll/work-agreements/{id}/content'].post,s=op.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(s.properties.routing.properties.version.anyOf.map((v:any)=>v.const),[1,2]);assert.equal(s.properties.routing.properties.parties.minItems,2);assert.equal(s.properties.routing.properties.parties.maxItems,2);for(const key of ['consentGranted','teacherPublished','approved','signerId','completed'])assert.equal(s.properties[key],undefined);assert.match(op.summary,/SAME document/);assert.match(op.summary,/both signatures stay required/);assert.match(op.summary,/never grants consent or publication/);
 });
@@ -46,7 +50,7 @@ test('family visibility preferences require exact versions and cannot supply con
 });
 
 test('privacy event record is a human read with no caller consent,scope or signing authority',()=>{
- const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/community/profile-privacy-events/{id}',op=api.paths[path].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name),['id']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/current profiles.view and student-profiles.view/);assert.match(op.summary,/Reading never restores consent/);
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/community/profile-privacy-events/{id}',op=api.paths[path].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name),['id']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/current profiles.view plus student-profiles.view for current students or people.view for other people/);assert.match(op.summary,/Reading never restores consent/);
 });
 
 test('family profile privacy controls are human-only,immediate and purpose-bound without grant or clock overrides',()=>{
