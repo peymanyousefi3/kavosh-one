@@ -39,7 +39,7 @@ function recipient(s:z.infer<typeof signer>,locale:z.infer<typeof draft.shape.lo
  const fields=routing.map(f=>{
   const type=f.fieldType.toLowerCase();
   if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(f.id)||!Object.hasOwn(executableTypes,type))throw new ApiError(409,'BOLDSIGN_ROUTING_UNSUPPORTED');
-  return {Id:f.id,FieldType:executableTypes[type as keyof typeof executableTypes],IsRequired:true,PageNumber:f.pageNumber,Bounds:{X:f.bounds.x,Y:f.bounds.y,Width:f.bounds.width,Height:f.bounds.height}};
+  return {Id:f.id,FieldType:executableTypes[type as keyof typeof executableTypes],IsRequired:f.isRequired,PageNumber:f.pageNumber,Bounds:{X:f.bounds.x,Y:f.bounds.y,Width:f.bounds.width,Height:f.bounds.height},...!f.isRequired?{Value:'off',IsReadOnly:false}:{}};
  });
  return {Name:s.legalName,EmailAddress:s.email,SignerType:'Signer',SignType:'Single',Locale:({en:'EN',fr:'FR','zh-CN':'ZH_CN'} as const)[locale],AuthenticationType:'SMSOTP',EnableEmailOTP:true,PhoneNumber:{CountryCode:'+'+phone.countryCallingCode,Number:phone.nationalNumber},DeliveryMode:'Email',AllowFieldConfiguration:false,FormFields:fields};
 }

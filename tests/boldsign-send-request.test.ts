@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash,webcrypto } from 'node:crypto';
 import { test } from 'node:test';
 import { buildBoldSignSendRequest,type BoldSignSendDraft } from '../src/integrations/boldsign-send-request.ts';
+import { agreementRouting,workAgreementRouting } from '../src/integrations/boldsign.ts';
 
 const packageId='e2af3028-2ec3-4f13-8c47-eafdfc51b1e4',attachmentId='f631b2a0-a664-41ca-9f64-c65f00ea08b1',bindingId='7dd390f6-3cdc-41cf-a3f8-acfe5e679098';
 // Header fixture, not a parsed/clean legal PDF or actual provider evidence.
@@ -10,6 +11,20 @@ const input:BoldSignSendDraft={packageId,attachmentId,bindingId,title:'PRIVATE U
  document:{sha256:hash(pdf),sizeBytes:pdf.length},routing:{version:1,role:'legal_signer',fields:[{id:'Signature1',fieldType:'Signature',isRequired:true,pageNumber:1,bounds:{x:20,y:40,width:180,height:35}}]},
  signer:{personId:'2ca4d03e-96ec-4e47-95fe-63b21cba297d',legalName:'PRIVATE Jean-Luc 王',email:'PRIVATE@example.test',phoneE164:'+16475550101',emailVerified:true,phoneVerified:true,contactFingerprint:'c'.repeat(64)}};
 const invalid={code:'INVALID_BOLDSIGN_SEND_DRAFT',status:400},mismatch={code:'BOLDSIGN_DOCUMENT_IDENTITY_MISMATCH',status:409};
+
+test('version two keeps optional profile choices unchecked and editable within the mandatory signed document',()=>{
+ const signature=input.routing.fields[0],choice={...signature,id:'PublicProfileChoice',fieldType:'CheckBox',isRequired:false,consentPurpose:'public_profile'};
+ const routing={version:2,role:'legal_signer',fields:[signature,choice,{...choice,id:'MembersChoice',consentPurpose:'verified_member_profile'}]};
+ const body=JSON.parse(buildBoldSignSendRequest({...input,routing},pdf).body),fields=body.Signers[0].FormFields;
+ assert.equal(body.Signers.length,1);assert.deepEqual(fields[0],JSON.parse(buildBoldSignSendRequest(input,pdf).body).Signers[0].FormFields[0]);
+ for(const [n,id] of ['PublicProfileChoice','MembersChoice'].entries())assert.deepEqual(fields[n+1],{Id:id,FieldType:'CheckBox',IsRequired:false,PageNumber:1,Bounds:{X:20,Y:40,Width:180,Height:35},Value:'off',IsReadOnly:false});
+ assert.ok(!JSON.stringify(body).includes('consentPurpose'));
+ const before=buildBoldSignSendRequest(input,pdf);assert.deepEqual(buildBoldSignSendRequest(input,pdf),before);
+ for(const fields of [[choice],[signature],[signature,{...choice,isRequired:true}],[signature,{...choice,fieldType:'Signature'}],[signature,{...choice,consentPurpose:'all_data'}],
+  [signature,{...choice,Value:'on'}],[signature,{...choice,isReadOnly:true}],[signature,choice,{...choice,id:'DuplicatePurpose'}]])assert.throws(()=>buildBoldSignSendRequest({...input,routing:{...routing,fields}},pdf),invalid);
+ assert.equal(agreementRouting.safeParse({...routing,version:1}).success,false);
+ assert.equal(workAgreementRouting.safeParse({version:1,parties:[{role:'worker',fields:routing.fields},{role:'academy_representative',fields:[{...signature,id:'AcademySignature'}]}]}).success,false);
+});
 
 test('offline request uses exact PDF bytes and independent body digest with no mutable template, URLs, credentials or network',async()=>{
  const original=globalThis.fetch;let calls=0;globalThis.fetch=async()=>{calls++;throw new Error('NETWORK_FORBIDDEN');};

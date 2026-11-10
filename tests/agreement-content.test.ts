@@ -34,6 +34,18 @@ async function fixture() {
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>,nativeOnly=false){test(name,{skip:nativeOnly&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
 
+check('optional purpose-bound profile choices persist in the same upper-reviewed content binding without admission or publication claims',async f=>{
+ const signature=f.input.routing.fields[0],choice={...signature,id:'PublicChoice',fieldType:'CheckBox',isRequired:false,consentPurpose:'public_profile'},routing={version:2,role:'legal_signer',fields:[signature,choice]};
+ const pending=await f.bind({...f.input,routing},'staff');assert.equal(pending.response.status,202,JSON.stringify(pending.body));
+ assert.equal((await f.approve(pending.body.approval.id,'staff')).response.status,403);
+ const made=await f.approve(pending.body.approval.id,'manager');assert.equal(made.response.status,200,JSON.stringify(made.body));
+ const rows=(await f.pg.query<{id:string;routing:unknown}>('SELECT id,routing FROM public.agreement_content_bindings')).rows;assert.deepEqual(rows.map(r=>r.routing),[routing]);
+ const read=await f.request('agreement-content-bindings/'+rows[0].id);assert.equal(read.response.status,200,JSON.stringify(read.body));assert.equal(read.body.data.admissionCleared,false);
+ assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.profile_publication_changes')).rows[0].n,0);
+ assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.agreement_packages')).rows[0].n,0);
+ for(const bad of [{...routing,version:1},{...routing,fields:[signature,{...choice,isRequired:true}]},{...routing,fields:[signature,{...choice,value:'on'}]}])assert.equal((await f.bind({...f.input,routing:bad})).response.status,400);
+});
+
 check('reviewed content binding persists exact inspected source identity and geometry without claiming signing, safe PDF or admission',async f=>{
  const start=performance.now(),queries=f.metrics.businessQueries,made=await f.bind();assert.equal(made.response.status,201,JSON.stringify(made.body));assert.equal(made.body.data.state,'reviewed_binding');
  console.log(JSON.stringify({case:'content-binding-single-request',elapsedMs:Math.round(performance.now()-start),clientQueries:f.metrics.businessQueries-queries}));
