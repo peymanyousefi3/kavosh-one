@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('work preparations describe pinned guardian authority without implying an active three-party sender or a consent grant',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),post=api.paths['/api/v1/payroll/engagements/{id}/agreement-preparations'].post,s=post.requestBody.content['application/json'].schema;for(const key of ['guardianId','guardianAuthorityVersion','guardianAuthorityReview'])assert.ok(s.properties[key]);assert.equal(s.properties.guardianAuthorityVersion.minimum,1);assert.equal(s.additionalProperties,false);assert.equal(s.properties.guardianVerified,undefined);assert.match(post.summary,/Three distinct people/);assert.match(post.summary,/Guardian-backed content\/sending stays blocked/);assert.match(post.summary,/not a signature or consent grant/);
+});
 test('worker guardian API separates reviewed authority from signing,consent and student-family permissions',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/people/{id}/work-guardians/{guardianId}',post=api.paths[root].post,s=post.requestBody.content['application/json'].schema;assert.equal(post['x-capability'],'worker-guardians.edit');assert.equal(api.paths[root].get['x-capability'],'worker-guardians.view');assert.equal(api.paths[root+'/history'].get['x-capability'],'worker-guardians.view');assert.equal(s.additionalProperties,false);assert.deepEqual(s.properties.relationship.enum,['parent','legal_guardian']);for(const key of ['signedAt','verified','consentGranted','guardianId','sourceBasis'])assert.equal(s.properties[key],undefined);assert.match(post.summary,/Upper-human-reviewed/);assert.match(post.summary,/Not a signed agreement or consent grant/);assert.equal(api.paths[root].delete,undefined);
 });
