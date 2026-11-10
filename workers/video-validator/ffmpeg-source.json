@@ -10,10 +10,20 @@
   "sourceReference": "https://ffmpeg.org/download.html",
   "protocolReference": "https://ffmpeg.org/ffmpeg-protocols.html",
   "networkDisabledAtBuild": true,
+  "softwareAv1Decoder": {
+    "name": "dav1d",
+    "version": "1.5.4",
+    "url": "https://download.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz",
+    "sha256": "686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5",
+    "publishedChecksumUrl": "https://download.videolan.org/pub/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz.sha256",
+    "publishedChecksumVerified": true,
+    "detachedSignatureVerified": false
+  },
   "configureFlags": [
     "--disable-autodetect", "--disable-network", "--disable-everything", "--disable-doc", "--disable-debug", "--enable-small", "--disable-programs", "--enable-ffmpeg", "--enable-ffprobe",
     "--enable-protocol=file,pipe", "--enable-demuxer=mov,matroska", "--enable-muxer=null,framehash,framecrc,mov,mp4,webm",
-    "--enable-decoder=h264,hevc,mpeg4,vp8,vp9,av1,aac,opus,vorbis,pcm_s16le,wrapped_avframe", "--enable-parser=h264,hevc,mpeg4video,vp8,vp9,av1,aac,opus,vorbis",
+    "--enable-libdav1d", "--pkg-config-flags=--static",
+    "--enable-decoder=h264,hevc,mpeg4,vp8,vp9,libdav1d,aac,opus,vorbis,pcm_s16le,wrapped_avframe", "--enable-parser=h264,hevc,mpeg4video,vp8,vp9,av1,aac,opus,vorbis",
     "--enable-encoder=rawvideo,pcm_s16le,mpeg4,aac", "--enable-filter=null,anull,format,aformat,aresample,scale,color,sine", "--enable-indev=lavfi",
     "--disable-vulkan", "--disable-metal", "--disable-videotoolbox", "--disable-audiotoolbox", "--disable-iconv", "--disable-bzlib", "--disable-zlib", "--disable-lzma"
   ],
