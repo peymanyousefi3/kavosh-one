@@ -20,11 +20,11 @@ export const profitabilityCoverageSQL=`WITH selected AS MATERIALIZED(${financial
 ),claims AS MATERIALIZED(
  SELECT l.academy_id,l.journal_id,l.line_number,o.family,o.source_id FROM operating l
  CROSS JOIN LATERAL(VALUES(l.journal_id),(l.reverses_id)) parent(id) JOIN originals o ON o.source_id=parent.id
- WHERE o.family<>'payroll_employer_contribution' OR EXISTS(
+ WHERE(o.family<>'provider_dispute' OR o.source_id=l.journal_id) AND(o.family<>'payroll_employer_contribution' OR EXISTS(
   SELECT 1 FROM public.payrun_net_postings p CROSS JOIN LATERAL jsonb_array_elements(p.plan->'lines') WITH ORDINALITY plan(line,n)
   WHERE p.academy_id=l.academy_id AND p.id=o.source_id AND plan.n=l.line_number AND plan.line->>'side'='debit'
   AND EXISTS(SELECT 1 FROM jsonb_array_elements(p.input->'employers') mapping WHERE plan.line->>'key'='EMPLOYER-EXPENSE:'||(mapping->>'code'))
- )
+ ))
 ),represented AS MATERIALIZED(
  SELECT academy_id,journal_id,line_number,count(DISTINCT(family,source_id)) claims FROM claims GROUP BY academy_id,journal_id,line_number
 ),totals AS(

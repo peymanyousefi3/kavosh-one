@@ -9,12 +9,12 @@ export const providerCostAuthorization=z.object({postings:ids}).strict();
 // Original approval bindings retain every original financial account and
 // invoice context. Current class/student rights are additional,not a shortcut
 // through a broad financial account or a selected report filter.
-const permitted=`p.status='applied' AND p.action='finance.provider-dispute.record'
+const permitted=`p.status='applied' AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct')
  AND public.approval_bindings_allow(p.privacy_bindings,$3::jsonb)
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) scope(value) WHERE public.scope_contains(scope.value,p.scope) IS NOT TRUE)
  AND public.scope_contains($5::jsonb,jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',cl.id,'hubId',cl.hub_id))))
  AND public.scope_contains($6::jsonb,jsonb_build_object('all',false,'hubs','[]'::jsonb,'people',jsonb_build_array(jsonb_build_object('id',person.id,'hubId',person.hub_id))))`;
-const joins=`FROM public.provider_dispute_postings d
+const joins=`FROM public.provider_cost_events d
  JOIN public.approval_requests p ON p.academy_id=d.academy_id AND p.id=d.approval_id
  JOIN public.provider_collections c ON c.academy_id=d.academy_id AND c.id=d.collection_id
  JOIN public.classes cl ON cl.academy_id=c.academy_id AND cl.id=c.class_id
