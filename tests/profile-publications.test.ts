@@ -28,7 +28,7 @@ test('organization publication uses upper review,denies personal profiles and in
   const created=await f.create(),id=created.body.data.id,pending=await f.publish(id,0,1,'public','staff');assert.equal(pending.response.status,202);assert.equal((await f.approve(pending.body.approval.id,'staff')).response.status,403);
   const applied=await f.approve(pending.body.approval.id,'manager');assert.equal(applied.response.status,200,JSON.stringify(applied.body));const publicId=applied.body.data.publicId;assert.equal((await f.publicRead(publicId)).response.status,200);
   assert.equal((await f.request('community/profiles/'+id+'/change',{expectedVersion:1,definition:{...definition,content:{en:{displayName:'UNREVIEWED draft'}}},reason:'PRIVATE edit before publishing'})).response.status,200);assert.equal((await f.publicRead(publicId)).response.status,404);assert.equal((await f.publish(id,1,1)).response.status,409);assert.equal((await f.publish(id,1,2)).response.status,200);assert.equal((await f.publicRead(publicId)).body.data.content.en.displayName,'UNREVIEWED draft');
-  const person=await f.create({kind:'person',id:f.actors.staff.person});assert.equal(person.response.status,201);const rejected=await f.publish(person.body.data.id);assert.equal(rejected.response.status,409);assert.equal(rejected.body.error.code,'PERSONAL_PROFILE_CONSENT_WORKFLOW_REQUIRED');assert.equal((await f.publicRead(person.body.data.id)).response.status,404);
+  const person=await f.create({kind:'person',id:f.actors.staff.person});assert.equal(person.response.status,201);const rejected=await f.publish(person.body.data.id);assert.equal(rejected.response.status,409);assert.equal(rejected.body.error.code,'STUDENT_PROFILE_CONSENT_REQUIRED');assert.equal((await f.publicRead(person.body.data.id)).response.status,404);
  }finally{await f.pg.close();}
 });
 test('public organization reader hides restricted,inactive and other-school drafts without borrowing internal permissions',async()=>{
@@ -93,5 +93,12 @@ test('actual318 organization publication upgrade preserves private drafts and ex
  const f=await fixture(318);try{
   const created=await f.create(),id=created.body.data.id,profiles=(await f.pg.query('SELECT * FROM public.community_profiles')).rows,credentials=(await f.pg.query('SELECT id,capabilities FROM auth_private.credentials')).rows;
   await upgradeToCurrent(f.pg);assert.deepEqual((await f.pg.query('SELECT * FROM public.community_profiles')).rows,profiles);assert.deepEqual((await f.pg.query('SELECT id,capabilities FROM auth_private.credentials')).rows,credentials);assert.equal((await f.pg.query('SELECT * FROM public.profile_publication_heads')).rows.length,0);assert.equal((await f.publicRead(id)).response.status,404);assert.equal((await f.publish(id)).response.status,200);
+ }finally{await f.pg.close();}
+});
+test('actual324 student publication upgrade preserves organization sources,function identities and credential ceilings',async()=>{
+ const f=await fixture(324);try{
+  const created=await f.create(),id=created.body.data.id;assert.equal(created.response.status,201,JSON.stringify(created.body));await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
+  const source=(await f.pg.query('SELECT public.profile_publication_basis($1) b',[id])).rows[0].b,functions="SELECT oid,proname,proowner,proacl FROM pg_proc WHERE oid IN('public.guard_profile_publication()'::regprocedure,'public.complete_profile_publication()'::regprocedure,'public.profile_publication_effect_required()'::regprocedure,'public.read_published_organization_profile(uuid,text)'::regprocedure) ORDER BY oid",before=(await f.pg.query(functions)).rows,credentials=(await f.pg.query('SELECT id,capabilities FROM auth_private.credentials ORDER BY id')).rows;
+  await upgradeToCurrent(f.pg);assert.deepEqual((await f.pg.query(functions)).rows,before);assert.deepEqual((await f.pg.query('SELECT id,capabilities FROM auth_private.credentials ORDER BY id')).rows,credentials);assert.deepEqual((await f.pg.query('SELECT public.profile_publication_basis($1,$2) b',[id,'public'])).rows[0].b,source,'organization approval dependency bytes remain identical');assert.equal((await f.pg.query('SELECT * FROM public.profile_publication_heads')).rows.length,0);assert.equal((await f.publish(id)).response.status,200);
  }finally{await f.pg.close();}
 });

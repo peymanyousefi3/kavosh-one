@@ -6,7 +6,7 @@ import { verifiedProxyIp } from '../core/trusted-proxy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const content=z.object({displayName:z.string().min(1).max(150),headline:z.string().max(200),bio:z.string().max(4000)}).strict();
-const publicProfile=z.object({id:uuid,kind:z.enum(['academy','hub']),profileVersion:z.number().int().positive().max(2147483647),publicationVersion:z.number().int().positive().max(2147483647),content:z.object({en:content,fr:content.optional(),'zh-CN':content.optional()}).strict(),links:z.object({github:z.string().url().max(500).startsWith('https://github.com/').nullable(),linkedin:z.string().url().max(500).startsWith('https://www.linkedin.com/in/').nullable()}).strict(),contentFormat:z.literal('plain_text'),mediaIncluded:z.literal(false)}).strict();
+export const publishedProfileSchema=z.object({id:uuid,kind:z.enum(['academy','hub','person']),profileVersion:z.number().int().positive().max(2147483647),publicationVersion:z.number().int().positive().max(2147483647),content:z.object({en:content,fr:content.optional(),'zh-CN':content.optional()}).strict(),links:z.object({github:z.string().url().max(500).startsWith('https://github.com/').nullable(),linkedin:z.string().url().max(500).startsWith('https://www.linkedin.com/in/').nullable()}).strict(),contentFormat:z.literal('plain_text'),mediaIncluded:z.literal(false)}).strict();
 export async function assertPublicProfileRole(db:Connection){
  const r=await db.query<{safe:boolean}>(`SELECT NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreaterole AND NOT r.rolcreatedb AND NOT r.rolreplication AND pg_has_role(current_user,'kavosh_public_profile_service','member')
  AND NOT EXISTS(SELECT 1 FROM pg_roles x WHERE(x.rolname IN('kavosh_runtime','kavosh_public_profile_policy') OR left(x.rolname,3)='pg_' OR x.rolsuper OR x.rolbypassrls OR x.rolcreaterole OR x.rolcreatedb OR x.rolreplication) AND pg_has_role(current_user,x.oid,'member'))
@@ -26,7 +26,7 @@ export function createPublicProfileApi(database:Database,config:{enabled:boolean
    db=await database.connect();await assertPublicProfileRole(db);await assertSchemaReady(db);await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('statement_timeout','5s',true),set_config('lock_timeout','2s',true)");
    const r=(await db.query<{result:{limited:boolean;data?:unknown}}>('SELECT public.read_published_organization_profile($1,$2) result',[id,budget])).rows[0]?.result;
    if(!r||typeof r.limited!=='boolean')throw new Error('PUBLIC_PROFILE_RESULT_INVALID');await db.query('COMMIT');transaction=false;
-   if(r.limited)throw new ApiError(429,'RATE_LIMITED');if(!r.data)throw new ApiError(404,'NOT_FOUND');const output=publicProfile.safeParse(r.data);if(!output.success)throw new Error('PUBLIC_PROFILE_OUTPUT_INVALID');return Response.json({data:output.data},{headers});
+   if(r.limited)throw new ApiError(429,'RATE_LIMITED');if(!r.data)throw new ApiError(404,'NOT_FOUND');const output=publishedProfileSchema.safeParse(r.data);if(!output.success)throw new Error('PUBLIC_PROFILE_OUTPUT_INVALID');return Response.json({data:output.data},{headers});
   }catch(error){if(transaction)try{await db!.query('ROLLBACK');}catch{destroy=true;}const status=error instanceof ApiError?error.status:error instanceof z.ZodError?400:503,code=error instanceof ApiError?error.code:error instanceof z.ZodError?'INVALID_INPUT':'PUBLIC_PROFILE_UNAVAILABLE';return Response.json({error:{code}},{status,headers:{...headers,...status===429?{'Retry-After':'60'}:{}}});}finally{db?.release(destroy);}
  };
 }
