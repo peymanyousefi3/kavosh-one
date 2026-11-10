@@ -1,15 +1,99 @@
 import assert from 'node:assert/strict';
 import { randomUUID,randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import test from 'node:test';
 import { operationsFixture } from './operations-fixture.ts';
 import { createPlatformApi,assertPlatformRole } from '../src/platform/api.ts';
 import { assertRuntimeRole,type Database } from '../src/core/database.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
+import { processPlatformNotices,assertPlatformNoticeWorker } from '../src/platform/notice-worker.ts';
 
 const definition={name:'Synthetic free academy',description:'Reference terms only',currencyCode:'CAD',unitScale:2,amountMinor:'0',periodMonths:1,graceDays:30,active:true};
 const instant=(days:number)=>new Date(Date.now()+days*86400000).toISOString();
+async function publishNotices(f:Awaited<ReturnType<typeof fixture>>,limit=50){
+ const db:Database={async connect(){if(f.pg.runtime){const c=await f.pg.runtime.connect();await c.query('SET ROLE kavosh_platform_notice_worker');return c;}await f.pg.exec('SET ROLE kavosh_platform_notice_worker');return{query:<Row>(sql:string,args?:unknown[])=>f.pg.query<Row>(sql,args),release(){}};}};
+ try{return await processPlatformNotices(db,limit);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+}
+test('platform notice worker creates bounded durable reminders without cancellations,and owner read state never clears a case',async()=>{
+ const f=await fixture();try{
+  const old=await historicalCancellation(f),first=await publishNotices(f,1);assert.equal(first.published,1);assert.ok(first.batchId);assert.equal((await publishNotices(f,1)).published,1);assert.equal((await publishNotices(f)).published,0);
+  const inbox=await f.request('notifications?unread=true');assert.equal(inbox.response.status,200,JSON.stringify(inbox.body));assert.deepEqual(inbox.body.data.map((n:any)=>n.kind).sort(),['requested','review_ready']);const ready=inbox.body.data.find((n:any)=>n.kind==='review_ready');assert.equal(ready.actionable,true);assert.equal(ready.sourceCurrent,true);assert.equal(inbox.body.externalDeliveryVerified,false);assert.equal((await f.schoolRequest('academy/subscription')).body.data.operationalStatus,'active');
+  const key=randomUUID(),read=await f.request('notifications/'+ready.id+'/read',{},'master',key);assert.equal(read.response.status,200);assert.deepEqual((await f.request('notifications/'+ready.id+'/read',{},'master',key)).body,read.body);assert.equal((await f.request('notifications?unread=true')).body.data.length,1);assert.equal((await f.request('subscription-cancellations?readiness=ready')).body.data.length,1);
+  const page=await f.request('notifications?limit=1');assert.ok(page.body.nextCursor);const tail=await f.request('notifications?limit=1&'+new URLSearchParams(page.body.nextCursor));assert.equal(tail.response.status,200);assert.notEqual(tail.body.data[0].id,page.body.data[0].id);assert.equal(tail.body.nextCursor,null);
+  assert.equal((await f.schoolRequest('academy/subscription/cancellations/'+old.id+'/withdraw',{expectedVersion:1,reason:'Synthetic master withdraws after reminder'})).response.status,200);assert.equal((await publishNotices(f)).published,1);
+  const after=await f.request('notifications');assert.equal(after.body.data.find((n:any)=>n.id===ready.id).sourceCurrent,false);assert.equal(after.body.data.find((n:any)=>n.id===ready.id).actionable,false);assert.ok(after.body.data.some((n:any)=>n.kind==='withdrawn'&&n.sourceCurrent));assert.equal((await f.request('subscription-cancellations')).body.data.length,0);
+ }finally{await f.pg.close();}
+});
+test('platform notice publication and read audit failures roll back durable effects before a successful retry',async()=>{
+ const f=await fixture();try{
+  await historicalCancellation(f);
+  for(const table of ['owner_notifications','notice_batches']){
+   await f.pg.exec(`CREATE FUNCTION platform_private.synthetic_skip_notice() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL;END $$;REVOKE ALL ON FUNCTION platform_private.synthetic_skip_notice() FROM PUBLIC;CREATE TRIGGER synthetic_skip BEFORE INSERT ON platform_private.${table} FOR EACH ROW EXECUTE FUNCTION platform_private.synthetic_skip_notice()`);
+   await assert.rejects(publishNotices(f),/PLATFORM_NOTICE_.*INCOMPLETE/);assert.equal((await f.pg.query('SELECT * FROM platform_private.owner_notifications')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM platform_private.notice_batches')).rows.length,0);await f.pg.exec(`DROP TRIGGER synthetic_skip ON platform_private.${table};DROP FUNCTION platform_private.synthetic_skip_notice()`);
+  }
+  assert.equal((await publishNotices(f)).published,2);const id=(await f.request('notifications')).body.data[0].id,key=randomUUID();
+  await f.pg.exec("CREATE FUNCTION platform_private.synthetic_skip_read_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='platform.notification.marked_read' THEN RETURN NULL;END IF;RETURN NEW;END $$;CREATE TRIGGER synthetic_skip BEFORE INSERT ON platform_private.audit_events FOR EACH ROW EXECUTE FUNCTION platform_private.synthetic_skip_read_audit()");
+  assert.equal((await f.request('notifications/'+id+'/read',{},'master',key)).response.status,503);assert.equal((await f.pg.query('SELECT * FROM platform_private.owner_notification_reads')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM platform_private.request_receipts WHERE request_key=$1',[key])).rows.length,0);
+  await f.pg.exec('DROP TRIGGER synthetic_skip ON platform_private.audit_events;DROP FUNCTION platform_private.synthetic_skip_read_audit()');assert.equal((await f.request('notifications/'+id+'/read',{},'master',key)).response.status,200);
+ }finally{await f.pg.close();}
+});
+test('platform notice worker and owner inbox reject cross-purpose authority and malformed inputs',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.request('notifications',undefined,'foreignMaster')).response.status,403);assert.equal((await f.request('notifications/'+randomUUID()+'/read',{})).response.status,404);
+  for(const query of ['limit=101','unread=maybe','afterId='+randomUUID(),'limit=1&limit=2','now='+instant(0)])assert.equal((await f.request('notifications?'+query)).response.status,400);
+  await f.pg.exec('SET ROLE kavosh_platform_notice_worker');try{
+   const db={query:<Row>(sql:string,args?:unknown[])=>f.pg.query<Row>(sql,args),release(){}};await assertPlatformNoticeWorker(db);await assert.rejects(f.pg.query('SELECT * FROM platform_private.owner_notifications'),/permission denied/);await assert.rejects(f.pg.query('SELECT * FROM public.academies'),/permission denied/);await assert.rejects(f.pg.query('SELECT platform_private.request($1,$2,$3,NULL,$4::jsonb)',[f.owner.user,f.owner.session,'academies.list','{}']),/permission denied/);
+  }finally{await f.pg.exec('RESET ROLE');}
+  await f.pg.exec('SET ROLE kavosh_platform_service');try{await assert.rejects(f.pg.query('SELECT platform_private.publish_cancellation_notices(50)'),/permission denied/);}finally{await f.pg.exec('RESET ROLE');}
+  await assert.rejects(publishNotices(f,0));await assert.rejects(publishNotices(f,101));
+ }finally{await f.pg.close();}
+});
+test('platform notice brief native concurrent publishers never duplicate a reminder',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{await historicalCancellation(f);const start=performance.now(),results=await Promise.all([publishNotices(f),publishNotices(f)]);assert.equal(results.reduce((n,r)=>n+r.published,0),2);assert.equal((await f.pg.query('SELECT * FROM platform_private.owner_notifications')).rows.length,2);assert.equal((await f.request('subscription-cancellations?readiness=ready')).body.data.length,1);console.info('Platform notice concurrent publishers ms:',Math.round(performance.now()-start));}finally{await f.pg.close();}
+});
+test('platform notice CLI refuses disabled or shared-secret environments without printing their values',()=>{
+ const secret=randomBytes(24).toString('hex');for(const config of [{PLATFORM_NOTICE_WORKER_ENABLED:'false'},{PLATFORM_NOTICE_WORKER_ENABLED:'true',AUTH_SECRET:secret}]){
+  const r=spawnSync(process.execPath,['--import','tsx',fileURLToPath(new URL('../scripts/process-platform-notices.ts',import.meta.url))],{encoding:'utf8',timeout:5000,env:{PATH:process.env.PATH,NODE_ENV:'production',...config}});assert.equal(r.status,1);assert.equal(r.stdout,'');assert.match(r.stderr,/check isolated configuration/);assert.equal(r.stderr.includes(secret),false);
+ }
+});
+test('platform notice actual restricted login cannot inspect source data or assume a platform role',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture(),role='kavosh_notice_check_'+randomUUID().replaceAll('-',''),password=randomBytes(32).toString('hex');let client:pg.Client|undefined,created=false;
+ try{
+  await historicalCancellation(f);await f.pg.exec(`CREATE ROLE "${role}" LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '${password}';GRANT kavosh_platform_notice_worker TO "${role}"`);created=true;
+  const url=new URL(process.env.TEST_DATABASE_URL!);url.pathname='/'+(await f.pg.query<{name:string}>('SELECT current_database() name')).rows[0].name;url.username=role;url.password=password;client=new pg.Client({connectionString:url.toString()});await client.connect();
+  assert.equal((await client.query('SELECT current_user name')).rows[0].name,role);const db={async connect(){return{query:async<Row>(sql:string,args?:unknown[])=>({rows:(await client!.query(sql,args)).rows as Row[]}),release(){}};}};
+  assert.equal((await processPlatformNotices(db)).published,2);assert.equal((await f.pg.query<{invoked_by:string}>('SELECT invoked_by FROM platform_private.notice_batches')).rows[0].invoked_by,role);
+  await assert.rejects(client.query('SELECT * FROM platform_private.school_cancellation_requests'),/permission denied/);await assert.rejects(client.query('SET ROLE kavosh_platform_policy'),/permission denied/);await assert.rejects(client.query('SELECT * FROM identity."user"'),/permission denied/);
+  await f.pg.exec(`GRANT SELECT ON public.academies TO "${role}"`);try{await assert.rejects(processPlatformNotices(db),/UNSAFE_PLATFORM_NOTICE_WORKER/);}finally{await f.pg.exec(`REVOKE SELECT ON public.academies FROM "${role}"`);}assert.equal((await processPlatformNotices(db)).published,0);
+  await f.pg.exec(`GRANT CREATE ON SCHEMA platform_private TO "${role}"`);try{await assert.rejects(processPlatformNotices(db),/UNSAFE_PLATFORM_NOTICE_WORKER/);}finally{await f.pg.exec(`REVOKE CREATE ON SCHEMA platform_private FROM "${role}"`);}
+  await f.pg.exec(`GRANT pg_monitor TO "${role}"`);try{await assert.rejects(processPlatformNotices(db),/UNSAFE_PLATFORM_NOTICE_WORKER/);}finally{await f.pg.exec(`REVOKE pg_monitor FROM "${role}"`);}assert.equal((await processPlatformNotices(db)).processed,0);
+ }finally{await client?.end();if(created)await f.pg.exec(`DROP ROLE "${role}"`);await f.pg.close();}
+});
+test('platform notices preserve intervening decisions and never invent a ready reminder after a closed case',async()=>{
+ const f=await fixture();try{
+  const old=await historicalCancellation(f);assert.equal((await f.schoolRequest('academy/subscription/cancellations/'+old.id+'/withdraw',{expectedVersion:1,reason:'Synthetic withdrawal before publisher runs'})).response.status,200);assert.equal((await publishNotices(f)).published,2);const inbox=await f.request('notifications');assert.deepEqual(inbox.body.data.map((n:any)=>n.kind).sort(),['requested','withdrawn']);assert.ok(inbox.body.data.every((n:any)=>!n.actionable));assert.equal((await publishNotices(f)).published,0);
+ }finally{await f.pg.close();}
+});
+test('platform notice pending tasks cannot be lost at source,reopened after completion or dropped during publication',async()=>{
+ const f=await fixture();try{
+  await f.pg.exec("CREATE FUNCTION platform_private.synthetic_skip_notice_task() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL;END $$;REVOKE ALL ON FUNCTION platform_private.synthetic_skip_notice_task() FROM PUBLIC;CREATE TRIGGER synthetic_skip BEFORE INSERT ON platform_private.notice_tasks FOR EACH ROW EXECUTE FUNCTION platform_private.synthetic_skip_notice_task()");
+  const key=randomUUID(),input={expectedVersion:0,reason:'Synthetic queue-source retry'};assert.equal((await f.schoolRequest('academy/subscription/cancellations',input,'master',{key})).response.status,503);assert.equal((await f.pg.query('SELECT * FROM platform_private.school_cancellation_requests')).rows.length,0);
+  await f.pg.exec('DROP TRIGGER synthetic_skip ON platform_private.notice_tasks;DROP FUNCTION platform_private.synthetic_skip_notice_task()');assert.equal((await f.schoolRequest('academy/subscription/cancellations',input,'master',{key})).response.status,200);
+  await f.pg.exec("CREATE FUNCTION platform_private.synthetic_skip_notice_progress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL;END $$;REVOKE ALL ON FUNCTION platform_private.synthetic_skip_notice_progress() FROM PUBLIC;CREATE TRIGGER synthetic_skip BEFORE UPDATE ON platform_private.notice_tasks FOR EACH ROW EXECUTE FUNCTION platform_private.synthetic_skip_notice_progress()");
+  await assert.rejects(publishNotices(f),/PLATFORM_NOTICE_TASKS_INCOMPLETE/);assert.equal((await f.pg.query('SELECT * FROM platform_private.owner_notifications')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM platform_private.notice_batches')).rows.length,0);
+  await f.pg.exec('DROP TRIGGER synthetic_skip ON platform_private.notice_tasks;DROP FUNCTION platform_private.synthetic_skip_notice_progress()');assert.equal((await publishNotices(f)).published,1);
+  await assert.rejects(f.pg.exec("UPDATE platform_private.notice_tasks SET completed_at=NULL,batch_id=NULL,outcome=NULL WHERE completed_at IS NOT NULL"),/PLATFORM_NOTICE_TASK_IMMUTABLE/);assert.equal((await publishNotices(f)).processed,0,'Future readiness tasks are not scanned as due');
+ }finally{await f.pg.close();}
+});
+test('actual316 platform notices upgrade preserves all earlier case and owner proofs without generating a notification until the worker runs',async()=>{
+ const f=await fixture({throughSchema:316});try{
+  const old=await historicalCancellation(f),tables=['public.academies','public.people','public.school_cancellation_approvals','platform_private.school_cancellation_requests','platform_private.school_cancellation_decisions','platform_private.audit_events','platform_private.request_receipts'],snapshot=async()=>{const rows=[];for(const t of tables)rows.push((await f.pg.query('SELECT to_jsonb(x) r FROM '+t+' x ORDER BY to_jsonb(x)::text')).rows);return rows;},before=await snapshot();
+  await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.equal((await f.request('notifications')).body.data.length,0);assert.equal((await publishNotices(f)).published,2);assert.ok((await f.request('notifications')).body.data.every((n:any)=>n.cancellation.id===old.id));
+ }finally{await f.pg.close();}
+});
 test('platform cancellation queue separates native ready and waiting cases,pages original deadlines and never changes access',async()=>{
  const f=await fixture();try{
   const old=await historicalCancellation(f),fresh=await f.request('academies/'+f.b+'/subscription/cancellations',{expectedVersion:0,reason:'Synthetic waiting school'});assert.equal(fresh.response.status,201);

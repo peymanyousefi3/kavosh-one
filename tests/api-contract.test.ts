@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('owner notification inbox is human-owner only,bounded and read-state mutation accepts no cancellation or content inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/notifications',read=api.paths[base+'/{id}/read'].post,s=read.requestBody.content['application/json'].schema;assert.equal(api.paths[base].get.security.some((v:any)=>'botBearer'in v),false);assert.equal(read.security.some((v:any)=>'botBearer'in v),false);assert.equal(s.additionalProperties,false);assert.deepEqual(s.properties,{});assert.deepEqual(api.paths[base].get.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['afterCreatedAt','afterId','limit','unread']);assert.equal(api.paths[base].post,undefined);assert.equal(api.paths[base+'/{id}/confirm'],undefined);
+});
+
 test('platform cancellation review queue is owner-only with paired deadline cursors and no supplied clock or mutation authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/platform/v1/subscription-cancellations',op=api.paths[path].get,parameters=op.parameters.filter((p:any)=>p.in==='query');assert.deepEqual(parameters.map((p:any)=>p.name).sort(),['academyId','afterId','afterReviewAfter','limit','readiness']);assert.equal(parameters.find((p:any)=>p.name==='limit').schema.maximum,100);assert.deepEqual(parameters.find((p:any)=>p.name==='readiness').schema.enum,['all','waiting','ready']);assert.equal(op.security.some((s:any)=>'botBearer'in s),false);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/not a snapshot or automatic confirmation/);
 });

@@ -8,6 +8,7 @@ COPY workers/message-worker/package.json ./workers/message-worker/package.json
 RUN pnpm install --frozen-lockfile
 COPY src ./src
 COPY scripts/process-notifications.ts ./scripts/process-notifications.ts
+COPY scripts/process-platform-notices.ts ./scripts/process-platform-notices.ts
 RUN pnpm notifications:build
 RUN pnpm --filter @kavosh/notification-worker deploy --prod /runtime
 
