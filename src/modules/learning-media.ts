@@ -29,7 +29,8 @@ async function targetSource(ctx:ApiContext,t:Target){
  if(!raw)throw new ApiError(404,'NOT_FOUND');const parsed=source.safeParse(raw);if(!parsed.success)throw new ApiError(503,'LEARNING_MEDIA_SOURCE_INVALID');return parsed.data;
 }
 type Binding={id:string;version:number;archived:boolean;effective_hub_id:string|null;copy_id:string;mime:string;bytes:number;destination_target:string};
-async function fileBinding(ctx:ApiContext,s:Source,ref:Ref,copy?:string){
+export async function learningFileBinding(ctx:ApiContext,owner:{classId:string}|{studentId:string},ref:Ref,copy?:string){
+ const personal='studentId'in owner,column=personal?'person_id':'class_id',anchor=personal?'person':'class',domain=personal?'student_private':'general',ownerId=personal?owner.studentId:owner.classId;
  // A metadata rename must not break an original frozen report. Compare the
  // immutable pinned content/owner revision,then serve its CURRENT metadata.
  // Never let a report turn a person/medical/financial/other-class file public.
@@ -37,10 +38,10 @@ async function fileBinding(ctx:ApiContext,s:Source,ref:Ref,copy?:string){
  FROM public.file_catalogue f JOIN public.file_record_revisions r ON r.academy_id=f.academy_id AND r.file_id=f.id AND r.version=$2
  JOIN public.file_copy_requests c ON c.academy_id=f.academy_id AND c.file_id=f.id JOIN public.file_copy_jobs j ON j.academy_id=c.academy_id AND j.copy_id=c.id AND j.state='verified'
  CROSS JOIN LATERAL(SELECT public.file_download_source(f.id,f.version,c.id) value) d
- WHERE f.id=$1 AND f.anchor_kind='class' AND f.class_id=$3 AND f.domain='general' AND NOT f.archived AND r.definition->>'domain'='general' AND r.definition->>'anchor_kind'='class' AND r.definition->>'class_id'=f.class_id::text
+ WHERE f.id=$1 AND f.anchor_kind='${anchor}' AND f.${column}=$3 AND f.domain='${domain}' AND NOT f.archived AND r.definition->>'domain'='${domain}' AND r.definition->>'anchor_kind'='${anchor}' AND r.definition->>'${column}'=f.${column}::text
  AND r.definition->>'claimed_mime_type'=f.claimed_mime_type AND(r.definition->>'expected_bytes')::bigint=f.expected_bytes AND(r.definition->>'expected_sha256') IS NOT DISTINCT FROM f.expected_sha256
  AND d.value IS NOT NULL AND($4::uuid IS NULL OR c.id=$4) AND($5::text IS NULL OR split_part(d.value->>'mime','/',1)=$5)
- ORDER BY c.requested_at DESC,c.id DESC LIMIT 1`,[ref.fileId,ref.fileVersion,s.classId,copy??null,ref.mediaKind??null])).rows[0]??null;
+ ORDER BY c.requested_at DESC,c.id DESC LIMIT 1`,[ref.fileId,ref.fileVersion,ownerId,copy??null,ref.mediaKind??null])).rows[0]??null;
 }
 function items(s:Source){return[...s.document.blocks.flatMap(b=>b.kind==='media'?[{kind:'media' as const,key:b.id,caption:b.caption,ref:{fileId:b.fileId,fileVersion:b.fileVersion,mediaKind:b.mediaKind}}]:[]),...s.attachments.map((a,n)=>({kind:'attachments' as const,key:String(n+1),caption:a.caption,ref:{fileId:a.fileId,fileVersion:a.fileVersion}}))];}
 export async function learningMedia(ctx:ApiContext,connections?:R2DownloadConnections):Promise<Reply|null>{
@@ -49,12 +50,12 @@ export async function learningMedia(ctx:ApiContext,connections?:R2DownloadConnec
  if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_RECIPIENT_REQUIRED');const p=new URL(ctx.request.url).searchParams;if([...p].length!==new Set(p.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');empty.parse(Object.fromEntries(p));
  const student=uuid.parse(m[1]),parent=uuid.parse(m[3]),solution=m[4]?uuid.parse(m[4]):null,t:Target={student,id:solution??parent,homework:solution?parent:null,kind:solution?'solution':m[2]==='homework'?'homework':'report',base:'students/'+student+'/'+m[2]+'/'+parent+(solution?'/solutions/'+solution:'')};
  if(ctx.request.method==='POST'&&m[7]){
-  empty.parse(await jsonBody(ctx.request));const key=m[5]==='media'?uuid.parse(m[6]):String(attachmentNo.parse(m[6])),s=await targetSource(ctx,t),item=items(s).find(i=>i.kind===m[5]&&i.key===key);if(!item)throw new ApiError(404,'NOT_FOUND');const f=await fileBinding(ctx,s,item.ref);if(!f)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');
-  const authorize=async(c:ApiContext,id:string)=>{const current=await targetSource(c,t),next=items(current).find(i=>i.kind===m[5]&&i.key===key);if(current.revision!==s.revision||!next||!isDeepStrictEqual(next.ref,item.ref)||id!==item.ref.fileId)throw new ApiError(404,'NOT_FOUND');const actual=await fileBinding(c,current,next.ref,f.copy_id);if(!actual)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');return actual;};
+  empty.parse(await jsonBody(ctx.request));const key=m[5]==='media'?uuid.parse(m[6]):String(attachmentNo.parse(m[6])),s=await targetSource(ctx,t),item=items(s).find(i=>i.kind===m[5]&&i.key===key);if(!item)throw new ApiError(404,'NOT_FOUND');const f=await learningFileBinding(ctx,s,item.ref);if(!f)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');
+  const authorize=async(c:ApiContext,id:string)=>{const current=await targetSource(c,t),next=items(current).find(i=>i.kind===m[5]&&i.key===key);if(current.revision!==s.revision||!next||!isDeepStrictEqual(next.ref,item.ref)||id!==item.ref.fileId)throw new ApiError(404,'NOT_FOUND');const actual=await learningFileBinding(c,current,next.ref,f.copy_id);if(!actual)throw new ApiError(409,'LEARNING_MEDIA_NOT_READY');return actual;};
   await record(ctx.db,ctx.credential,ctx.requestId,'learning.media.read',t.id,s.hubId,{studentId:student,sourceKind:t.kind,kind:'download_request',itemKind:item.kind,itemKey:key,privateContentRedacted:true});return issueFileDownload(ctx,f.id,{expectedMetadataVersion:f.version,copyId:f.copy_id},authorize,connections);
  }
  if(ctx.request.method!=='GET'||m[7]||m[5]!=='media')throw new ApiError(405,'METHOD_NOT_ALLOWED');const s=await targetSource(ctx,t),data=[];
- for(const item of items(s)){const f=await fileBinding(ctx,s,item.ref);data.push({kind:item.kind,key:item.key,caption:item.caption,availability:f?'requestable':'unavailable',...f?{mime:f.mime,bytes:f.bytes,readerConfigured:Boolean(connections?.(ctx.credential.academy_id,f.destination_target)),downloadPath:'/api/v1/'+t.base+'/'+item.kind+'/'+item.key+'/download-link'}:{},retrievalVerified:false});}
+ for(const item of items(s)){const f=await learningFileBinding(ctx,s,item.ref);data.push({kind:item.kind,key:item.key,caption:item.caption,availability:f?'requestable':'unavailable',...f?{mime:f.mime,bytes:f.bytes,readerConfigured:Boolean(connections?.(ctx.credential.academy_id,f.destination_target)),downloadPath:'/api/v1/'+t.base+'/'+item.kind+'/'+item.key+'/download-link'}:{},retrievalVerified:false});}
  await record(ctx.db,ctx.credential,ctx.requestId,'learning.media.read',t.id,s.hubId,{studentId:student,sourceKind:t.kind,kind:'directory',rows:data.length,privateContentRedacted:true});return{status:200,body:{data,privateFamilyOnly:true,publiclyPublished:false,mediaContentIncluded:false,videoServingVerified:false,externalRetrievalVerified:false}};
 }
 const readSummary='Current verified self/legal family descriptors for an exact released learning record under existing feature,class/student/hub and original joining-day gates. Captions and opaque item keys only;no raw file/copy IDs,private notes,storage source or bearer URLs. Requestable means existing decoded-image/inspected-PDF copy/policy evidence,not live retrieval or malware-free certification. Video remains unavailable until its inspection/serving pipeline is implemented.';

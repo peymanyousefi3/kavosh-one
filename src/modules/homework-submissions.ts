@@ -29,7 +29,7 @@ async function ownAuthority(ctx:ApiContext,studentId:string,homeworkId:string){
  if(!(await ctx.db.query('SELECT 1 FROM public.class_enrollments WHERE class_id=$1 AND student_id=$2 AND enabled AND joins_on<=$3::date AND(leaves_on IS NULL OR leaves_on>=$3::date)',[t.class_id,studentId,t.on])).rows.length)throw new ApiError(404,'NOT_FOUND');return t;
 }
 function view(r:Submission,editable=false,currentHomeworkVersion?:number){return {id:r.id,homeworkId:r.homework_id,homeworkVersion:r.homework_version,studentId:r.student_id,version:r.version,state:r.state,text:r.answer.text,
- attachments:r.answer.attachments.map((f,n)=>({caption:f.caption,name:r.context.attachments[n]?.name,claimedMimeType:r.context.attachments[n]?.claimed_mime_type,availability:'unavailable'})),
+ attachmentResources:{family:'/api/v1/students/'+r.student_id+'/homework/'+r.homework_id+'/submission/versions/'+r.version+'/attachments',staff:'/api/v1/homework-submissions/'+r.id+'/versions/'+r.version+'/attachments'},attachments:r.answer.attachments.map((f,n)=>({caption:f.caption,name:r.context.attachments[n]?.name,claimedMimeType:r.context.attachments[n]?.claimed_mime_type,availability:'unavailable'})),
  instructions:receivedHomeworkDocument(r.instructions),sessionOn:r.context.homework.on,timeZone:r.context.homework.timeZone,dueAt:r.context.homework.dueAt,acceptLate:r.context.homework.acceptLate,
  submittedAt:r.submitted_at,changedAt:r.changed_at,createdAt:r.created_at,isLate:r.is_late,...currentHomeworkVersion===undefined?{}:{instructionsChanged:r.homework_version!==currentHomeworkVersion},...editable?{editableAnswer:r.answer}:{},mediaServingEnabled:false,attachmentContentVerified:false,externalDeliveryVerified:false,gradingAvailable:true,solutionsAvailable:true};}
 async function write(ctx:ApiContext,studentId:string,homeworkId:string,i:Input):Promise<Reply>{
@@ -48,6 +48,17 @@ async function write(ctx:ApiContext,studentId:string,homeworkId:string,i:Input):
 function datedMembership(parameter:3|5){return `($${parameter}::uuid IS NULL OR EXISTS(SELECT 1 FROM public.class_enrollments e WHERE e.class_id=(v.definition->>'class_id')::uuid AND e.student_id=$${parameter} AND e.enabled AND e.joins_on<=(v.definition#>>'{context,homework,on}')::date AND(e.leaves_on IS NULL OR e.leaves_on>=(v.definition#>>'{context,homework,on}')::date)))`;}
 const instructionRevisionJoin=`JOIN public.homework_revisions h ON h.academy_id=v.academy_id AND h.homework_id=(v.definition->>'homework_id')::uuid AND h.version=(v.definition->>'homework_version')::integer`;
 async function selectedRevision(ctx:ApiContext,id:string,drafts:boolean,studentId?:string,exactVersion?:number){return(await ctx.db.query<{definition:Submission}>(`SELECT v.definition||jsonb_build_object('instructions',h.definition->'document') definition FROM public.homework_submission_revisions v ${instructionRevisionJoin} WHERE v.submission_id=$1 AND($2::boolean OR v.state='submitted') AND ${datedMembership(3)} AND($4::integer IS NULL OR v.version=$4) ORDER BY v.version DESC LIMIT 1`,[id,drafts,studentId??null,exactVersion??null])).rows[0]?.definition??null;}
+export type SubmissionReaderTarget={studentId:string;homeworkId:string}|{submissionId:string};
+async function submissionReader(ctx:ApiContext,t:SubmissionReaderTarget){
+ await lockApprovalWrites(ctx);const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
+ const family='studentId'in t;if(family)await authorizeLearningRecipient(ctx,t.studentId,'received-submissions.view');
+ const r=family?await current(ctx,t.homeworkId,t.studentId):(await ctx.db.query<{submission:Submission}>('SELECT to_jsonb(s) submission FROM public.homework_submissions s WHERE id=$1',[t.submissionId])).rows[0]?.submission;
+ if(!r||!permitted(ctx,r,family?'received-submissions.view':'homework-submissions.view'))throw new ApiError(404,'NOT_FOUND');
+ const self=family&&ctx.credential.person_id===t.studentId,drafts=self||permitted(ctx,r,family?'received-submissions.drafts':'homework-submissions.drafts'),h=(await ctx.db.query<{version:number}>('SELECT version FROM public.homeworks WHERE id=$1',[r.homework_id])).rows[0];return{r,self,drafts,currentVersion:h?.version,studentId:family?t.studentId:undefined};
+}
+// Both JSON reads and attachments use exactly the same current source grants,
+// draft selection and original-day membership rules. No extra file authority.
+export async function submissionMediaSource(ctx:ApiContext,t:SubmissionReaderTarget,exactVersion:number){const a=await submissionReader(ctx,t),selected=await selectedRevision(ctx,a.r.id,a.drafts,a.studentId,exactVersion);if(!selected)throw new ApiError(404,'NOT_FOUND');return selected;}
 async function history(ctx:ApiContext,id:string,drafts:boolean,q:z.infer<typeof historyQuery>,editable:boolean,currentVersion?:number,studentId?:string):Promise<Reply>{
  const rows=(await ctx.db.query<{version:number;definition:Submission|null}>(`WITH selected AS MATERIALIZED(SELECT v.version,v.definition||jsonb_build_object('instructions',h.definition->'document') definition FROM public.homework_submission_revisions v ${instructionRevisionJoin} WHERE v.submission_id=$1 AND v.version>$2 AND($4::boolean OR v.state='submitted') AND ${datedMembership(5)} ORDER BY v.version LIMIT $3),budget AS(SELECT *,sum(octet_length(definition::text)) OVER(ORDER BY version) bytes FROM selected) SELECT version,CASE WHEN bytes<=2097152 THEN definition ELSE NULL END definition FROM budget ORDER BY version`,[id,q.afterVersion,q.limit+1,drafts,studentId??null])).rows;
  const visible=rows.filter((r):r is typeof r&{definition:Submission}=>r.definition!==null).slice(0,q.limit);if(rows.length&&!visible.length)throw new ApiError(409,'SUBMISSION_HISTORY_REQUIRES_BACKGROUND_JOB');return {status:200,body:{data:visible.map(r=>({version:r.version,definition:view(r.definition,editable,currentVersion)})),nextVersion:rows.length>visible.length?visible.at(-1)!.version:null}};
@@ -61,10 +72,9 @@ async function family(ctx:ApiContext,studentId:string,homeworkId:string,section?
   const document=(await ctx.db.query<{document:TaskDocument}>("SELECT definition->'document' document FROM public.homework_revisions WHERE homework_id=$1 AND version=$2",[homeworkId,task.version])).rows[0].document;
   return {status:200,body:{homeworkId,homeworkVersion:task.version,expectedVersion:r?.version??0,instructions:receivedHomeworkDocument(document),dueAt:actual.homework.dueAt,acceptLate:actual.homework.acceptLate,canSubmitBeforeValidation:actual.homework.acceptLate||!actual.homework.dueAt||Date.parse(now)<=Date.parse(actual.homework.dueAt),data:r?view(r,true,task.version):null,attachmentContentVerified:false}};
  }
- await authorizeLearningRecipient(ctx,studentId,'received-submissions.view');const r=await current(ctx,homeworkId,studentId);if(!r||!permitted(ctx,r,'received-submissions.view'))throw new ApiError(404,'NOT_FOUND');
- const self=ctx.credential.person_id===studentId,drafts=self||permitted(ctx,r,'received-submissions.drafts'),h=(await ctx.db.query<{version:number}>('SELECT version FROM public.homeworks WHERE id=$1',[homeworkId])).rows[0];
+ const {r,self,drafts,currentVersion}=await submissionReader(ctx,{studentId,homeworkId});
  const selected=await selectedRevision(ctx,r.id,drafts,studentId,exactVersion);if(!selected)throw new ApiError(404,'NOT_FOUND');
- if(section==='history')return history(ctx,r.id,drafts,q!,false,h?.version,studentId);return {status:200,body:{data:view(selected,self,h?.version)}};
+ if(section==='history')return history(ctx,r.id,drafts,q!,false,currentVersion,studentId);return {status:200,body:{data:view(selected,self,currentVersion)}};
 }
 export async function homeworkSubmissions(ctx:ApiContext):Promise<Reply|null>{
  const received=/^students\/([^/]+)\/homework\/([^/]+)\/submission(?:\/(history|context))?$/.exec(ctx.path),item=/^homework-submissions\/([^/]+)(?:\/(history))?$/.exec(ctx.path),list=/^homeworks\/([^/]+)\/submissions$/.exec(ctx.path);if(!received&&!item&&!list)return null;
@@ -79,9 +89,8 @@ export async function homeworkSubmissions(ctx:ApiContext):Promise<Reply|null>{
   ) r ON true WHERE s.homework_id=$1 AND($2::uuid IS NULL OR s.id>$2) AND public.scope_contains($4::jsonb,${targetSQL}) ORDER BY s.id LIMIT $5`,[id,q.after??null,JSON.stringify(draftScope),JSON.stringify(scope),q.limit+1])).rows;
   return {status:200,body:{data:rows.slice(0,q.limit).map(r=>({id:r.id,studentId:r.definition.student_id,version:r.definition.version,state:r.definition.state,homeworkVersion:r.definition.homework_version,instructionsChanged:r.current_version!==r.definition.homework_version,submittedAt:r.definition.submitted_at,isLate:r.definition.is_late})),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
  }
- const id=uuid.parse(item![1]),r=(await ctx.db.query<{submission:Submission}>('SELECT to_jsonb(s) submission FROM public.homework_submissions s WHERE id=$1',[id])).rows[0]?.submission;if(!r||!permitted(ctx,r,'homework-submissions.view'))throw new ApiError(404,'NOT_FOUND');const drafts=permitted(ctx,r,'homework-submissions.drafts');
- const h=(await ctx.db.query<{version:number}>('SELECT version FROM public.homeworks WHERE id=$1',[r.homework_id])).rows[0];
- if(item![2])return history(ctx,id,drafts,historyQuery.parse(params),false,h?.version);const q=readQuery.parse(params),selected=await selectedRevision(ctx,id,drafts,undefined,q.version);if(!selected)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:view(selected,false,h?.version)}};
+ const id=uuid.parse(item![1]),{drafts,currentVersion}=await submissionReader(ctx,{submissionId:id});
+ if(item![2])return history(ctx,id,drafts,historyQuery.parse(params),false,currentVersion);const q=readQuery.parse(params),selected=await selectedRevision(ctx,id,drafts,undefined,q.version);if(!selected)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:view(selected,false,currentVersion)}};
 }
 export const homeworkSubmissionsContract=[
  {path:'/api/v1/students/{id}/homework/{homeworkId}/submission/context',method:'get',summary:'Verified own-student authoring context and private editable answer; explicit instruction version and server deadline hint'},

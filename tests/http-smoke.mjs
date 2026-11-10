@@ -28,6 +28,7 @@ try {
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
   const learningId='00000000-0000-4000-8000-000000000001';
+  for(const path of ['students/'+learningId+'/homework/'+learningId+'/submission/versions/1/attachments','homework-submissions/'+learningId+'/versions/1/attachments'])for(const [url,method]of [[path,'GET'],[path+'/1/download-link','POST']]){const r=await fetch(base+'/api/v1/'+url,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/fileId|copyId|destination|X-Amz|stack/);}
   for(const root of ['students/'+learningId+'/published-reports/'+learningId,'students/'+learningId+'/homework/'+learningId,'students/'+learningId+'/homework/'+learningId+'/solutions/'+learningId]){
     for(const [path,method] of [[root+'/media','GET'],[root+'/media/'+learningId+'/download-link','POST'],...root.includes('/solutions/')?[[root+'/attachments/1/download-link','POST']]:[]]){
       const r=await fetch(base+'/api/v1/'+path,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/fileId|copyId|destination|X-Amz|stack/);

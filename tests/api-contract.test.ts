@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('answer attachment API pins numeric immutable revisions and bounded item numbers with no client proof overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const root of ['/api/v1/students/{id}/homework/{homeworkId}/submission/versions/{version}/attachments','/api/v1/homework-submissions/{id}/versions/{version}/attachments']){const get=api.paths[root].get,post=api.paths[root+'/{attachmentNo}/download-link'].post;for(const op of[get,post]){assert.deepEqual(op.security??api.security,root.includes('/students/')?[{humanSession:[],academySelection:[]}]:[{botBearer:[]},{humanSession:[],academySelection:[]}]);const version=op.parameters.find((p:any)=>p.name==='version').schema;assert.equal(version.pattern,'^[1-9][0-9]{0,9}$');assert.equal(version.format,undefined);assert.match(op.summary,/SAME current JSON-reader permission/);}assert.deepEqual(post.requestBody.content['application/json'].schema.properties,{});assert.equal(post.requestBody.content['application/json'].schema.additionalProperties,false);assert.equal(post.parameters.find((p:any)=>p.name==='attachmentNo').schema.pattern,'^(?:[1-9]|1[0-9]|20)$');}
+});
 test('released learning media API is human-only and never accepts caller file,copy or actor overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
  for(const root of ['/api/v1/students/{id}/published-reports/{publicationId}','/api/v1/students/{id}/homework/{homeworkId}','/api/v1/students/{id}/homework/{homeworkId}/solutions/{solutionId}']){
