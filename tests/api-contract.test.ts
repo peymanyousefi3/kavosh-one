@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('dispute resolution preparation is a strict read-only source and never grants client money,scope or release authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/provider-collections/{id}/dispute-resolution-source',op=api.paths[path].get;assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['id','on']);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/ALL posting\/correction privacy rights/);assert.match(op.summary,/never credit release/);assert.match(op.summary,/not historical\/live provider state/);
+});
+
 test('dispute corrections accept exact evidence,accounts,edition and dates but no money,identity or provider authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/provider-dispute-postings/{id}/corrections',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['balanceInspectionId','disputedFundsAccount','expectedVersion','feeAccount','feeTaxTreatment','period','postedOn','processorAccount','reason']);assert.equal(s.properties.expectedVersion.minimum,0);assert.deepEqual(s.properties.feeTaxTreatment.enum,['no_fee','not_claimed']);assert.match(op.summary,/atomic exact inverse/);assert.match(op.summary,/no caller money/);assert.ok(api.paths[path].get);assert.equal(api.paths[path].delete,undefined);assert.ok(api.paths['/api/v1/finance/provider-dispute-postings/{id}/correction-source'].get);assert.ok(api.paths['/api/v1/finance/provider-dispute-corrections/{id}'].get);
 });
