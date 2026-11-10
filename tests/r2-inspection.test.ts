@@ -7,10 +7,10 @@ import { privateR2 } from '../src/integrations/r2.ts';
 const academy='8fbe4060-32ec-46a9-a97d-78ea54fe50e6',file='73e6a708-ad23-484b-9b12-91db85854593';
 const content=Buffer.from('Synthetic object transport, not an actual R2 file.');
 const config={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-private-files',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1_000_000};
-function fixture(body:Readable=Readable.from([content]),headers:Record<string,string>={},statusCode=200) {
+function fixture(body:Readable=Readable.from([content]),headers:Record<string,string>={},statusCode=200,stage:'quarantine'|'clean'='quarantine') {
   let requests=0;const store=privateR2(config,academy,{async handle(request:{method:string;hostname:string;path:string;query?:Record<string,unknown>}){
     requests++;assert.equal(request.method,'GET');assert.equal(request.hostname,config.accountId+'.r2.cloudflarestorage.com');
-    assert.equal(request.path,'/'+config.bucket+'/academies/'+academy+'/quarantine/'+file);assert.equal(request.query?.['response-content-disposition'],undefined);
+    assert.equal(request.path,'/'+config.bucket+'/academies/'+academy+'/'+stage+'/'+file);assert.equal(request.query?.['response-content-disposition'],undefined);
     return {response:{statusCode,headers:{'content-length':String(content.length),'content-type':'application/octet-stream',etag:'"synthetic-opaque-etag"',...headers},body}};
   }});
   return {store,body,requests:()=>requests};
@@ -47,6 +47,13 @@ test('R2 inspection deadline aborts a stalled stream, while source failures are 
     const body=new Readable({read(){if(!stall)this.destroy(new Error('Private synthetic object failure'));}}),f=fixture(body);
     try{await assert.rejects(f.store.inspectQuarantine(file,{bytes:content.length},consume,100),{code:stall?'R2_INSPECTION_TIMEOUT':'R2_INSPECTION_UNAVAILABLE',status:502});assert.equal(body.destroyed,true);}finally{f.store.close();}
   }
+});
+test('provider error bodies are destroyed before SDK XML deserialization instead of bypassing the inspection byte ceiling',async()=>{
+ for(const status of [301,403,412,503]){let reads=0,inspections=0;const body=new Readable({read(){reads++;this.push(Buffer.alloc(65536));}}),f=fixture(body,{},status);try{await assert.rejects(f.store.inspectQuarantine(file,{bytes:content.length},async source=>{inspections++;return consume(source);},100),{code:'R2_INSPECTION_UNAVAILABLE'});assert.equal(reads,0);assert.equal(inspections,0);assert.equal(body.closed,true);}finally{f.store.close();}}
+});
+test('a rejected provider response retains its resource observation until the actual uncooperative body closes',{timeout:2000},async()=>{
+ let finish!:()=>void,settled=false,observed:Promise<unknown>|undefined;const body=new Readable({read(){throw Error('Error response must not be read');},destroy(_error,done){finish=()=>done(null);}}),f=fixture(body,{},403,'clean');
+ try{await assert.rejects(f.store.inspectClean(file,{bytes:content.length},consume,30,undefined,p=>{observed=p;void p.then(()=>settled=true);}),{code:'R2_INSPECTION_TIMEOUT'});assert.equal(settled,false);assert.ok(observed);finish();await observed;assert.equal(body.closed,true);assert.equal(settled,true);}finally{finish?.();f.store.close();}
 });
 test('R2 absolute deadline also rejects an inspector stalled after the entire object was consumed', {timeout:2000},async()=>{
   const f=fixture();let signal:AbortSignal|undefined;

@@ -405,6 +405,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Install native build tools and synthetic-only test encoder on the disposable runner
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends nasm meson ninja-build pkg-config ffmpeg
+      - name: Check exact source pins,download ceilings and bounded transient retries
+        run: node --import tsx --test tests/video-source-download.test.ts
       - name: Build exact pinned FFmpeg and software AV1 source without network protocols or autodetected libraries
         run: |
           node scripts/build-video-runtime.mjs > "$RUNNER_TEMP/kavosh-video-runtime.json"

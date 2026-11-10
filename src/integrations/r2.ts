@@ -27,6 +27,12 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     ...(handler?{requestHandler:handler}:{})});
   let closed=false;
   const bodyClosed=(source:Readable)=>source.closed?Promise.resolve():new Promise<void>(resolve=>source.once('close',resolve));
+  // The SDK deserializes error XML BEFORE inspectStored receives a response.
+  // Reject non-object responses at the transport boundary so an error body
+  // cannot bypass our byte meter or enter private diagnostics. Preserve actual
+  // close settlement even when a transport ignores cancellation.
+  const transport=client.config.requestHandler,send=transport.handle.bind(transport);
+  client.config.requestHandler={...transport,async handle(request,options){const result=await send(request,options);if(![200,206].includes(result.response.statusCode)){const source=result.response.body;if(source instanceof Readable){source.once('error',()=>{});const ended=bodyClosed(source);source.destroy();await ended;}throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');}return result;},destroy(){transport.destroy?.();},...('updateHttpClientConfig'in transport&&typeof transport.updateHttpClientConfig==='function'?{updateHttpClientConfig:transport.updateHttpClientConfig.bind(transport)}:{}),...('httpHandlerConfigs'in transport&&typeof transport.httpHandlerConfigs==='function'?{httpHandlerConfigs:transport.httpHandlerConfigs.bind(transport)}:{})};
   function key(stage:'quarantine'|'clean'|'signature-evidence',fileId:string) {
     if(closed)throw new ApiError(503,'R2_CONNECTION_CLOSED');
     const id=uuid.safeParse(fileId);if(!id.success)throw new ApiError(400,'INVALID_FILE_ID');

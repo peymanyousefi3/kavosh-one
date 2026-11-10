@@ -18,15 +18,16 @@ const work:BoldSignWorkSendDraft={preparationId:randomUUID(),bindingId:randomUUI
 type Request={method:string;hostname:string;path:string;headers:Record<string,string>};
 type Mode='normal'|'changed_bytes'|'changed_etag'|'short'|'overflow'|'wrong_length'|'missing_etag'|'denied'|'pending';
 function fixture(mode:Mode='normal'){
- let calls=0,destroyed=0,started!:()=>void,release!:(value:unknown)=>void;const observed=new Promise<void>(resolve=>{started=resolve;}),pending=new Promise<never>(resolve=>{release=resolve as (value:unknown)=>void;});
+ let calls=0,destroyed=0,started!:()=>void,release!:(value:unknown)=>void,ended!:()=>void;const closed=new Promise<void>(resolve=>ended=resolve),observed=new Promise<void>(resolve=>{started=resolve;}),pending=new Promise<never>(resolve=>{release=resolve as (value:unknown)=>void;});
+ const body=(chunks:Buffer[])=>{const value=Readable.from(chunks);value.once('close',ended);return value;};
  const response=()=>{
-  if(mode==='denied')return {response:{statusCode:412,headers:{'content-type':'application/xml'},body:Readable.from([Buffer.from('<Error><Code>PreconditionFailed</Code><Message>PRIVATE provider secret</Message></Error>')])}};
+  if(mode==='denied')return {response:{statusCode:412,headers:{'content-type':'application/xml'},body:body([Buffer.from('<Error><Code>PreconditionFailed</Code><Message>PRIVATE provider secret</Message></Error>')])}};
   const content=Buffer.from(bytes);if(mode==='changed_bytes')content[12]^=1;
   const actual=mode==='short'?content.subarray(0,-1):mode==='overflow'?Buffer.concat([content,Buffer.from('!')]):content;
-  return {response:{statusCode:200,headers:{'content-type':'application/octet-stream','content-length':String(mode==='wrong_length'?content.length+1:content.length),...mode==='missing_etag'?{}:{etag:mode==='changed_etag'?'"replacement"':source.etag}},body:Readable.from([actual.subarray(0,9),actual.subarray(9)])}};
+  return {response:{statusCode:200,headers:{'content-type':'application/octet-stream','content-length':String(mode==='wrong_length'?content.length+1:content.length),...mode==='missing_etag'?{}:{etag:mode==='changed_etag'?'"replacement"':source.etag}},body:body([actual.subarray(0,9),actual.subarray(9)])}};
  };
  const handler={destroy(){destroyed++;},async handle(req:Request){calls++;started();assert.equal(req.method,'GET');assert.equal(req.hostname,config.accountId+'.r2.cloudflarestorage.com');assert.equal(req.path,`/${config.bucket}/academies/${source.academyId}/clean/${source.fileId}`);assert.equal(req.headers['if-match'],source.etag);assert.match(req.headers.authorization,/SignedHeaders=[^,]*if-match/);assert.match(req.headers.authorization,/Credential=synthetic-read-only-id\//);return mode==='pending'?pending:response();}};
- return {handler,observed,release:()=>release(response()),counts:()=>({calls,destroyed}),run:(input:unknown={purpose:'unified_enrollment',draft},claims:unknown=source,options:Parameters<typeof prepareStoredBoldSignRequest>[3]={})=>prepareStoredBoldSignRequest(config,input,claims,options,handler)};
+ return {handler,observed,closed,release:()=>release(response()),counts:()=>({calls,destroyed}),run:(input:unknown={purpose:'unified_enrollment',draft},claims:unknown=source,options:Parameters<typeof prepareStoredBoldSignRequest>[3]={})=>prepareStoredBoldSignRequest(config,input,claims,options,handler)};
 }
 test('stored signing preparation reads one exact conditional clean object and builds both private request kinds without sending',async()=>{
  for(const purpose of ['unified_enrollment','worker_services'] as const){const f=fixture(),selected=purpose==='worker_services'?work:draft,result=await f.run({purpose,draft:selected}),expected=purpose==='worker_services'?buildBoldSignWorkSendRequest(work,bytes):buildBoldSignSendRequest(draft,bytes);assert.equal(result.body,expected.body);assert.deepEqual(result.receipt,expected.receipt);assert.deepEqual(result.original,source);assert.equal(result.originalBytesMeasured,true);assert.equal(result.storageReadPerformed,true);assert.equal(result.fileSafetyCleared,false);assert.equal(result.signingProviderRequestMade,false);assert.deepEqual(f.counts(),{calls:1,destroyed:1});assert.doesNotMatch(JSON.stringify(result.receipt),/PRIVATE|example.test|https:|accessKey|secretAccess/);}
@@ -37,8 +38,8 @@ test('stored three-party preparation measures one conditional original and retai
  const invalid=fixture();await assert.rejects(invalid.run({purpose:'worker_services',draft:{...selected,guardian:undefined}}),{code:'INVALID_BOLDSIGN_STORED_REQUEST'});assert.equal(invalid.counts().calls,0);
 });
 test('wrong original bytes,length or ETag cannot pass using provider metadata or a matching claimed hash',async()=>{
- for(const mode of ['changed_bytes','changed_etag','short','overflow','wrong_length'] as const){const f=fixture(mode);await assert.rejects(f.run(),{code:'BOLDSIGN_ORIGINAL_IDENTITY_MISMATCH',status:409});assert.deepEqual(f.counts(),{calls:1,destroyed:1});}
- for(const mode of ['denied','missing_etag'] as const){const f=fixture(mode);await assert.rejects(f.run(),e=>{assert.equal((e as {code:string}).code,'BOLDSIGN_ORIGINAL_UNAVAILABLE');assert.doesNotMatch(String(e),/PRIVATE|PreconditionFailed|synthetic-read-only-id/);return true;});assert.equal(f.counts().calls,1);}
+ for(const mode of ['changed_bytes','changed_etag','short','overflow','wrong_length'] as const){const f=fixture(mode);await assert.rejects(f.run(),{code:'BOLDSIGN_ORIGINAL_IDENTITY_MISMATCH',status:409});await f.closed;await new Promise<void>(resolve=>setImmediate(resolve));assert.deepEqual(f.counts(),{calls:1,destroyed:1});}
+ for(const mode of ['denied','missing_etag'] as const){const f=fixture(mode);await assert.rejects(f.run(),e=>{assert.equal((e as {code:string}).code,'BOLDSIGN_ORIGINAL_UNAVAILABLE');assert.doesNotMatch(String(e),/PRIVATE|PreconditionFailed|synthetic-read-only-id/);return true;});await f.closed;await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(f.counts().calls,1);}
 });
 test('strict target,draft,document and budget controls reject before storage IO',async()=>{
  const f=fixture();

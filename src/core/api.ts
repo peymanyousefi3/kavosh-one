@@ -238,6 +238,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if(request.method==='POST'&&/^(?:(?:students|people)\/[0-9a-f-]{36}|me)\/profile-consents\/(?:public_profile|verified_member_profile)\/withdraw$/i.test(path))securityRevocation=true;
       if(status==='read_only'&&request.method==='POST'&&/^(?:(?:students|people)\/[0-9a-f-]{36}|me)\/profile-visibility$/i.test(path))securityRevocation=z.object({audience:z.literal('members')}).passthrough().safeParse(await jsonBody(request.clone())).success;
       if(status==='read_only'&&request.method==='POST'&&/^community\/profiles\/[0-9a-f-]{36}\/publication$/i.test(path))securityRevocation=z.object({audience:z.literal('unpublished')}).passthrough().safeParse(await jsonBody(request.clone())).success;
+      if(status==='read_only'&&request.method==='POST'&&/^community\/profiles\/[0-9a-f-]{36}\/academic-release$/i.test(path))securityRevocation=z.object({state:z.literal('withdrawn'),awards:z.array(z.never()).max(0)}).passthrough().safeParse(await jsonBody(request.clone())).success;
       if(request.method==='POST'&&/^academy\/subscription\/cancellations(?:\/[0-9a-f-]{36}\/withdraw)?$/i.test(path))securityRevocation=true;
       if(status==='read_only'&&request.method==='POST'&&/^approvals\/[0-9a-f-]{36}\/withdraw$/i.test(path))securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('academy.subscription.cancel-request','academy.subscription.cancel-withdraw')",[id.parse(path.split('/')[1])])).rows.length===1;
       if(status==='read_only'&&request.method==='POST'&&path==='automations/delivery-policy'){
@@ -264,6 +265,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       }
       if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action='work.guardian.change' AND payload->>'state'='suspended'",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('community-profile.publish','student-profile.publish','worker-profile.publish') AND payload->>'audience'='unpublished'",[id.parse(readOnlyDecision[1])])).rows.length===1;
+      if(readOnlyDecision&&!securityRevocation)securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action='academic-profile.publish' AND payload->>'state'='withdrawn' AND payload->'awards'='[]'::jsonb",[id.parse(readOnlyDecision[1])])).rows.length===1;
       if (status === 'read_only' && request.method !== 'GET'&&!videoHead && !securityRevocation&&!readOnlyPreview) throw new ApiError(403, 'ACADEMY_READ_ONLY');
       const actor = await db.query<{ kind: string; status: string }>('SELECT kind,status FROM public.people WHERE id=$1', [c.person_id]);
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');

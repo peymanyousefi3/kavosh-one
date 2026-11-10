@@ -1,7 +1,7 @@
 import { mkdtemp,readFile,writeFile,mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
+import { downloadVideoSource } from './video-source-download.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -14,9 +14,7 @@ const av1=manifest.softwareAv1Decoder;if(av1?.name!=='dav1d'||av1.version!=='1.5
 const root=await mkdtemp(join(tmpdir(),'kavosh-video-build-')),source=join(root,'source');
 const env={PATH:process.env.PATH??'/usr/bin:/bin',TZ:'UTC',LC_ALL:'C'},options={env,encoding:'utf8',maxBuffer:8388608,timeout:300000};
 async function extractPinnedRelease(release,prefix,directory,maximum){
- const response=await fetch(release.url,{redirect:'error',signal:AbortSignal.timeout(60000)});if(!response.ok||!response.body)throw Error('VIDEO_SOURCE_UNAVAILABLE');
- const chunks=[];let size=0;for await(const chunk of response.body){size+=chunk.length;if(size>maximum)throw Error('VIDEO_SOURCE_TOO_LARGE');chunks.push(chunk);}
- const bytes=Buffer.concat(chunks,size);if(createHash('sha256').update(bytes).digest('hex')!==release.sha256)throw Error('VIDEO_SOURCE_HASH_MISMATCH');const archive=directory+'.tar.xz';await writeFile(archive,bytes,{mode:0o600,flag:'wx'});
+ const bytes=await downloadVideoSource(release,maximum),archive=directory+'.tar.xz';await writeFile(archive,bytes,{mode:0o600,flag:'wx'});
  const list=await run('tar',['-tJf',archive],options);if(list.stdout.split('\n').filter(Boolean).some(p=>!p.startsWith(prefix+'/')||p.split('/').includes('..')))throw Error('UNSAFE_VIDEO_SOURCE_ARCHIVE');await mkdir(directory,{mode:0o700});await run('tar',['-xJf',archive,'-C',directory,'--strip-components=1'],options);
 }
 const av1Source=join(root,'dav1d-source'),av1Build=join(root,'dav1d-build'),av1Prefix=join(root,'dav1d-install');

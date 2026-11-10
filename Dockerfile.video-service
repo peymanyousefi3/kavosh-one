@@ -11,6 +11,7 @@ COPY workers/video-validator/package.json workers/video-validator/ffmpeg-source.
 COPY workers/message-worker/package.json ./workers/message-worker/package.json
 RUN pnpm install --frozen-lockfile
 COPY scripts/build-video-runtime.mjs ./scripts/build-video-runtime.mjs
+COPY scripts/video-source-download.mjs ./scripts/video-source-download.mjs
 RUN node scripts/build-video-runtime.mjs > /build/video-runtime.json && node --input-type=module -e 'import{readFileSync,mkdirSync,copyFileSync}from"node:fs";const r=JSON.parse(readFileSync("/build/video-runtime.json","utf8"));mkdirSync("/opt/video",{recursive:true});for(const name of["ffmpeg","ffprobe"])copyFileSync(r[name+"Path"],"/opt/video/"+name);copyFileSync(r.root+"/source/COPYING.LGPLv2.1","/opt/video/COPYING.LGPLv2.1");copyFileSync(r.av1LicensePath,"/opt/video/COPYING.dav1d");'
 COPY src/core/policy.ts ./src/core/policy.ts
 COPY src/files/video-validation.ts src/files/video-service.ts src/files/video-runtime.ts src/files/isolated-runtime.ts src/files/content-signature.ts ./src/files/
