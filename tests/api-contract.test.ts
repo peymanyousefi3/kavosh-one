@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('queued payroll forecast is a bounded requester-bound report kind without caller budget or source-proof overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/jobs'].post,s=op.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('payroll.scheduled-costs'));assert.equal(s.additionalProperties,false);for(const key of ['background','sourceBudget','authorizationContext','classes','engagements'])assert.equal(s.properties[key],undefined);assert.match(op.summary,/1000engagements\/10000terms\/2000assignments\/2000sessions/);assert.match(op.summary,/200hourly intervals\/person\/currency/);
+});
 test('poll aggregate exports preserve exact-form filters without exposing response-detail or bypass switches',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['/export','/export.xlsx']){const op=api.paths['/api/v1/reports/learning/polls/{id}'+suffix].get;assert.ok(op);assert.equal(op.requestBody,undefined);for(const name of ['formVersion','hubIds','classIds','studentIds'])assert.ok(op.parameters.some((p:any)=>p.name===name));for(const name of ['answers','includeText','includeExcluded','includeHidden','limit'])assert.ok(!op.parameters.some((p:any)=>p.name===name));assert.match(op.summary,/NO free-text answers/);}
 });

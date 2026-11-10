@@ -18,11 +18,14 @@ import { processOneNotification } from '../src/automations/notification-worker.t
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
 import { historicalReportJob,historicalReportScheduleApproval } from './historical-report-job.ts';
+import { financialJobInput } from '../src/modules/report-jobs.ts';
+import { parse } from 'csv-parse/sync';
 
 async function fixture(as='staff',maxDelayMinutes=60,throughSchema?:number,reportId='finance.trial-balance'){const f=await operationsFixture({throughSchema});try{
+ if(reportId==='payroll.scheduled-costs')for(const role of [f.staffRole,f.managerRole])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'work-pay.view','allow')",[f.a,role]);
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['report-presets.view','report-presets.edit','report-schedules.view','report-schedules.edit','financial-reports.view','ledger.view','accounts.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
  const due=(await f.pg.query<{due:string}>(`SELECT to_char((date_trunc('minute',clock_timestamp())-interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') due`)).rows[0].due,local=Temporal.Instant.from(due).toZonedDateTimeISO('America/Toronto');
- const p=await f.request('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Automatic previous-month report',reportId,parameters:{includeZero:'true'},dateWindow:{kind:'previous_month',timeZone:'America/Toronto'}},reason:'Recurring report source'});assert.equal(p.response.status,201,JSON.stringify(p.body));
+ const p=await f.request('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Automatic previous-month report',reportId,parameters:reportId==='payroll.scheduled-costs'?{}:{includeZero:'true'},dateWindow:{kind:'previous_month',timeZone:'America/Toronto'}},reason:'Recurring report source'});assert.equal(p.response.status,201,JSON.stringify(p.body));
  const definition={name:'Daily automatic report',enabled:true,presetVersion:1,timing:{timeZone:'America/Toronto',localTime:local.toPlainTime().toString({smallestUnit:'minute'}),startsOn:'2026-01-01',cycle:{kind:'daily'},maxDelayMinutes}},q=await f.request('reports/presets/'+p.body.data.id+'/schedules',{definition,reason:'Approved recurring report'},as);let s=q;
  let created=q.body.data;
  if(as!=='master'){
@@ -39,6 +42,12 @@ async function fixture(as='staff',maxDelayMinutes=60,throughSchema?:number,repor
  return {...f,id,due,preset:p.body.data,definition:created.definition,stage,database,errors,work,state,stop,occurrences};
  }catch(e){await f.pg.close();throw e;}}
 type F=Awaited<ReturnType<typeof fixture>>;
+test('current scheduler queues forecast presets with pinned occurrence dates while old manifests skip them',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture('staff',60,undefined,'payroll.scheduled-costs');try{
+  await f.pg.exec('SET ROLE kavosh_automation_worker');try{assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1)',[[f.a]])).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],financialJobInput.shape.reportId.options.filter(id=>id!=='payroll.scheduled-costs')])).rows.length,0);}finally{await f.pg.exec('RESET ROLE');}
+  assert.equal((await f.pg.query('SELECT * FROM public.report_schedule_work')).rows.length,0);assert.equal((await f.work()).outcome,'queued',JSON.stringify(f.errors));assert.equal((await processOneReport(f.database,[f.a])).outcome,'succeeded',JSON.stringify(f.errors));const receipts=(await f.occurrences()).body.data;assert.equal(receipts.length,1);const file=await f.request('reports/jobs/'+receipts[0].jobId+'/download',undefined,'staff');assert.equal(file.response.status,200);assert.match(file.body,/scheduledOccurrence/);assert.match(file.body,new RegExp(f.id));const rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[],window=JSON.parse(rows.find(r=>r.field==='dateWindow')!.value),occurrence=JSON.parse(rows.find(r=>r.field==='scheduledOccurrence')!.value);assert.equal(Temporal.Instant.from(window.resolvedAt).equals(Temporal.Instant.from(f.due)),true);assert.equal(Temporal.Instant.from(occurrence.dueAt).equals(Temporal.Instant.from(f.due)),true);assert.equal(occurrence.scheduleId,f.id);
+ }finally{await f.pg.close();}
+});
 test('actual363to364 preserves due schedules and makes legacy schedulers skip new cash types without consuming work',{skip:!process.env.TEST_DATABASE_URL},async()=>{
  const f=await fixture('staff',60,363,'finance.cash-movements');try{
   const tables=['report_schedules','report_schedule_revisions','report_schedule_work','report_presets','report_preset_revisions','approval_requests','audit_events','outbox_events'],before=[];
@@ -55,7 +64,7 @@ test('actual363to364 preserves due schedules and makes legacy schedulers skip ne
   assert.equal((await f.pg.query('SELECT * FROM public.report_schedule_work')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.report_jobs')).rows.length,0);
   await f.pg.exec('SET ROLE kavosh_runtime');try{await assert.rejects(f.pg.query('SELECT * FROM public.claim_report_schedule($1,$2)',[[f.a],['finance.cash-movements']]),/permission denied/);}finally{await f.pg.exec('RESET ROLE');}
   const authority=(await f.pg.query("SELECT proowner,prosecdef,proconfig,(SELECT jsonb_agg(jsonb_build_array(grantee,privilege_type,is_grantable) ORDER BY grantee,privilege_type,is_grantable) FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner)))) acl FROM pg_proc p WHERE oid IN('public.claim_report_schedule(uuid[])'::regprocedure,'public.claim_report_schedule(uuid[],text[])'::regprocedure) ORDER BY oid")).rows;assert.equal(authority.length,2);assert.deepEqual(authority[0],authority[1]);
-  assert.equal((await f.work()).outcome,'queued',JSON.stringify(f.errors));assert.equal((await processOneReport(f.database,[f.a])).outcome,'succeeded',JSON.stringify(f.errors));const receipts=(await f.occurrences()).body.data;assert.equal(receipts.length,1);assert.equal((await f.request('reports/jobs/'+receipts[0].jobId+'/download',undefined,'staff')).response.status,200);
+  await upgradeToCurrent(f.pg);assert.equal((await f.work()).outcome,'queued',JSON.stringify(f.errors));assert.equal((await processOneReport(f.database,[f.a])).outcome,'succeeded',JSON.stringify(f.errors));const receipts=(await f.occurrences()).body.data;assert.equal(receipts.length,1);assert.equal((await f.request('reports/jobs/'+receipts[0].jobId+'/download',undefined,'staff')).response.status,200);
  }finally{await f.pg.close();}
 });
 test('unsupported schedulers cannot reap exhausted cash work while the compatible broker publishes its one critical issue',{skip:!process.env.TEST_DATABASE_URL},async()=>{
