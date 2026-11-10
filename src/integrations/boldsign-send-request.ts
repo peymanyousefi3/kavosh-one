@@ -12,7 +12,8 @@ const signer=z.object({personId:uuid,legalName:label,email:z.string().email().ma
 const draft=boldSignRequestOptions.extend({packageId:uuid,attachmentId:uuid,bindingId:uuid,locale:z.enum(['en','fr','zh-CN']),
  document:z.object({sha256:hash,sizeBytes:z.number().int().min(9).max(10_485_760)}).strict(),routing:agreementRouting,
  signer}).strict();
-const workDraft=boldSignRequestOptions.extend({preparationId:uuid,bindingId:uuid,locale:draft.shape.locale,document:draft.shape.document,routing:workAgreementRouting,worker:signer,academyRepresentative:signer}).strict();
+const guardian=signer.extend({authorityVersion:z.number().int().positive().max(2147483647),authorityApprovalId:uuid,workerIdentityVersion:z.number().int().positive().max(2147483647),workerIdentityApprovalId:uuid,guardianProfileVersion:z.number().int().positive().max(2147483647)}).strict();
+const workDraft=boldSignRequestOptions.extend({preparationId:uuid,bindingId:uuid,locale:draft.shape.locale,document:draft.shape.document,routing:workAgreementRouting,worker:signer,academyRepresentative:signer,guardian:guardian.optional()}).strict().refine(i=>i.routing.version===3?i.guardian!==undefined:i.guardian===undefined);
 export type BoldSignSendDraft=z.infer<typeof draft>;
 export const boldSignSendDraftSchema=draft;
 export type BoldSignWorkSendDraft=z.infer<typeof workDraft>;
@@ -67,8 +68,9 @@ export function buildBoldSignSendRequest(raw:unknown,inputBytes:Uint8Array) {
 // group signer as proof that BOTH individual counterparties signed a framework.
 export function buildBoldSignWorkSendRequest(raw:unknown,inputBytes:Uint8Array){
  const selected=workDraft.safeParse(raw);if(!selected.success)throw new ApiError(400,'INVALID_BOLDSIGN_WORK_SEND_DRAFT');const i=selected.data;
- if(i.worker.personId===i.academyRepresentative.personId||i.worker.email.toLowerCase()===i.academyRepresentative.email.toLowerCase()||i.worker.phoneE164===i.academyRepresentative.phoneE164)throw new ApiError(409,'INDEPENDENT_WORK_SIGNERS_REQUIRED');
- const bytes=documentBytes(i.document,inputBytes),parties=[{role:'worker',signer:i.worker},{role:'academy_representative',signer:i.academyRepresentative}] as const;
- const {body,requestSha256,requestBytes}=wireBody(i,bytes,parties.map(p=>recipient(p.signer,i.locale,i.routing.parties.find(r=>r.role===p.role)!.fields)),{kavoshWorkPreparationId:i.preparationId,kavoshWorkContentBindingId:i.bindingId,kavoshDocumentSha256:i.document.sha256});
- return {body,receipt:{formatVersion:1 as const,purpose:'worker_services' as const,preparationId:i.preparationId,bindingId:i.bindingId,signers:parties.map(p=>({role:p.role,personId:p.signer.personId,contactFingerprint:p.signer.contactFingerprint})),documentSha256:i.document.sha256,documentBytes:bytes.length,requestSha256,requestBytes}};
+ const parties=[{role:'worker' as const,signer:i.worker},{role:'academy_representative' as const,signer:i.academyRepresentative},...i.guardian?[{role:'legal_guardian' as const,signer:i.guardian}]:[]];
+ if(new Set(parties.map(p=>p.signer.personId)).size!==parties.length||new Set(parties.map(p=>p.signer.email.toLowerCase())).size!==parties.length||new Set(parties.map(p=>p.signer.phoneE164)).size!==parties.length)throw new ApiError(409,'INDEPENDENT_WORK_SIGNERS_REQUIRED');
+ const bytes=documentBytes(i.document,inputBytes),authority=i.guardian?{personId:i.guardian.personId,version:i.guardian.authorityVersion,approvalId:i.guardian.authorityApprovalId,profileVersion:i.guardian.guardianProfileVersion,workerIdentityVersion:i.guardian.workerIdentityVersion,workerIdentityApprovalId:i.guardian.workerIdentityApprovalId}:null;
+ const {body,requestSha256,requestBytes}=wireBody(i,bytes,parties.map(p=>recipient(p.signer,i.locale,i.routing.parties.find(r=>r.role===p.role)!.fields)),{kavoshWorkPreparationId:i.preparationId,kavoshWorkContentBindingId:i.bindingId,kavoshDocumentSha256:i.document.sha256,...authority?{kavoshWorkGuardianId:authority.personId,kavoshWorkGuardianAuthorityVersion:String(authority.version),kavoshWorkGuardianAuthorityApprovalId:authority.approvalId,kavoshWorkGuardianProfileVersion:String(authority.profileVersion),kavoshWorkerIdentityVersion:String(authority.workerIdentityVersion),kavoshWorkerIdentityApprovalId:authority.workerIdentityApprovalId}:{}});
+ return {body,receipt:{formatVersion:i.guardian?2 as const:1 as const,purpose:'worker_services' as const,preparationId:i.preparationId,bindingId:i.bindingId,signers:parties.map(p=>({role:p.role,personId:p.signer.personId,contactFingerprint:p.signer.contactFingerprint})),...authority?{guardianAuthority:authority}:{},documentSha256:i.document.sha256,documentBytes:bytes.length,requestSha256,requestBytes}};
 }

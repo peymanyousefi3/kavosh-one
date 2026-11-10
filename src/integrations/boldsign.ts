@@ -67,12 +67,13 @@ export const agreementRouting=z.object({version:z.union([z.literal(1),z.literal(
   return new Set(v.fields.map(f=>f.id)).size===v.fields.length&&v.fields.some(f=>f.isRequired&&f.fieldType.toLowerCase()==='signature')
    &&(v.version===1?choices.length===0:choices.length>0&&new Set(choices.map(f=>f.consentPurpose)).size===choices.length);
  },'Use unique fields, a required signature and distinct optional consent purposes only in version 2.');
-export const workAgreementRouting=z.object({version:z.union([z.literal(1),z.literal(2)]),parties:z.array(z.object({role:z.enum(['worker','academy_representative']),fields:agreementRouting.shape.fields}).strict()).length(2)
- .refine(v=>new Set(v.map(p=>p.role)).size===2&&v.reduce((n,p)=>n+p.fields.length,0)<=100&&new Set(v.flatMap(p=>p.fields.map(f=>f.id))).size===v.reduce((n,p)=>n+p.fields.length,0),'Use both parties,at most100 fields and globally unique field IDs.')
- .transform(v=>v.sort((a,b)=>a.role==='worker'?-1:b.role==='worker'?1:0))}).strict().refine(r=>{
- const worker=r.parties.find(p=>p.role==='worker'),academy=r.parties.find(p=>p.role==='academy_representative');if(!worker||!academy||r.parties.some(p=>!p.fields.some(f=>f.isRequired&&f.fieldType.toLowerCase()==='signature')))return false;
- const choices=worker.fields.filter(f=>!f.isRequired);return academy.fields.every(f=>f.isRequired)&&(r.version===1?choices.length===0:choices.length>0&&new Set(choices.map(f=>f.consentPurpose)).size===choices.length);
-},'Both parties must sign;version2 permits only distinct optional worker disclosure purposes,never academy choices or preselected fields.');
+export const workAgreementRouting=z.object({version:z.union([z.literal(1),z.literal(2),z.literal(3)]),parties:z.array(z.object({role:z.enum(['worker','academy_representative','legal_guardian']),fields:agreementRouting.shape.fields}).strict()).min(2).max(3)
+ .refine(v=>new Set(v.map(p=>p.role)).size===v.length&&v.reduce((n,p)=>n+p.fields.length,0)<=100&&new Set(v.flatMap(p=>p.fields.map(f=>f.id))).size===v.reduce((n,p)=>n+p.fields.length,0),'Use distinct parties,at most100 fields and globally unique field IDs.')
+ .transform(v=>v.sort((a,b)=>['worker','academy_representative','legal_guardian'].indexOf(a.role)-['worker','academy_representative','legal_guardian'].indexOf(b.role)))}).strict().refine(r=>{
+ const worker=r.parties.find(p=>p.role==='worker'),academy=r.parties.find(p=>p.role==='academy_representative'),guardian=r.parties.find(p=>p.role==='legal_guardian');if(!worker||!academy||r.parties.some(p=>!p.fields.some(f=>f.isRequired&&f.fieldType.toLowerCase()==='signature'))||!academy.fields.every(f=>f.isRequired))return false;
+ if(r.version===3){if(r.parties.length!==3||!guardian||!worker.fields.every(f=>f.isRequired))return false;const choices=guardian.fields.filter(f=>!f.isRequired);return new Set(choices.map(f=>f.consentPurpose)).size===choices.length;}
+ if(r.parties.length!==2||guardian)return false;const choices=worker.fields.filter(f=>!f.isRequired);return r.version===1?choices.length===0:choices.length>0&&new Set(choices.map(f=>f.consentPurpose)).size===choices.length;
+},'All required parties must sign. Version2 permits only optional worker disclosure choices;version3 requires a guardian and allows only guardian disclosure choices,never academy choices or preselected fields.');
 
 // Shared bounded provider transport. The fixed resource union cannot become
 // an arbitrary URL or mutation method. The absolute deadline also covers a
