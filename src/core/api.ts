@@ -232,6 +232,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (!status || ['provisioning', 'suspended'].includes(status)) throw new ApiError(403, 'ACADEMY_UNAVAILABLE');
       let securityRevocation = request.method === 'POST' && (/^credentials\/[^/]+\/revoke$/.test(path)||/^invitations\/[0-9a-f-]{36}\/revoke$/i.test(path));
       if(request.method==='POST'&&path==='me/notification-preferences/disable')securityRevocation=true;
+      if(request.method==='POST'&&/^students\/[0-9a-f-]{36}\/profile-consents\/(?:public_profile|verified_member_profile)\/withdraw$/i.test(path))securityRevocation=true;
       if(status==='read_only'&&request.method==='POST'&&/^community\/profiles\/[0-9a-f-]{36}\/publication$/i.test(path))securityRevocation=z.object({audience:z.literal('unpublished')}).passthrough().safeParse(await jsonBody(request.clone())).success;
       if(request.method==='POST'&&/^academy\/subscription\/cancellations(?:\/[0-9a-f-]{36}\/withdraw)?$/i.test(path))securityRevocation=true;
       if(status==='read_only'&&request.method==='POST'&&/^approvals\/[0-9a-f-]{36}\/withdraw$/i.test(path))securityRevocation=(await db.query("SELECT 1 FROM public.approval_requests WHERE id=$1 AND action IN('academy.subscription.cancel-request','academy.subscription.cancel-withdraw')",[id.parse(path.split('/')[1])])).rows.length===1;

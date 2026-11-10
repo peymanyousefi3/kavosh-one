@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('family profile privacy controls are human-only,immediate and purpose-bound without grant or clock overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/students/{id}/profile-consents/{purpose}/withdraw',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;
+ assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties),['reason']);assert.deepEqual(op.parameters.find((p:any)=>p.name==='purpose').schema.enum,['public_profile','verified_member_profile']);assert.match(op.summary,/no upper approval/);assert.ok(api.paths[path.replace('/withdraw','/withdrawals')].get);assert.equal(api.paths[path.replace('/withdraw','/grant')],undefined);
+});
+
 test('organization publication separates reviewed private controls from default-off anonymous plain-text reads',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),control='/api/v1/community/profiles/{id}/publication',open='/api/public/v1/profiles/{id}',s=api.paths[control].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['audience','expectedProfileVersion','expectedVersion','reason']);assert.deepEqual(s.properties.audience.enum,['public','unpublished']);assert.ok(api.paths[control+'/history'].get);assert.deepEqual(api.paths[open].get.security,[]);assert.equal(api.paths[open].post,undefined);assert.deepEqual(api.paths[open].get.parameters.map((p:any)=>p.name),['id']);assert.match(api.paths[open].get.summary,/no personal\/student data/);assert.match(api.paths[open].get.summary,/not a visual profile page/);
 });
