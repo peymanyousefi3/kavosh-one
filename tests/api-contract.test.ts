@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('worker guardian directory documents bounded independent-scope discovery rather than signing eligibility',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/people/{id}/work-guardians'].get;assert.equal(op['x-capability'],'worker-guardians.view');const limit=op.parameters.find((p:any)=>p.name==='limit');assert.equal(limit.schema.maximum,50);assert.equal(limit.schema.minimum,1);assert.deepEqual(op.parameters.find((p:any)=>p.name==='state').schema.enum,['approved','suspended']);assert.match(op.summary,/before state filtering and pagination/);assert.match(op.summary,/not current signing authority/);assert.equal(api.paths['/api/v1/people/{id}/work-guardians'].post,undefined);
+});
 test('work preparations describe pinned guardian authority without implying an active three-party sender or a consent grant',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),post=api.paths['/api/v1/payroll/engagements/{id}/agreement-preparations'].post,s=post.requestBody.content['application/json'].schema;for(const key of ['guardianId','guardianAuthorityVersion','guardianAuthorityReview'])assert.ok(s.properties[key]);assert.equal(s.properties.guardianAuthorityVersion.minimum,1);assert.equal(s.additionalProperties,false);assert.equal(s.properties.guardianVerified,undefined);assert.match(post.summary,/Three distinct people/);assert.match(post.summary,/Guardian content requires version3 all-three-party routing;sending stays blocked/);assert.match(post.summary,/not a signature or consent grant/);
 });
