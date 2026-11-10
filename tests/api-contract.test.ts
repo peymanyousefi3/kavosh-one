@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('poll aggregate exports preserve exact-form filters without exposing response-detail or bypass switches',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['/export','/export.xlsx']){const op=api.paths['/api/v1/reports/learning/polls/{id}'+suffix].get;assert.ok(op);assert.equal(op.requestBody,undefined);for(const name of ['formVersion','hubIds','classIds','studentIds'])assert.ok(op.parameters.some((p:any)=>p.name===name));for(const name of ['answers','includeText','includeExcluded','includeHidden','limit'])assert.ok(!op.parameters.some((p:any)=>p.name===name));assert.match(op.summary,/NO free-text answers/);}
+});
 test('recorded-time export contracts retain dated source selectors without supplied rates,times or approval authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['/export','/export.xlsx']){const op=api.paths['/api/v1/reports/payroll/recorded-time'+suffix].get;assert.ok(op);assert.equal(op.requestBody,undefined);for(const name of ['from','through','timeZone'])assert.equal(op.parameters.find((p:any)=>p.name===name).required,true);for(const name of ['amount','rate','startsAt','payrollApproved','includeHidden','limit'])assert.ok(!op.parameters.some((p:any)=>p.name===name));assert.match(op.summary,/Not payroll approval/);}
 });

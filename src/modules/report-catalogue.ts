@@ -61,7 +61,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:recordedWorkReportContract,handler:recordedWorkReport,capability:'session-time.view',csv:true},
  {contracts:payrollCostReportContract,handler:payrollCostReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:payrollGrossReportContract,handler:payrollGrossReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
- {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view'},
+ {contracts:pollResultsContract,handler:pollResults,capability:'poll-results.view',csv:true},
  {contracts:sessionEvidenceReportContract,handler:sessionEvidenceReport,capability:'session-time.view',csv:true},
  {contracts:sessionFollowUpContract,handler:sessionFollowUp,capability:'session-evidence.view',csv:true},
  {contracts:studentPerformanceReportContract,handler:studentPerformance,capability:'student-feedback.view',csv:true,backgroundCsv:true},

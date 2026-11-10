@@ -6,6 +6,7 @@ import { formatMoney,roundRatio } from '../core/money.ts';
 import type { PollDefinition } from './poll-definition.ts';
 import { pollOwnerSQL } from './poll-definition.ts';
 import { pollRecordSQL } from './poll-responses.ts';
+import { csvRow,csvText } from '../core/csv.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const ids=z.string().max(3699).transform(v=>v.split(',')).pipe(z.array(uuid).min(1).max(100)).refine(v=>new Set(v).size===v.length,'Duplicate filter ID');
@@ -19,10 +20,10 @@ type Counts={summary:Summary;question_counts:{id:string;count:number}[];choice_c
 export function pollResultSeries(definition:PollDefinition,r:Counts){
  if(r.summary.selectedHeads>maximumSynchronousPollResponses)throw new ApiError(422,'POLL_RESULTS_REQUIRE_BACKGROUND_JOB');
  const counts=new Map(r.question_counts.map(c=>[c.id,c.count])),choices=new Map(r.choice_counts.map(c=>[c.questionId+':'+c.optionId,c.count]));
- return definition.questions.map(question=>{const count=counts.get(question.id)??0;return {id:question.id,prompt:question.prompt,kind:question.kind,required:question.required,answeringResponses:count,unansweredResponses:r.summary.includedResponses-count,answerCoveragePercent:percent(count,r.summary.includedResponses),...(question.kind==='text'?{textBodiesIncluded:false}:{multipleSelections:question.kind==='multiple',choices:question.options.map(o=>{const n=choices.get(question.id+':'+o.id)??0;return {id:o.id,label:o.label,count:n,percentOfAnsweringResponses:percent(n,count)};})})};});
+ return definition.questions.map(question=>{const count=counts.get(question.id)??0;return {id:question.id,prompt:question.prompt,kind:question.kind,required:question.required,answeringResponses:count,unansweredResponses:r.summary.includedResponses-count,answerCoveragePercent:percent(count,r.summary.includedResponses),...(question.kind==='text'?{textBodiesIncluded:false}:{optionCount:question.options.length,multipleSelections:question.kind==='multiple',choices:question.options.map(o=>{const n=choices.get(question.id+':'+o.id)??0;return {id:o.id,label:o.label,count:n,percentOfAnsweringResponses:percent(n,count)};})})};});
 }
 
-export async function pollResults(ctx:ApiContext):Promise<Reply|null>{
+export async function pollResults(ctx:ApiContext){
  const match=/^reports\/learning\/polls\/([^/]+)$/.exec(ctx.path);if(!match)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
  const params=new URL(ctx.request.url).searchParams;if(new Set(params.keys()).size!==[...params.keys()].length)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params)),id=uuid.parse(match[1]);await lockApprovalWrites(ctx);
  const results=permissionScope(ctx,'poll-results.view'),polls=permissionScope(ctx,'polls.view');if(!scopeNonempty(results)||!scopeNonempty(polls))throw new ApiError(403,'FORBIDDEN');
@@ -54,7 +55,35 @@ export async function pollResults(ctx:ApiContext):Promise<Reply|null>{
  coalesce((SELECT jsonb_agg(jsonb_build_object('id',id,'count',count)) FROM questions),'[]'::jsonb) question_counts,
  coalesce((SELECT jsonb_agg(jsonb_build_object('questionId',question_id,'optionId',option_id,'count',count)) FROM choices),'[]'::jsonb) choice_counts FROM totals t CROSS JOIN audience`,[id,f.form_version,...scopes,q.hubIds??null,q.classIds??null,q.studentIds??null,f.audience_version])).rows[0];
  const questions=pollResultSeries(f.definition,r);
- return {status:200,body:{pollId:id,pollVersion:f.poll_version,formVersion:f.form_version,audiencePollVersion:f.audience_version,state:f.state,title:f.definition.title,description:f.definition.description,locale:f.definition.locale,responseUnit:f.response_unit,respondentMode:f.respondent_mode,snapshotAt:r.snapshot_at,filters:{...q,formVersion:f.form_version},summary:r.summary,questions,
+ return {status:200,body:{pollId:id,pollVersion:f.poll_version,formVersion:f.form_version,audiencePollVersion:f.audience_version,state:f.state,title:f.definition.title,description:f.definition.description,locale:f.definition.locale,responseUnit:f.response_unit,respondentMode:f.respondent_mode,snapshotAt:r.snapshot_at,filters:{...q,formVersion:f.form_version},summary:r.summary,questionCount:questions.length,questions,
  countingPolicy:'current_submitted_nonexcluded_response_heads_in_scope_including_former_recipients',permissionsAppliedBeforeAggregation:true,percentageRounding:'half_even_2dp',freeTextIncluded:false,moderationAvailable:true,moderationAppliesTo:'exact_response_revision',externalDeliveryVerified:false}};
 }
 export const pollResultsContract=[{path:'/api/v1/reports/learning/polls/{id}',method:'get',summary:'Exact-form source-scoped poll charts count current submitted nonexcluded heads; separately report included/excluded/withdrawn and student/actor counts; combined hub/class/student filters; no free-text or global totals; 10000-head synchronous cap',querySchema:query}] as const;
+
+type PollResult=NonNullable<Awaited<ReturnType<typeof pollResults>>>['body'];
+export function pollResultsCsv(data:PollResult,provenance?:{id:string;version:number}):Reply{
+ const summary=data.summary;
+ if(!uuid.safeParse(data.pollId).success||!Number.isSafeInteger(data.formVersion)||data.formVersion<1||data.freeTextIncluded!==false||data.permissionsAppliedBeforeAggregation!==true||!Number.isSafeInteger(data.questionCount)||data.questionCount<1||data.questionCount>20||data.questions.length!==data.questionCount||new Set(data.questions.map(q=>q.id)).size!==data.questions.length)throw new Error('POLL_EXPORT_INVALID');
+ if(Object.values(summary).some(n=>!Number.isSafeInteger(n)||n<0)||summary.selectedHeads>maximumSynchronousPollResponses||summary.selectedHeads!==summary.submittedResponses+summary.withdrawnResponses||summary.submittedResponses!==summary.includedResponses+summary.excludedResponses||summary.distinctStudents>summary.submittedResponses||summary.distinctLastActors>summary.submittedResponses||summary.distinctIncludedStudents>Math.min(summary.includedResponses,summary.distinctStudents)||summary.distinctIncludedLastActors>Math.min(summary.includedResponses,summary.distinctLastActors))throw new Error('POLL_EXPORT_COUNTS_INVALID');
+ const header=['section','field','value','question_id','prompt','kind','required','answering_responses','unanswered_responses','answer_coverage_percent','option_id','option_label','choice_count','percent_of_answering_responses'],rows:(string|number|boolean|null|undefined)[][]=[header];
+ const meta=(field:string,value:unknown)=>{if(value!==undefined)rows.push(['metadata',field,csvText(typeof value==='string'?value:JSON.stringify(value))]);};
+ // Explicit public-result fields only. Never serialize response bodies or a
+ // newly added private field by iterating the whole source object.
+ for(const field of ['pollId','pollVersion','formVersion','audiencePollVersion','state','title','description','locale','responseUnit','respondentMode','snapshotAt','questionCount','filters','countingPolicy','permissionsAppliedBeforeAggregation','percentageRounding','freeTextIncluded','moderationAvailable','moderationAppliesTo','externalDeliveryVerified'] as const)meta(field,data[field]);
+ meta('exportCompleteness','complete_permitted_exact_form_aggregates_within_source_limits');meta('textPolicy','Formula-like authored text uses a visible text: prefix; stored records are unchanged.');meta('percentageNullPolicy','Empty percentage cell means no denominator,not zero percent.');
+ if(provenance){meta('presetId',provenance.id);meta('presetVersion',provenance.version);}
+ for(const [field,value]of Object.entries(summary))rows.push(['summary',field,String(value)]);
+ for(const question of data.questions){
+  if(!uuid.safeParse(question.id).success||!['text','single','multiple'].includes(question.kind)||typeof question.required!=='boolean'||![question.answeringResponses,question.unansweredResponses].every(n=>Number.isSafeInteger(n)&&n>=0)||question.answeringResponses+question.unansweredResponses!==summary.includedResponses||question.answerCoveragePercent!==percent(question.answeringResponses,summary.includedResponses))throw new Error('POLL_EXPORT_QUESTION_INVALID');
+  const common=[question.id,csvText(question.prompt),question.kind,question.required,question.answeringResponses,question.unansweredResponses,question.answerCoveragePercent];rows.push(['question','answer_counts','',...common]);
+  if(question.kind==='text'){if('choices'in question||!('textBodiesIncluded'in question)||question.textBodiesIncluded!==false)throw new Error('POLL_EXPORT_PRIVATE_TEXT_INVALID');continue;}
+  if(!('choices'in question)||!('multipleSelections'in question)||!('optionCount'in question))throw new Error('POLL_EXPORT_CHOICES_INVALID');const choices=question.choices;
+  if(!Array.isArray(choices)||choices.length<2||choices.length>20||choices.length!==question.optionCount||new Set(choices.map(c=>c.id)).size!==choices.length||question.multipleSelections!==(question.kind==='multiple'))throw new Error('POLL_EXPORT_CHOICES_INVALID');
+  let selected=0;for(const choice of choices){if(!uuid.safeParse(choice.id).success||!Number.isSafeInteger(choice.count)||choice.count<0||choice.count>question.answeringResponses||choice.percentOfAnsweringResponses!==percent(choice.count,question.answeringResponses))throw new Error('POLL_EXPORT_CHOICES_INVALID');selected+=choice.count;rows.push(['choice','selection_counts','',...common,choice.id,csvText(choice.label),choice.count,choice.percentOfAnsweringResponses]);}
+  if(question.kind==='single'?selected!==question.answeringResponses:selected<question.answeringResponses)throw new Error('POLL_EXPORT_CHOICES_INVALID');
+ }
+ const body='\uFEFF'+rows.map(row=>csvRow(Array.from({length:header.length},(_,i)=>row[i]))).join('\r\n')+'\r\n';if(Buffer.byteLength(body)>4_194_304)throw new ApiError(422,'POLL_RESULTS_REQUIRE_BACKGROUND_JOB');return{status:200,body,csv:{filename:`poll-results-${data.pollId}-form-${data.formVersion}.csv`}};
+}
+export async function completePollResultsExport(ctx:ApiContext,provenance?:{id:string;version:number}){const reply=await pollResults(ctx);if(!reply||reply.status!==200)throw new Error('POLL_EXPORT_SOURCE_INVALID');return pollResultsCsv(reply.body,provenance);}
+export async function pollResultsExport(ctx:ApiContext):Promise<Reply|null>{const m=/^reports\/learning\/polls\/([^/]+)\/export$/.exec(ctx.path);if(!m)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const path='reports/learning/polls/'+uuid.parse(m[1]),url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;return completePollResultsExport({...ctx,path,request:new Request(url,{method:'GET'})});}
+export const pollResultsExportContract=[{...pollResultsContract[0],path:pollResultsContract[0].path+'/export',summary:'Complete exact-form scoped poll aggregate CSV:all authorized summary counts,question/option chart series,authored labels and percentage denominators;Empty percentage cells denote missing denominators,not zero percent. Same current polls/results rights,combined selectors and10000response-head cap;4MiB refuses oversized files without partial counts. Formula-safe authored text;NO free-text answers,respondent names,identities or response bodies. Saved preset provenance retained;not a response-detail export or queued report.',responseContentType:'text/csv' as const}] as const;
