@@ -12,7 +12,7 @@ import { counterpartyPayment,retainedCounterpartyPayment,prepareCounterpartyPaym
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2_147_483_647);
 const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000);
 const line=z.object({accountId:uuid,accountVersion:version,side:z.enum(['debit','credit']),amount:text.max(80),note:text.max(500).default('')}).strict();
-const common={periodId:uuid,periodVersion:version,postedOn:accountingDate,description:text.trim().min(1).max(2000),reference:text.max(200).default(''),reason};
+const common={periodId:uuid,periodVersion:version,postedOn:accountingDate,description:text.trim().min(1).max(2000),reference:text.max(200).default('').transform(v=>/^txn_[A-Za-z0-9]+$/.test(v.trim())?v.trim():v),reason};
 const create=z.object({...common,purpose:z.enum(['activity','opening','closing']).default('activity').describe('Ordinary activity by default. Opening uses permanent accounts at the period start; closing uses income/expense/equity at its end. Purpose is immutable and inherited by exact reversals.'),lines:z.array(line).min(2).max(200),counterpartyLines:journalCounterpartyLines.optional(),counterpartyPayment:counterpartyPayment.optional()}).strict();
 const reverse=z.object(common).strict();
 const reversal=reverse.extend({reversesId:uuid});
@@ -67,6 +67,10 @@ async function period(ctx:ApiContext,input:z.infer<typeof reverse>,lock:boolean)
 async function prepare(ctx:ApiContext,reversing:boolean,raw:unknown,lock:boolean,checkState=true){
   scope(ctx,'journals.edit');scope(ctx,'journals.view');
   const input=reversing?reversal.parse(raw):create.parse(raw);
+  if(!reversing&&/^txn_[A-Za-z0-9]+$/.test(input.reference)){
+    if(lock&&!(await ctx.db.query<{ok:boolean}>("SELECT pg_try_advisory_xact_lock(hashtextextended($1::text||':provider-dispute:'||$2,0)) ok",[ctx.credential.academy_id,input.reference])).rows[0].ok)throw new ApiError(409,'PROVIDER_DISPUTE_REFERENCE_BUSY');
+    if((await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE p.action='finance.provider-dispute.record' AND p.review_context#>>'{source,balanceTransactionId}'=$1 LIMIT 1",[input.reference])).rows.length)throw new ApiError(409,'PROVIDER_DISPUTE_ALREADY_RECORDED');
+  }
   if(!reversing&&/^re_[A-Za-z0-9]+$/.test(input.reference)){
     if(lock&&!(await ctx.db.query<{ok:boolean}>("SELECT pg_try_advisory_xact_lock(hashtextextended($1::text||':provider-refund:'||$2,0)) ok",[ctx.credential.academy_id,input.reference])).rows[0].ok)throw new ApiError(409,'PROVIDER_REFUND_REFERENCE_BUSY');
     if((await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE p.action='finance.provider-refund.record' AND p.payload->>'refundId'=$1 LIMIT 1",[input.reference])).rows.length)throw new ApiError(409,'PROVIDER_REFUND_ALREADY_RECORDED');
@@ -123,6 +127,7 @@ async function apply(ctx:ApiContext,p:Proposal,reversing=p.action==='finance.jou
 }
 async function standaloneReversal(ctx:ApiContext,input:unknown,lock:boolean){
  const prepared=await prepare(ctx,true,input,lock,false);
+ if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action='finance.provider-dispute.record' LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_DISPUTE_CORRECTION_WORKFLOW_REQUIRED');
  if(prepared.source&&(await ctx.db.query("SELECT 1 FROM public.finance_journals j JOIN public.approval_requests p ON p.academy_id=j.academy_id AND p.id=j.approval_id WHERE j.id=$1 AND p.action='finance.provider-refund.record' LIMIT 1",[prepared.source.id])).rows.length)throw new ApiError(409,'PROVIDER_REFUND_CORRECTION_WORKFLOW_REQUIRED');
  // Original approval identity exists on historical schemas too. Do not make
  // unrelated legacy corrections depend on a later feature table being present.
