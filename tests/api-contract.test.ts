@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('three-party work review exposes a separately attested guardian time without caller consent or legal-clearance overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/payroll/work-signature-send-requests/{id}/completion-evidence/{evidenceId}/review'].post,s=op.requestBody.content['application/json'].schema;assert.ok(s.properties.guardianSignedAt);assert.equal(s.additionalProperties,false);assert.equal(s.required.includes('guardianSignedAt'),false);assert.match(op.summary,/within the original authority window/);assert.match(op.summary,/guardian beneficiaries cannot review except master/);assert.match(op.summary,/Two-party source forbids/);for(const key of ['guardianVerified','consentGranted','legallyEffective','paymentCleared'])assert.equal(s.properties[key],undefined);
+});
 test('worker guardian directory documents bounded independent-scope discovery rather than signing eligibility',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/people/{id}/work-guardians'].get;assert.equal(op['x-capability'],'worker-guardians.view');const limit=op.parameters.find((p:any)=>p.name==='limit');assert.equal(limit.schema.maximum,50);assert.equal(limit.schema.minimum,1);assert.deepEqual(op.parameters.find((p:any)=>p.name==='state').schema.enum,['approved','suspended']);assert.match(op.summary,/before state filtering and pagination/);assert.match(op.summary,/not current signing authority/);assert.equal(api.paths['/api/v1/people/{id}/work-guardians'].post,undefined);
 });
