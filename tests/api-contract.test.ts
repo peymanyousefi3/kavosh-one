@@ -4,6 +4,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('exact provider warning deep links are protected reads with no source or accounting authority inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/checkout-requests/{id}/attempts/{attemptId}/inspections/{inspectionId}',read=api.paths[path].get;assert.deepEqual(read.parameters.map((p:any)=>p.name).sort(),['attemptId','id','inspectionId']);assert.equal(api.paths[path].post,undefined);assert.match(read.summary,/not a live balance/);
+});
+
+test('independent payment observations join the same protected automation catalogue without supplied payment facts',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),events=api.paths['/api/v1/automations/events'].get;assert.ok(events.parameters.find((p:any)=>p.name==='sourceKind').schema.enum.includes('checkout'));assert.match(events.summary,/independent payment observations/);const queue=api.paths['/api/v1/automations/rules/{id}/queue'].post.requestBody.content['application/json'].schema;assert.equal(queue.additionalProperties,false);assert.deepEqual(Object.keys(queue.properties).sort(),['eventId','expectedVersion','locale']);
+});
+
 test('collection accounting summary accepts only an optional civil day without supplied balances or provider verification',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),read=api.paths['/api/v1/finance/provider-collections/{id}'].get;assert.deepEqual(read.parameters.map((p:any)=>p.name).sort(),['id','on']);assert.equal(read.parameters.find((p:any)=>p.name==='on').required,false);assert.match(read.summary,/future-booked totals/);assert.match(read.summary,/No target invoice details/);
 });
