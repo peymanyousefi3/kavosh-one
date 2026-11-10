@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('refund return accounting accepts only retained evidence,date,period and reason,not caller money or restored status',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/finance/provider-refunds/{id}',s=api.paths[root+'/returns'].post.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['period','postedOn','reason','returnInspectionId']);assert.deepEqual(api.paths[root+'/return-source'].get.parameters.map((v:any)=>v.name).sort(),['id','postedOn','returnInspectionId']);assert.equal(api.paths[root+'/return-source'].post,undefined);assert.equal(api.paths['/api/v1/finance/provider-refund-returns/{id}'].post,undefined);assert.match(api.paths[root+'/returns'].post.summary,/Full original refund reconciliation is still required/);
+});
 test('refund return evidence is bounded read-only history,not supplied financial correction authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/finance/checkout-requests/{id}/attempts/{attemptId}/refund-return-inspections';assert.equal(api.paths[root].get.parameters.find((v:any)=>v.name==='limit').schema.maximum,25);assert.equal(api.paths[root].post,undefined);assert.equal(api.paths[root+'/{returnId}'].post,undefined);assert.deepEqual(api.paths[root+'/{returnId}'].get.parameters.map((v:any)=>v.name).sort(),['attemptId','id','returnId']);assert.match(api.paths[root+'/{returnId}'].get.summary,/not a financial correction/);
 });
