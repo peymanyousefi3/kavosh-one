@@ -27,6 +27,8 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['dispute-loss-source','dispute-losses'])for(const method of suffix==='dispute-losses'?['GET','POST']:['GET']){const r=await fetch(base+'/api/v1/finance/provider-collections/00000000-0000-4000-8000-000000000001/'+suffix,{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/sourceStamp|amountMinor|disputeId|expenseAccountId|stack/);}
+  {const r=await fetch(base+'/api/v1/finance/provider-dispute-losses/00000000-0000-4000-8000-000000000001');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/collectionId|amount|disposition|stack/);}
   {const r=await fetch(base+'/api/v1/community/published-profiles/Ej5FZ-ibQtOkVkJmFBdAAA');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/displayName|profileVersion|source_basis|stack/);}
   {const r=await fetch(base+'/api/public/v1/profiles/Ej5FZ-ibQtOkVkJmFBdAAA');assert.equal(r.status,404);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/displayName|profileVersion|source_basis|stack/);}
   {const r=await fetch(base+'/api/v1/community/published-profiles');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/displayName|headline|recordPath|nextCursor|stack/);}

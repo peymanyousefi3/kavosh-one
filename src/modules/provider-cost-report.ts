@@ -5,11 +5,13 @@ import { ApiError } from '../core/policy.ts';
 import type { profitabilityQuery } from './profitability-report.ts';
 
 const ids=z.array(z.string().uuid().transform(s=>s.toLowerCase())).max(10000).refine(a=>new Set(a).size===a.length);
+// The retained view's fee_minor column is the common provider-cost amount:
+// original/corrected fees and explicitly reviewed academy-absorbed losses.
 export const providerCostAuthorization=z.object({postings:ids}).strict();
 // Original approval bindings retain every original financial account and
 // invoice context. Current class/student rights are additional,not a shortcut
 // through a broad financial account or a selected report filter.
-const permitted=`p.status='applied' AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct')
+const permitted=`p.status='applied' AND p.action IN('finance.provider-dispute.record','finance.provider-dispute.correct','finance.provider-dispute.loss')
  AND public.approval_bindings_allow(p.privacy_bindings,$3::jsonb)
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($4::jsonb) scope(value) WHERE public.scope_contains(scope.value,p.scope) IS NOT TRUE)
  AND public.scope_contains($5::jsonb,jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',cl.id,'hubId',cl.hub_id))))

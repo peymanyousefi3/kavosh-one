@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('disputed loss recording requires explicit academy expense and no-tax-claim treatment without caller money,credit or release authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/finance/provider-collections/{id}/',op=api.paths[root+'dispute-losses'].post,s=op.requestBody.content['application/json'].schema;assert.equal(op['x-capability'],'dispute-losses.record');assert.equal(api.paths[root+'dispute-loss-source'].get['x-capability'],'dispute-losses.view');assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['disposition','disputeId','disputedFundsAccount','expenseAccount','period','postedOn','reason','sourceStamp','taxTreatment']);assert.equal(s.properties.disposition.const,'academy_expense');assert.equal(s.properties.taxTreatment.const,'not_claimed');assert.match(op.summary,/Preserves customer credit and processor custody/);assert.match(op.summary,/no refund/);assert.ok(api.paths[root+'dispute-losses'].get);assert.ok(api.paths[root+'dispute-loss-source'].get);assert.ok(api.paths['/api/v1/finance/provider-dispute-losses/{id}'].get);assert.equal(api.paths[root+'dispute-losses'].delete,undefined);
+});
+
 test('short profile sharing is documented on existing readers without adding a new identity or authentication bypass',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/public/v1/profiles/{id}','/api/v1/community/published-profiles/{id}']){const op=api.paths[path].get,schema=op.parameters.find((p:any)=>p.name==='id').schema;assert.equal(schema.anyOf[0].format,'uuid');assert.equal(schema.anyOf[1].pattern,'^[A-Za-z0-9_-]{22}$');assert.match(op.summary,/SAME/);assert.equal(op.requestBody,undefined);}assert.equal(api.paths['/api/v1/community/published-profiles/{id}'].get.security.some((v:any)=>'botBearer'in v),false);
 });
