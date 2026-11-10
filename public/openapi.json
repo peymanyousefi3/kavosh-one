@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.363.0",
+    "version": "0.364.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -3437,15 +3437,25 @@
     "/api/public/v1/profiles/{id}": {
       "get": {
         "security": [],
-        "summary": "Default-off reviewed school/hub and consented student profile JSON. Native current-publication,pinned consent,owner,moderation and draft-version gates;no private legal/family/student records,media or HTML rendering. Trusted proxy and keyed per-IP budget required;no-store,not a visual profile page.",
+        "summary": "Default-off reviewed school/hub and consented student profile JSON. Accepts canonical UUID or22character canonical short sharing ID with the SAME consent,identity and keyed budget gates. Short IDs are not access credentials. Native current-publication,pinned consent,owner,moderation and draft-version gates;no private legal/family/student records,media or HTML rendering. Trusted proxy and keyed per-IP budget required;no-store,not a visual profile page.",
         "parameters": [
           {
             "name": "id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
             }
           }
         ],
@@ -13795,15 +13805,25 @@
     },
     "/api/v1/community/published-profiles/{id}": {
       "get": {
-        "summary": "Current verified same-school member reads only a reviewed public/member edition under published-profiles.view. Exact draft,moderation,owner and pinned purpose-specific student consent are rechecked;no private profile/signature/family/media data.",
+        "summary": "Canonical UUID or22character short sharing ID;both use the SAME gates. Current verified same-school member reads only a reviewed public/member edition under published-profiles.view. Exact draft,moderation,owner and pinned purpose-specific student consent are rechecked;no private profile/signature/family/media data.",
         "parameters": [
           {
             "name": "id",
             "in": "path",
             "required": true,
             "schema": {
-              "type": "string",
-              "format": "uuid"
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
             }
           }
         ],

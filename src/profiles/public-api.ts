@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ApiError } from '../core/policy.ts';
 import { assertSchemaReady,type Connection,type Database } from '../core/database.ts';
 import { verifiedProxyIp } from '../core/trusted-proxy.ts';
+import { profileShareId } from './share-id.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const content=z.object({displayName:z.string().min(1).max(150),headline:z.string().max(200),bio:z.string().max(4000)}).strict();
@@ -21,7 +22,7 @@ export function createPublicProfileApi(database:Database,config:{enabled:boolean
  return async(request:Request,rawId:string)=>{
   const headers={'Cache-Control':'no-store','Pragma':'no-cache','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff','Content-Security-Policy':"sandbox; default-src 'none'"};let db:Connection|undefined,transaction=false,destroy=false;
   try{
-   if(!config.enabled)throw new ApiError(404,'NOT_FOUND');if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(new URL(request.url).search)throw new ApiError(400,'INVALID_QUERY');const id=uuid.parse(rawId);
+   if(!config.enabled)throw new ApiError(404,'NOT_FOUND');if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(new URL(request.url).search)throw new ApiError(400,'INVALID_QUERY');const id=profileShareId.parse(rawId);
    if(!config.budgetSecret||config.budgetSecret.length<32||config.budgetSecret.length>4096||config.budgetSecret===config.edgeSecret)throw new Error('INDEPENDENT_PUBLIC_BUDGET_SECRET_REQUIRED');const ip=verifiedProxyIp(request,config),budget=createHmac('sha256',config.budgetSecret).update('public-profile-ip:v1:'+ip).digest('hex');
    db=await database.connect();await assertPublicProfileRole(db);await assertSchemaReady(db);await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('statement_timeout','5s',true),set_config('lock_timeout','2s',true)");
    const r=(await db.query<{result:{limited:boolean;data?:unknown}}>('SELECT public.read_published_organization_profile($1,$2) result',[id,budget])).rows[0]?.result;

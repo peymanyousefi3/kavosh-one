@@ -4,6 +4,10 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('short profile sharing is documented on existing readers without adding a new identity or authentication bypass',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/public/v1/profiles/{id}','/api/v1/community/published-profiles/{id}']){const op=api.paths[path].get,schema=op.parameters.find((p:any)=>p.name==='id').schema;assert.equal(schema.anyOf[0].format,'uuid');assert.equal(schema.anyOf[1].pattern,'^[A-Za-z0-9_-]{22}$');assert.match(op.summary,/SAME/);assert.equal(op.requestBody,undefined);}assert.equal(api.paths['/api/v1/community/published-profiles/{id}'].get.security.some((v:any)=>'botBearer'in v),false);
+});
+
 test('member academic directory is human-only and accepts bounded public-ID paging and localized literal search without private selectors',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/community/published-profiles',op=api.paths[path].get;assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.deepEqual(op.parameters.map((p:any)=>p.name).sort(),['after','hubId','kind','limit','locale','q']);assert.equal(op.parameters.find((p:any)=>p.name==='limit').schema.maximum,50);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/BEFORE search and pagination/);assert.match(op.summary,/no legal identities/);
 });
