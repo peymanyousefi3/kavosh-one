@@ -25,6 +25,7 @@ if os.path.realpath(INPUT_DIRECTORY) != INPUT_DIRECTORY or not os.path.isdir(INP
 if MIME not in ("video/mp4", "video/quicktime", "video/webm"):
     sys.exit(1)
 ENV = {"TZ": "UTC", "LC_ALL": "C", "PATH": "/usr/bin:/bin"}
+STAGE = "runtime"
 
 
 class Rejected(Exception):
@@ -73,7 +74,9 @@ def run(args, maximum=1048576):
                                 reject("RESOURCE_LIMIT")
                 code = child.wait(timeout=max(0.01, deadline - time.monotonic()))
                 if code != 0:
-                    reject("DECODER_REJECTED")
+                    failure = Rejected("DECODER_REJECTED")
+                    failure.native_exit_code = code
+                    raise failure
                 return b"".join(output)
             finally:
                 if child.poll() is None:
@@ -88,6 +91,7 @@ def number(value):
 
 
 def screen(path):
+    global STAGE
     for executable, name in ((FFMPEG, "ffmpeg"), (FFPROBE, "ffprobe")):
         version = run([executable, "-version"], 65536).decode("ascii", "strict")
         if not version.startswith(name + " version 9.0.2 ") or "--disable-network" not in version:
@@ -99,9 +103,11 @@ def screen(path):
     source = ["-protocol_whitelist", "file,pipe", "-f", container]
     if container == "mov":
         source += ["-enable_drefs", "0", "-use_absolute_path", "0"]
+    STAGE = "probe"
     probe = json.loads(run([FFPROBE, "-v", "error", "-max_alloc", "67108864", "-threads", "1"] + source + [
         "-show_entries", "stream=index,codec_type,codec_name,width,height,avg_frame_rate,duration,channels,sample_rate:format=format_name,duration",
         "-of", "json", path]))
+    STAGE = "stream_policy"
     streams, fmt = probe.get("streams"), probe.get("format")
     if not isinstance(streams, list) or not 1 <= len(streams) <= 2 or not isinstance(fmt, dict):
         reject("STREAM_POLICY")
@@ -132,10 +138,12 @@ def screen(path):
         if not re.fullmatch(r"[0-9]{4,6}", sample_rate) or not 8000 <= int(sample_rate) <= 192000:
             reject("STREAM_POLICY")
         audio = {"codec": a["codec_name"], "channels": a["channels"], "sampleRate": int(sample_rate)}
+    STAGE = "decode"
     decoded = run([FFMPEG, "-hide_banner", "-loglevel", "error", "-xerror", "-max_error_rate", "0", "-max_alloc", "67108864",
                    "-threads", "1", "-filter_threads", "1", "-filter_complex_threads", "1", "-err_detect", "explode"] + source + [
         "-noautorotate", "-i", path, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "rawvideo", "-pix_fmt", "yuv420p",
         "-fps_mode:v", "passthrough", "-c:a", "pcm_s16le", "-threads", "1", "-f", "framehash", "-hash", "sha256", "pipe:1"], 8388608)
+    STAGE = "frame_evidence"
     frames, audio_frames, decoded_bytes = 0, 0, 0
     timebases, starts, ends, previous_pts = {}, {}, {}, {}
     digest = hashlib.sha256()
@@ -190,7 +198,9 @@ try:
         stream.write(data)
     result.update(screen(path))
 except Rejected as error:
-    result.update(outcome="rejected", reason=str(error))
+    result.update(outcome="rejected", reason=str(error), stage=STAGE)
+    if hasattr(error, "native_exit_code"):
+        result["nativeExitCode"] = error.native_exit_code
 except Exception:
     sys.exit(1)
 usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)

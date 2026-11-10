@@ -382,6 +382,15 @@ jobs:
   video-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -408,6 +417,32 @@ jobs:
           appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\n');
           JS
       - name: Quick real full-video/audio decode and adverse-case checks,no live services
-        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts tests/video-service.test.ts tests/file-video-evidence.test.ts
         env:
           VIDEO_VALIDATION_TEST_REQUIRED: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Build credential-free native video service
+        run: docker build --file Dockerfile.video-service --tag kavosh-video:ci .
+      - name: Refuse video startup without required runtime isolation
+        run: |
+          if docker run --rm --network none kavosh-video:ci; then
+            echo 'Unsafe video-service startup was accepted'
+            exit 1
+          fi
+      - name: Run actual private resource-limited video service
+        run: >-
+          docker run --detach --name kavosh-video-ci --network none --read-only
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64
+          --tmpfs /run/kavosh-video:rw,noexec,nosuid,nodev,size=1m,uid=10003,gid=10001,mode=0750
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=160m,uid=10003,gid=10001,mode=0700
+          kavosh-video:ci
+      - name: Verify actual decoder PIE,kernel controls,private socket,complete decode and temp cleanup
+        run: docker exec kavosh-video-ci node scripts/video-service-smoke.mjs
+      - name: Verify graceful video service shutdown
+        run: |
+          docker stop --time 10 kavosh-video-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' kavosh-video-ci)" = 0
+      - name: Remove disposable video-service container
+        if: always()
+        run: docker rm --force kavosh-video-ci || true

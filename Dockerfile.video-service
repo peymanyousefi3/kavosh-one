@@ -1,0 +1,34 @@
+# Decoder has no database,storage,identity credentials or network interface.
+FROM alpine:3.24 AS build
+RUN apk add --no-cache nodejs npm python3 build-base nasm linux-headers
+WORKDIR /build
+RUN npm install --global pnpm@11.25.0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY workers/image-service/package.json ./workers/image-service/package.json
+COPY workers/notification-worker/package.json ./workers/notification-worker/package.json
+COPY workers/pdf-validator/package.json ./workers/pdf-validator/package.json
+COPY workers/video-validator/package.json workers/video-validator/ffmpeg-source.json ./workers/video-validator/
+COPY workers/message-worker/package.json ./workers/message-worker/package.json
+RUN pnpm install --frozen-lockfile
+COPY scripts/build-video-runtime.mjs ./scripts/build-video-runtime.mjs
+RUN node scripts/build-video-runtime.mjs > /build/video-runtime.json && node --input-type=module -e 'import{readFileSync,mkdirSync,copyFileSync}from"node:fs";const r=JSON.parse(readFileSync("/build/video-runtime.json","utf8"));mkdirSync("/opt/video",{recursive:true});for(const name of["ffmpeg","ffprobe"])copyFileSync(r[name+"Path"],"/opt/video/"+name);copyFileSync(r.root+"/source/COPYING.LGPLv2.1","/opt/video/COPYING.LGPLv2.1");'
+COPY src/core/policy.ts ./src/core/policy.ts
+COPY src/files/video-validation.ts src/files/video-service.ts src/files/video-runtime.ts src/files/isolated-runtime.ts src/files/content-signature.ts ./src/files/
+COPY scripts/video-validator-service.ts ./scripts/video-validator-service.ts
+RUN pnpm exec tsc --ignoreConfig --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir /compiled scripts/video-validator-service.ts
+RUN pnpm --filter @kavosh/video-validator deploy --prod /runtime
+
+FROM alpine:3.24 AS runtime
+RUN apk add --no-cache nodejs python3 libstdc++ && addgroup -g 10001 parser && adduser -D -u 10003 -G parser parser
+WORKDIR /app
+ENV NODE_ENV=production TZ=UTC
+COPY --from=build /runtime/package.json ./package.json
+COPY --from=build /runtime/node_modules ./node_modules
+COPY --from=build /compiled/src ./src
+COPY --from=build /compiled/scripts ./scripts
+COPY --from=build /opt/video /opt/video
+COPY src/files/video-inspector.py src/files/signature-detector.mjs ./src/files/
+COPY scripts/video-service-smoke.mjs ./scripts/video-service-smoke.mjs
+RUN mkdir /run/kavosh-video && chown 10003:10001 /run/kavosh-video && chmod 0750 /run/kavosh-video
+USER 10003:10001
+CMD ["node", "scripts/video-validator-service.js"]

@@ -73,7 +73,7 @@ async function inspection(ctx:ApiContext,id:string):Promise<Reply> {
     await permittedFile(ctx,id);const row=(await ctx.db.query('SELECT '+inspectionFields+' FROM public.file_inspection_requests WHERE file_id=$1',[id])).rows[0];
     if(!row)throw new ApiError(404,'FILE_INSPECTION_NOT_REQUESTED');
     const processing=(await ctx.db.query('SELECT state,attempt_no AS "attemptCount",last_outcome AS "lastOutcome",last_reason AS "lastReason",CASE WHEN state=\'queued\' THEN available_at ELSE NULL END AS "nextAttemptAt" FROM public.file_inspection_jobs WHERE inspection_id=$1',[row.id])).rows[0]??null;
-    const textAvailable=(await ctx.db.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0].revision>=357;
+    const revision=(await ctx.db.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0].revision,textAvailable=revision>=357,videoAvailable=revision>=358;
     const attempts=(await ctx.db.query(`SELECT a.attempt_no AS "attempt",a.worker_id AS "workerId",a.started_at AS "startedAt",a.finished_at AS "finishedAt",a.outcome,a.reason_code AS "reason",a.measured_bytes::float8 AS "measuredBytes",a.sha256,a.provider_content_type AS "providerContentType",
       CASE WHEN s.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('detector',s.detector,'sampleBytes',s.sample_bytes,'sampleSha256',s.sample_sha256,'mime',s.mime,'extension',s.extension) END AS "contentSignature",
       CASE WHEN screen.inspection_id IS NULL THEN jsonb_build_object('state','unassessed','reason','ASSESSMENT_NOT_RECORDED','structurallyValidated',false)
@@ -81,12 +81,14 @@ async function inspection(ctx:ApiContext,id:string):Promise<Reply> {
       CASE WHEN image.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',image.recorded_at,'result',image.result) END AS "imageValidation",
       CASE WHEN pdf.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',pdf.recorded_at,'result',pdf.result,'profile','unsigned_source','renderingVerified',false,'providerCoordinatesVerified',false,'signatureVerified',false) END AS "pdfValidation",
       ${textAvailable?"CASE WHEN text_evidence.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',text_evidence.recorded_at,'result',text_evidence.result,'executionVerified',false,'previewIncluded',false) END":'NULL::jsonb'} AS "textValidation",
+      ${videoAvailable?"CASE WHEN video.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',video.recorded_at,'result',video.result,'playbackVerified',false,'servingAuthorized',false) END":'NULL::jsonb'} AS "videoValidation",
       CASE WHEN scanner.inspection_id IS NULL THEN NULL ELSE jsonb_build_object('recordedAt',scanner.recorded_at,'result',scanner.result,'currentFreshnessVerified',false,'configurationVerified',false,'officialSignaturesVerified',false,'scanEnginePinned',false) END AS "scannerObservation"
       FROM public.file_inspection_attempts a LEFT JOIN public.file_content_signatures s ON s.academy_id=a.academy_id AND s.inspection_id=a.inspection_id AND s.attempt_no=a.attempt_no
       LEFT JOIN public.file_format_assessments screen ON screen.academy_id=a.academy_id AND screen.inspection_id=a.inspection_id AND screen.attempt_no=a.attempt_no
       LEFT JOIN public.file_image_evidence image ON image.academy_id=a.academy_id AND image.inspection_id=a.inspection_id AND image.attempt_no=a.attempt_no
       LEFT JOIN public.file_pdf_evidence pdf ON pdf.academy_id=a.academy_id AND pdf.inspection_id=a.inspection_id AND pdf.attempt_no=a.attempt_no
       ${textAvailable?'LEFT JOIN public.file_text_evidence text_evidence ON text_evidence.academy_id=a.academy_id AND text_evidence.inspection_id=a.inspection_id AND text_evidence.attempt_no=a.attempt_no':''}
+      ${videoAvailable?'LEFT JOIN public.file_video_evidence video ON video.academy_id=a.academy_id AND video.inspection_id=a.inspection_id AND video.attempt_no=a.attempt_no':''}
       LEFT JOIN public.file_scanner_observations scanner ON scanner.academy_id=a.academy_id AND scanner.inspection_id=a.inspection_id AND scanner.attempt_no=a.attempt_no
       WHERE a.inspection_id=$1 ORDER BY a.attempt_no LIMIT 5`,[row.id])).rows;
     return {status:200,body:{data:inspectionReply({...row,processing,attempts})}};

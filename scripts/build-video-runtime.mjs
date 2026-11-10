@@ -17,6 +17,9 @@ const bytes=Buffer.concat(chunks,size);if(createHash('sha256').update(bytes).dig
 const env={PATH:process.env.PATH??'/usr/bin:/bin',TZ:'UTC',LC_ALL:'C'},options={env,encoding:'utf8',maxBuffer:8388608,timeout:300000};
 const list=await run('tar',['-tJf',archive],options);if(list.stdout.split('\n').filter(Boolean).some(p=>!p.startsWith('ffmpeg-'+manifest.version+'/')||p.split('/').includes('..')))throw Error('UNSAFE_VIDEO_SOURCE_ARCHIVE');
 await mkdir(source,{mode:0o700});await run('tar',['-xJf',archive,'-C',source,'--strip-components=1'],options);
-await run('./configure',manifest.configureFlags,{...options,cwd:source});await run('make',['-j2'],{...options,cwd:source});
+// FFmpeg's native hardened toolchain explicitly enables PIE,stack protection
+// and immediate read-only relocations on Linux;do not rely on distro defaults.
+const flags=[...manifest.configureFlags,...process.platform==='linux'?['--toolchain=hardened']:[]];
+await run('./configure',flags,{...options,cwd:source});await run('make',['-j2'],{...options,cwd:source});
 const ffmpegPath=join(source,'ffmpeg'),ffprobePath=join(source,'ffprobe');for(const [path,name]of [[ffmpegPath,'ffmpeg'],[ffprobePath,'ffprobe']]){const version=await run(path,['-version'],options);if(!version.stdout.startsWith(name+' version '+manifest.version+' ')||!version.stdout.includes('--disable-network'))throw Error('UNEXPECTED_VIDEO_BUILD');}
 console.log(JSON.stringify({root,ffmpegPath,ffprobePath,version:manifest.version,sourceSha256:manifest.sha256,sourceHashVerified:true,networkDisabledAtBuild:true,productionContainerVerified:false}));

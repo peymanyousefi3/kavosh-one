@@ -8,6 +8,8 @@ import { processOneInspection,inspectStoredFile } from '../src/files/inspection-
 import type { Database } from '../src/core/database.ts';
 import { imageServiceConfiguration } from '../src/files/image-service.ts';
 import { assertPrivateImageSocket } from '../src/files/image-runtime.ts';
+import { videoServiceConfiguration } from '../src/files/video-service.ts';
+import { assertPrivateVideoSocket } from '../src/files/video-runtime.ts';
 import { pdfServiceConfiguration } from '../src/files/pdf-service.ts';
 import { assertPrivatePdfSocket } from '../src/files/pdf-runtime.ts';
 import { clamdConfiguration } from '../src/integrations/clamav.ts';
@@ -23,6 +25,8 @@ try {
   if(imageService)await assertPrivateImageSocket(imageService.socketPath);
   const pdfService=process.env.FILE_PDF_VALIDATION_ENABLED==='true'?pdfServiceConfiguration.parse({socketPath:process.env.FILE_PDF_VALIDATION_SOCKET_PATH}):undefined;
   if(pdfService)await assertPrivatePdfSocket(pdfService.socketPath);
+  const videoService=process.env.FILE_VIDEO_VALIDATION_ENABLED==='true'?videoServiceConfiguration.parse({socketPath:process.env.FILE_VIDEO_VALIDATION_SOCKET_PATH}):undefined;
+  if(videoService)await assertPrivateVideoSocket(videoService.socketPath);
   const raw=z.string().min(1).refine(v=>Buffer.byteLength(v)<=1_048_576).parse(process.env.FILE_INSPECTION_R2_CONNECTIONS);
   const entries=z.array(z.object({academyId:z.string().uuid().transform(v=>v.toLowerCase()),configuration:r2Connection}).strict()).min(1).max(1000).refine(v=>new Set(v.map(e=>e.academyId)).size===v.length).parse(JSON.parse(raw));
   const connections=new Map(entries.map(e=>[e.academyId,e.configuration]));
@@ -35,7 +39,8 @@ try {
   while(!stopping.signal.aborted) {
     if(imageService)await assertPrivateImageSocket(imageService.socketPath);
     if(pdfService)await assertPrivatePdfSocket(pdfService.socketPath);
-    const result=await processOneInspection(database,[...connections.keys()],workerId,(task,signal)=>inspectStoredFile(task,id=>connections.get(id)??null,scanner,signal,timeoutMs,undefined,imageService,databasePolicy,pdfService),{timeoutMs,signal:stopping.signal});
+    if(videoService)await assertPrivateVideoSocket(videoService.socketPath);
+    const result=await processOneInspection(database,[...connections.keys()],workerId,(task,signal)=>inspectStoredFile(task,id=>connections.get(id)??null,scanner,signal,timeoutMs,undefined,imageService,databasePolicy,pdfService,videoService),{timeoutMs,signal:stopping.signal});
     if(result.claimed&&!result.recorded)console.error('file_inspection_lease_lost');
     if(!result.claimed)await delay(1000,undefined,{signal:stopping.signal});
   }
