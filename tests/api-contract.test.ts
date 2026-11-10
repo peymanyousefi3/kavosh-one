@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+test('permanent primary-school exemption needs an explicit confirmed identity and current subscription version,not a guessed brand or payment input',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p='/api/platform/v1/academies/{id}/subscription/free-exemption',op=api.paths[p].post,s=op.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['confirmAcademyId','expectedVersion','permanent','reason']);assert.equal(s.properties.permanent.const,true);assert.equal(s.properties.expectedVersion.minimum,1);assert.equal(op.security.some((v:any)=>'botBearer'in v),false);assert.ok(api.paths[p].get);assert.equal(api.paths[p].delete,undefined);for(const k of ['name','free','paid','amountMinor'])assert.equal(s.properties[k],undefined);
+});
+
 test('school subscription assignment documents explicit pinned terms,zero initial version and no client payment or access authority',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/academies/{id}/subscription',op=api.paths[base+'/assign'].post,s=op.requestBody.content['application/json'].schema;
  assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['expectedVersion','expiresAt','planId','planVersion','reason','startsAt']);assert.equal(s.properties.expectedVersion.minimum,0);assert.ok(s.required.includes('expiresAt'));assert.equal(op.security.some((v:any)=>'botBearer'in v),false);for(const key of ['paid','paymentVerified','effectiveStatus','graceDays','free','amountMinor'])assert.equal(s.properties[key],undefined);assert.ok(api.paths[base].get);assert.ok(api.paths[base+'/history'].get);assert.equal(api.paths[base].delete,undefined);

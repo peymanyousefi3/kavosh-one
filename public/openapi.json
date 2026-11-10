@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.339.0",
+    "version": "0.340.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -2235,6 +2235,121 @@
                   "planVersion",
                   "startsAt",
                   "expiresAt",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/platform/v1/academies/{id}/subscription/free-exemption": {
+      "get": {
+        "summary": "Owner-only proof of the explicitly registered primary free academy; never infer an exemption from a school name",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current directory data or version-checked change"
+          },
+          "201": {
+            "description": "Pending school/master or private onboarding invitation created atomically; no verification or activation bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Permanently bind Kavosh’s one primary free academy to an explicitly confirmed ID and current active non-expiring zero-price assignment; cannot transfer or remove; later paid,expiring or future-start assignments are blocked; does not charge or activate",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          },
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants, academy selection and bot credentials confer no platform authority. Every successful read and change is audited. This directory does not yet provide cross-school business-record browsing, billing or deletion. Master-invitation issuance returns a private 48-hour token and its non-secret invitationRequestKey only for the already assigned pending master. Exact issue retries preserve expiry; superseded/expired/consumed tokens cannot be returned again. Cancellation binds the original issue receipt,reason,school version and derived token hash,expires only that still-unused invitation and never edits accounts or cancels a replacement. Pre-tracking issue receipts require reissue before cancellation. Exact cancellation retries are historical receipts,not current availability. No plaintext token enters database history. Keep returned tokens private. No message,payment,signature or live provider action is performed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  },
+                  "confirmAcademyId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "permanent": {
+                    "type": "boolean",
+                    "const": true
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "confirmAcademyId",
+                  "permanent",
                   "reason"
                 ],
                 "additionalProperties": false
