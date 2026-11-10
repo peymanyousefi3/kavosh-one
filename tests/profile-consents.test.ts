@@ -8,6 +8,10 @@ import type { Credential } from '../src/core/policy.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { assertRuntimeRole } from '../src/core/database.ts';
 import { workAgreementFixture } from './work-agreement-fixture.ts';
+import { workerProfileConsentEligibilitySchema } from '../src/modules/profile-consents.ts';
+test('minor worker consent status requires a bounded guardian proof without leaking or borrowing adult authority',()=>{
+ const base={eligible:true,reason:null,purpose:'public_profile',requiresGuardian:true,evidenceId:randomUUID(),reviewVersion:1,providerFreshlyChecked:false,legalValidityCertified:false,sourceKind:'work',identityVersion:1,identityApprovalId:randomUUID()},guardian={...base,guardianSourceFingerprint:'a'.repeat(64)};assert.equal(workerProfileConsentEligibilitySchema.safeParse(guardian).success,true);assert.equal(workerProfileConsentEligibilitySchema.safeParse(base).success,false);assert.equal(workerProfileConsentEligibilitySchema.safeParse({...guardian,requiresGuardian:false}).success,false);assert.equal(workerProfileConsentEligibilitySchema.safeParse({...guardian,guardianId:randomUUID()}).success,false);assert.equal(workerProfileConsentEligibilitySchema.safeParse({...guardian,guardianSourceFingerprint:'private-name'}).success,false);assert.equal(workerProfileConsentEligibilitySchema.safeParse({...base,requiresGuardian:false}).success,true);
+});
 type Fixture=Awaited<ReturnType<typeof agreementFixture>>;
 const base=(f:Fixture)=>'students/'+f.student+'/profile-consents';
 const withdraw=(f:Fixture,as='staff',key?:string,purpose='public_profile',body:unknown={})=>f.request(base(f)+'/'+purpose+'/withdraw',body,as,{key});

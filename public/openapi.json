@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.382.0",
+    "version": "0.383.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -13579,7 +13579,7 @@
         }
       },
       "post": {
-        "summary": "Upper-reviewed exact-version sharing. Organizations use profiles.publish and public/unpublished only. Students require separate student-profiles.view/publish plus profile view and actual purpose consent for public/members;unpublished needs no positive consent. Workers require separate worker-profiles.view/publish and an approved current identity plus original Live purpose-bound worker consent. Old organization/student roles/tokens gain no worker rights. Every public read rechecks the exact pinned family visibility choice,consent and draft edition;private preference may immediately restrict an already-reviewed public edition to authorized verified members without republishing or a new signature;no media.",
+        "summary": "Upper-reviewed exact-version sharing. Organizations use profiles.publish and public/unpublished only. Students require separate student-profiles.view/publish plus profile view and actual purpose consent for public/members;unpublished needs no positive consent. Workers require separate worker-profiles.view/publish and an approved current identity plus original Live purpose-bound adult worker or current verified minor-worker guardian consent. Old organization/student roles/tokens gain no worker rights. Every public read rechecks the exact pinned family visibility choice,consent and draft edition;private preference may immediately restrict an already-reviewed public edition to authorized verified members without republishing or a new signature;no media.",
         "parameters": [
           {
             "name": "id",
@@ -42148,7 +42148,7 @@
     },
     "/api/v1/me/profile-consents": {
       "get": {
-        "summary": "Verified human reads own purpose-specific withdrawal and native student/worker evidence eligibility. Worker checks require reviewed current identity,adult self at signing and now,original worker-only selected purpose,accepted current original-bound Live evidence and post-withdrawal dispatch. Current student/guardian rules take precedence for dual-role people. No legal DOB,name,identity/evidence/approval IDs,signature data or public content;this does not evaluate or grant publication,certify legal validity or freshly check the provider.",
+        "summary": "Verified human reads own purpose-specific withdrawal and native student/worker evidence eligibility. Worker checks require reviewed current identity,adult self or current approved guardian authority for a minor at signing and now,original authorized signer-only purpose,accepted current original-bound Live evidence and post-withdrawal dispatch. Current student/guardian rules take precedence for dual-role people. No legal DOB,name,identity/evidence/approval IDs,signature data or public content;this does not evaluate or grant publication,certify legal validity or freshly check the provider.",
         "parameters": [],
         "security": [
           {
@@ -57590,6 +57590,352 @@
               "type": "string",
               "format": "uuid"
             }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/profile-consents": {
+      "get": {
+        "summary": "Verified nonstudent worker or their current approved under18 work guardian reads only purpose eligibility and withdrawal status. No administrative grants required or sufficient;current student records must use the student path. No legal identity,guardian identity,private approval/source pointers or signature data.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/profile-consents/{purpose}/withdraw": {
+      "post": {
+        "summary": "Immediate verified self/current approved minor-worker guardian withdrawal through the SAME immutable privacy cutoff,audit and mandatory upper alerts. No upper approval,restoration,enrollment or administrator impersonation;available in read-only school.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "enum": [
+                "public_profile",
+                "verified_member_profile"
+              ]
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "default": "Profile sharing withdrawn",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/profile-consents/{purpose}/withdrawals": {
+      "get": {
+        "summary": "Bounded purpose withdrawal history for current verified self/work guardian,without private reasons,other actor identities or signing evidence.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "enum": [
+                "public_profile",
+                "verified_member_profile"
+              ]
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/profile-visibility": {
+      "get": {
+        "summary": "Current verified self/approved under18 worker guardian reads the default-members sharing preference;not signed consent or publication. Student identity takes precedence and requires the student path.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "post": {
+        "summary": "Current verified nonstudent self/approved minor-worker guardian chooses exact-version members/public preference. Members restriction available in read-only school;public never grants consent or publishes. No administrative role can impersonate family authority.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "audience": {
+                    "type": "string",
+                    "enum": [
+                      "public",
+                      "members"
+                    ]
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "audience"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/people/{id}/profile-visibility/history": {
+      "get": {
+        "summary": "Bounded sharing-preference history for current verified self/work guardian without private review reasons or signing data.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
           }
         ],
         "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
