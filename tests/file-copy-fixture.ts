@@ -5,6 +5,7 @@ import { operationsFixture } from './operations-fixture.ts';
 import { processOneInspection,type InspectionResult } from '../src/files/inspection-worker.ts';
 import { validateImage } from '../src/files/image-validation.ts';
 import { validateUnsignedPdf } from '../src/files/pdf-validation.ts';
+import { validateText } from '../src/files/text-validation.ts';
 import { detectContentSignature } from '../src/files/content-signature.ts';
 import type { Database } from '../src/core/database.ts';
 
@@ -21,7 +22,7 @@ export async function fixture(base?:Awaited<ReturnType<typeof operationsFixture>
   const b=options.content??bytes,mime=options.mime??'image/png',made=await f.request('files',{anchor:options.class?{kind:'class',id:options.class}:options.academy?{kind:'academy'}:options.person?{kind:'person',id:options.person}:{kind:'hub',id:options.hub??f.hub},domain:options.domain??'general',...(options.workEngagementId?{workEngagementId:options.workEngagementId}:{}),name:'Synthetic source',claimedMimeType:mime,expectedBytes:b.length,expectedSha256:hash(b)});assert.equal(made.response.status,201,JSON.stringify(made.body));const id=made.body.data.id;
   const grant=await f.request('files/'+id+'/upload-link',{expectedMetadataVersion:1});assert.equal(grant.response.status,201);const inspection=await f.request('files/'+id+'/inspection',{expectedMetadataVersion:1,grantId:grant.body.data.id});assert.equal(inspection.response.status,202);
   const now=Date.now(),observation={formatVersion:1 as const,engineVersion:'1.5.4',databaseVersion:30001,databaseCreatedAt:new Date(Math.floor((now-60000)/1000)*1000).toISOString().replace('.000Z','Z'),observedAt:new Date(now).toISOString(),observedBeforeAt:new Date(now).toISOString(),timeZone:'UTC',maximumAgeSeconds:172800};
-  const result:InspectionResult={outcome:'no_detection',bytes:b.length,sha256:hash(b),etag:'"synthetic-copy-source"',providerContentType:'application/octet-stream',signature:await detectContentSignature(b),...(mime==='image/png'?{imageValidation:await validateImage(b,mime)}:{}),...(mime==='application/pdf'?{pdfValidation:await validateUnsignedPdf(b,{pythonPath:python!})}:{}),...(options.observation===false?{}:{databaseObservation:observation})};
+  const result:InspectionResult={outcome:'no_detection',bytes:b.length,sha256:hash(b),etag:'"synthetic-copy-source"',providerContentType:'application/octet-stream',signature:await detectContentSignature(b),...(mime==='image/png'?{imageValidation:await validateImage(b,mime)}:{}),...(mime==='application/pdf'?{pdfValidation:await validateUnsignedPdf(b,{pythonPath:python!})}:{}),...(mime==='text/plain'?{textValidation:validateText(b)}:{}),...(options.observation===false?{}:{databaseObservation:observation})};
   try{assert.deepEqual(await processOneInspection(database,[f.a],randomUUID(),async()=>result),{claimed:true,recorded:true});}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
   if(options.expire!==false)await expire(id);return {id,grantId:grant.body.data.id,input:{fileVersion:1,inspectionId:inspection.body.data.id,attemptNo:1,routeId:route.id,routeVersion:1}};
  }
