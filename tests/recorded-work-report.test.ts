@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile,readdir } from 'node:fs/promises';
 import { workFixture } from './work-fixture.ts';
-import { recordedWorkReport } from '../src/modules/recorded-work-report.ts';
+import { recordedWorkReport,recordedWorkCsv } from '../src/modules/recorded-work-report.ts';
+import { parse } from 'csv-parse/sync';
+import { spreadsheetRows } from './spreadsheet-reader.ts';
 import type { ApiContext } from '../src/core/api.ts';
 
 async function fixture(throughSchema?:number){const f=await workFixture({throughSchema});try{
@@ -29,6 +31,31 @@ test('actual230to231 retains populated teaching time history and pricing while a
  }finally{await f.pg.close();}
 });
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+
+check('recorded-time CSV and Excel include all entries,actual and rounded hours,review flags and source pins without approving pay',async f=>{
+ await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'report-presets.view','allow')",[f.a,f.staffRole]);assert.equal((await f.create({components:[f.hourly]})).response.status,201);const saved=await f.save();assert.equal(saved.response.status,201);
+ const parameters={from:'2026-01-01',through:'2026-01-31',timeZone:'America/Toronto'},path='reports/payroll/recorded-time/export?'+new URLSearchParams(parameters),csv=await f.request(path,undefined,'staff');assert.equal(csv.response.status,200,JSON.stringify(csv.body));const rows=parse(csv.body,{columns:true,bom:true}) as Record<string,string>[];
+ assert.equal(rows.filter(r=>r.section==='entry').length,1);assert.equal(JSON.parse(rows.find(r=>r.section==='entry')!.details_json).outsideScheduleMilliseconds,'120000');assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='actualHourlyTotal')?.amount,'20.67');assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='configuredHourlyTotal')?.amount,'20.00');assert.equal(rows.filter(r=>r.section==='actual_segment').length,1);assert.equal(rows.filter(r=>r.section==='configured_segment').length,1);assert.match(rows.find(r=>r.section==='actual_segment')!.details_json,new RegExp(saved.body.data.id));assert.equal(JSON.parse(rows.find(r=>r.section==='worker')!.details_json).configuredReductionRequiresReview,true);assert.equal(rows.find(r=>r.field==='sessionEvidenceReviewed')?.value,'false');assert.equal(rows.find(r=>r.field==='payrollApproved')?.value,'false');assert.doesNotMatch(csv.body,/Private recorded-work note/);
+ const excel=await f.request('reports/payroll/recorded-time/export.xlsx?'+new URLSearchParams(parameters),undefined,'staff');assert.equal(excel.response.status,200);const expected=parse(csv.body,{bom:true}) as string[][],normalize=(matrix:string[][])=>matrix.map((row,i)=>Array.from({length:expected[i].length},(_,j)=>expected[i][1]==='snapshotAt'&&j===2?'SNAPSHOT':row[j]??''));assert.deepEqual(normalize(spreadsheetRows(excel.body)),normalize(expected));
+ const preset=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Delivered teaching hours',reportId:'payroll.recorded-time',parameters},reason:'Reusable actual work report'}),presetPath='reports/presets/'+preset.id+'/export',file=await f.request(presetPath,undefined,'staff');assert.equal(file.response.status,200,JSON.stringify(file.body));assert.equal((parse(file.body,{columns:true,bom:true}) as Record<string,string>[]).find(r=>r.field==='presetId')?.value,preset.id);assert.equal((await f.request(presetPath+'.xlsx',undefined,'staff')).response.status,200);assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='work-pay.view'",[f.staffRole]);for(const target of [path,presetPath,presetPath+'.xlsx']){const denied=await f.request(target,undefined,'staff');assert.equal(denied.response.status,403);assert.equal(denied.response.headers.get('content-disposition'),null);}
+});
+check('unpriced recorded hours still export their entries and review reasons when no currency can be priced',async f=>{
+ assert.equal((await f.save()).response.status,201);const report=await f.report();assert.equal(report.response.status,200);assert.equal(report.body.data.currencies.length,0);const rows=parse(recordedWorkCsv(report.body.data).body as string,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.filter(r=>r.section==='entry').length,1);assert.equal(rows.find(r=>r.section==='review')?.field,'NO_VISIBLE_APPLICABLE_COMPENSATION');assert.equal(rows.filter(r=>r.section==='currency_total').length,0);
+});
+test('recorded-time export holds the real permission fence while reading source rows',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});let reader:ReturnType<typeof f.request>|undefined;const runtime=f.pg.runtime!,connect=runtime.connect.bind(runtime);
+ try{assert.equal((await f.create({components:[f.hourly]})).response.status,201);assert.equal((await f.save()).response.status,201);let reached!:()=>void;const atSource=new Promise<void>(r=>{reached=r;});let held=false;
+  runtime.connect=async()=>{const c=await connect(),query=c.query.bind(c);c.query=async<Row=Record<string,unknown>>(sql:string,args?:unknown[])=>{if(!held&&sql.startsWith('WITH entries AS MATERIALIZED(')){held=true;reached();await gate;}return query<Row>(sql,args);};return c;};reader=f.request('reports/payroll/recorded-time/export?from=2026-01-01&through=2026-01-31&timeZone=UTC',undefined,'staff');await atSource;assert.equal((await f.pg.query<{ok:boolean}>('SELECT pg_try_advisory_xact_lock(hashtextextended($1,8)) ok',[f.a])).rows[0].ok,false);release();const r=await reader;assert.equal(r.response.status,200,JSON.stringify(r.body));assert.match(r.body,/20\.67/);assert.equal((await f.pg.query<{ok:boolean}>('SELECT pg_try_advisory_xact_lock(hashtextextended($1,8)) ok',[f.a])).rows[0].ok,true);
+ }finally{release();await reader;runtime.connect=connect;await f.pg.close();}
+});
+check('recorded-time exports reject ambiguous selectors,foreign sources and inconsistent or incomplete output',async f=>{
+ assert.equal((await f.create({components:[f.hourly]})).response.status,201);assert.equal((await f.save()).response.status,201);const query='from=2026-01-01&through=2026-01-31&timeZone=UTC',path='reports/payroll/recorded-time/export?'+query;
+ for(const suffix of ['','/export','/export.xlsx'])for(const key of ['from','through','timeZone','hubId','classId','personId','currencyId']){const r=await f.request('reports/payroll/recorded-time'+suffix+'?'+query+'&'+key+'=x&'+key+'=y',undefined,'staff');assert.equal(r.response.status,400);assert.equal(r.body.error.code,'DUPLICATE_QUERY');assert.equal(r.response.headers.get('content-disposition'),null);}
+ for(const suffix of ['&limit=1','&amount=0','&payrollApproved=true'])assert.equal((await f.request(path+suffix,undefined,'staff')).response.status,400);const foreign=await f.request(path,undefined,'foreignMaster',{academy:f.b});assert.equal(foreign.response.status,200);assert.doesNotMatch(foreign.body,new RegExp(f.session.id));
+ const data=(await f.report()).body.data;for(const mutate of [(d:any)=>{d.currencies[0].workers=[];},(d:any)=>{d.currencies[0].workers[0].actualSegments=[];},(d:any)=>{d.currencies[0].workers[0].configuredReductionRequiresReview=false;},(d:any)=>{d.currencies[0].knownActualHourlySubtotal.amount='0';},(d:any)=>{d.entries=[];}]){const d=structuredClone(data);mutate(d);assert.throws(()=>recordedWorkCsv(d));}
+ const huge=structuredClone(data);huge.snapshotAt='x'.repeat(4_194_305);assert.throws(()=>recordedWorkCsv(huge),(e:unknown)=>e instanceof Error&&'code'in e&&e.code==='RECORDED_WORK_REPORT_REQUIRES_BACKGROUND_JOB');
+});
 
 check('recorded hourly report reads actual persisted sources, preserves five-minute reductions and posts no pay or journals',async f=>{
  const engagement=await f.create({components:[f.hourly]});assert.equal(engagement.response.status,201);
@@ -176,7 +203,9 @@ check('recorded report validates real ranges and zones and never accepts client-
 test('recorded report fails rather than truncating an oversized same-snapshot source set',async()=>{
  const capabilities=['financial-reports.view','work-pay.view','session-time.view'] as const;
  for(const oversized of [{entries:Array(201).fill({}),terms:[]},{entries:[],terms:Array(1001).fill({})}]){
-  const ctx:ApiContext={path:'reports/payroll/recorded-time',request:new Request('https://academy.example/api/v1/reports/payroll/recorded-time?from=2026-01-01&through=2026-01-31&timeZone=UTC'),requestId:'source-budget',credential:{token_id:'test',academy_id:'test',person_id:'test',capabilities:[...capabilities],all_hubs:true,hub_ids:[],allowed:true,kind:'human'},grants:capabilities.map(capability=>({capability,effect:'allow',allHubs:true,hubIds:[]})),db:{async query<Row>(){return {rows:[{snapshot_at:'test',...oversized}] as unknown as Row[]};},release(){}}};
+  // Isolated overflow formatter fixture; the native permission-fence case
+  // above verifies the real lock/grant protocol instead of mocking it here.
+  const ctx:ApiContext={policyLock:'shared',path:'reports/payroll/recorded-time',request:new Request('https://academy.example/api/v1/reports/payroll/recorded-time?from=2026-01-01&through=2026-01-31&timeZone=UTC'),requestId:'source-budget',credential:{token_id:'test',academy_id:'test',person_id:'test',capabilities:[...capabilities],all_hubs:true,hub_ids:[],allowed:true,kind:'human'},grants:capabilities.map(capability=>({capability,effect:'allow',allHubs:true,hubIds:[]})),db:{async query<Row>(){return {rows:[{snapshot_at:'test',...oversized}] as unknown as Row[]};},release(){}}};
   await assert.rejects(recordedWorkReport(ctx),/RECORDED_WORK_REPORT_REQUIRES_BACKGROUND_JOB/);
  }
 });

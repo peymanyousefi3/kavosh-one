@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { Temporal } from '@js-temporal/polyfill';
 import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
-import { permissionScope } from '../core/approvals.ts';
+import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
 import { ApiError,scopeNonempty } from '../core/policy.ts';
 import { payCalendarDays,payCalendarRange } from '../core/pay-calendar.ts';
-import { formatMoneyTotal,roundRatio } from '../core/money.ts';
+import { formatMoneyTotal,roundRatio,readMinorUnits } from '../core/money.ts';
+import { csvRow,csvText } from '../core/csv.ts';
+import type { ResolvedReportWindow } from '../core/report-window.ts';
 import { highestHourlySegments,hourlyCompensationRate,type CompensationRule,type HourlyRule,type HourlyInterval } from '../core/work-compensation.ts';
 import { payrollHourlyCurrencyConflicts } from '../core/payroll-hourly-earnings.ts';
 
@@ -92,11 +94,12 @@ export function hourlyHeadcountDetails(p:ReturnType<typeof priceRecordedHourlySo
   {headcountBasis:'present',presentCount:p.entry.attendance!.present,attendanceVersion:p.entry.attendance!.version,attendanceSessionVersion:p.entry.attendance!.sessionVersion,attendanceCountBasis:'observed_present_and_late',admissionClearanceVerified:false};
 }
 
-export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
+export async function recordedWorkReport(ctx:ApiContext){
  if(ctx.path!=='reports/payroll/recorded-time')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
+ await lockApprovalWrites(ctx);const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
  const work=permissionScope(ctx,'work-pay.view'),reports=permissionScope(ctx,'financial-reports.view'),time=permissionScope(ctx,'session-time.view');
  if(![work,reports,time].every(scopeNonempty))throw new ApiError(403,'FORBIDDEN');
- const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),days=payCalendarDays({from:q.from,through:q.through}),first=days[0].toZonedDateTime(q.timeZone).toInstant(),last=days.at(-1)!.add({days:1}).toZonedDateTime(q.timeZone).toInstant();
+ const q=query.parse(Object.fromEntries(params)),days=payCalendarDays({from:q.from,through:q.through}),first=days[0].toZonedDateTime(q.timeZone).toInstant(),last=days.at(-1)!.add({days:1}).toZonedDateTime(q.timeZone).toInstant();
  const sqlDate=(v:string)=>v.replace(/^\+0(?=\d{5}-)/,'');
  const data=(await ctx.db.query<{snapshot_at:string;entries:Entry[];terms:Terms[]}>(sources,[JSON.stringify(work),JSON.stringify(reports),JSON.stringify(time),ctx.credential.all_hubs,ctx.credential.hub_ids,sqlDate(first.toString()),sqlDate(last.toString()),q.hubId??null,q.classId??null,q.personId??null,JSON.stringify(permissionScope(ctx,'rosters.view')),JSON.stringify(permissionScope(ctx,'attendance.view'))])).rows[0];
  const {priced,issues,scales,issue}=priceRecordedHourlySources(data.entries,data.terms);
@@ -125,3 +128,32 @@ export async function recordedWorkReport(ctx:ApiContext):Promise<Reply|null>{
   entries:data.entries.map(e=>({entryId:e.id,entryVersion:e.version,personId:e.person_id,hubId:e.hub_id,classId:e.class_id,sessionId:e.session_id,assignmentId:e.assignment_id,assignmentVersion:e.assignment_version,recordedMilliseconds:String(ms(e.ends_at)-ms(e.starts_at)),outsideScheduleMilliseconds:String(Math.max(0,ms(e.ends_at)-ms(e.starts_at)-Math.max(0,Math.min(ms(e.ends_at),ms(e.scheduled_end))-Math.max(ms(e.starts_at),ms(e.scheduled_start))))),scheduleChanged:e.session_version!==e.current_session_version,currentSessionStatus:e.session_status})),unpricedComponents:issues,currencies}}};
 }
 export const recordedWorkReportContract=[{path:'/api/v1/reports/payroll/recorded-time',method:'get',summary:'Same-snapshot saved teacher-hour costs with authorized captured-date enrollment or current complete observed-present-and-late attendance headcounts; missing/stale/unsigned eligibility remains unpriced, actual/configured rounding and highest overlap once. Never payroll approval, signed admission clearance or payment.',querySchema:query}] as const;
+
+type RecordedData=NonNullable<Awaited<ReturnType<typeof recordedWorkReport>>>['body']['data'];
+type Provenance={id:string;version:number;dateWindow?:ResolvedReportWindow&{overriddenFields?:string[]}};
+export function recordedWorkCsv(data:RecordedData,provenance?:Provenance):Reply{
+ if(data.report!=='recorded_session_hourly_costs'||data.entries.length>200||new Set(data.entries.map(e=>e.entryId)).size!==data.entries.length||new Set(data.currencies.map(c=>c.currencyId)).size!==data.currencies.length)throw new Error('RECORDED_WORK_EXPORT_INVALID');
+ const header=['section','field','value','currency_id','currency_code','unit_scale','source_id','minor','amount','details_json'],rows:(string|number|undefined)[][]=[header],entryIds=new Set(data.entries.map(e=>e.entryId));
+ const meta=(field:string,value:unknown)=>rows.push(['metadata',field,csvText(typeof value==='string'?value:JSON.stringify(value))]);
+ for(const [field,value]of Object.entries(data))if(!['currencies','entries','unpricedComponents'].includes(field)&&value!==undefined)meta(field,value);
+ meta('exportCompleteness','complete_permitted_report_within_source_and_output_limits');meta('numericPrecisionPolicy','money_minor_units_and_amounts_are_exact_strings');meta('textPolicy','Formula-like free text uses a visible text: prefix; stored records are unchanged.');
+ if(provenance){meta('presetId',provenance.id);meta('presetVersion',provenance.version);if(provenance.dateWindow)meta('dateWindow',provenance.dateWindow);}
+ for(const e of data.entries)rows.push(['entry','recorded_time','',undefined,undefined,undefined,e.entryId,'','',csvText(JSON.stringify(e))]);
+ for(const e of data.unpricedComponents){if(!entryIds.has(e.entryId))throw new Error('RECORDED_WORK_EXPORT_SOURCE_INVALID');rows.push(['review',csvText(e.reason),'',e.currencyId,undefined,undefined,e.entryId,'','',csvText(JSON.stringify(e))]);}
+ for(const c of data.currencies){
+  const amount=(section:string,field:string,raw:unknown,source?:string,details?:unknown)=>{const m=raw as {minor:string;amount:string}|null;if(!m||typeof m.minor!=='string'||m.amount!==formatMoneyTotal(readMinorUnits(m.minor),c.unitScale))throw new Error('RECORDED_WORK_EXPORT_MONEY_INVALID');rows.push([section,field,'',c.currencyId,csvText(c.currencyCode),c.unitScale,source,m.minor,m.amount,details===undefined?undefined:csvText(JSON.stringify(details))]);return readMinorUnits(m.minor);};
+  const actual=amount('currency_total','knownActualHourlySubtotal',c.knownActualHourlySubtotal),configured=amount('currency_total','knownConfiguredHourlySubtotal',c.knownConfiguredHourlySubtotal);
+  for(const [field,known]of [['actualHourlyTotal',actual],['configuredHourlyTotal',configured]] as const){if((c[field]===null)!==Boolean(c.unpricedComponents.length))throw new Error('RECORDED_WORK_EXPORT_TOTAL_INVALID');if(c[field]===null)rows.push(['status',field,'unpriced_components_present',c.currencyId,csvText(c.currencyCode),c.unitScale]);else if(amount('currency_total',field,c[field])!==known)throw new Error('RECORDED_WORK_EXPORT_TOTAL_INVALID');}
+  let actualSum=0n,configuredSum=0n;
+  for(const worker of c.workers){const person=uuid.parse(worker.personId);let actualWorkerCost=0n;for(const [basis,costField,timeField,segmentField]of [['actual','actualCost','actualMilliseconds','actualSegments'],['configured','configuredCost','configuredMilliseconds','configuredSegments']] as const){const cost=amount('worker',costField,worker[costField],person,{configuredReductionRequiresReview:worker.configuredReductionRequiresReview,milliseconds:worker[timeField]}),segments=worker[segmentField];if(!Array.isArray(segments))throw new Error('RECORDED_WORK_EXPORT_SEGMENTS_INVALID');let milliseconds=0n,numerator=0n,last=-Infinity;
+   for(const segment of segments){const start=Date.parse(segment.startsAt),end=Date.parse(segment.endsAt),rate=readMinorUnits(segment.rateMinor);if(!Number.isSafeInteger(start)||!Number.isSafeInteger(end)||end<=start||start<last||rate<0n||!entryIds.has(segment.source?.entryId))throw new Error('RECORDED_WORK_EXPORT_SEGMENTS_INVALID');last=end;milliseconds+=BigInt(end-start);numerator+=rate*BigInt(end-start);rows.push([basis+'_segment','rate_and_pinned_source','',c.currencyId,csvText(c.currencyCode),c.unitScale,person,'','',csvText(JSON.stringify(segment))]);}
+   if(milliseconds.toString()!==worker[timeField]||roundRatio(numerator,3600000n,'half_away')!==cost)throw new Error('RECORDED_WORK_EXPORT_SEGMENTS_INVALID');if(basis==='actual'){actualSum+=cost;actualWorkerCost=cost;}else{configuredSum+=cost;if(worker.configuredReductionRequiresReview!==(cost<actualWorkerCost))throw new Error('RECORDED_WORK_EXPORT_REVIEW_INVALID');}
+  }}
+  if(actualSum!==actual||configuredSum!==configured)throw new Error('RECORDED_WORK_EXPORT_TOTAL_INVALID');
+  for(const e of c.sourceAssessments){if(!entryIds.has(e.entryId))throw new Error('RECORDED_WORK_EXPORT_SOURCE_INVALID');rows.push(['source_assessment','pricing_and_review','',c.currencyId,csvText(c.currencyCode),c.unitScale,e.entryId,'','',csvText(JSON.stringify(e))]);}
+ }
+ if(rows.length>10001)throw new ApiError(422,'RECORDED_WORK_REPORT_REQUIRES_BACKGROUND_JOB');const body='\uFEFF'+rows.map(row=>csvRow(Array.from({length:header.length},(_,i)=>row[i]))).join('\r\n')+'\r\n';if(Buffer.byteLength(body)>4_194_304)throw new ApiError(422,'RECORDED_WORK_REPORT_REQUIRES_BACKGROUND_JOB');return{status:200,body,csv:{filename:`recorded-work-${data.from}-${data.through}.csv`}};
+}
+export async function completeRecordedWorkExport(ctx:ApiContext,provenance?:Provenance){const reply=await recordedWorkReport(ctx);if(!reply||reply.status!==200)throw new Error('RECORDED_WORK_EXPORT_SOURCE_INVALID');return recordedWorkCsv(reply.body.data,provenance);}
+export async function recordedWorkExport(ctx:ApiContext):Promise<Reply|null>{if(ctx.path!=='reports/payroll/recorded-time/export')return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const path='reports/payroll/recorded-time',url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;return completeRecordedWorkExport({...ctx,path,request:new Request(url,{method:'GET'})});}
+export const recordedWorkExportContract=[{...recordedWorkReportContract[0],path:recordedWorkReportContract[0].path+'/export',summary:'Complete current-source-scoped recorded teaching time CSV:all visible entries,outside-schedule and changed-session flags,actual/configured currency and worker costs,pinned nonduplicated hourly segments,source assessments and unpriced cases. Reconciles exact time/rate/monetary totals;keeps review requirements and original coverage limitations. Not payroll approval,legal entitlement,attendance clearance or payment. Original200time-entry/1000terms source bounds plus10000output rows/4MiB fail without partial files. Saved preset provenance and resolved dates retained;no queued recorded-time export yet.',responseContentType:'text/csv' as const}] as const;
