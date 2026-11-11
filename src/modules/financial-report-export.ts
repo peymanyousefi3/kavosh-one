@@ -4,7 +4,7 @@ import { ApiError } from '../core/policy.ts';
 import { lockApprovalWrites } from '../core/approvals.ts';
 import { csvText,csvRow } from '../core/csv.ts';
 import { financialReports,financialReportsContract } from './financial-reports.ts';
-import { cashMovementExport } from './cash-movements.ts';
+import { cashMovementExport,cashFlowExport } from './cash-movements.ts';
 import {completeAssetCurrencyValuationExport} from './asset-currency-valuation.ts';
 import { financialStatements,financialStatementsContract } from './financial-statements.ts';
 import { catalogueReport,configuredReportContext,resolveConfiguredReportContext } from './report-catalogue.ts';
@@ -66,7 +66,7 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
 }
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
- if(configuration.reportId==='finance.cash-movements'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return cashMovementExport(context,{...provenance,dateWindow:resolvedDateWindow});}
+ if(['finance.cash-flow','finance.cash-movements'].includes(configuration.reportId)){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return (configuration.reportId==='finance.cash-flow'?cashFlowExport:cashMovementExport)(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='payroll.scheduled-costs'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePayrollForecastExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='payroll.recorded-time'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeRecordedWorkExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='learning.polls.by-id'){const {context}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePollResultsExport(context,provenance);}

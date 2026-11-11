@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.407.0",
+    "version": "0.408.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -65909,6 +65909,348 @@
         }
       }
     },
+    "/api/v1/reports/finance/cash-flow": {
+      "get": {
+        "summary": "Same-snapshot direct cash-flow report with reviewed original operating/investing/financing splits,exact inverse corrections,unclassified line counts and full cash bridge. Unknown flows remain explicit even if their net is zero. Only native linked transfers with both selected cash legs are eliminated. cash-flow/account/ledger/report scope intersection precedes all totals. Separate currencies,monthly charts and bounded account paging. Not bank verification,accountant certification,FX conversion or automatic accounting-standard compliance.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "includeZero",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "afterCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+            }
+          },
+          {
+            "name": "afterId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/finance/cash-flow/export": {
+      "get": {
+        "summary": "Complete permitted direct cash-flow CSV schema3,not one screen page:cash bridge,reviewed category receipts/payments/net,unknown-line counts,monthly charts and all review/coverage warnings. Exact strings,2000accounts/4MiB;larger source sets require queued jobs,never truncation.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "includeZero",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/finance/cash-flow/export.xlsx": {
+      "get": {
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete permitted direct cash-flow CSV schema3,not one screen page:cash bridge,reviewed category receipts/payments/net,unknown-line counts,monthly charts and all review/coverage warnings. Exact strings,2000accounts/4MiB;larger source sets require queued jobs,never truncation.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "hubIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "currencyIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "accountIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Comma-separated unique UUIDs, at most 200 records; selecting records never grants access.",
+              "type": "string",
+              "maxLength": 8000
+            }
+          },
+          {
+            "name": "includeZero",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterCode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          },
+          {
+            "name": "afterId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "not": {}
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/reports/finance/cash-movements": {
       "get": {
         "summary": "Same-snapshot exact posted cash/bank movement bridge,opening/closing adjustments,ordinary receipts/payments,corrections,scoped native transfers and monthly chart values. Loan proceeds are not labelled income. As-posted cash roles only;unknown asset roles warn,not guessed. Not bank verification or a formal operating/investing/financing cash-flow statement. Maximum3660days,200currencies,2000monthly points;no silent truncation.",
@@ -71118,7 +71460,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue poll aggregates(up to100000response heads/10000student-class-hub contexts;pathParameters.id required;exact question form pinned at enqueue,no written answers),recorded-hour reports(up to2000time entries/10000terms/2000priced intervals,200priced intervals/person across currencies,10000output rows/4MiB,366civil days),scheduled payroll forecasts(up to1000engagements/10000terms/2000assignments/2000sessions;200hourly intervals/person/currency,2000total intervals,200000salary-reference calendar days,366civil days,10000detail rows/4MiB),or a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
+        "summary": "Queue reviewed direct cash-flow reports(up to10000cash accounts/4MiB,retained original full classification scope,exact chart/category bridge and current access checks),poll aggregates(up to100000response heads/10000student-class-hub contexts;pathParameters.id required;exact question form pinned at enqueue,no written answers),recorded-hour reports(up to2000time entries/10000terms/2000priced intervals,200priced intervals/person across currencies,10000output rows/4MiB,366civil days),scheduled payroll forecasts(up to1000engagements/10000terms/2000assignments/2000sessions;200hourly intervals/person/currency,2000total intervals,200000salary-reference calendar days,366civil days,10000detail rows/4MiB),or a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -71136,6 +71478,7 @@
                   "reportId": {
                     "type": "string",
                     "enum": [
+                      "finance.cash-flow",
                       "learning.polls.by-id",
                       "payroll.recorded-time",
                       "payroll.scheduled-costs",
@@ -75461,6 +75804,7 @@
                 "finance.asset-valuation",
                 "finance.balance-sheet",
                 "finance.bank-reconciliation",
+                "finance.cash-flow",
                 "finance.cash-movements",
                 "finance.collector-custody",
                 "finance.counterparty-statement",
@@ -75656,6 +76000,7 @@
                           "finance.asset-valuation",
                           "finance.balance-sheet",
                           "finance.bank-reconciliation",
+                          "finance.cash-flow",
                           "finance.cash-movements",
                           "finance.collector-custody",
                           "finance.counterparty-statement",
@@ -75908,6 +76253,7 @@
                           "finance.asset-valuation",
                           "finance.balance-sheet",
                           "finance.bank-reconciliation",
+                          "finance.cash-flow",
                           "finance.cash-movements",
                           "finance.collector-custody",
                           "finance.counterparty-statement",

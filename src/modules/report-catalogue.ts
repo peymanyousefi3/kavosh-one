@@ -4,7 +4,7 @@ import type { ApiContext,Reply } from '../core/api.ts';
 import { ApiError,scopeNonempty,type Capability } from '../core/policy.ts';
 import { permissionScope } from '../core/approvals.ts';
 import { financialReports,financialReportsContract } from './financial-reports.ts';
-import { cashMovements,cashMovementsContract } from './cash-movements.ts';
+import { cashMovements,cashMovementsContract,cashFlowReport,cashFlowReportContract } from './cash-movements.ts';
 import {assetCurrencyValuation,assetCurrencyValuationContract} from './asset-currency-valuation.ts';
 import { collectorCustodyReport,collectorCustodyReportContract } from './collector-custody-report.ts';
 import { counterpartyStatement,counterpartyStatementContract } from './counterparty-statement.ts';
@@ -38,6 +38,7 @@ type Contract={path:string;summary:string;querySchema?:z.ZodType};
 type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
 const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
  {contracts:cashMovementsContract,handler:cashMovements,capability:'financial-reports.view',csv:true,backgroundCsv:true},
+ {contracts:cashFlowReportContract,handler:cashFlowReport,capability:'cash-flow.view',csv:true,backgroundCsv:true},
  {contracts:assetCurrencyValuationContract,handler:assetCurrencyValuation,capability:'currency-valuation.view',csv:true},
  {contracts:counterpartyStatementContract,handler:counterpartyStatement,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:collectorCustodyReportContract,handler:collectorCustodyReport,capability:'financial-reports.view',csv:true},
