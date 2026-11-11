@@ -50,7 +50,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:expenseCostReportContract,handler:expenseCostReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:t4WorkingPaperContract,handler:t4WorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:t4aWorkingPaperContract,handler:t4aWorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
- {contracts:supplierTaxWorkingPaperContract,handler:supplierTaxWorkingPaper,capability:'payroll-tax.view',csv:true},
+ {contracts:supplierTaxWorkingPaperContract,handler:supplierTaxWorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:paidTaxYearReportContract,handler:paidTaxYtd,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:payrollRegisterContract,handler:payrollRegister,capability:'payrun-postings.view',csv:true},
  {contracts:payrollRemittanceReportContract,handler:payrollRemittanceReport,capability:'payrun-remittances.view',csv:true,backgroundCsv:true},

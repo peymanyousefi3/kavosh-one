@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('supplier background report uses the shared strict requester-bound queue without caller source proofs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/reports/jobs'].post,s=op.requestBody.content['application/json'].schema;assert.ok(s.properties.reportId.enum.includes('finance.supplier-t4a-working-paper'));assert.equal(s.additionalProperties,false);for(const key of ['authorizationContext','sources','recognitionVersion','payeeRights','background'])assert.equal(s.properties[key],undefined);assert.match(op.summary,/supplier annual service reports/);assert.match(op.summary,/500payments\/20000components\/4MiB/);
+});
 test('supplier annual reports and complete exports require explicit payee payer year and timezone without caller totals',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/export','/export.xlsx']){const op=api.paths['/api/v1/reports/finance/supplier-t4a-working-paper'+suffix].get;assert.equal(op.requestBody,undefined);assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['payeeId','employerId','taxYear','timeZone'].sort());assert.ok(op.parameters.filter((p:any)=>p.in==='query').every((p:any)=>p.required));}assert.match(api.paths['/api/v1/reports/finance/supplier-t4a-working-paper'].get.summary,/not payroll-inclusive,alias-inclusive,all-source completeness or official forms/);
 });
