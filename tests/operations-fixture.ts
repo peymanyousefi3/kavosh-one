@@ -10,7 +10,7 @@ import type { Database } from '../src/core/database.ts';
 import type { R2UploadConnections,R2DownloadConnections } from '../src/integrations/r2-config.ts';
 import type { PayrollPrivateVault } from '../src/core/payroll-private-data.ts';
 
-export async function operationsFixture(options:{botCredentialSecret?:string;connections?:R2UploadConnections;downloadConnections?:R2DownloadConnections;throughSchema?:number;invitationSecret?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault}={}) {
+export async function operationsFixture(options:{profileShareOrigin?:string;botCredentialSecret?:string;connections?:R2UploadConnections;downloadConnections?:R2DownloadConnections;throughSchema?:number;invitationSecret?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault}={}) {
   const pg=options.throughSchema===undefined?await migratedTestDatabase():await testDatabase();
   try {
     for(const file of options.throughSchema===undefined?[]:(await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&Number.parseInt(n,10)<=options.throughSchema!).sort())
@@ -65,13 +65,13 @@ export async function operationsFixture(options:{botCredentialSecret?:string;con
     const api=createApi(database,async request=>{
       const actor=actors[request.headers.get('x-test-actor')??''];
       return actor?{userId:actor.user,sessionId:actor.session,academyId:request.headers.get('x-academy-id')??a}:null;
-    },ctx=>business(ctx,options.connections,options.downloadConnections,{botCredentialSecret:options.botCredentialSecret,invitationSecret:options.invitationSecret,payrollPrivateVault:options.payrollPrivateVault,studentCareVault:options.studentCareVault}));
+    },ctx=>business(ctx,options.connections,options.downloadConnections,{profileShareOrigin:options.profileShareOrigin,botCredentialSecret:options.botCredentialSecret,invitationSecret:options.invitationSecret,payrollPrivateVault:options.payrollPrivateVault,studentCareVault:options.studentCareVault}));
     async function request(path:string,body?:unknown,as='master',options:{key?:string;academy?:string;method?:string;bearer?:string}={}) {
       try {
         const response=await api(new Request('https://academy.example/api/v1/'+path,{method:options.method??(body===undefined?'GET':'POST'),headers:{
           'content-type':'application/json','idempotency-key':options.key??randomUUID(),'x-test-actor':as,'x-academy-id':options.academy??a,
           ...(as==='bot'?{authorization:'Bearer '+(options.bearer??botAuth.token)}:{cookie:'synthetic-only-resolver-cookie'})},...(body===undefined?{}:{body:JSON.stringify(body)})}),path.split('?')[0]);
-        return {response,body:response.headers.get('content-type')?.includes('spreadsheetml')?new Uint8Array(await response.arrayBuffer()):response.headers.get('content-type')?.startsWith('text/csv')?Buffer.from(await response.arrayBuffer()).toString('utf8'):await response.json()};
+        return {response,body:(response.headers.get('content-type')?.includes('spreadsheetml')||response.headers.get('content-type')==='image/png')?new Uint8Array(await response.arrayBuffer()):response.headers.get('content-type')?.startsWith('text/csv')?Buffer.from(await response.arrayBuffer()).toString('utf8'):await response.json()};
       // Native requests use their own role-resetting pool, not the fixture's
       // admin client. Only the single-engine embedded path shares its role.
       }finally{if(!pg.runtime)await pg.exec('RESET ROLE');}

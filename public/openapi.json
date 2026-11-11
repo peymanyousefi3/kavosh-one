@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.408.0",
+    "version": "0.409.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -3197,6 +3197,126 @@
         }
       }
     },
+    "/api/member/v1/academies/{academyId}/profiles/{id}": {
+      "get": {
+        "summary": "Canonical UUID or22character short sharing ID;both use the SAME gates. Current verified same-school member reads only a reviewed public/member edition under published-profiles.view. Exact draft,moderation,owner and pinned purpose-specific student/guardian or worker consent are rechecked;no private profile/signature/family/media data.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,not authorization;cookie membership and current school/profile scopes remain required."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native read/QR URL carries its non-secret school selector in the path,so a phone scan needs no custom X-Academy-Id header. No login token,redirect or visual frontend is created.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/member/v1/academies/{academyId}/profiles/{id}/qr.png": {
+      "get": {
+        "summary": "Download a standard black/white QR containing only the configured HTTPS origin plus canonical short verified-member profile API link. Same current verified-school/profile scope,consent,visibility,moderation and reviewed edition gate as its JSON read. No credential,private identity or copied profile content. No-store;render only after commit and DB release;bounded payload/image/concurrency. Scanning still requires the current login and permission. Target is the existing JSON API,not an unbuilt visual page;fails closed until PROFILE_SHARE_ORIGIN is configured.",
+        "parameters": [
+          {
+            "name": "academyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Non-secret school selector,not authorization;cookie membership and current school/profile scopes remain required."
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied. Browser-native read/QR URL carries its non-secret school selector in the path,so a phone scan needs no custom X-Academy-Id header. No login token,redirect or visual frontend is created.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/platform/v1/academies": {
       "get": {
         "summary": "Audited platform-owner school directory",
@@ -4992,6 +5112,55 @@
           },
           "503": {
             "description": "Unsafe configuration,source projection or isolated reader unavailable"
+          }
+        }
+      }
+    },
+    "/api/public/v1/profiles/{id}/qr.png": {
+      "get": {
+        "security": [],
+        "summary": "Default-off PNG QR of the canonical configured HTTPS short public profile JSON API link. SAME current publication,consent,visibility,moderation,identity,isolated reader and persistent per-IP budget as JSON;QR contains no credential or copied private/profile content and grants nothing. Strict PROFILE_SHARE_ORIGIN,no Host fallback,queries or arbitrary target input. Standard black/white,four-module quiet zone,512px/64KiB ceilings,two render slots/process;commit and release DB before encoding. No-store;withdrawal makes the target unavailable on its next read. Not a visual frontend page.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current public profile link QR attachment",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Disabled,unknown,withdrawn,nonpublic or stale source"
+          },
+          "429": {
+            "description": "Same persistent public-profile budget exhausted"
+          },
+          "503": {
+            "description": "Unsafe/unconfigured origin,source,reader or bounded encoder unavailable"
           }
         }
       }
@@ -15859,6 +16028,61 @@
         "responses": {
           "200": {
             "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/community/published-profiles/{id}/qr.png": {
+      "get": {
+        "summary": "Download a standard black/white QR containing only the configured HTTPS origin plus canonical short verified-member profile API link. Same current verified-school/profile scope,consent,visibility,moderation and reviewed edition gate as its JSON read. No credential,private identity or copied profile content. No-store;render only after commit and DB release;bounded payload/image/concurrency. Scanning still requires the current login and permission. Target is the existing JSON API,not an unbuilt visual page;fails closed until PROFILE_SHARE_ORIGIN is configured.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
           },
           "201": {
             "description": "Created within granted rights or master self-approval"
