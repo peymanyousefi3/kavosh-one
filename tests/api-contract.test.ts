@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('T4A annual report reuses protected complete CSV Excel and queued schemas without caller report amounts or source proofs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/export','/export.xlsx']){const op=api.paths['/api/v1/reports/payroll/t4a-working-paper'+suffix].get;assert.equal(op.requestBody,undefined);assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['employerId','personId','taxYear','timeZone']);assert.ok(op.parameters.filter((p:any)=>p.in==='query').every((p:any)=>p.required));}assert.ok(api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema.properties.reportId.enum.includes('payroll.t4a-working-paper'));
+});
 test('T4A recognition contract keeps payment identity in the path and exposes no source or approval override',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/payroll/payments/{id}/t4a-recognition',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['definition','expectedVersion','reason']);assert.match(op.summary,/Upper-human-reviewed/);assert.match(op.summary,/No automatic residency/);assert.ok(api.paths[path].get);assert.ok(api.paths[path+'/history'].get);assert.equal(api.paths[path+'/history'].post,undefined);assert.equal(api.paths[path].get.requestBody,undefined);
 });

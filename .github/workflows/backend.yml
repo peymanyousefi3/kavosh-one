@@ -376,7 +376,15 @@ jobs:
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - name: Install actual scanner engine on the disposable CI runner
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends clamav-daemon
+        run: |
+          set -euo pipefail
+          # The Azure mirror failed DNS resolution in two actual runs. Keep
+          # Ubuntu's signed repositories and normal TLS/signature validation.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|https\{0,1\}://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --yes --no-install-recommends clamav-daemon
       - name: Actual isolated ClamAV engine with harmless test signature (not production signatures)
         run: node --import tsx --test --test-concurrency=1 tests/clamav.test.ts tests/clamav-database.test.ts tests/r2-inspection.test.ts tests/clamav-engine.test.ts
         env:
