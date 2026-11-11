@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.423.0",
+    "version": "0.424.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -45816,6 +45816,267 @@
         }
       }
     },
+    "/api/v1/me/privacy-requests": {
+      "post": {
+        "summary": "Verified human immediately records own/current guardian access,correction,deletion or consent question without administrative data grants. Receipt is not approval,disclosure,erasure,profile correction,consent change or legal certification. Original receipt/timezone/30-calendar-day operational review baseline retained;not a universal legal deadline.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "access",
+                      "correction",
+                      "deletion",
+                      "consent_question",
+                      "complaint"
+                    ]
+                  },
+                  "details": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  },
+                  "locale": {
+                    "default": "en",
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "fr",
+                      "zh-CN"
+                    ]
+                  },
+                  "subjectId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "category",
+                  "details"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Own self/family submissions only under current verified authority,filtered before paging. No other guardian submissions,internal notes,review references or source snapshots.",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/privacy-requests/{id}/clarifications": {
+      "post": {
+        "summary": "Original verified requester adds plain-text clarification to an unfinished case without losing the previous published response or private administrative history. Exact version;no state escalation or automatic data change.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "details": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "details"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/me/privacy-requests/{id}/withdraw": {
+      "post": {
+        "summary": "Original current verified self/guardian withdraws an unfinished own submission with exact version. Immutable history,not data deletion;read-only school supported.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/me/profile-consents": {
       "get": {
         "summary": "Verified human reads own purpose-specific withdrawal and native student/worker evidence eligibility. Worker checks require reviewed current identity,adult self or current approved guardian authority for a minor at signing and now,original authorized signer-only purpose,accepted current original-bound Live evidence and post-withdrawal dispatch. Current student/guardian rules take precedence for dual-role people. No legal DOB,name,identity/evidence/approval IDs,signature data or public content;this does not evaluate or grant publication,certify legal validity or freshly check the provider.",
@@ -65273,6 +65534,449 @@
                 },
                 "required": [
                   "expectedVersion",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/privacy-requests": {
+      "post": {
+        "summary": "Scoped privacy administrator records an offline request with explicit optional attested original received instant/timezone. Subject scope is required;the recording administrator is not automatically the verified requester. Original receipt remains immutable;offline responses are attested,not provider-verified. No impersonation or automatic publication of internal notes.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "access",
+                      "correction",
+                      "deletion",
+                      "consent_question",
+                      "complaint"
+                    ]
+                  },
+                  "details": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  },
+                  "locale": {
+                    "default": "en",
+                    "type": "string",
+                    "enum": [
+                      "en",
+                      "fr",
+                      "zh-CN"
+                    ]
+                  },
+                  "subjectId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "receivedAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100,
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "timeZone": {
+                    "default": null,
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "category",
+                  "details",
+                  "subjectId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Central scoped privacy-request queue with subject/category/state and baseline/target overdue filters before paging. Whole subject and applicable original self/guardian scope required;no free-text request or reviewer notes in queue rows;retains original baseline when a reviewed operational target changes.",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          {
+            "name": "subjectId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "access",
+                "correction",
+                "deletion",
+                "consent_question",
+                "complaint"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "received",
+                "under_review",
+                "needs_information",
+                "responded",
+                "closed",
+                "withdrawn"
+              ]
+            }
+          },
+          {
+            "name": "overdue",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "baseline",
+                "target"
+              ]
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/privacy-requests/{id}": {
+      "get": {
+        "summary": "Current scoped administrative view or original verified self/family public view. Public message is separate from internal notes,review references and attested delivery evidence;no automatic data disclosure/deletion or legal certification.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/privacy-requests/{id}/history": {
+      "get": {
+        "summary": "Bounded immutable receipt,clarification,withdrawal and reviewed-response history. Requesters see only published messages and their clarification text;administrative evidence requires both current record scopes.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/privacy-requests/{id}/review": {
+      "post": {
+        "summary": "Exact-version upper-human-reviewed status,response,internal note,operational target and attested response evidence. Independent reviewer unless master;bot may propose but not approve/apply. Reopening is explicit and retained. Does not execute erasure,canonical corrections,third-party disclosure,external delivery or a legal determination.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "definition": {
+                    "type": "object",
+                    "properties": {
+                      "state": {
+                        "type": "string",
+                        "enum": [
+                          "under_review",
+                          "needs_information",
+                          "responded",
+                          "closed"
+                        ]
+                      },
+                      "message": {
+                        "default": "",
+                        "type": "string",
+                        "maxLength": 8000
+                      },
+                      "privateNote": {
+                        "default": "",
+                        "type": "string",
+                        "maxLength": 8000
+                      },
+                      "reviewReference": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 2000
+                      },
+                      "targetResponseOn": {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      "delivery": {
+                        "anyOf": [
+                          {
+                            "oneOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "method": {
+                                    "type": "string",
+                                    "const": "portal"
+                                  },
+                                  "reference": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 2000
+                                  }
+                                },
+                                "required": [
+                                  "method",
+                                  "reference"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "method": {
+                                    "type": "string",
+                                    "const": "offline"
+                                  },
+                                  "reference": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 2000
+                                  },
+                                  "deliveredAt": {
+                                    "type": "string",
+                                    "maxLength": 100,
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  }
+                                },
+                                "required": [
+                                  "method",
+                                  "reference",
+                                  "deliveredAt"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "state",
+                      "reviewReference",
+                      "targetResponseOn",
+                      "delivery"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "definition",
                   "reason"
                 ],
                 "additionalProperties": false
