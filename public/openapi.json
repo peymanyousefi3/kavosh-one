@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.426.0",
+    "version": "0.427.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -46660,6 +46660,84 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/overview": {
+      "get": {
+        "summary": "Central role-aware management overview reusing current original approval,unread-notification,session-follow-up,overdue-privacy and optional tuition-receivable/expense-payable handlers. Explicit IANA timezone and bounded section/page selection;source links and real cursors,private payload/body omission,no borrowed admin rights. Permission denial is unavailable,null counts,never a zero balance. Financial exact per-currency chart summaries are opt-in and retain subledger coverage;other counts are page-only. No read receipts,approvals,messages or money movement.",
+        "parameters": [
+          {
+            "name": "timeZone",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "en",
+              "type": "string",
+              "enum": [
+                "en",
+                "fr",
+                "zh-CN"
+              ]
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": "approvals,notifications,sessions,privacy_overdue",
+              "type": "string",
+              "maxLength": 120
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          },
+          {
+            "name": "lookbackDays",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 90
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
         "responses": {
           "200": {
             "description": "Current data or applied change"

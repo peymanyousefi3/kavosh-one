@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('central overview has bounded typed section selectors and requires an explicit timezone without caller source routes',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),r=api.paths['/api/v1/overview'].get,p=r.parameters.filter((p:{in:string})=>p.in==='query');assert.deepEqual(p.map((p:{name:string})=>p.name).sort(),['include','limit','locale','lookbackDays','timeZone']);assert.equal(p.find((p:{name:string})=>p.name==='timeZone').required,true);assert.equal(p.find((p:{name:string})=>p.name==='limit').schema.maximum,10);assert.match(r.summary,/unavailable,null counts/);assert.equal(r.requestBody,undefined);
+});
 test('consolidated annual service report accepts identity selectors not caller amounts and declares private CSV',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/v1/reports/payroll/t4a-consolidated-working-paper',r=api.paths[base].get;
  assert.deepEqual(r.parameters.filter((p:{in:string})=>p.in==='query').map((p:{name:string})=>p.name).sort(),['employerId','personId','taxYear','timeZone']);assert.match(r.summary,/Sequential snapshots/);assert.match(r.summary,/No official form/);assert.ok(api.paths[base+'/export'].get.responses['200'].content['text/csv']);
