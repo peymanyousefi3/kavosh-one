@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('paid-tax reporting documents explicit nonemployee exclusions and retained paid-date mismatch detection',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),report=api.paths['/api/v1/reports/payroll/paid-tax-year-to-date'].get;assert.match(report.summary,/known declared contractor|separately listed retained nonemployee/i);assert.match(report.summary,/timezone\/year mismatches cannot silently disappear/i);assert.match(api.paths['/api/v1/payroll/tax-profiles/{id}/year-to-date'].get.summary,/explicitly excluded from employee totals/i);assert.equal(report.requestBody,undefined);
+});
 test('T4A annual report reuses protected complete CSV Excel and queued schemas without caller report amounts or source proofs',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/export','/export.xlsx']){const op=api.paths['/api/v1/reports/payroll/t4a-working-paper'+suffix].get;assert.equal(op.requestBody,undefined);assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['employerId','personId','taxYear','timeZone']);assert.ok(op.parameters.filter((p:any)=>p.in==='query').every((p:any)=>p.required));}assert.ok(api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema.properties.reportId.enum.includes('payroll.t4a-working-paper'));
 });

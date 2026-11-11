@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.411.0",
+    "version": "0.412.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -57632,7 +57632,7 @@
     },
     "/api/v1/payroll/tax-profiles/{id}/year-to-date": {
       "get": {
-        "summary": "Exact same-worker/employer/calendar-year totals of reviewed actual recorded partial-payment allocations,explicit report timezone and attested-payment date cutoff. Missing,withdrawn,wrong-year/timezone and reversed-but-unwithdrawn recognition stays unresolved. Complete original earning/funding/method permissions required;no silently partial YTD,no noncash/zero-net/external inference,statutory certification or automatic calculation clearance.",
+        "summary": "Exact same-worker/employer/calendar-year totals of reviewed actual recorded partial-payment allocations,explicit report timezone and attested-payment date cutoff. Missing,withdrawn,wrong-year/timezone and reversed-but-unwithdrawn recognition stays unresolved. Uncertain legal contexts stay visible;known declared contractor T4A/T4A-NR contexts are explicitly excluded from employee totals,not misclassified as wages. Complete original earning/funding/method permissions required;no silently partial YTD,no noncash/zero-net/external inference,statutory certification or automatic calculation clearance.",
         "parameters": [
           {
             "name": "id",
@@ -74463,7 +74463,7 @@
     },
     "/api/v1/reports/payroll/paid-tax-year-to-date": {
       "get": {
-        "summary": "Central private one-worker/employer paid-tax-year report,using the exact existing payment-date YTD service and complete source rights. Includes typed employee/employer totals,daily charts,recognized references and explicit unresolved-payment warnings. CAD only;not T4/T4A or statutory certification.",
+        "summary": "Central private one-worker/employer paid-tax-year report,using the exact existing payment-date YTD service and complete source rights. Includes typed employee/employer totals,daily charts,recognized references and explicit unresolved-payment warnings and separately listed retained nonemployee reporting contexts. Candidate selection includes reviewed paid dates so timezone/year mismatches cannot silently disappear. CAD only;not T4/T4A or statutory certification.",
         "parameters": [
           {
             "name": "through",
@@ -74515,7 +74515,7 @@
     },
     "/api/v1/reports/payroll/paid-tax-year-to-date/export": {
       "get": {
-        "summary": "Complete private payment-tax-year CSV with exact minor units/amounts,typed employee/employer totals,daily chart rows,recognized payment references and explicit unresolved rows. Same original source rights and500payment/20,000line/4MiB limits;no page truncation,private declarations,official forms or new ledger effects.",
+        "summary": "Complete private payment-tax-year CSV with exact minor units/amounts,typed employee/employer totals,daily chart rows,recognized payment references and explicit unresolved and declared-nonemployee exclusion rows. Same original source rights and500payment/20,000line/4MiB limits;no page truncation,private declarations,official forms or new ledger effects.",
         "parameters": [
           {
             "name": "through",
@@ -74574,7 +74574,7 @@
     },
     "/api/v1/reports/payroll/paid-tax-year-to-date/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete private payment-tax-year CSV with exact minor units/amounts,typed employee/employer totals,daily chart rows,recognized payment references and explicit unresolved rows. Same original source rights and500payment/20,000line/4MiB limits;no page truncation,private declarations,official forms or new ledger effects.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/20001rows/256columns/100000cells/32767UTF16units-per-cell conversion ceilings apply. Multipart CSV byte segments are never converted individually. Complete private payment-tax-year CSV with exact minor units/amounts,typed employee/employer totals,daily chart rows,recognized payment references and explicit unresolved and declared-nonemployee exclusion rows. Same original source rights and500payment/20,000line/4MiB limits;no page truncation,private declarations,official forms or new ledger effects.",
         "parameters": [
           {
             "name": "through",
