@@ -20,6 +20,7 @@ test('quick CI groups cover every authoritative quick-suite file exactly once wi
  assert.ok(all.includes('tests/year-end-private-package.test.ts'));
  assert.ok(all.includes('tests/paid-tax-selection.test.ts'));
  assert.ok(all.includes('tests/audit-events.test.ts'));
+ assert.ok(all.includes('tests/expense-tax-source.test.ts'));
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  business-logic:')[1]?.split('  learning:')[0];assert.ok(job);assert.deepEqual(job.match(/group: \[([^\]]+)\]/)![1].match(/'[0-9]+'/g)?.map(v=>Number(v.slice(1,-1))),Array.from({length:quickCheckGroupCount},(_,i)=>i+1));assert.ok(job.includes('max-parallel: '+quickCheckGroupCount));assert.ok(job.includes('timeout-minutes: 30'));assert.ok(job.includes('postgres:17'));
 });
 test('quick runner refuses a named missing file instead of trusting a declared path or a permissive test runner',()=>{

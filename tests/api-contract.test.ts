@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('supplier-payment tax source accepts only an explicit timezone and no invented amount payer or reporting eligibility',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/expense-payments/{id}/tax-source',op=api.paths[path].get;assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>[p.name,p.required]),[['timeZone',true]]);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/No guessed payer/);assert.match(op.summary,/original bill,payment,payee,both-journal\/account and method rights/);
+});
 test('audit searches expose exact selectors without private reveal overrides and retain scoped bearer or human authentication',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/audit-events'].get;assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['limit','after','actorId','entityId','requestId','action','actorKind','from','through'].sort());assert.match(op.summary,/Explicit area\/hub denials exclude global events/);assert.ok(api.paths['/api/v1/audit-events/{id}'].get);assert.equal(api.paths['/api/v1/audit-events/{id}'].post,undefined);assert.equal(op.requestBody,undefined);
 });

@@ -16,6 +16,7 @@ import { accountingDate } from './finance-periods.ts';
 import { prepareJournal,journalDependencies,applyJournal } from './finance-journals.ts';
 import { collectorRow } from './collectors.ts';
 import { lockCollectorFunds } from '../core/collector-funds.ts';
+export { row as authorizedExpensePayment };
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000),ref=z.object({id:uuid,version}).strict();
 const create=z.object({fundingAccount:ref,payableVersion:version,method:ref,amount:text.min(1).max(80),period:ref,postedOn:accountingDate,paidAt:z.iso.datetime({offset:true}).max(100),handledById:uuid.nullable().default(null),reference:text.trim().max(200).default(''),evidence:ref.nullable().default(null),missingEvidenceReason:text.trim().max(2000).default(''),taxTreatment:z.literal('settle_expense_bill'),reason}).strict().refine(v=>v.evidence!==null||v.missingEvidenceReason.length>0);

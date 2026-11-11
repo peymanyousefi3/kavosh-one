@@ -9,15 +9,17 @@ import { videoRangeSchema,isVideoReadPath,type VideoRange } from '../files/video
 import { reportSpreadsheet,spreadsheetMime } from '../reports/spreadsheet.ts';
 import { profileQrReplySchema,profileQrTarget,profileQrFilename,renderProfileQr } from '../profiles/qr.ts';
 import { profileShareId } from '../profiles/share-id.ts';
-import { Temporal } from '@js-temporal/polyfill';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
 const name = z.string().trim().min(1).max(200);
 const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
-const auditInstant=z.iso.datetime({offset:true}).max(100).refine(v=>{try{const instant=Temporal.Instant.from(v),year=instant.toZonedDateTimeISO('UTC').year;return year>=1900&&year<=9999&&(v.match(/\.(\d+)/)?.[1].length??0)<=6;}catch{return false;}});
-const auditQuery=paging.extend({actorId:id.optional(),entityId:id.optional(),requestId:id.optional(),action:z.string().regex(/^[a-z][a-z0-9_.-]{0,149}$/).optional(),actorKind:z.enum(['human','bot']).optional(),from:auditInstant.optional(),through:auditInstant.optional()}).strict().refine(q=>!q.from||!q.through||Temporal.Instant.compare(q.from,q.through)<=0,'Choose an ordered inclusive timestamp interval.');
+// Keep shared worker imports dependency-light. Date provides exact integer
+// milliseconds;retain the remaining3digits for PostgreSQL microsecond bounds.
+function auditEpochMicros(value:string){const ms=Date.parse(value),fraction=value.match(/\.(\d+)/)?.[1]??'',year=new Date(ms).getUTCFullYear();if(!Number.isFinite(ms)||year<1900||year>9999||fraction.length>6)return null;return BigInt(ms)*1000n+BigInt(fraction.padEnd(6,'0').slice(3));}
+const auditInstant=z.iso.datetime({offset:true}).max(100).refine(v=>auditEpochMicros(v)!==null);
+const auditQuery=paging.extend({actorId:id.optional(),entityId:id.optional(),requestId:id.optional(),action:z.string().regex(/^[a-z][a-z0-9_.-]{0,149}$/).optional(),actorKind:z.enum(['human','bot']).optional(),from:auditInstant.optional(),through:auditInstant.optional()}).strict().refine(q=>{if(!q.from||!q.through)return true;const from=auditEpochMicros(q.from),through=auditEpochMicros(q.through);return from!==null&&through!==null&&from<=through;},'Choose an ordered inclusive timestamp interval.');
 export type Reply = { status: number; body: unknown; qr?:{profileId:string;academyId:string;origin:string};csv?:{filename:string};xlsx?:{filename:string};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive';financeBookLocked?:boolean;financeBookExclusive?:boolean;collectorFundLocks?:Set<string>;expenseSettlementSnapshot?:boolean;notificationJobId?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
