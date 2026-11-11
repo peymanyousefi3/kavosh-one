@@ -20,12 +20,20 @@ const freeExemption=z.object({expectedVersion:z.number().int().min(1).max(214748
 const cancellationRequest=z.object({expectedVersion:z.number().int().min(0).max(2147483647),reason}).strict();
 const cancellationWithdrawal=z.object({expectedVersion:z.literal(1),reason}).strict();
 const cancellationConfirmation=cancellationWithdrawal.extend({expectedSubscriptionVersion:z.number().int().min(0).max(2147483647),confirmAcademyId:id}).strict();
+const holdReason=reason.refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v));
+const legalHoldCreate=z.object({caseReference:name.refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)),reason:holdReason}).strict();
+const legalHoldRelease=z.object({expectedVersion:z.literal(1),confirmAcademyId:id,reason:holdReason}).strict();
 const ownerInbox=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterCreatedAt:z.iso.datetime({offset:true}).optional(),afterId:id.optional(),unread:z.enum(['true','false']).transform(v=>v==='true').optional()}).strict().refine(v=>(v.afterCreatedAt===undefined)===(v.afterId===undefined));
 const empty=z.object({}).strict();
 const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),academyId:id.optional(),readiness:z.enum(['all','waiting','ready']).default('all'),afterReviewAfter:z.iso.datetime({offset:true}).optional(),afterId:id.optional()}).strict().refine(v=>(v.afterReviewAfter===undefined)===(v.afterId===undefined));
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/retention',method:'get',summary:'Verified platform-owner-only current school preservation status and active legal-hold count. A clear hold register does not authorize deletion or certify statutory retention or external storage protection.'},
+ {path:'/api/platform/v1/academies/{id}/legal-holds',method:'get',summary:'Verified owner-only bounded immutable academy-wide legal-hold and release history;no school subscription or access change',querySchema:paging},
+ {path:'/api/platform/v1/academies/{id}/legal-holds',method:'post',summary:'Verified MFA owner records an academy-wide preservation hold with private case reference and reason,immutable audit and exact retries. No automatic expiry,deletion or external storage certification.',schema:legalHoldCreate},
+ {path:'/api/platform/v1/academies/{id}/legal-holds/{holdId}',method:'get',summary:'Verified owner reads one school-bound private preservation case with immutable original basis and current release state'},
+ {path:'/api/platform/v1/academies/{id}/legal-holds/{holdId}/release',method:'post',summary:'Verified MFA owner explicitly releases only the exact active school-bound legal hold after matching school confirmation. Other active cases continue preservation;release never authorizes deletion or bypasses statutory retention.',schema:legalHoldRelease},
  {path:'/api/platform/v1/notifications',method:'get',summary:'Verified owner-only durable internal cancellation alerts; current source/actionability rechecked on read. Reading never confirms a case or removes it from the review queue. No external delivery claim.',querySchema:ownerInbox},
  {path:'/api/platform/v1/notifications/{id}/read',method:'post',summary:'Owner marks one internal alert read idempotently,without cancelling,confirming or deleting its source case',schema:empty},
  {path:'/api/platform/v1/subscription-cancellations',method:'get',summary:'Verified platform-owner review queue of pending school cancellations ordered by original review deadline/id; native clock readiness,optional school and bounded paired cursor. Live queue,not a snapshot or automatic confirmation,charge or deletion.',querySchema:cancellationQueue},
@@ -81,9 +89,18 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const subscriptionTarget=/^academies\/([a-f0-9-]{36})\/subscription(?:\/(history|assign|free-exemption))?$/.exec(path);
    const cancellationTarget=/^academies\/([a-f0-9-]{36})\/subscription\/cancellations(?:\/([a-f0-9-]{36})(?:\/(withdraw|confirm))?)?$/.exec(path);
    const noticeTarget=/^notifications\/([a-f0-9-]{36})\/read$/.exec(path);
+   const holdTarget=/^academies\/([a-f0-9-]{36})\/(retention|legal-holds)(?:\/([a-f0-9-]{36})(\/release)?)?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(path==='notifications'||noticeTarget){
+   if(holdTarget){
+    const academyId=id.parse(holdTarget[1]),holdId=holdTarget[3]?id.parse(holdTarget[3]):undefined;if(holdTarget[2]==='retention'){
+     if(holdId)throw new ApiError(404,'NOT_FOUND');if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId};operation='retention.get';
+    }else if(request.method==='GET'&&!holdTarget[4]){
+     const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');if(holdId){if(pairs.length)throw new ApiError(400,'INVALID_QUERY');input={academyId,holdId};operation='holds.get';}else{input={...paging.parse(Object.fromEntries(pairs)),academyId};operation='holds.list';}
+    }else if(request.method==='POST'&&(!holdId||holdTarget[4])){
+     if(url.search)throw new ApiError(400,'INVALID_QUERY');key=id.parse(request.headers.get('idempotency-key'));const body=await jsonBody(request);input=holdId?{...legalHoldRelease.parse(body),academyId,holdId}:{...legalHoldCreate.parse(body),academyId};operation=holdId?'holds.release':'holds.create';
+    }else throw new ApiError(405,'METHOD_NOT_ALLOWED');
+   }else if(path==='notifications'||noticeTarget){
     if(path==='notifications'&&request.method==='GET'){const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');input=ownerInbox.parse(Object.fromEntries(pairs));operation='notifications.list';}
     else if(noticeTarget&&request.method==='POST'){if(url.search)throw new ApiError(400,'INVALID_QUERY');empty.parse(await jsonBody(request));key=id.parse(request.headers.get('idempotency-key'));input={notificationId:id.parse(noticeTarget[1])};operation='notifications.mark-read';}
     else throw new ApiError(405,'METHOD_NOT_ALLOWED');
@@ -165,7 +182,8 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
     if(message==='PLATFORM_OWNER_REQUIRED'){status=403;code=message;}
     else if(message==='PLATFORM_ACADEMY_NOT_FOUND'||message==='PLATFORM_PLAN_NOT_FOUND'){status=404;code=message;}
     else if(message==='PLATFORM_PLAN_VERSION_CHANGED'){status=409;code=message;}
-    else if(message==='PLATFORM_CANCELLATION_NOT_FOUND'||message==='PLATFORM_NOTIFICATION_NOT_FOUND'){status=404;code=message;}
+    else if(message==='PLATFORM_CANCELLATION_NOT_FOUND'||message==='PLATFORM_NOTIFICATION_NOT_FOUND'||message==='PLATFORM_HOLD_NOT_FOUND'){status=404;code=message;}
+    else if(message==='PLATFORM_HOLD_ALREADY_ACTIVE'||message==='PLATFORM_HOLD_ALREADY_RELEASED'){status=409;code=message;}
     else if(['PLATFORM_CANCELLATION_ALREADY_PENDING','PLATFORM_CANCELLATION_ALREADY_DECIDED','PLATFORM_CANCELLATION_WAITING_PERIOD'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_SUBSCRIPTION_VERSION_CHANGED','PLATFORM_SUBSCRIPTION_UNCHANGED','PLATFORM_PLAN_NOT_CURRENT'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_FREE_ACADEMY_PROTECTED','PLATFORM_FREE_ACADEMY_ALREADY_BOUND','PLATFORM_FREE_ACADEMY_ACTIVE_FREE_REQUIRED'].includes(message)){status=409;code=message;}

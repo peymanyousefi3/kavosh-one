@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('legal-hold contracts expose strict owner-reviewed preservation without expiry backdating or deletion authority inputs',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/academies/{id}/legal-holds',create=api.paths[base].post,release=api.paths[base+'/{holdId}/release'].post,shape=(op:any)=>op.requestBody.content['application/json'].schema;assert.deepEqual(Object.keys(shape(create).properties).sort(),['caseReference','reason']);assert.equal(shape(create).additionalProperties,false);assert.deepEqual(Object.keys(shape(release).properties).sort(),['confirmAcademyId','expectedVersion','reason']);assert.equal(shape(release).additionalProperties,false);assert.match(release.summary,/never authorizes deletion/);assert.match(create.summary,/No automatic expiry/);assert.ok(api.paths[base+'/{holdId}'].get);assert.equal(api.paths['/api/platform/v1/academies/{id}/retention'].get.requestBody,undefined);assert.deepEqual(create.security,[{humanSession:[]}]);
+});
 test('paid-tax reporting documents explicit nonemployee exclusions and retained paid-date mismatch detection',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),report=api.paths['/api/v1/reports/payroll/paid-tax-year-to-date'].get;assert.match(report.summary,/known declared contractor|separately listed retained nonemployee/i);assert.match(report.summary,/timezone\/year mismatches cannot silently disappear/i);assert.match(api.paths['/api/v1/payroll/tax-profiles/{id}/year-to-date'].get.summary,/explicitly excluded from employee totals/i);assert.equal(report.requestBody,undefined);
 });
