@@ -15,6 +15,7 @@ import { completePayrollSettlementExport } from './payroll-settlement-report.ts'
 import { completePayrollRegisterExport } from './payroll-register.ts';
 import { completePaidTaxYtdExport } from './paid-tax-ytd.ts';
 import { completeT4WorkingPaperExport } from './t4-working-paper.ts';
+import { completeConsolidatedT4aExport } from './t4a-consolidated-working-paper.ts';
 import { completeT4aWorkingPaperExport } from './t4a-working-paper.ts';
 import { completeSupplierTaxWorkingPaperExport } from './supplier-tax-working-paper.ts';
 import { completeFinancialOutlookExport } from './financial-outlook-export.ts';
@@ -80,6 +81,7 @@ export async function exportConfiguredFinancialReport(ctx:ApiContext,configurati
  if(configuration.reportId==='learning.student-performance'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePerformanceExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(['learning.session-follow-up','learning.sessions.by-id.evidence'].includes(configuration.reportId)){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides),url=new URL(context.request.url);url.searchParams.delete('limit');return completeLearningExport({...context,request:new Request(url)},{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='payroll.t4-working-paper'){const {context}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeT4WorkingPaperExport(context,provenance);}
+ if(configuration.reportId==='payroll.t4a-consolidated-working-paper'){const {context}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeConsolidatedT4aExport(context,provenance);}
  if(configuration.reportId==='payroll.t4a-working-paper'){const {context}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeT4aWorkingPaperExport(context,provenance);}
  if(configuration.reportId==='finance.supplier-t4a-working-paper'){const {context}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completeSupplierTaxWorkingPaperExport(context,provenance);}
  if(configuration.reportId==='payroll.paid-tax-year-to-date'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePaidTaxYtdExport(context,{...provenance,dateWindow:resolvedDateWindow});}
