@@ -144,7 +144,7 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
     const q:z.infer<typeof auditQuery>=auditId?(z.object({}).strict().parse(Object.fromEntries(url.searchParams)),{limit:1}):auditQuery.parse(Object.fromEntries(url.searchParams));
     const rows=(await db.query(`SELECT id,actor_id,actor_kind AS "actorKind",request_id,action,entity_id,hub_id,
       CASE WHEN changes?'reason' AND action LIKE 'approval.%' AND EXISTS(SELECT 1 FROM public.approval_requests private_case WHERE private_case.academy_id=public.audit_events.academy_id AND private_case.id=public.audit_events.entity_id AND private_case.privacy_capability IS NOT NULL)
-      THEN(changes-'reason')||'{"hasReason":true}'::jsonb ELSE changes END changes,created_at
+      THEN(changes-'reason')||'{"hasReason":true}'::jsonb ELSE changes END changes,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
       FROM public.audit_events WHERE((hub_id IS NULL AND $1::boolean) OR(hub_id IS NOT NULL AND($2::boolean OR hub_id=ANY($3::uuid[])) AND NOT hub_id=ANY($4::uuid[])))
       AND($5::uuid IS NULL OR id=$5) AND($6::uuid IS NULL OR id>$6) AND($7::uuid IS NULL OR actor_id=$7) AND($8::uuid IS NULL OR entity_id=$8) AND($9::uuid IS NULL OR request_id=$9)
       AND($10::text IS NULL OR action=$10) AND($11::text IS NULL OR actor_kind=$11) AND($12::timestamptz IS NULL OR created_at>=$12) AND($13::timestamptz IS NULL OR created_at<=$13) ORDER BY id LIMIT $14`,

@@ -1,4 +1,9 @@
 {
+  "auditSearch419TimestampFollowup": {
+    "fix": "Audit JSON timestamps now preserve the original PostgreSQL6digit UTC microseconds rather than passing through the driver Date millisecond truncation. A returned event timestamp can therefore be reused as an exact inclusive from/through bound without losing that event.",
+    "verification": "All5native audit workflow cases passed again0failed0skipped4229.996833ms,including byte-exact comparison between returned timestamp and the retained database instant.",
+    "priorHosted": "a69eca64f261c553b7c60d47e2558bba515eff7d Backend43080602625 still in_progress;9jobs success including actual video container,scanner,PDF,image,database-recovery,learning,business2/5/6;verify/business1/3/4 still pending. No full hosted success claim."
+  },
   "auditSearch419Acceptance": {
     "schema": 375,
     "api": "0.419",
