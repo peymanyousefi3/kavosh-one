@@ -9,7 +9,7 @@ export async function encodeReportSpreadsheet(source) {
   let cells = 0;
   const rows = parse(source, { bom: true, skip_empty_lines: false, relax_column_count: false,
     on_record(row, info) {
-      if (info.records > 20_001 || row.length > 256 || (cells += row.length) > 100_000) throw new Error('SPREADSHEET_REQUIRES_CSV');
+      if (info.records > 40_001 || row.length > 256 || (cells += row.length) > 200_000) throw new Error('SPREADSHEET_REQUIRES_CSV');
       return row.map(value => {
         if (value.length > 32_767 || !value.isWellFormed()) throw new Error('SPREADSHEET_REQUIRES_CSV');
         // The writer strips these XML characters. Refuse rather than silently
@@ -25,7 +25,12 @@ export async function encodeReportSpreadsheet(source) {
     }
   });
   if (!rows.length || !cells) throw new Error('EMPTY');
-  const stream = await writeXlsxFile(rows, { sheet: 'Report' }).toStream();
+  // Repeat the ORIGINAL source header,never split a row or convert CSV byte
+  // segments independently. Bound each sheet as well as the whole workbook.
+  const header=rows[0],perSheet=Math.min(20_000,Math.floor(100_000/header.length)-1),sheets=[];
+  for(let start=1;start<rows.length;start+=perSheet)sheets.push({data:[header,...rows.slice(start,start+perSheet)],sheet:sheets.length?'Report '+(sheets.length+1):'Report'});
+  if(!sheets.length)sheets.push({data:rows,sheet:'Report'});
+  const stream = await writeXlsxFile(sheets).toStream();
   const chunks = []; let size = 0;
   for await (const chunk of stream) {
     size += chunk.byteLength;
