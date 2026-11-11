@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.425.0",
+    "version": "0.426.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -73690,7 +73690,7 @@
     },
     "/api/v1/reports/jobs": {
       "post": {
-        "summary": "Queue supplier annual service reports(up to500payments/20000components/4MiB;exact original payment/review editions,selected payee/payer/year/timezone and current source access rechecked),or reviewed direct cash-flow reports(up to10000cash accounts/4MiB,retained original full classification scope,exact chart/category bridge and current access checks),poll aggregates(up to100000response heads/10000student-class-hub contexts;pathParameters.id required;exact question form pinned at enqueue,no written answers),recorded-hour reports(up to2000time entries/10000terms/2000priced intervals,200priced intervals/person across currencies,10000output rows/4MiB,366civil days),scheduled payroll forecasts(up to1000engagements/10000terms/2000assignments/2000sessions;200hourly intervals/person/currency,2000total intervals,200000salary-reference calendar days,366civil days,10000detail rows/4MiB),or a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
+        "summary": "Queue consolidated payroll/linked-person supplier annual reports with nested original source proofs and current whole-domain authority,or supplier annual service reports(up to500payments/20000components/4MiB;exact original payment/review editions,selected payee/payer/year/timezone and current source access rechecked),or reviewed direct cash-flow reports(up to10000cash accounts/4MiB,retained original full classification scope,exact chart/category bridge and current access checks),poll aggregates(up to100000response heads/10000student-class-hub contexts;pathParameters.id required;exact question form pinned at enqueue,no written answers),recorded-hour reports(up to2000time entries/10000terms/2000priced intervals,200priced intervals/person across currencies,10000output rows/4MiB,366civil days),scheduled payroll forecasts(up to1000engagements/10000terms/2000assignments/2000sessions;200hourly intervals/person/currency,2000total intervals,200000salary-reference calendar days,366civil days,10000detail rows/4MiB),or a complete cash-movement bridge(up to10000cash accounts/4MiB with original full-scope proof and existing date/chart limits),counterparty-statement (up to200000 source and window events,10000 bills;larger than10000events or4MiB uses resumable250record/1MiB ordered CSV byte parts with exact original membership retained),manual-income/cost,payroll-cost/tuition-income/expense-cost attribution,performance,financial,gross-payroll,net-settlement,liability-remittance,private paid-tax-year or achievement CSV using requester-bound current authority.20pending jobs/person,one-day execution deadline and4MiB single-file ceiling;counterparty multipart results expose a protected ordered parts directory,never a partial ordinary download. Attribution keeps existing10000source-event/10000chart-group bounds;expense100000cost-line events. Other original report bounds remain. Larger outputs fail without truncation;separate opt-in worker,no message or payment.",
         "parameters": [
           {
             "$ref": "#/components/parameters/idempotency"
@@ -73708,6 +73708,7 @@
                   "reportId": {
                     "type": "string",
                     "enum": [
+                      "payroll.t4a-consolidated-working-paper",
                       "finance.supplier-t4a-working-paper",
                       "payroll.t4a-working-paper",
                       "finance.cash-flow",

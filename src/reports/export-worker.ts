@@ -21,6 +21,7 @@ import { payrollRemittanceData,payrollRemittanceCsv } from '../modules/payroll-r
 import { paidTaxYearReportData,paidTaxYtdCsv } from '../modules/paid-tax-ytd.ts';
 import { t4WorkingPaperData,t4WorkingPaperCsv } from '../modules/t4-working-paper.ts';
 import { t4aWorkingPaperData,t4aWorkingPaperCsv } from '../modules/t4a-working-paper.ts';
+import { consolidatedT4aWorkingPaperData,consolidatedT4aCsv } from '../modules/t4a-consolidated-working-paper.ts';
 import { supplierTaxWorkingPaperData,supplierTaxWorkingPaperCsv } from '../modules/supplier-tax-working-paper.ts';
 import { studentPerformanceResult } from '../modules/student-performance.ts';
 import { performanceReportCsv } from '../modules/student-performance-export.ts';
@@ -67,6 +68,7 @@ export async function processOneReport(database:Database,allowedAcademies:string
    else if(job.configuration.reportId==='payroll.paid-tax-year-to-date'){const data=await paidTaxYearReportData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=paidTaxYtdCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.t4-working-paper'){const data=await t4WorkingPaperData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=t4WorkingPaperCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.t4a-working-paper'){const data=await t4aWorkingPaperData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=t4aWorkingPaperCsv(data,provenance);}
+   else if(job.configuration.reportId==='payroll.t4a-consolidated-working-paper'){const data=await consolidatedT4aWorkingPaperData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=consolidatedT4aCsv(data,provenance);}
    else if(job.configuration.reportId==='finance.supplier-t4a-working-paper'){const data=await supplierTaxWorkingPaperData(source,true);proof=reportAuthorizationContext.parse(data.authorizationContext);file=supplierTaxWorkingPaperCsv(data,provenance);}
    else if(['finance.cash-flow','finance.cash-movements'].includes(job.configuration.reportId)){const data=await (job.configuration.reportId==='finance.cash-flow'?completeCashFlowReport:completeCashMovementReport)(source,backgroundFinancialEntryLimit);proof=reportAuthorizationContext.parse(data.authorizationContext);file=cashMovementCsv(data,provenance);}
    else if(job.configuration.reportId==='payroll.scheduled-costs'){const reply=await payrollForecast(source,true);if(!reply||reply.status!==200)throw new Error('FORECAST_JOB_SOURCE_INVALID');proof=reportAuthorizationContext.parse(reply.body.data.authorizationContext);file=payrollForecastCsv(reply.body.data,provenance);}
