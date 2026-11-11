@@ -426,7 +426,7 @@ jobs:
           import {execFileSync} from 'node:child_process';
           const r=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'kavosh-video-runtime.json'),'utf8'));
           const python=execFileSync('python',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim();
-          appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\n');
+          appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\nVIDEO_FFMPEG_SOURCE_ARCHIVE='+r.ffmpegSourceArchivePath+'\nVIDEO_DAV1D_SOURCE_ARCHIVE='+r.av1SourceArchivePath+'\n');
           JS
       - name: Generate tiny original synthetic codec and soundtrack fixtures
         run: |
@@ -441,7 +441,10 @@ jobs:
           VIDEO_CODEC_TEST_REQUIRED: 'true'
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Build credential-free native video service
-        run: docker build --file Dockerfile.video-service --tag kavosh-video:ci .
+        run: >-
+          docker build --file Dockerfile.video-service --tag kavosh-video:ci
+          --secret "id=ffmpeg-source,src=$VIDEO_FFMPEG_SOURCE_ARCHIVE"
+          --secret "id=dav1d-source,src=$VIDEO_DAV1D_SOURCE_ARCHIVE" .
       - name: Refuse video startup without required runtime isolation
         run: |
           if docker run --rm --network none kavosh-video:ci; then

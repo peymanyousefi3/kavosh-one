@@ -14,7 +14,7 @@ const av1=manifest.softwareAv1Decoder;if(av1?.name!=='dav1d'||av1.version!=='1.5
 const root=await mkdtemp(join(tmpdir(),'kavosh-video-build-')),source=join(root,'source');
 const env={PATH:process.env.PATH??'/usr/bin:/bin',TZ:'UTC',LC_ALL:'C'},options={env,encoding:'utf8',maxBuffer:8388608,timeout:300000};
 async function extractPinnedRelease(release,prefix,directory,maximum){
- const bytes=await downloadVideoSource(release,maximum),archive=directory+'.tar.xz';await writeFile(archive,bytes,{mode:0o600,flag:'wx'});
+ const archivePath=process.env.VIDEO_BUILD_SOURCE_DIRECTORY?join(process.env.VIDEO_BUILD_SOURCE_DIRECTORY,prefix+'.tar.xz'):undefined,bytes=await downloadVideoSource(release,maximum,{archivePath}),archive=directory+'.tar.xz';await writeFile(archive,bytes,{mode:0o600,flag:'wx'});
  const list=await run('tar',['-tJf',archive],options);if(list.stdout.split('\n').filter(Boolean).some(p=>!p.startsWith(prefix+'/')||p.split('/').includes('..')))throw Error('UNSAFE_VIDEO_SOURCE_ARCHIVE');await mkdir(directory,{mode:0o700});await run('tar',['-xJf',archive,'-C',directory,'--strip-components=1'],options);
 }
 const av1Source=join(root,'dav1d-source'),av1Build=join(root,'dav1d-build'),av1Prefix=join(root,'dav1d-install');
@@ -31,4 +31,4 @@ const flags=[...manifest.configureFlags,...process.platform==='linux'?['--toolch
 await run('./configure',flags,{...codecOptions,cwd:source});await run('make',['-j2'],{...codecOptions,cwd:source});
 const ffmpegPath=join(source,'ffmpeg'),ffprobePath=join(source,'ffprobe');for(const [path,name]of [[ffmpegPath,'ffmpeg'],[ffprobePath,'ffprobe']]){const version=await run(path,['-version'],options);if(!version.stdout.startsWith(name+' version '+manifest.version+' ')||!version.stdout.includes('--disable-network'))throw Error('UNEXPECTED_VIDEO_BUILD');}
 if(!/\blibdav1d\b/.test((await run(ffmpegPath,['-hide_banner','-decoders'],options)).stdout))throw Error('MISSING_SOFTWARE_AV1_DECODER');
-console.log(JSON.stringify({root,ffmpegPath,ffprobePath,version:manifest.version,sourceSha256:manifest.sha256,sourceHashVerified:true,av1Version:av1.version,av1SourceSha256:av1.sha256,av1LicensePath:join(av1Source,'COPYING'),networkDisabledAtBuild:true,productionContainerVerified:false}));
+console.log(JSON.stringify({root,ffmpegSourceArchivePath:source+'.tar.xz',av1SourceArchivePath:av1Source+'.tar.xz',ffmpegPath,ffprobePath,version:manifest.version,sourceSha256:manifest.sha256,sourceHashVerified:true,av1Version:av1.version,av1SourceSha256:av1.sha256,av1LicensePath:join(av1Source,'COPYING'),networkDisabledAtBuild:true,productionContainerVerified:false}));

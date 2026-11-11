@@ -1,4 +1,11 @@
 {
+  "videoPinnedArchiveReuseAcceptance": {
+    "sourceCheckpoint": "e7deb2c3272ef0ad4e31af1ef71a26b5c075b09a",
+    "observedHosted": "Backend43071439685 terminal:12 jobs success,video-parser130700096657 failure. Secret43071439804 success. Actual video log failed inside Docker build downloading dav1d via downloadVideoSource;the runner native decoder build and quick decode checks had already completed. This is not an application decoder-test failure or a complete hosted pass.",
+    "implementation": "Keep normal credential-free HTTPS container builds compatible. CI optionally mounts the exact host-downloaded FFmpeg/dav1d source archives through transient BuildKit inputs;the same reviewed URL,version,SHA256 and size ceilings are validated before use. Never import host binaries or libraries into the Alpine runtime. Corrupt,oversized,missing or non-file provided archives fail without network fallback. No source mirror,new dependency,relaxed checksum or disabled container acceptance.",
+    "localEvidence": "5 focused download/archive tests passed0failed0skipped485.20775ms. Actual vendor dav1d1.5.4 HTTPS archive1038852bytes downloaded with its existing pinned SHA256,then reread byte-exact from disk while a network callback would throw;zero reuse network requests. Build-script syntax and diff whitespace checks passed. No local Docker/container-build claim;hosted verification still required.",
+    "remaining": "Await actual credential-free container build and isolation/codec smoke results on GitHub. This change does not close the full approved backend,official tax forms,frontend,live providers or production deployment."
+  },
   "privateYearEndPackage417Recheck": {
     "native": "11 focused cases passed,0 failed,0 skipped,11682.138125ms against local PostgreSQL;no prolonged stress.",
     "priorHosted": "5d124daf84bcdf5f0ccf7d82a67b3351ab9db517 Backend43060987408 is terminal failure:11 jobs success,scanner-engine failure,video-parser cancelled. Secret43060987428 success. Earlier scanner logs showed package mirror DNS failure;this is not an all-green result.",
