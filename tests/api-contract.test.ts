@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('supplier annual reports and complete exports require explicit payee payer year and timezone without caller totals',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const suffix of ['','/export','/export.xlsx']){const op=api.paths['/api/v1/reports/finance/supplier-t4a-working-paper'+suffix].get;assert.equal(op.requestBody,undefined);assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['payeeId','employerId','taxYear','timeZone'].sort());assert.ok(op.parameters.filter((p:any)=>p.in==='query').every((p:any)=>p.required));}assert.match(api.paths['/api/v1/reports/finance/supplier-t4a-working-paper'].get.summary,/not payroll-inclusive,alias-inclusive,all-source completeness or official forms/);
+});
 test('supplier recognition binds the original payment and allows only reviewed allocations and retained history selectors',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/expense-payments/{id}/tax-recognition',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;
  assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['definition','expectedVersion','reason']);assert.match(op.summary,/human-reviewed/);assert.match(op.summary,/No inferred withholding/);assert.ok(api.paths[path].get);assert.equal(api.paths[path].get.requestBody,undefined);assert.equal(api.paths[path+'/history'].post,undefined);assert.deepEqual(api.paths[path+'/history'].get.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['afterVersion','limit']);

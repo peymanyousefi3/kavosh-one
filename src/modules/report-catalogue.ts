@@ -23,6 +23,7 @@ import { payrollRegister,payrollRegisterContract } from './payroll-register.ts';
 import { paidTaxYtd,paidTaxYearReportContract } from './paid-tax-ytd.ts';
 import { t4WorkingPaper,t4WorkingPaperContract } from './t4-working-paper.ts';
 import { t4aWorkingPaper,t4aWorkingPaperContract } from './t4a-working-paper.ts';
+import { supplierTaxWorkingPaper,supplierTaxWorkingPaperContract } from './supplier-tax-working-paper.ts';
 import { payrollRemittanceReport,payrollRemittanceReportContract } from './payroll-remittance-report.ts';
 import { pollResults,pollResultsContract } from './poll-results.ts';
 import { sessionEvidenceReport,sessionEvidenceReportContract } from './session-evidence-report.ts';
@@ -49,6 +50,7 @@ const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:
  {contracts:expenseCostReportContract,handler:expenseCostReport,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:t4WorkingPaperContract,handler:t4WorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:t4aWorkingPaperContract,handler:t4aWorkingPaper,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
+ {contracts:supplierTaxWorkingPaperContract,handler:supplierTaxWorkingPaper,capability:'payroll-tax.view',csv:true},
  {contracts:paidTaxYearReportContract,handler:paidTaxYtd,capability:'payroll-tax.view',csv:true,backgroundCsv:true},
  {contracts:payrollRegisterContract,handler:payrollRegister,capability:'payrun-postings.view',csv:true},
  {contracts:payrollRemittanceReportContract,handler:payrollRemittanceReport,capability:'payrun-remittances.view',csv:true,backgroundCsv:true},
