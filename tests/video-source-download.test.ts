@@ -1,10 +1,22 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp,writeFile,open,rm } from 'node:fs/promises';
+import { mkdtemp,writeFile,open,rm,readFile,stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { downloadVideoSource } from '../scripts/video-source-download.mjs';
+import { downloadVideoSource,cachedVideoSource } from '../scripts/video-source-download.mjs';
 const source={url:'https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz',sha256:'8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e'},maximum=33554432;
+test('public source archives use a read-only named build context rather than Docker secret-size-limited inputs',async()=>{
+ const docker=await readFile(new URL('../Dockerfile.video-service',import.meta.url),'utf8'),workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8');assert.match(docker,/FROM scratch AS video-sources/);assert.match(docker,/--mount=type=bind,from=video-sources,target=\/run\/kavosh-video-sources,readonly/);assert.doesNotMatch(docker,/--mount=type=secret/);assert.match(workflow,/--build-context "video-sources=\$RUNNER_TEMP\/kavosh-video-sources"/);assert.doesNotMatch(workflow,/--secret "id=(?:ffmpeg|dav1d)-source/);assert.match(workflow,/actions\/cache@caa296126883cff596d87d8935842f9db880ef25/);
+});
+test('public source cache never refreshes corruption or publishes failed and unreviewed downloads',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'kavosh-source-cache-')),archivePath=join(root,'source.tar.xz');let calls=0;
+ const options={async fetcher(){calls++;return new Response('synthetic bad source');}};
+ try{
+  await assert.rejects(cachedVideoSource(source,maximum,archivePath,options),/VIDEO_SOURCE_HASH_MISMATCH/);assert.equal(calls,1);await assert.rejects(stat(archivePath),{code:'ENOENT'});
+  await writeFile(archivePath,'retained corrupt cache');calls=0;await assert.rejects(cachedVideoSource(source,maximum,archivePath,options),/VIDEO_SOURCE_HASH_MISMATCH/);assert.equal(calls,0);assert.equal(await readFile(archivePath,'utf8'),'retained corrupt cache');
+  await assert.rejects(cachedVideoSource({...source,sha256:'0'.repeat(64)},maximum,archivePath,options),/UNREVIEWED_VIDEO_SOURCE/);await assert.rejects(cachedVideoSource(source,maximum,'relative-cache',options),/UNREVIEWED_VIDEO_SOURCE/);assert.equal(calls,0);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 test('reused build archives keep exact source pins,size ceilings and fail closed without network fallback',async()=>{
  const root=await mkdtemp(join(tmpdir(),'kavosh-source-check-'));let calls=0;const options={async fetcher(){calls++;throw Error('NETWORK_MUST_NOT_RUN');}};
  try{

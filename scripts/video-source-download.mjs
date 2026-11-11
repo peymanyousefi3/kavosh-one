@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { open } from 'node:fs/promises';
+import { open,mkdir,writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 // Build-time public source download only. Every retry uses the SAME reviewed
@@ -35,4 +36,15 @@ export async function downloadVideoSource(release,maximum,options={}){
   }
  }
  throw Error('VIDEO_SOURCE_UNAVAILABLE');
+}
+// Cache only public reviewed source archives,not binaries or credentials.
+// A cache hit has exactly the same hash/size checks as a fresh HTTPS fetch.
+export async function cachedVideoSource(release,maximum,archivePath,options={}){
+ if(typeof archivePath!=='string'||!archivePath.startsWith('/'))throw Error('UNREVIEWED_VIDEO_SOURCE');
+ try{return await downloadVideoSource(release,maximum,{...options,archivePath});}
+ catch(error){if(error?.code!=='ENOENT')throw error;}
+ const bytes=await downloadVideoSource(release,maximum,options);await mkdir(dirname(archivePath),{recursive:true,mode:0o700});
+ try{await writeFile(archivePath,bytes,{mode:0o600,flag:'wx'});}
+ catch(error){if(error?.code!=='EEXIST')throw error;return downloadVideoSource(release,maximum,{...options,archivePath});}
+ return bytes;
 }

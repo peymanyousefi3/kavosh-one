@@ -417,7 +417,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends nasm meson ninja-build pkg-config ffmpeg
       - name: Check exact source pins,download ceilings and bounded transient retries
         run: node --import tsx --test tests/video-source-download.test.ts
+      - name: Reuse public source archives with mandatory checksum revalidation
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/kavosh-video-sources
+          key: video-sources-8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e-686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
       - name: Build exact pinned FFmpeg and software AV1 source without network protocols or autodetected libraries
+        env:
+          VIDEO_BUILD_SOURCE_CACHE: ${{ runner.temp }}/kavosh-video-sources
         run: |
           node scripts/build-video-runtime.mjs > "$RUNNER_TEMP/kavosh-video-runtime.json"
           node --input-type=module - <<'JS'
@@ -426,7 +433,7 @@ jobs:
           import {execFileSync} from 'node:child_process';
           const r=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'kavosh-video-runtime.json'),'utf8'));
           const python=execFileSync('python',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim();
-          appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\nVIDEO_FFMPEG_SOURCE_ARCHIVE='+r.ffmpegSourceArchivePath+'\nVIDEO_DAV1D_SOURCE_ARCHIVE='+r.av1SourceArchivePath+'\n');
+          appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\n');
           JS
       - name: Generate tiny original synthetic codec and soundtrack fixtures
         run: |
@@ -443,8 +450,7 @@ jobs:
       - name: Build credential-free native video service
         run: >-
           docker build --file Dockerfile.video-service --tag kavosh-video:ci
-          --secret "id=ffmpeg-source,src=$VIDEO_FFMPEG_SOURCE_ARCHIVE"
-          --secret "id=dav1d-source,src=$VIDEO_DAV1D_SOURCE_ARCHIVE" .
+          --build-context "video-sources=$RUNNER_TEMP/kavosh-video-sources" .
       - name: Refuse video startup without required runtime isolation
         run: |
           if docker run --rm --network none kavosh-video:ci; then

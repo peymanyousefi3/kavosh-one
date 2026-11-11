@@ -1,7 +1,7 @@
 import { mkdtemp,readFile,writeFile,mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { downloadVideoSource } from './video-source-download.mjs';
+import { downloadVideoSource,cachedVideoSource } from './video-source-download.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -14,7 +14,7 @@ const av1=manifest.softwareAv1Decoder;if(av1?.name!=='dav1d'||av1.version!=='1.5
 const root=await mkdtemp(join(tmpdir(),'kavosh-video-build-')),source=join(root,'source');
 const env={PATH:process.env.PATH??'/usr/bin:/bin',TZ:'UTC',LC_ALL:'C'},options={env,encoding:'utf8',maxBuffer:8388608,timeout:300000};
 async function extractPinnedRelease(release,prefix,directory,maximum){
- const archivePath=process.env.VIDEO_BUILD_SOURCE_DIRECTORY?join(process.env.VIDEO_BUILD_SOURCE_DIRECTORY,prefix+'.tar.xz'):undefined,bytes=await downloadVideoSource(release,maximum,{archivePath}),archive=directory+'.tar.xz';await writeFile(archive,bytes,{mode:0o600,flag:'wx'});
+ const fileName=prefix+'.tar.xz',archivePath=process.env.VIDEO_BUILD_SOURCE_DIRECTORY?join(process.env.VIDEO_BUILD_SOURCE_DIRECTORY,fileName):undefined,bytes=archivePath?await downloadVideoSource(release,maximum,{archivePath}):process.env.VIDEO_BUILD_SOURCE_CACHE?await cachedVideoSource(release,maximum,join(process.env.VIDEO_BUILD_SOURCE_CACHE,fileName)):await downloadVideoSource(release,maximum),archive=directory+'.tar.xz';await writeFile(archive,bytes,{mode:0o600,flag:'wx'});
  const list=await run('tar',['-tJf',archive],options);if(list.stdout.split('\n').filter(Boolean).some(p=>!p.startsWith(prefix+'/')||p.split('/').includes('..')))throw Error('UNSAFE_VIDEO_SOURCE_ARCHIVE');await mkdir(directory,{mode:0o700});await run('tar',['-xJf',archive,'-C',directory,'--strip-components=1'],options);
 }
 const av1Source=join(root,'dav1d-source'),av1Build=join(root,'dav1d-build'),av1Prefix=join(root,'dav1d-install');
