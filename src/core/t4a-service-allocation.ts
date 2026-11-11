@@ -13,7 +13,7 @@ export const t4aServiceAllocation=z.object({
  income:z.array(z.object({box:z.enum(['020','048']),amount:money}).strict()).min(1).max(2).refine(a=>new Set(a.map(v=>v.box)).size===a.length),
  gstHst:money,pst:money,incomeTaxDeducted:money,
  otherExcluded:z.array(z.object({code:z.string().regex(/^[A-Z0-9][A-Z0-9._-]{0,31}$/).refine(v=>v.trim()===v),amount:money,sourceReference:reference}).strict()).max(100).refine(a=>new Set(a.map(v=>v.code)).size===a.length),
- eligibilityReview:z.object({canadianRecipient:z.literal(true),nonEmployment:z.literal(true),serviceReportingReviewed:z.literal(true),sourceReference:reference}).strict(),
+ eligibilityReview:z.object({canadianRecipient:z.literal(true).describe('Explicit reviewed Canadian tax residency for this payment reporting;not citizenship,address,workplace or government verification.'),nonEmployment:z.literal(true),serviceReportingReviewed:z.literal(true),sourceReference:reference}).strict(),
  review:reference
 }).strict().superRefine((d,c)=>{if(!c.issues.length&&d.income.every(v=>parseMoney(v.amount,2)===0n))c.addIssue({code:'custom',message:'At least one positive reviewed service or commission amount is required.'});});
 const storedMinor=z.string().max(80).regex(/^\d+(?:\.0+)?$/).refine(v=>v.trim()===v);
