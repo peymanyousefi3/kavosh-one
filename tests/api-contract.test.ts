@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('audit searches expose exact selectors without private reveal overrides and retain scoped bearer or human authentication',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/audit-events'].get;assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['limit','after','actorId','entityId','requestId','action','actorKind','from','through'].sort());assert.match(op.summary,/Explicit area\/hub denials exclude global events/);assert.ok(api.paths['/api/v1/audit-events/{id}'].get);assert.equal(api.paths['/api/v1/audit-events/{id}'].post,undefined);assert.equal(op.requestBody,undefined);
+});
 test('private year-end packages require human cookie authentication and strict source selectors without caching or queue overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const kind of ['t4','t4a']){const path='/api/v1/reports/payroll/'+kind+'-working-paper/private-package',op=api.paths[path].post,shape=op.requestBody.content['application/json'].schema;assert.deepEqual(op.security,[{humanSession:[],academySelection:[]}]);assert.equal(shape.additionalProperties,false);assert.deepEqual(Object.keys(shape.properties).sort(),(kind==='t4'?['profileId','timeZone','identityVersion']:['personId','employerId','taxYear','timeZone','identityVersion']).sort());assert.ok(!op.parameters.some((p:any)=>p.$ref==='#/components/parameters/idempotency'));assert.equal(api.paths[path].get,undefined);assert.match(op.summary,/Human-only/);}assert.ok(!api.paths['/api/v1/reports/jobs'].post.requestBody.content['application/json'].schema.properties.reportId.enum.some((id:string)=>id.includes('private-package')));
 });

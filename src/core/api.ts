@@ -9,16 +9,21 @@ import { videoRangeSchema,isVideoReadPath,type VideoRange } from '../files/video
 import { reportSpreadsheet,spreadsheetMime } from '../reports/spreadsheet.ts';
 import { profileQrReplySchema,profileQrTarget,profileQrFilename,renderProfileQr } from '../profiles/qr.ts';
 import { profileShareId } from '../profiles/share-id.ts';
+import { Temporal } from '@js-temporal/polyfill';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
 const name = z.string().trim().min(1).max(200);
 const hubInput = z.object({ name, city: z.string().trim().min(1).max(100), countryCode: z.string().regex(/^[A-Z]{2}$/) }).strict();
 const personInput = z.object({ name, email: z.string().email().max(254).optional(), hubId: id }).strict();
 const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default(50), after: id.optional() }).strict();
+const auditInstant=z.iso.datetime({offset:true}).max(100).refine(v=>{try{const instant=Temporal.Instant.from(v),year=instant.toZonedDateTimeISO('UTC').year;return year>=1900&&year<=9999&&(v.match(/\.(\d+)/)?.[1].length??0)<=6;}catch{return false;}});
+const auditQuery=paging.extend({actorId:id.optional(),entityId:id.optional(),requestId:id.optional(),action:z.string().regex(/^[a-z][a-z0-9_.-]{0,149}$/).optional(),actorKind:z.enum(['human','bot']).optional(),from:auditInstant.optional(),through:auditInstant.optional()}).strict().refine(q=>!q.from||!q.through||Temporal.Instant.compare(q.from,q.through)<=0,'Choose an ordered inclusive timestamp interval.');
 export type Reply = { status: number; body: unknown; qr?:{profileId:string;academyId:string;origin:string};csv?:{filename:string};xlsx?:{filename:string};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive';financeBookLocked?:boolean;financeBookExclusive?:boolean;collectorFundLocks?:Set<string>;expenseSettlementSnapshot?:boolean;notificationJobId?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
-export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'}] as const;
+export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'},
+ {path:'/api/v1/audit-events',method:'get',querySchema:auditQuery,summary:'Current audit.view school/hub intersection before exact actor,entity,request,action,actor-kind and inclusive offset timestamp filters and UUID cursor pagination. Explicit area/hub denials exclude global events. Immutable redacted change metadata only;no credential/session IDs,automatic diff,private-source reveal or additional authority. Timestamp precision at most6fractional digits.'},
+ {path:'/api/v1/audit-events/{id}',method:'get',summary:'Read one exact retained change-history event under the same current audit scope,tenant isolation,explicit denials and private approval-reason redaction as its directory. Unknown or out-of-scope events return404.'}] as const;
 
 export async function jsonBody(request: Request,maximumBytes=16_384) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
@@ -119,14 +124,14 @@ function permit(scope: Scope) {
 async function operation(db: Connection, c: Credential, grants: Grant[], request: Request, path: string, requestId: string): Promise<Reply> {
   const url = new URL(request.url);
   const isRead = request.method === 'GET';
-  const personPath=/^people\/([^/]+)$/.exec(path),personId=personPath&&isRead?id.parse(personPath[1]):null;
+  const personPath=/^people\/([^/]+)$/.exec(path),personId=personPath&&isRead?id.parse(personPath[1]):null,auditPath=/^audit-events(?:\/([^/]+))?$/.exec(path),auditId=auditPath?.[1]&&isRead?id.parse(auditPath[1]):null;
   let capability: Capability;
   if (path === 'hubs') capability = isRead ? 'hubs.view' : 'hubs.edit';
   else if (path === 'people'||personId) capability = isRead ? 'people.view' : 'people.edit';
-  else if (path === 'audit-events' && isRead) capability = 'audit.view';
+  else if (auditPath) capability = 'audit.view';
   else if (/^credentials\/[^/]+\/revoke$/.test(path) && request.method === 'POST') capability = 'credentials.revoke';
   else throw new ApiError(404, 'NOT_FOUND');
-  if (!['GET','POST'].includes(request.method) || (path === 'audit-events' && !isRead)) throw new ApiError(405, 'METHOD_NOT_ALLOWED');
+  if (!['GET','POST'].includes(request.method) || (auditPath && !isRead)) throw new ApiError(405, 'METHOD_NOT_ALLOWED');
   if(!isRead) {
     await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,8))',[c.academy_id]);
     await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,9))',[c.academy_id]);
@@ -134,16 +139,25 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
   }
   const scope = scopeFor(c, grants, capability);
   permit(scope);
+  if(isRead&&auditPath){
+    if([...url.searchParams].length!==new Set(url.searchParams.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');
+    const q:z.infer<typeof auditQuery>=auditId?(z.object({}).strict().parse(Object.fromEntries(url.searchParams)),{limit:1}):auditQuery.parse(Object.fromEntries(url.searchParams));
+    const rows=(await db.query(`SELECT id,actor_id,actor_kind AS "actorKind",request_id,action,entity_id,hub_id,
+      CASE WHEN changes?'reason' AND action LIKE 'approval.%' AND EXISTS(SELECT 1 FROM public.approval_requests private_case WHERE private_case.academy_id=public.audit_events.academy_id AND private_case.id=public.audit_events.entity_id AND private_case.privacy_capability IS NOT NULL)
+      THEN(changes-'reason')||'{"hasReason":true}'::jsonb ELSE changes END changes,created_at
+      FROM public.audit_events WHERE((hub_id IS NULL AND $1::boolean) OR(hub_id IS NOT NULL AND($2::boolean OR hub_id=ANY($3::uuid[])) AND NOT hub_id=ANY($4::uuid[])))
+      AND($5::uuid IS NULL OR id=$5) AND($6::uuid IS NULL OR id>$6) AND($7::uuid IS NULL OR actor_id=$7) AND($8::uuid IS NULL OR entity_id=$8) AND($9::uuid IS NULL OR request_id=$9)
+      AND($10::text IS NULL OR action=$10) AND($11::text IS NULL OR actor_kind=$11) AND($12::timestamptz IS NULL OR created_at>=$12) AND($13::timestamptz IS NULL OR created_at<=$13) ORDER BY id LIMIT $14`,
+      [scope.all&&!scope.excludedHubs?.length&&!scope.excludedAreas?.length,scope.all,scope.hubs,scope.excludedHubs??[],auditId,q.after??null,q.actorId??null,q.entityId??null,q.requestId??null,q.action??null,q.actorKind??null,q.from??null,q.through??null,q.limit+1])).rows;
+    if(auditId){if(!rows.length)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:rows[0]}};}
+    return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
+  }
   if (isRead) {
     const { limit, after } = personId?(z.object({}).strict().parse(Object.fromEntries(url.searchParams)),{limit:1,after:undefined}):paging.parse(Object.fromEntries(url.searchParams));
     // Identifiers are constants selected here, never request-controlled SQL.
-    const table = path === 'hubs' ? 'hubs' : path === 'people'||personId ? 'people' : 'audit_events';
+    const table = path === 'hubs' ? 'hubs' : 'people';
     const hubColumn = path === 'hubs' ? 'id' : 'hub_id';
-    const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : table === 'people'
-      ? 'id,name,email,hub_id,status,created_at' : `id,actor_id,request_id,action,entity_id,hub_id,
-        CASE WHEN changes?'reason' AND action LIKE 'approval.%' AND EXISTS(SELECT 1 FROM public.approval_requests private_case
-          WHERE private_case.academy_id=public.audit_events.academy_id AND private_case.id=public.audit_events.entity_id AND private_case.privacy_capability IS NOT NULL)
-          THEN (changes-'reason')||'{"hasReason":true}'::jsonb ELSE changes END AS changes,created_at`;
+    const fields = path === 'hubs' ? 'id,name,city,country_code,created_at' : 'id,name,email,hub_id,status,created_at';
     const rows = await db.query(`SELECT ${fields} FROM public.${table}
       WHERE (($1::boolean AND (cardinality($5::uuid[])=0 OR ${hubColumn} IS NOT NULL)) OR ${hubColumn}=ANY($2::uuid[]) OR id=ANY($6::uuid[]))
       AND NOT coalesce(${hubColumn}=ANY($5::uuid[]),false) AND NOT id=ANY($7::uuid[]) AND ($3::uuid IS NULL OR id>$3::uuid)
