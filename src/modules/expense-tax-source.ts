@@ -15,12 +15,13 @@ import { reportDateWindow } from '../core/report-window.ts';
 import { exactReportMoney as exact } from '../core/aging.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),query=z.object({timeZone:reportDateWindow.shape.timeZone}).strict();
+export function requireExpenseTaxAccess(ctx:ApiContext,edit=false){requirePayrollEmployerView(ctx);for(const cap of ['payroll-tax.view',...edit?['payroll-tax.edit'] as const:[]] as const)if(!scopeContains(permissionScope(ctx,cap),{all:true,hubs:[]}))throw new ApiError(403,'FORBIDDEN');}
 // Financial source inspection,not a classification or a second payment. A
 // later reviewed recognition must pin these original facts and select a payer.
 export async function expenseTaxSource(ctx:ApiContext):Promise<Reply|null>{
  const match=/^finance\/expense-payments\/([^/]+)\/tax-source$/.exec(ctx.path);if(!match)return null;
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const id=uuid.parse(match[1]),params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params));
- requirePayrollEmployerView(ctx);if(!scopeContains(permissionScope(ctx,'payroll-tax.view'),{all:true,hubs:[]}))throw new ApiError(403,'FORBIDDEN');
+ requireExpenseTaxAccess(ctx);
  await lockApprovalWrites(ctx);let payment=await authorizedExpensePayment(ctx,id);await lockAcademyTopology(ctx);
  // Same order as expense reversal:bill then payment. Re-read after waiting so
  // a concurrent correction cannot combine old flags with new source amounts.

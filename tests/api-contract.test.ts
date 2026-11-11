@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('supplier recognition binds the original payment and allows only reviewed allocations and retained history selectors',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/expense-payments/{id}/tax-recognition',op=api.paths[path].post,s=op.requestBody.content['application/json'].schema;
+ assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['definition','expectedVersion','reason']);assert.match(op.summary,/human-reviewed/);assert.match(op.summary,/No inferred withholding/);assert.ok(api.paths[path].get);assert.equal(api.paths[path].get.requestBody,undefined);assert.equal(api.paths[path+'/history'].post,undefined);assert.deepEqual(api.paths[path+'/history'].get.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['afterVersion','limit']);
+});
 test('supplier-payment tax source accepts only an explicit timezone and no invented amount payer or reporting eligibility',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/expense-payments/{id}/tax-source',op=api.paths[path].get;assert.deepEqual(op.parameters.filter((p:any)=>p.in==='query').map((p:any)=>[p.name,p.required]),[['timeZone',true]]);assert.equal(op.requestBody,undefined);assert.equal(api.paths[path].post,undefined);assert.match(op.summary,/No guessed payer/);assert.match(op.summary,/original bill,payment,payee,both-journal\/account and method rights/);
 });
