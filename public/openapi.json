@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.430.0",
+    "version": "0.431.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -27453,7 +27453,7 @@
     },
     "/api/v1/finance/expense-payments/{id}/tax-recognition": {
       "post": {
-        "summary": "Propose human-reviewed CAD supplier service/commission tax allocation against an original positive cash/bank/card expense settlement. Explicit payer review and effective RP binding;original recipient,paid timezone/year,whole bill/journal/accounts/method rights and shared exclusion capacity remain source-bound. Corrections/withdrawals retain history. No inferred withholding,employment/residency certification,additional journal,payment,official slip or annual completeness claim.",
+        "summary": "Propose human-reviewed CAD supplier service/commission tax allocation against an original positive cash/bank/card expense settlement. Foreign sources require an explicit current direct approved reference quote to CAD,original-currency GST/HST/PST exclusions and a date/source review;half-even converted settlement and exclusions must reconcile exactly. Shared exclusion capacity remains in original currency. Both currency and reference-rate rights apply before source lookup and to retained reads. No automatic inverse quote,market-rate certification or second payment. Explicit payer review and effective RP binding;original recipient,paid timezone/year,whole bill/journal/accounts/method rights and shared exclusion capacity remain source-bound. Corrections/withdrawals retain history. No inferred withholding,employment/residency certification,additional journal,payment,official slip or annual completeness claim.",
         "parameters": [
           {
             "name": "id",
@@ -27638,6 +27638,44 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 2000
+                          },
+                          "fx": {
+                            "type": "object",
+                            "properties": {
+                              "rateId": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "maximumAgeDays": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 3660
+                              },
+                              "gstHstMinor": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,37})$",
+                                "description": "Explicit excluded GST/HST in original settlement minor units,not CAD."
+                              },
+                              "pstMinor": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,37})$",
+                                "description": "Explicit excluded PST in original settlement minor units,not CAD."
+                              },
+                              "review": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000
+                              }
+                            },
+                            "required": [
+                              "rateId",
+                              "maximumAgeDays",
+                              "gstHstMinor",
+                              "pstMinor",
+                              "review"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
@@ -72732,7 +72770,7 @@
     },
     "/api/v1/reports/finance/supplier-t4a-working-paper": {
       "get": {
-        "summary": "Private complete bounded supplier-person or organization annual service/commission working paper from retained expense settlements and explicit payer/RP recognition. Exact boxes020/048/022,RP editions,monthly charts,missing/reversed/FX/noncash/year warnings and separately listed other reviewed payers. Current original financial and retained recognition boundaries rechecked for every selected payment. Up to500payments/20000components/4MiB;not payroll-inclusive,alias-inclusive,all-source completeness or official forms.",
+        "summary": "Private complete bounded supplier-person or organization annual service/commission working paper from retained expense settlements and explicit payer/RP recognition. Exact boxes020/048/022,RP editions,monthly charts,explicitly recognized CAD conversion with retained original foreign settlement and approved quote,missing/reversed/unrecognized-FX/noncash/year warnings and separately listed other reviewed payers. Current original financial and retained recognition boundaries rechecked for every selected payment. Up to500payments/20000components/4MiB;not payroll-inclusive,alias-inclusive,all-source completeness or official forms.",
         "parameters": [
           {
             "name": "payeeId",
@@ -72794,7 +72832,7 @@
     },
     "/api/v1/reports/finance/supplier-t4a-working-paper/export": {
       "get": {
-        "summary": "Complete same-source private supplier T4A working-paper CSV with exact annual/RP/monthly/payment totals,retained RP editions and unresolved warnings. No private review notes,RP numbers,official form or CRA filing.",
+        "summary": "Complete same-source private supplier T4A working-paper CSV with exact annual/RP/monthly/payment totals,retained RP editions,original foreign money and safe FX reference rows,and unresolved warnings. No private review notes,RP numbers,official form or CRA filing.",
         "parameters": [
           {
             "name": "payeeId",
@@ -72863,7 +72901,7 @@
     },
     "/api/v1/reports/finance/supplier-t4a-working-paper/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Complete same-source private supplier T4A working-paper CSV with exact annual/RP/monthly/payment totals,retained RP editions and unresolved warnings. No private review notes,RP numbers,official form or CRA filing.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Complete same-source private supplier T4A working-paper CSV with exact annual/RP/monthly/payment totals,retained RP editions,original foreign money and safe FX reference rows,and unresolved warnings. No private review notes,RP numbers,official form or CRA filing.",
         "parameters": [
           {
             "name": "payeeId",
