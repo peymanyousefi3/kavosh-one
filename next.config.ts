@@ -2,6 +2,9 @@ import type { NextConfig } from 'next';
 
 const config: NextConfig = {
   output: 'standalone',
+  // Full test/operator typing remains in `typecheck` and CI. Production also
+  // checks every runtime module strictly, without loading all test fixtures.
+  typescript: { tsconfigPath: 'tsconfig.build.json' },
   outputFileTracingIncludes: {'/*': [
     './src/reports/xlsx-worker.mjs',
     './node_modules/write-excel-file/**/*', './node_modules/csv-parse/**/*',

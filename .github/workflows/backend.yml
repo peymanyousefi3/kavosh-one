@@ -85,6 +85,7 @@ jobs:
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: node --test tests/build-typecheck.test.mjs
       - name: Account-wide signing callbacks retain only their exact school and original connection
         run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^account callback|^actual388to389|^bound-only' tests/boldsign-inbox.test.ts tests/signature-dispatch.test.ts
         env:
