@@ -1,0 +1,12 @@
+{
+  "region": "CA",
+  "environment": "Live",
+  "productionApiAccessObservedInAccount": true,
+  "productionKeyCreatedWithOwnerApproval": true,
+  "keyExpiration": "Until revoked",
+  "providerKeyPermissions": "All API scopes; provider does not offer scope selection for API keys",
+  "credentialStorage": { "runtime": "VPS", "fileOwner": "root", "fileMode": "0600", "savedInGitHub": false, "savedInLocalFile": false, "webProcessReceivesKey": false },
+  "readOnlyConnectionCheck": { "endpoint": "https://api-ca.boldsign.com/v1/brand/list", "httpStatus": 200, "tlsVerificationRequired": true, "providerResponseContentsLogged": false, "agreementRequests": 0, "agreementsSentModifiedOrDeleted": 0 },
+  "encryptedConfigurationBackup": { "id": "1356cbf0-326b-4469-ae0a-898d8c1082c8", "createdAt": "2026-11-12T22:35:40.439Z", "encryptedBytes": 102616, "ciphertextSha256": "1ce1cc097966b423504182c5002c56ec112a621d4f971e1d6bf95774e1674fdc", "independentDriveCopyVerified": true, "thisNewArchiveOffServerDecryptionRetested": false },
+  "limitations": [ "No real agreement or dual-verification signing journey has been sent or completed by this check", "Academy-specific signing queues and verified webhook activation still require academy provisioning", "Google backup authorization remains in Testing with seven-day expiry until production publication is completed" ]
+}
