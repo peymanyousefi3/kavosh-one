@@ -1,0 +1,20 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "sourceCommit": "bec0f1706094d8ab19cd8440e2a11e5af1f4af8a",
+  "sourceParentsVerifiedToInclude": "e0fa615ae79010394165c0c24925a4b88a55de72",
+  "ciRun": 43320140158,
+  "ciRunOverallConclusion": "success",
+  "individualParserCiJobsPassed": [ "image-engine", "pdf-parser", "video-parser" ],
+  "artifacts": {
+    "image": { "archiveSha256": "76b5ccc7eba9ca756821d2edac9e3238c36cf082db0a60e6393393e4e86e2816", "imageId": "b28067ccdb35cdd953fd6a92b1eae4ad4433b401d15e82db7caff57e6bfcc440" },
+    "pdf": { "archiveSha256": "336d8f9620fdc92bdc46e6c05e2ab81c19707d68c12bb5058271b490639bb065", "imageId": "b2bbb19640e0c9d032015169a759dd0c4bc3d89f79c637336ce3477cdfc198e3" },
+    "video": { "archiveSha256": "7074105cb0bfc25cf65879d550321f62304e9bef2f4ba9909236769ef2e633c3", "imageId": "7a53d6a848e6bf2b9e8f9ea082d9d025f4a61db0f2cda038663b466259e507e6" }
+  },
+  "runtimeVerifiedByProductionGuards": { "nonRootParser": true, "readOnlyRoot": true, "noNetworkInterface": true, "noCapabilities": true, "noNewPrivileges": true, "seccomp": true, "actualPieExecutables": true, "privateSocketOwnershipAndModes": true, "memoryLimitMiB": 1024, "swapLimitBytes": 0, "cpuLimitPercentOfOneCore": 50, "pidLimit": 64 },
+  "apparmor": { "mode": "enforce", "profile": "kavosh-one-parser", "upstreamContainerRestrictionsRetained": true, "exactSameProfileCrunStackedChildSignalsAllowed": true, "hostProfilesChanged": false, "disabled": false },
+  "actualVpsChecks": { "imageFormatsDecoded": 5, "imageBoundedBurstRequests": 100, "imageBurstAdmitted": 2, "imageBurstRefusedBusy": 98, "imageBurstElapsedMs": 3027, "corruptImageRejected": true, "pdfActiveContentAndAttachmentsRejected": true, "pdfSignedEvidenceProfile": 2, "pdfCryptographicSignatureValidityVerified": false, "videoSyntheticFramesDecoded": 2, "malformedVideoRefused": true, "videoTemporaryInputsRemoved": true, "videoPlaybackVerified": false, "realAcademyFilesUsed": false },
+  "services": { "activeAfterRestart": 3, "enabledOnBoot": 3, "postRestartFailureCounts": [0,0,0], "gracefulStopsSucceeded": 3, "credentialsMounted": false, "publicPortsExposed": false },
+  "encryptedConfigurationBackup": { "id": "3ce4e57e-9ed1-444a-9ee4-35b4e5b952e9", "createdAt": "2026-11-12T22:45:26.725Z", "ciphertextSha256": "5fa274a9ae571560875c525da8e508605ec3e682b27942352172133c723ceb13", "independentDriveCopyVerified": true },
+  "landingPage": { "processIdStill": 536773, "processStartStill": "2026-11-06T01:33:33Z", "httpStatus": 200 },
+  "limitations": [ "The academy-specific durable inspection, promotion and browser upload workflow is not yet activated", "Nine codec fixtures passed CI; the VPS check used a tiny synthetic MPEG-4 clip only", "No real user uploaded files or existing agreements were inspected", "Google backup connection remains Testing until production publication" ]
+}
