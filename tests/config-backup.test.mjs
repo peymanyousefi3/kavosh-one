@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync,readdirSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 const read = name => readFileSync(new URL('../deploy/ovh/' + name, import.meta.url), 'utf8');
 test('configuration backup retains isolation, uses password-free separate role export and fixed One-only paths', () => {
@@ -21,4 +21,10 @@ test('scanner stays private, resource bounded and fail-closed for size/encryptio
  assert.doesNotMatch(config,/^TCP(?:Socket|Addr)/m);
  for(const line of ['PrivateNetwork=true','RestrictAddressFamilies=AF_UNIX','CapabilityBoundingSet=','MemoryMax=2G','CPUQuota=75%','ProtectSystem=strict'])assert.ok(unit.includes(line));
  assert.ok(read('run-config-backup.sh').includes('etc/kavosh-one-scanner'));
+});
+test('every checked-in Kavosh One service and timer is covered by the encrypted configuration archive',()=>{
+ const script=read('run-config-backup.sh'),units=readdirSync(new URL('../deploy/ovh/',import.meta.url)).filter(name=>/^kavosh-one.*\.(?:service|timer)$/.test(name));
+ assert.ok(units.length>=12);
+ for(const name of units)assert.ok(script.split(/\s+/).includes('etc/systemd/system/'+name),'Missing backup coverage: '+name);
+ assert.doesNotMatch(script,/\betc\/systemd\/system\/(?:kavosh\.service|\*)/);
 });
