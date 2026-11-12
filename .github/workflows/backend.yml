@@ -39,7 +39,7 @@ jobs:
           echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/kavosh-backup-tools/age.tar.gz' | sha256sum --check --strict
           tar -xzf /tmp/kavosh-backup-tools/age.tar.gz -C /tmp/kavosh-backup-tools age/age age/age-keygen
       - name: Initial school and file-worker setup stays isolated; cleanup touches only confirmed synthetic probes
-        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs
+        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs tests/file-copy-daemon.test.mjs
       - name: Start only a disposable loopback PostgreSQL instance
         run: |
           install -d -o postgres -g postgres -m 700 /tmp/kavosh-backup-postgres
