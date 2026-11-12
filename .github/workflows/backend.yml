@@ -38,6 +38,8 @@ jobs:
           curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o /tmp/kavosh-backup-tools/age.tar.gz
           echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/kavosh-backup-tools/age.tar.gz' | sha256sum --check --strict
           tar -xzf /tmp/kavosh-backup-tools/age.tar.gz -C /tmp/kavosh-backup-tools age/age age/age-keygen
+      - name: First-school setup stays pending and cannot replace a master or expose its email
+        run: node --test tests/first-school-provisioning.test.mjs
       - name: Start only a disposable loopback PostgreSQL instance
         run: |
           install -d -o postgres -g postgres -m 700 /tmp/kavosh-backup-postgres

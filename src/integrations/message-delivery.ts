@@ -48,7 +48,7 @@ export function messageTransport(configuration:MessageConnection,send:typeof fet
   async email(message:z.input<typeof emailMessage>):Promise<MessageAcceptance>{
    const input=emailMessage.parse(message);if(!smtp||!transport)throw new MessageDeliveryError('not_attempted','EMAIL_NOT_CONFIGURED');if(input.expiresAt&&Date.parse(input.expiresAt)<=Date.now())throw new MessageDeliveryError('not_attempted','MESSAGE_EXPIRED');
    try{
-    const result=await transport.sendMail({from:smtp.from,to:input.to,subject:input.subject,text:input.text,disableFileAccess:true,disableUrlAccess:true});
+    const result=await transport.sendMail({from:smtp.from,replyTo:smtp.from,to:input.to,subject:input.subject,text:input.text,disableFileAccess:true,disableUrlAccess:true});
     if(result.rejected?.length||!result.accepted?.some(v=>typeof v==='string'&&v.toLowerCase()===input.to.toLowerCase())||typeof result.messageId!=='string'||!result.messageId||result.messageId.length>500)throw new MessageDeliveryError('outcome_unknown','EMAIL_ACCEPTANCE_UNCONFIRMED');
     return {provider:'smtp',providerMessageId:result.messageId,providerStatus:'accepted',providerAccepted:true,deliveryConfirmed:false};
    }catch(e){if(e instanceof MessageDeliveryError)throw e;throw new MessageDeliveryError('outcome_unknown','EMAIL_OUTCOME_UNKNOWN');}
