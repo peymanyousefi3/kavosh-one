@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.428.0",
+    "version": "0.429.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -9815,6 +9815,7 @@
                 "payroll_due",
                 "counterparty_statement",
                 "statement_due",
+                "privacy_due",
                 "checkout"
               ]
             }
@@ -10265,6 +10266,29 @@
                         "required": [
                           "daysFromDue",
                           "timeZone"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "privacyReminder": {
+                        "description": "One civil day relative to the original operational baseline or latest reviewed target in the immutable request time zone. Final cases are suppressed. Administrative privacy-source scope is mandatory;not a legal-deadline determination.",
+                        "type": "object",
+                        "properties": {
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "baseline",
+                              "target"
+                            ]
+                          },
+                          "daysFromTarget": {
+                            "type": "integer",
+                            "minimum": -365,
+                            "maximum": 3650
+                          }
+                        },
+                        "required": [
+                          "basis",
+                          "daysFromTarget"
                         ],
                         "additionalProperties": false
                       },
@@ -10839,6 +10863,29 @@
                         "required": [
                           "daysFromDue",
                           "timeZone"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "privacyReminder": {
+                        "description": "One civil day relative to the original operational baseline or latest reviewed target in the immutable request time zone. Final cases are suppressed. Administrative privacy-source scope is mandatory;not a legal-deadline determination.",
+                        "type": "object",
+                        "properties": {
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "baseline",
+                              "target"
+                            ]
+                          },
+                          "daysFromTarget": {
+                            "type": "integer",
+                            "minimum": -365,
+                            "maximum": 3650
+                          }
+                        },
+                        "required": [
+                          "basis",
+                          "daysFromTarget"
                         ],
                         "additionalProperties": false
                       },
@@ -65898,6 +65945,59 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 20
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/privacy-requests/{id}/reminder-source": {
+      "get": {
+        "summary": "Read-only same-snapshot operational privacy follow-up assessment. Explicit baseline/most-recent-reviewed-target basis and civil-day offset in the immutable original request time zone. Final/withdrawn cases are ineligible;clarification retains the reviewed target. Current complete subject/original requester scope required. No request text,private notes,contacts,source proof,caller clock,queue effect,legal-deadline certification,disclosure or deletion.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "basis",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "baseline",
+                "target"
+              ]
+            }
+          },
+          {
+            "name": "daysFromTarget",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": -365,
+              "maximum": 3650
             }
           }
         ],
