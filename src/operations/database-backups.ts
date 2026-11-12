@@ -23,11 +23,11 @@ const restoreInput=common.extend({
 export class RecoveryError extends Error {
  constructor(readonly code:string){super(code);this.name='RecoveryError';}
 }
-async function privateDirectory(p:string){
+export async function privateDirectory(p:string){
  const s=await lstat(p);
  if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==process.getuid?.()||(s.mode&0o077)!==0||await realpath(p)!==resolve(p))throw new RecoveryError('PRIVATE_RECOVERY_DIRECTORY_REQUIRED');
 }
-async function regularFile(p:string,privateKey=false){
+export async function regularFile(p:string,privateKey=false){
  const s=await lstat(p);
  if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||privateKey&&(s.uid!==process.getuid?.()||(s.mode&0o077)!==0))throw new RecoveryError('UNSAFE_RECOVERY_FILE');
  return s;
