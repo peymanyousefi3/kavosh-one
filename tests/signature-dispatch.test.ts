@@ -7,9 +7,11 @@ import { agreementFixture,reviewedAgreementContent } from './agreement-fixture.t
 import { buildBoldSignSendRequest } from '../src/integrations/boldsign-send-request.ts';
 import { recordSignatureTransportReceipt } from '../src/integrations/signature-result-worker.ts';
 import type { Database } from '../src/core/database.ts';
+import { signatureConnectionTarget } from '../src/integrations/boldsign-webhook-config.ts';
+import { assertSignatureIngestRole } from '../src/integrations/boldsign-inbox.ts';
 
-async function fixture(throughSchema?:number){
- const f=await agreementFixture(throughSchema);
+async function fixture(throughSchema?:number,boundDocumentsOnly=false){
+ const f=await agreementFixture(throughSchema,undefined,'Test',{boundDocumentsOnly});
  try{
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['signature-sends.view','signature-sends.edit','signature-sends.execute','signature-dispatch.execute'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
  const binding=await reviewedAgreementContent(f,f.t.id,[120,203].includes(throughSchema??0)?{async recordInspection(database,academy,result){
@@ -39,6 +41,24 @@ async function fixture(throughSchema?:number){
  }catch(error){await f.pg.close();throw error;}
 }
 function check(name:string,run:(f:Awaited<ReturnType<typeof fixture>>)=>Promise<void>,native=false){test(name,{skip:native&&!process.env.TEST_DATABASE_URL},async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+test('account callback retains only the exact bound academy and connection; an early ignored event can be recorded after a transport observation',async()=>{
+ const f=await fixture(undefined,true);try{
+  const own={connectionId:f.connection,academyId:f.a,region:'CA' as const,environment:'Test' as const,clientId:null},other={...own,connectionId:randomUUID()},foreign={...own,connectionId:randomUUID(),academyId:f.b},document=randomUUID(),event=randomUUID();
+  for(const c of [other,foreign])await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled,bound_documents_only) VALUES($1,$2,'CA','Test',true,true)",[c.connectionId,c.academyId]);
+  const receive=async(c=own,resource:string|null=document,id=event,object='document')=>{
+   await f.pg.exec('SET ROLE kavosh_signature_ingest');try{await assertSignatureIngestRole({query:f.pg.query.bind(f.pg),release(){}});const now=Math.floor(Date.now()/1000);return(await f.pg.query<{outcome:string}>('SELECT public.receive_signature_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) outcome',[c.connectionId,signatureConnectionTarget(c),id,now,now,'Test',null,'Completed',object,resource,'Completed','a'.repeat(64),500])).rows[0].outcome;}finally{await f.pg.exec('RESET ROLE');}
+  };
+  assert.equal(await receive(),'ignored');assert.equal((await f.pg.query('SELECT * FROM public.signature_webhook_inbox')).rows.length,0);
+  const started=await f.start();assert.equal(started.response.status,201,JSON.stringify(started.body));
+  assert.equal((await f.outcome({state:'accepted_for_processing',documentId:document})).response.status,201);
+  assert.equal(await receive(),'recorded');assert.equal(await receive(),'duplicate');
+  assert.equal(await receive(other),'ignored');assert.equal(await receive(foreign),'ignored');assert.equal(await receive(own,randomUUID(),randomUUID()),'ignored');assert.equal(await receive(own,document,randomUUID(),'template'),'ignored');
+  const rows=(await f.pg.query('SELECT academy_id,connection_id,event_id,resource_id FROM public.signature_webhook_inbox')).rows;assert.deepEqual(rows,[{academy_id:f.a,connection_id:f.connection,event_id:event,resource_id:document}]);
+  assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='signature.webhook.received'")).rows.length,1);assert.equal((await f.pg.query('SELECT * FROM public.signature_webhook_conflicts')).rows.length,0);
+  await assert.rejects(f.pg.query('UPDATE public.signature_connections SET bound_documents_only=false WHERE id=$1',[f.connection]),/SIGNATURE_CONNECTION_IDENTITY_IMMUTABLE/);
+  for(const role of ['kavosh_runtime','kavosh_signature_ingest']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.signature_callback_document_bound($1,$2,$3)',[f.a,f.connection,document]),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
+ }finally{await f.pg.close();}
+});
 check('dispatch privately preserves the verified historical signer after email and phone replacement without exposing plaintext contacts',async f=>{
  const contact=(await f.pg.query<{name:string;email:string;phone:string}>(`SELECT g.legal_name name,u.email,u."phoneNumber" phone FROM public.guardian_profiles g JOIN public.people p ON p.academy_id=g.academy_id AND p.id=g.person_id JOIN identity."user" u ON u.id=p.auth_user_id WHERE p.id=$1`,[f.signer])).rows[0];
  const started=await f.start();assert.equal(started.response.status,201,JSON.stringify(started.body));const id=started.body.data.id,rows=(await f.pg.query('SELECT * FROM identity.signature_signer_history')).rows;assert.equal(rows.length,1);assert.equal(rows[0].start_id,id);assert.equal(rows[0].signer_id,f.signer);for(const value of [contact.name,contact.email,contact.phone])assert.ok(!JSON.stringify(rows).includes(value));

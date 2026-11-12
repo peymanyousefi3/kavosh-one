@@ -33,7 +33,7 @@ export function createBoldSignWebhook(database:Database,configuration:(id:string
    db=await database.connect();await assertSignatureIngestRole(db);await assertSchemaReady(db);await db.query('BEGIN');transaction=true;
    await db.query("SELECT set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)");
    const receipt=(await db.query<{outcome:string}>('SELECT public.receive_signature_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) AS outcome',[c.connectionId,signatureConnectionTarget(c),p.event.id,p.event.created,signed,p.event.environment,p.event.clientId??null,p.event.eventType,p.data.object,p.data.documentId??p.data.templateId??null,p.data.status??null,createHash('sha256').update(bytes).digest('hex'),bytes.length])).rows[0];
-   if(!['recorded','duplicate','conflict'].includes(receipt?.outcome??''))throw new ApiError(503,'BOLDSIGN_INGEST_UNAVAILABLE');
+   if(!['recorded','duplicate','conflict','ignored'].includes(receipt?.outcome??''))throw new ApiError(503,'BOLDSIGN_INGEST_UNAVAILABLE');
    await db.query('COMMIT');transaction=false;return reply(200,{received:true});
   }catch(error){
    if(transaction&&db){try{await db.query('ROLLBACK');}catch{db.release(true);db=undefined;}}

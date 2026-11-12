@@ -6,6 +6,8 @@ import { Readable } from 'node:stream';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
+import { readFile } from 'node:fs/promises';
+import { upgradeToCurrent } from './migration-upgrade.ts';
 import { operationsFixture } from './operations-fixture.ts';
 import { createBoldSignWebhook,assertSignatureIngestRole } from '../src/integrations/boldsign-inbox.ts';
 import { configuredBoldSignWebhook,signatureConnectionTarget,type WebhookConnection } from '../src/integrations/boldsign-webhook-config.ts';
@@ -35,6 +37,26 @@ check('signed provider delivery persists minimal tenant-bound evidence and one d
  const stored=(await f.pg.query('SELECT * FROM public.signature_webhook_inbox')).rows;assert.equal(stored.length,1);assert.equal(stored[0].academy_id,f.a);assert.equal(stored[0].connection_id,f.c.connectionId);assert.equal(stored[0].event_id,payload.event.id);assert.equal(stored[0].resource_id,payload.data.documentId);assert.equal(stored[0].payload_sha256,createHash('sha256').update(bytes).digest('hex'));assert.equal(stored[0].payload_bytes,bytes.length);
  assert.ok(!JSON.stringify(stored).includes('PRIVATE'));assert.equal('eligible'in stored[0],false);assert.equal((await f.pg.query("SELECT count(*)::integer AS n FROM public.outbox_events WHERE event_type='signature.webhook.received'")).rows[0].n,1);
  assert.equal((await f.request('finance/journals')).body.data.length,0);assert.equal((await f.pg.query('SELECT count(*)::integer AS n FROM public.signature_webhook_conflicts')).rows[0].n,0);
+});
+check('bound-only account callback acknowledges unrelated events without retaining their identities and still applies the shared request budget',async f=>{
+ f.c.connectionId=randomUUID();await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled,bound_documents_only,max_events_per_minute) VALUES($1,$2,'CA','Test',true,true,1)",[f.c.connectionId,f.a]);
+ const event=f.payload(),r=await f.send(event);assert.equal(r.response.status,200,JSON.stringify(r.body));assert.deepEqual(r.body,{received:true});
+ for(const table of ['signature_webhook_inbox','signature_webhook_conflicts'])assert.equal((await f.pg.query('SELECT * FROM public.'+table)).rows.length,0);
+ assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type LIKE 'signature.webhook.%'")).rows.length,0);
+ await f.pg.query("UPDATE public.signature_ingest_limits SET window_started=date_trunc('minute',clock_timestamp())+interval '1 minute',attempts=1 WHERE connection_id=$1",[f.c.connectionId]);assert.equal((await f.send(event)).response.status,429);
+});
+test('actual388to389 preserves existing callback records and broker authority without broadening ingest access or changing old stream semantics',async()=>{
+ const f=await operationsFixture({throughSchema:388});try{
+  const c={connectionId:randomUUID(),academyId:f.a,region:'CA' as const,environment:'Test' as const,clientId:null},now=Math.floor(Date.now()/1000),event=randomUUID();
+  await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled) VALUES($1,$2,'CA','Test',true)",[c.connectionId,f.a]);
+  const receive=async(id:string)=>f.pg.query<{outcome:string}>('SELECT public.receive_signature_event($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) outcome',[c.connectionId,signatureConnectionTarget(c),id,now,now,'Test',null,'Completed','document',randomUUID(),'Completed','b'.repeat(64),400]);
+  assert.equal((await receive(event)).rows[0].outcome,'recorded');
+  const snapshot=async()=> (await f.pg.query("SELECT jsonb_build_object('inbox',(SELECT jsonb_agg(to_jsonb(i)) FROM public.signature_webhook_inbox i),'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM public.outbox_events e)) data")).rows;
+  const identity=async()=> (await f.pg.query("SELECT oid,proowner,proacl,proconfig FROM pg_proc WHERE oid='public.receive_signature_event(uuid,text,uuid,bigint,bigint,text,uuid,text,text,uuid,text,text,integer)'::regprocedure")).rows;
+  const before=await snapshot(),authority=await identity();await f.pg.exec(await readFile(new URL('../db/migrations/389_signature_webhook_retention.sql',import.meta.url),'utf8'));await upgradeToCurrent(f.pg);
+  assert.deepEqual(await snapshot(),before);assert.deepEqual(await identity(),authority);assert.equal((await f.pg.query('SELECT bound_documents_only FROM public.signature_connections WHERE id=$1',[c.connectionId])).rows[0].bound_documents_only,false);
+  assert.equal((await receive(randomUUID())).rows[0].outcome,'recorded');await f.pg.exec('SET ROLE kavosh_signature_ingest');try{await assertSignatureIngestRole({query:f.pg.query.bind(f.pg),release(){}});await assert.rejects(f.pg.query('SELECT * FROM public.signature_transport_receipts'),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}
+ }finally{await f.pg.close();}
 });
 check('valid duplicate deliveries are idempotent and conflicting authenticated bytes retain the original with one critical alert',async f=>{
  const p=f.payload();assert.equal((await f.send(p)).response.status,200);assert.equal((await f.send(p)).response.status,200);

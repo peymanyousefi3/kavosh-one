@@ -6,7 +6,7 @@ import type { Database } from '../src/core/database.ts';
 import type { R2DownloadConnections } from '../src/integrations/r2-config.ts';
 
 const connection={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-package-content',accessKeyId:'synthetic-id',secretAccessKey:'synthetic-not-real-secret',maximumUploadBytes:100000};
-export async function agreementFixture(throughSchema?:number,downloadConnections?:R2DownloadConnections,environment:'Test'|'Live'='Test',options:{selfSigner?:boolean}={}) {
+export async function agreementFixture(throughSchema?:number,downloadConnections?:R2DownloadConnections,environment:'Test'|'Live'='Test',options:{selfSigner?:boolean;boundDocumentsOnly?:boolean}={}) {
  const f=await operationsFixture({connections:()=>connection,throughSchema,downloadConnections}),country=randomUUID(),region=randomUUID(),city=randomUUID(),connectionId=randomUUID();
  for(const role of [f.staffRole,f.managerRole])for(const cap of ['signatures.view','signatures.edit','enrollments.view','students.view','guardians.view','families.view','agreements.view','files.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,role,cap]);
  await f.pg.query("INSERT INTO public.countries(academy_id,id,code,name) VALUES($1,$2,'CA','Canada')",[f.a,country]);
@@ -22,7 +22,7 @@ export async function agreementFixture(throughSchema?:number,downloadConnections
  const c=await f.request('classes',{hubId:f.hub,courseId:course.body.data.id,courseVersion:1,name:'Signature test class',mode:'in_person',schedule:{oneOff:[{start:'2027-01-01T10:00',end:'2027-01-01T11:00'}]}});assert.equal(c.response.status,201,JSON.stringify(c.body));
  const e=await f.request('classes/'+c.body.data.id+'/enrollments',{studentId:student,studentProfileVersion:1,joinsOn:'2027-01-01',reason:'PRIVATE membership'});assert.equal(e.response.status,201,JSON.stringify(e.body));
  const t=await f.request('agreements',{hubId:f.hub,name:'Unified package test',legalEntityName:'Kavosh Al and Robotics Academy Inc.',countryCode:'CA',jurisdiction:'Ontario',languages:[{locale:'en',title:'Unified contract',body:'PRIVATE contract, waiver and consent'}],provider:{region:'CA',templateId:randomUUID()},available:true,reason:'PRIVATE template evidence'});assert.equal(t.response.status,201);
- await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled) VALUES($1,$2,'CA',$3,true)",[connectionId,f.a,environment]);
+ await f.pg.query(options.boundDocumentsOnly?"INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled,bound_documents_only) VALUES($1,$2,'CA',$3,true,true)":"INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled) VALUES($1,$2,'CA',$3,true)",[connectionId,f.a,environment]);
  const input={enrollmentVersion:1,templateId:t.body.data.id,templateVersion:1,signerId:signer,relationshipId:options.selfSigner?null:relationship.body.data.id,connectionId,locale:'en',reason:'PRIVATE preparation reason'};
  const path='enrollments/'+e.body.data.id+'/agreement-packages';
  const prepare=(body:unknown=input,as='master',key?:string)=>f.request(path,body,as,key?{key}:{});

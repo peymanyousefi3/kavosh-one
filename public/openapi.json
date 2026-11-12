@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.431.0",
+    "version": "0.432.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -92663,7 +92663,7 @@
       "post": {
         "security": [],
         "summary": "Receive a configured, raw-byte-authenticated BoldSign event into the isolated durable inbox; never admission clearance",
-        "description": "Provider-only authentication, not a human session or bot token. Off until operator configuration, registered school/region/environment/client identity and isolated ingest database role are verified. HMAC-SHA256 over timestamp + dot + original bytes; current/previous endpoint-specific secret and fixed 300-second freshness window. A strict Verification probe may be unsigned but performs no database call. Repeated identical event IDs deduplicate; differing authenticated bytes retain the original and record one critical conflict per digest. Private signer content is not retained. No live provider verification or enrolment eligibility is implied.",
+        "description": "Provider-only authentication, not a human session or bot token. Off until operator configuration, registered school/region/environment/client identity and isolated ingest database role are verified. HMAC-SHA256 over timestamp + dot + original bytes; current/previous endpoint-specific secret and fixed 300-second freshness window. A strict Verification probe may be unsigned but performs no database call. New operator registrations retain only document events already bound to a signing transport observation for the exact school and connection; unrelated or early unbound events are acknowledged without inbox/outbox persistence. Early-event completion requires independent provider reconciliation after the transport observation, not reliance on callback retention. All authenticated attempts still consume the bounded connection budget. Retained identical event IDs deduplicate; differing authenticated bytes retain the original and record one critical conflict per digest. Private signer content is not retained. No live provider verification or enrolment eligibility is implied.",
         "parameters": [
           {
             "name": "connectionId",
@@ -92845,7 +92845,7 @@
         },
         "responses": {
           "200": {
-            "description": "Received, duplicate, conflict recorded, or side-effect-free verification probe. No source details or admission status returned."
+            "description": "Received, duplicate, conflict recorded, unbound event ignored, or side-effect-free verification probe. No source details or admission status returned."
           },
           "400": {
             "description": "Invalid body or stream identity"

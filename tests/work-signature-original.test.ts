@@ -401,5 +401,11 @@ test('two-party worker source uses actual parsed PDF and native verified-copy po
   await f.pg.exec('BEGIN');try{await f.pg.exec('SET LOCAL ROLE kavosh_event_policy');await f.pg.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);await assert.rejects(f.pg.query("INSERT INTO public.automation_event_sources(academy_id,event_id,audit_id,approval_id,source_kind,source_version,event_type,hub_id,occurred_at,projection,work_signature_start_id,work_signature_notice_key,origin_transaction) SELECT academy_id,$1,NULL,NULL,source_kind,source_version,event_type,hub_id,occurred_at,projection,work_signature_start_id,work_signature_notice_key,pg_current_xact_id() FROM public.automation_event_sources WHERE event_id=$2",[randomUUID(),selected.event_id]),/WORK_SIGNATURE_NOTICE_SOURCE_REQUIRED/);}finally{await f.pg.exec('ROLLBACK');}
   for(const role of ['kavosh_runtime','kavosh_signature_result_worker','kavosh_identity','kavosh_delivery']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.work_signature_notice_projection($1,$2,pg_current_xact_id())',[started.id,'received']),/permission denied/);await assert.rejects(f.pg.query('SELECT * FROM public.work_signature_notice_audience($1)',[started.id]),/permission denied/);}finally{await f.pg.exec('RESET ROLE');}}
   console.log(JSON.stringify({case:'work-signature-critical-center',boundSources:6,criticalPerUpper:5,normalAckHasNoMandatoryAlert:true,queuedRevocationCancelled:true,recipientScopeRechecked:true,currentUpperRechecked:true,forgedAuditRejected:true,externalDeliveries:0}));
+  // Retention follows the original receipt/framework after current rights change.
+  await f.pg.exec('SET ROLE kavosh_signature_policy');try{
+   assert.equal((await f.pg.query<{bound:boolean}>('SELECT public.signature_callback_document_bound($1,$2,$3) bound',[f.a,d.connection.id,providerDocument])).rows[0].bound,true);
+   assert.equal((await f.pg.query<{bound:boolean}>('SELECT public.signature_callback_document_bound($1,$2,$3) bound',[f.a,randomUUID(),providerDocument])).rows[0].bound,false);
+   assert.equal((await f.pg.query<{bound:boolean}>('SELECT public.signature_callback_document_bound($1,$2,$3) bound',[f.b,d.connection.id,providerDocument])).rows[0].bound,false);
+  }finally{await f.pg.exec('RESET ROLE');}
  }finally{await base.pg.close();}
 });
