@@ -301,6 +301,20 @@ jobs:
       - name: Remove disposable image-service container
         if: always()
         run: docker rm --force kavosh-image-ci || true
+      - name: Package only the tested credential-free image runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-runtime"
+          docker save kavosh-image:ci | gzip -1 > "$RUNNER_TEMP/image-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/image-runtime"
+          sha256sum runtime.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-image-runtime
+          path: ${{ runner.temp }}/image-runtime/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
   pdf-parser:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -363,6 +377,20 @@ jobs:
       - name: Remove disposable PDF-service container
         if: always()
         run: docker rm --force kavosh-pdf-ci || true
+      - name: Package only the tested credential-free PDF runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/pdf-runtime"
+          docker save kavosh-pdf:ci | gzip -1 > "$RUNNER_TEMP/pdf-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/pdf-runtime"
+          sha256sum runtime.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-pdf-runtime
+          path: ${{ runner.temp }}/pdf-runtime/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
   scanner-engine:
     runs-on: ubuntu-latest
     # Run42267995981 spent4m46s installing the engine;all27 assertions passed
@@ -482,3 +510,17 @@ jobs:
       - name: Remove disposable video-service container
         if: always()
         run: docker rm --force kavosh-video-ci || true
+      - name: Package only the tested credential-free video runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/video-runtime"
+          docker save kavosh-video:ci | gzip -1 > "$RUNNER_TEMP/video-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/video-runtime"
+          sha256sum runtime.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-video-runtime
+          path: ${{ runner.temp }}/video-runtime/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
