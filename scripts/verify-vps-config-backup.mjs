@@ -29,9 +29,9 @@ try {
  try { execFileSync('/opt/homebrew/bin/age', ['--decrypt', '--identity', '-', encrypted], { input: recovery.identity, stdio: ['pipe', output, 'pipe'], timeout: 30000 }); } finally { closeSync(output); recovery.identity = ''; }
  stage = 'archive paths and credential completeness';
  const entries = execFileSync('/usr/bin/tar', ['-tf', plaintext], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim().split('\n');
- const required = ['roles.sql', 'etc/kavosh-one/web.env', 'etc/kavosh-one/backup.env', 'etc/kavosh-one/drive.json', 'etc/kavosh-one/twilio-credentials.json', 'etc/kavosh-one/r2-upload.json', 'etc/kavosh-one/r2-scan.json', 'etc/kavosh-one/r2-promote.json', 'etc/kavosh-one/r2-download.json', 'etc/kavosh-one-tls/server.crt', 'etc/caddy/kavosh-one.caddy', 'etc/systemd/system/kavosh-one-role-export.service'];
+ const required = ['roles.sql', 'etc/kavosh-one/web.env', 'etc/kavosh-one/backup.env', 'etc/kavosh-one/drive.json', 'etc/kavosh-one/twilio-credentials.json', 'etc/kavosh-one/r2-upload.json', 'etc/kavosh-one/r2-scan.json', 'etc/kavosh-one/r2-promote.json', 'etc/kavosh-one/r2-download.json', 'etc/kavosh-one-tls/server.crt', 'etc/caddy/kavosh-one.caddy', 'etc/systemd/system/kavosh-one-role-export.service', 'etc/kavosh-one-scanner/clamd.conf', 'etc/apparmor.d/local/usr.sbin.clamd', 'etc/systemd/system/kavosh-one-scanner.service'];
  for (const file of required) assert.ok(entries.includes(file));
- for (const name of entries) assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name));
+ for (const name of entries) assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name));
  const content = name => execFileSync('/usr/bin/tar', ['-xOf', plaintext, name], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1048576 });
  for (const name of required) {
   const bytes = content(name);

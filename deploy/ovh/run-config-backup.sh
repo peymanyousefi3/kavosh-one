@@ -12,11 +12,13 @@ task_directory=$(mktemp -d /var/lib/kavosh-one-config-backups/config-XXXXXXXX)
 task_id=$(/usr/bin/node -p 'require("node:crypto").randomUUID()')
 task_phase=encrypted_configuration_archive
 env -i PATH=/usr/bin:/bin LANG=C /usr/bin/tar -C / -cf - \
- etc/kavosh-one etc/kavosh-one-tls etc/postgresql/18/main \
+ etc/kavosh-one etc/kavosh-one-tls etc/kavosh-one-scanner etc/postgresql/18/main \
+ etc/apparmor.d/local/usr.sbin.clamd \
  etc/caddy/kavosh-one.caddy etc/systemd/system/kavosh-one.service \
  etc/systemd/system/kavosh-one-backup.service etc/systemd/system/kavosh-one-backup.timer \
  etc/systemd/system/kavosh-one-config-backup.service etc/systemd/system/kavosh-one-config-backup.timer \
  etc/systemd/system/kavosh-one-role-export.service \
+ etc/systemd/system/kavosh-one-scanner.service \
  -C /run/kavosh-one-role-export roles.sql 2>/dev/null \
  | env -i PATH=/usr/bin:/bin LANG=C /opt/kavosh-one-tools/age --encrypt --recipient "$BACKUP_AGE_RECIPIENT" > "$task_directory/configuration.tar.age.partial" 2>/dev/null
 mv -- "$task_directory/configuration.tar.age.partial" "$task_directory/configuration.tar.age"

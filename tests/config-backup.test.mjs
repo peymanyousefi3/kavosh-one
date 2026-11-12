@@ -15,3 +15,10 @@ test('configuration backup retains isolation, uses password-free separate role e
  assert.match(read('kavosh-one-config-backup.timer'), /03:05:00 America\/Toronto/);
  for (const name of ['run-config-backup.sh', 'export-backup-roles.sh']) execFileSync('/bin/bash', ['-n', new URL('../deploy/ovh/' + name, import.meta.url).pathname]);
 });
+test('scanner stays private, resource bounded and fail-closed for size/encryption limits', () => {
+ const config=read('clamd.conf'),unit=read('kavosh-one-scanner.service');
+ for(const line of ['OfficialDatabaseOnly yes','LocalSocketMode 660','AlertExceedsMax yes','AlertEncrypted yes','StreamMaxLength 64M','EnableVersionCommand yes','BytecodeMode ForceInterpreter']) assert.ok(config.includes(line));
+ assert.doesNotMatch(config,/^TCP(?:Socket|Addr)/m);
+ for(const line of ['PrivateNetwork=true','RestrictAddressFamilies=AF_UNIX','CapabilityBoundingSet=','MemoryMax=2G','CPUQuota=75%','ProtectSystem=strict'])assert.ok(unit.includes(line));
+ assert.ok(read('run-config-backup.sh').includes('etc/kavosh-one-scanner'));
+});

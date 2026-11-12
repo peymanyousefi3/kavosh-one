@@ -14,9 +14,26 @@
     "onlyAllowedBrowserOrigin": "https://one.kavosh.ai",
     "unexpectedOriginsMethodsAndHeadersDenied": true,
     "publicBucketsEnabled": false,
-    "antivirusEngineVerifiedOnVps": false,
+    "antivirusEngineVerifiedOnVps": true,
     "browserEndToEndVerified": false,
     "applicationMediaWorkflowActivated": false
+  },
+  "scanner": {
+    "officialUbuntuPackage": "1.5.4+dfsg-0ubuntu0.26.04.1",
+    "loadedDatabaseVersion": 28181,
+    "loadedDatabaseCreatedAt": "2026-11-12T06:27:14Z",
+    "officialCurrentSignaturesVerified": true,
+    "harmlessStandardAntivirusTestDetected": true,
+    "healthyAfterDetection": true,
+    "privateSocketMode": "0660",
+    "publicTcpListenerEnabled": false,
+    "networkNamespaceIsolated": true,
+    "apparmorEnforced": true,
+    "memoryLimitGiB": 2,
+    "cpuLimitPercentOfOneCore": 75,
+    "scannerAndSignatureUpdaterEnabledOnBoot": true,
+    "unusedDefaultWorldWritableSocketDisabled": true,
+    "fullInspectionWorkerActivated": false
   },
   "sms": {
     "restrictedMessagesCreateCredentialStoredOnVps": true,
