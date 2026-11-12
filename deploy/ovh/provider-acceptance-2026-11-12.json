@@ -39,18 +39,25 @@
     "restrictedMessagesCreateCredentialStoredOnVps": true,
     "authenticatedMissingRecipientResponse": 21604,
     "messageHistoryAndBalanceAccessDenied": true,
-    "smsSent": false,
+    "smsSent": true,
+    "ownerApprovedTestMessageCount": 1,
+    "ownerConfirmedReceiptOnMobile": true,
+    "sendingRuntime": "VPS",
+    "senderBoundToMessagingService": true,
+    "keyRotatedOrPermissionsExpanded": false,
+    "automaticSendRetriesPerformed": false,
     "productionMessagingActivated": false,
     "accountUpgradeObserved": true,
     "productionMessagingServiceCreated": true,
     "productionServiceConfigurationStoredRootOnlyOnVps": true,
-    "latestPostUpgradeCredentialCheckPassed": false,
-    "latestPostUpgradeCredentialCheckStatus": 401,
-    "latestPostUpgradeCredentialCheckCode": 20003,
-    "sameFailureWithoutMessagingServiceSid": true,
-    "sameFailureOnIndependentNetwork": true,
+    "latestPostUpgradeCredentialCheckPassed": true,
+    "latestPostUpgradeCredentialCheckStatus": 400,
+    "latestPostUpgradeCredentialCheckCode": 21604,
+    "earlierAuthenticationRejectionNoLongerReproduces": true,
     "savedKeyIdentifierRegionAndMessagesCreateOnlyPermissionMatchConsole": true,
-    "blocker": "Owner primary compliance profile is required before obtaining a sending number. Saved key is also currently rejected with 20003 after upgrade; do not activate workers or claim delivery until resolved. No number purchased and no SMS sent by setup."
+    "blocker": "Provider delivery is proven for one owner-approved Canadian recipient. Routine authentication delivery still requires production SMTP configuration; academy notification workers remain disabled pending per-academy setup. US/international delivery is not verified."
   },
-  "realPersonalDataUsed": false
+  "realAcademyStudentOrFinanceDataUsed": false,
+  "ownerSuppliedSmsTestRecipientUsed": true,
+  "testRecipientStoredInRepository": false
 }
