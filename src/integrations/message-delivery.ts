@@ -5,7 +5,13 @@ const text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0'));
 export const emailMessage=z.object({to:z.string().email().max(254),subject:text.max(200).refine(v=>!/[\r\n]/.test(v)),text:text.max(10000),expiresAt:z.iso.datetime({offset:true}).optional()}).strict();
 export const smsMessage=z.object({to:z.string().regex(/^\+[1-9]\d{7,14}$/),text:text.max(1000)}).strict();
 export const smtpConnection=z.object({host:z.string().min(1).max(253).regex(/^[A-Za-z0-9.-]+$/),port:z.number().int().refine(v=>v===465||v===587),user:text.min(1).max(1000),password:text.min(1).max(4096),from:z.string().email().max(254)}).strict();
-export const twilioConnection=z.object({accountSid:z.string().regex(/^AC[a-fA-F0-9]{32}$/),authToken:text.min(20).max(4096),messagingServiceSid:z.string().regex(/^MG[a-fA-F0-9]{32}$/)}).strict();
+const twilioBase={accountSid:z.string().regex(/^AC[a-fA-F0-9]{32}$/),messagingServiceSid:z.string().regex(/^MG[a-fA-F0-9]{32}$/)};
+// Prefer a separately revocable restricted key; retain existing token configs.
+// Strict alternatives refuse mixed or incomplete authentication,never fallback.
+export const twilioConnection=z.union([
+ z.object({...twilioBase,authToken:text.min(20).max(4096)}).strict(),
+ z.object({...twilioBase,apiKeySid:z.string().regex(/^SK[a-fA-F0-9]{32}$/),apiKeySecret:text.min(20).max(4096)}).strict()
+]);
 export const messageConnection=z.object({smtp:smtpConnection.optional(),twilio:twilioConnection.optional()}).strict().refine(v=>!!v.smtp||!!v.twilio);
 export type MessageConnection=z.infer<typeof messageConnection>;
 export type MessageAcceptance={provider:'smtp'|'twilio';providerMessageId:string;providerStatus:string;providerAccepted:true;deliveryConfirmed:false};
@@ -40,7 +46,8 @@ export function messageTransport(configuration:MessageConnection,send:typeof fet
   async sms(message:z.input<typeof smsMessage>):Promise<MessageAcceptance>{
    const input=smsMessage.parse(message);if(!twilio)throw new MessageDeliveryError('not_attempted','SMS_NOT_CONFIGURED');
    try{
-    const response=await send('https://api.twilio.com/2010-04-01/Accounts/'+twilio.accountSid+'/Messages.json',{method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),headers:{authorization:'Basic '+Buffer.from(twilio.accountSid+':'+twilio.authToken).toString('base64'),'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({To:input.to,Body:input.text,MessagingServiceSid:twilio.messagingServiceSid})});
+    const credentials='apiKeySid' in twilio?twilio.apiKeySid+':'+twilio.apiKeySecret:twilio.accountSid+':'+twilio.authToken;
+    const response=await send('https://api.twilio.com/2010-04-01/Accounts/'+twilio.accountSid+'/Messages.json',{method:'POST',redirect:'error',signal:AbortSignal.timeout(10000),headers:{authorization:'Basic '+Buffer.from(credentials).toString('base64'),'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({To:input.to,Body:input.text,MessagingServiceSid:twilio.messagingServiceSid})});
     if(response.status!==201){void response.body?.cancel().catch(()=>{});throw new MessageDeliveryError(response.status>=400&&response.status<500&&response.status!==408?'rejected':'outcome_unknown','SMS_NOT_ACCEPTED');}
     const receipt=twilioReceipt.parse(await responseJson(response));if(receipt.account_sid!==twilio.accountSid||receipt.messaging_service_sid!==twilio.messagingServiceSid||receipt.to!==input.to)throw new Error('SMS_RECEIPT_MISMATCH');
     return {provider:'twilio',providerMessageId:receipt.sid,providerStatus:receipt.status,providerAccepted:true,deliveryConfirmed:false};

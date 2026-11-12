@@ -1,6 +1,6 @@
 import { symmetricEncrypt, symmetricDecrypt } from 'better-auth/crypto';
 import { z } from 'zod';
-import { emailMessage as email,smsMessage as sms,messageTransport,MessageDeliveryError } from '../integrations/message-delivery.ts';
+import { emailMessage as email,smsMessage as sms,messageTransport,MessageDeliveryError,twilioConnection } from '../integrations/message-delivery.ts';
 import type { Delivery } from './config.ts';
 import type { IdentityStore } from './store.ts';
 
@@ -18,10 +18,12 @@ export function queuedDelivery(store:IdentityStore,key:string):Delivery {
 // Fixed provider endpoint: recipients cannot choose an outbound URL.
 export function providerDelivery(env:Record<string,string|undefined>=process.env,send:typeof fetch=fetch):Delivery {
   const config=z.object({SMTP_HOST:z.string().min(1),SMTP_PORT:z.coerce.number().int().refine(n=>n===465||n===587),
-    SMTP_USER:z.string().min(1),SMTP_PASSWORD:z.string().min(1),SMTP_FROM:z.string().email(),
-    TWILIO_ACCOUNT_SID:z.string().regex(/^AC[a-fA-F0-9]{32}$/),TWILIO_AUTH_TOKEN:z.string().min(20),
-    TWILIO_MESSAGING_SERVICE_SID:z.string().regex(/^MG[a-fA-F0-9]{32}$/)}).parse(env);
-  const transport=messageTransport({smtp:{host:config.SMTP_HOST,port:config.SMTP_PORT,user:config.SMTP_USER,password:config.SMTP_PASSWORD,from:config.SMTP_FROM},twilio:{accountSid:config.TWILIO_ACCOUNT_SID,authToken:config.TWILIO_AUTH_TOKEN,messagingServiceSid:config.TWILIO_MESSAGING_SERVICE_SID}},send);
+    SMTP_USER:z.string().min(1),SMTP_PASSWORD:z.string().min(1),SMTP_FROM:z.string().email()}).parse(env);
+  const twilio=twilioConnection.parse({accountSid:env.TWILIO_ACCOUNT_SID,messagingServiceSid:env.TWILIO_MESSAGING_SERVICE_SID,
+    ...(env.TWILIO_AUTH_TOKEN!==undefined?{authToken:env.TWILIO_AUTH_TOKEN}:{}),
+    ...(env.TWILIO_API_KEY_SID!==undefined?{apiKeySid:env.TWILIO_API_KEY_SID}:{}),
+    ...(env.TWILIO_API_KEY_SECRET!==undefined?{apiKeySecret:env.TWILIO_API_KEY_SECRET}:{})});
+  const transport=messageTransport({smtp:{host:config.SMTP_HOST,port:config.SMTP_PORT,user:config.SMTP_USER,password:config.SMTP_PASSWORD,from:config.SMTP_FROM},twilio},send);
   return {
     async email(message) {
       await transport.email(message);

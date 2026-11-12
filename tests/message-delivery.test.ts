@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import nodemailer from 'nodemailer';
 import { configuredOperationalDelivery,messageConnection,messageTransport,MessageDeliveryError } from '../src/integrations/message-delivery.ts';
+import { providerDelivery } from '../src/auth/delivery.ts';
 
 const twilio={accountSid:'AC'+'a'.repeat(32),authToken:'synthetic-provider-token-not-real',messagingServiceSid:'MG'+'b'.repeat(32)};
 const smtp={host:'smtp.example.test',port:465 as const,user:'synthetic',password:'synthetic-password',from:'academy@example.test'};
@@ -12,6 +13,16 @@ const outcome=(value:string)=>((e:unknown)=>e instanceof MessageDeliveryError&&e
 
 test('message transport refuses a process-wide TLS certificate-validation bypass before any provider IO',()=>{
  const previous=process.env.NODE_TLS_REJECT_UNAUTHORIZED;try{process.env.NODE_TLS_REJECT_UNAUTHORIZED='0';assert.throws(()=>messageTransport({twilio}),e=>e instanceof MessageDeliveryError&&e.outcome==='not_attempted'&&e.message==='INSECURE_TRANSPORT_ENVIRONMENT');}finally{if(previous===undefined)delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;else process.env.NODE_TLS_REJECT_UNAUTHORIZED=previous;}
+});
+
+test('restricted Twilio API keys use their own Basic identity while retaining original account and service receipt checks',async()=>{
+ const restricted={accountSid:twilio.accountSid,messagingServiceSid:twilio.messagingServiceSid,apiKeySid:'SK'+'d'.repeat(32),apiKeySecret:'synthetic-restricted-secret-not-real'};
+ let calls=0;const send:typeof fetch=async(url,options)=>{calls++;assert.equal(url,'https://api.twilio.com/2010-04-01/Accounts/'+twilio.accountSid+'/Messages.json');assert.equal(new Headers(options?.headers).get('authorization'),'Basic '+Buffer.from(restricted.apiKeySid+':'+restricted.apiKeySecret).toString('base64'));return Response.json(receipt(),{status:201});};
+ assert.equal((await messageTransport({twilio:restricted},send).sms(message)).providerAccepted,true);
+ const env={SMTP_HOST:smtp.host,SMTP_PORT:'465',SMTP_USER:smtp.user,SMTP_PASSWORD:smtp.password,SMTP_FROM:smtp.from,TWILIO_ACCOUNT_SID:restricted.accountSid,TWILIO_MESSAGING_SERVICE_SID:restricted.messagingServiceSid,TWILIO_API_KEY_SID:restricted.apiKeySid,TWILIO_API_KEY_SECRET:restricted.apiKeySecret};
+ await providerDelivery(env,send).sms(message);assert.equal(calls,2);
+ for(const value of [{...restricted,authToken:twilio.authToken},{...restricted,apiKeySid:undefined},{...restricted,apiKeySecret:undefined},{...restricted,apiKeySid:twilio.accountSid}])assert.throws(()=>messageTransport({twilio:value as unknown as typeof restricted},send));
+ assert.throws(()=>providerDelivery({...env,TWILIO_AUTH_TOKEN:twilio.authToken},send));assert.equal(calls,2,'invalid credentials must not invoke transport');
 });
 
 test('per-school operational connections are disabled by default and never borrow authentication secrets or another academy connection',()=>{
