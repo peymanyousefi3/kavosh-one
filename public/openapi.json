@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.427.0",
+    "version": "0.428.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -46678,7 +46678,7 @@
     },
     "/api/v1/overview": {
       "get": {
-        "summary": "Central role-aware management overview reusing current original approval,unread-notification,session-follow-up,overdue-privacy and optional tuition-receivable/expense-payable handlers. Explicit IANA timezone and bounded section/page selection;source links and real cursors,private payload/body omission,no borrowed admin rights. Permission denial is unavailable,null counts,never a zero balance. Financial exact per-currency chart summaries are opt-in and retain subledger coverage;other counts are page-only. No read receipts,approvals,messages or money movement.",
+        "summary": "Central role-aware management overview reusing current original approval,unread-notification,attention-only session-follow-up with bounded empty-page continuation,overdue-privacy and optional tuition-receivable/expense-payable handlers. Explicit IANA timezone and bounded section/page selection;source links and real cursors,private payload/body omission,no borrowed admin rights. Permission denial is unavailable,null counts,never a zero balance. Financial exact per-currency chart summaries are opt-in and retain subledger coverage;other counts are page-only. No read receipts,approvals,messages or money movement.",
         "parameters": [
           {
             "name": "timeZone",
@@ -74479,7 +74479,7 @@
     },
     "/api/v1/reports/learning/session-follow-up": {
       "get": {
-        "summary": "Central current session follow-up list with source-permission filtering before precise start-time paging; missing/stale inputs,exact current decisions and reversible waivers,server-clock overdue and explicit oversized flags; seven source rights,hub/class/status/time filters,page-only totals,no private bodies or payroll decision; reading sends no notification",
+        "summary": "Central current session follow-up list with source-permission filtering before precise start-time paging;optional needs_attention/overdue selection evaluates at most100authorized candidates before matching-page limits. Follow nextCursor even when data is empty;scan metadata prevents claiming no further issues from a bounded empty window. Missing/stale inputs,exact current decisions and reversible waivers,server-clock overdue and explicit oversized flags;seven source rights,hub/class/status/time filters,page-only totals,no private bodies or payroll decision;reading sends no notification. Unfiltered legacy paging is unchanged;complete filtered exports refuse unfinished scans.",
         "parameters": [
           {
             "name": "from",
@@ -74532,6 +74532,19 @@
                 "scheduled",
                 "cancelled",
                 "all"
+              ]
+            }
+          },
+          {
+            "name": "attention",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "needs_attention",
+                "overdue"
               ]
             }
           },
@@ -74654,6 +74667,19 @@
             }
           },
           {
+            "name": "attention",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "needs_attention",
+                "overdue"
+              ]
+            }
+          },
+          {
             "name": "graceMinutes",
             "in": "query",
             "required": false,
@@ -74768,6 +74794,19 @@
                 "scheduled",
                 "cancelled",
                 "all"
+              ]
+            }
+          },
+          {
+            "name": "attention",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "needs_attention",
+                "overdue"
               ]
             }
           },

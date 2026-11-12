@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('session work queue exposes a strict optional attention filter and documents continuation after empty scans',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),r=api.paths['/api/v1/reports/learning/session-follow-up'].get,p=r.parameters.find((p:{name:string})=>p.name==='attention');assert.equal(p.required,false);assert.deepEqual(p.schema.enum,['all','needs_attention','overdue']);assert.match(r.summary,/100authorized candidates/);assert.match(r.summary,/even when data is empty/);assert.ok(api.paths['/api/v1/reports/learning/session-follow-up/export'].get.parameters.some((p:{name:string})=>p.name==='attention'));
+});
 test('central overview has bounded typed section selectors and requires an explicit timezone without caller source routes',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),r=api.paths['/api/v1/overview'].get,p=r.parameters.filter((p:{in:string})=>p.in==='query');assert.deepEqual(p.map((p:{name:string})=>p.name).sort(),['include','limit','locale','lookbackDays','timeZone']);assert.equal(p.find((p:{name:string})=>p.name==='timeZone').required,true);assert.equal(p.find((p:{name:string})=>p.name==='limit').schema.maximum,10);assert.match(r.summary,/unavailable,null counts/);assert.equal(r.requestBody,undefined);
 });

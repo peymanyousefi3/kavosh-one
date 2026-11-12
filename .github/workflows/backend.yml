@@ -413,8 +413,8 @@ jobs:
           python-version: '3.11'
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
-      - name: Install native build tools and synthetic-only test encoder on the disposable runner
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends nasm meson ninja-build pkg-config ffmpeg
+      - name: Install synthetic-only test encoder on the disposable runner
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ffmpeg
       - name: Check exact source pins,download ceilings and bounded transient retries
         run: node --import tsx --test tests/video-source-download.test.ts
       - name: Reuse public source archives with mandatory checksum revalidation
@@ -422,19 +422,20 @@ jobs:
         with:
           path: ${{ runner.temp }}/kavosh-video-sources
           key: video-sources-8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e-686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
-      - name: Build exact pinned FFmpeg and software AV1 source without network protocols or autodetected libraries
-        env:
-          VIDEO_BUILD_SOURCE_CACHE: ${{ runner.temp }}/kavosh-video-sources
+      - name: Verify public source archives without a duplicate host compilation
+        run: node scripts/cache-video-sources.mjs "$RUNNER_TEMP/kavosh-video-sources"
+      - name: Build actual decoder and non-root test image once
+        run: >-
+          docker build --file Dockerfile.video-service --target video-tests --tag kavosh-video-tests:ci
+          --build-context "video-sources=$RUNNER_TEMP/kavosh-video-sources"
+          --build-context "video-test-files=./tests" .
+      - name: Assemble credential-free native video service from the same cached build stage
+        run: >-
+          docker build --file Dockerfile.video-service --tag kavosh-video:ci
+          --build-context "video-sources=$RUNNER_TEMP/kavosh-video-sources" .
+      - name: Verify test and production images contain identical decoder bytes
         run: |
-          node scripts/build-video-runtime.mjs > "$RUNNER_TEMP/kavosh-video-runtime.json"
-          node --input-type=module - <<'JS'
-          import {readFileSync,appendFileSync} from 'node:fs';
-          import {join} from 'node:path';
-          import {execFileSync} from 'node:child_process';
-          const r=JSON.parse(readFileSync(join(process.env.RUNNER_TEMP,'kavosh-video-runtime.json'),'utf8'));
-          const python=execFileSync('python',['-c','import sys;print(sys.executable)'],{encoding:'utf8'}).trim();
-          appendFileSync(process.env.GITHUB_ENV,'TEST_FFMPEG_BINARY='+r.ffmpegPath+'\nTEST_FFPROBE_BINARY='+r.ffprobePath+'\nTEST_VIDEO_PYTHON_BINARY='+python+'\n');
-          JS
+          test "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint sha256sum kavosh-video-tests:ci /opt/video/ffmpeg /opt/video/ffprobe)" = "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint sha256sum kavosh-video:ci /opt/video/ffmpeg /opt/video/ffprobe)"
       - name: Generate tiny original synthetic codec and soundtrack fixtures
         run: |
           node scripts/video-codec-fixtures.mjs "$RUNNER_TEMP/kavosh-video-codec-fixtures"
@@ -442,15 +443,19 @@ jobs:
         env:
           TEST_VIDEO_FIXTURE_ENCODER: /usr/bin/ffmpeg
       - name: Quick real full-video/audio decode and adverse-case checks,no live services
-        run: node --import tsx --test --test-concurrency=1 tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts tests/file-video-evidence.test.ts tests/file-video-copies.test.ts tests/file-video-downloads.test.ts tests/family-video-media.test.ts tests/file-video-streams.test.ts tests/video-transfer.test.ts
+        run: >-
+          docker run --rm --network host
+          --env VIDEO_VALIDATION_TEST_REQUIRED --env VIDEO_CODEC_TEST_REQUIRED --env TEST_DATABASE_URL
+          --env TEST_VIDEO_CODEC_FIXTURES=/fixtures
+          --mount "type=bind,source=$RUNNER_TEMP/kavosh-video-codec-fixtures,target=/fixtures,readonly"
+          kavosh-video-tests:ci node --import tsx --test --test-concurrency=1
+          tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts
+          tests/file-video-evidence.test.ts tests/file-video-copies.test.ts tests/file-video-downloads.test.ts
+          tests/family-video-media.test.ts tests/file-video-streams.test.ts tests/video-transfer.test.ts
         env:
           VIDEO_VALIDATION_TEST_REQUIRED: 'true'
           VIDEO_CODEC_TEST_REQUIRED: 'true'
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
-      - name: Build credential-free native video service
-        run: >-
-          docker build --file Dockerfile.video-service --tag kavosh-video:ci
-          --build-context "video-sources=$RUNNER_TEMP/kavosh-video-sources" .
       - name: Refuse video startup without required runtime isolation
         run: |
           if docker run --rm --network none kavosh-video:ci; then
