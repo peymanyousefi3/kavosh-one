@@ -45,6 +45,14 @@ check('bound-only account callback acknowledges unrelated events without retaini
  assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type LIKE 'signature.webhook.%'")).rows.length,0);
  await f.pg.query("UPDATE public.signature_ingest_limits SET window_started=date_trunc('minute',clock_timestamp())+interval '1 minute',attempts=1 WHERE connection_id=$1",[f.c.connectionId]);assert.equal((await f.send(event)).response.status,429);
 });
+check('initial provisioning acknowledges only discard-only account callbacks; other inactive states and legacy streams remain denied',async f=>{
+ f.c.connectionId=randomUUID();await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled,bound_documents_only) VALUES($1,$2,'CA','Test',true,true)",[f.c.connectionId,f.a]);
+ await f.pg.query("UPDATE public.academies SET status='provisioning' WHERE id=$1",[f.a]);assert.equal((await f.send(f.payload())).response.status,200);
+ for(const table of ['signature_webhook_inbox','signature_webhook_conflicts'])assert.equal((await f.pg.query('SELECT * FROM public.'+table)).rows.length,0);
+ const legacy={...f.c,connectionId:randomUUID()};await f.pg.query("INSERT INTO public.signature_connections(id,academy_id,region,environment,enabled) VALUES($1,$2,'CA','Test',true)",[legacy.connectionId,f.a]);
+ const receiver=createBoldSignWebhook(f.db,id=>id===legacy.connectionId?legacy:null);assert.equal((await f.send(f.payload(),{connection:legacy,receiver})).response.status,503);
+ await f.pg.query("UPDATE public.academies SET status='suspended' WHERE id=$1",[f.a]);assert.equal((await f.send(f.payload())).response.status,503);
+});
 test('actual388to389 preserves existing callback records and broker authority without broadening ingest access or changing old stream semantics',async()=>{
  const f=await operationsFixture({throughSchema:388});try{
   const c={connectionId:randomUUID(),academyId:f.a,region:'CA' as const,environment:'Test' as const,clientId:null},now=Math.floor(Date.now()/1000),event=randomUUID();

@@ -36,3 +36,4 @@ exports/
 /.local-tools/
 __pycache__/
 *.tsbuildinfo
+.signature-worker/

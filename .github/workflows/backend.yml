@@ -39,7 +39,7 @@ jobs:
           echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/kavosh-backup-tools/age.tar.gz' | sha256sum --check --strict
           tar -xzf /tmp/kavosh-backup-tools/age.tar.gz -C /tmp/kavosh-backup-tools age/age age/age-keygen
       - name: Initial school and file-worker setup stays isolated; cleanup touches only confirmed synthetic probes
-        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs tests/file-copy-daemon.test.mjs tests/background-provisioning.test.mjs
+        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs tests/file-copy-daemon.test.mjs tests/background-provisioning.test.mjs tests/signature-ingest-provisioning.test.mjs tests/signature-webhook-secret.test.mjs
       - name: Start only a disposable loopback PostgreSQL instance
         run: |
           install -d -o postgres -g postgres -m 700 /tmp/kavosh-backup-postgres
@@ -87,7 +87,7 @@ jobs:
       - run: pnpm typecheck
       - run: node --test tests/build-typecheck.test.mjs
       - name: Account-wide signing callbacks retain only their exact school and original connection
-        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^account callback|^actual388to389|^bound-only' tests/boldsign-inbox.test.ts tests/signature-dispatch.test.ts
+        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^account callback|^actual388to389|^bound-only|^initial provisioning' tests/boldsign-inbox.test.ts tests/signature-dispatch.test.ts
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Payment signature, durable isolated intake and original signing compatibility (no provider calls)
@@ -134,6 +134,8 @@ jobs:
         run: pnpm files:build
       - name: Compile and package per-service background daemons and their spreadsheet worker asset
         run: pnpm background:build
+      - name: Compile the private signing intake checker and operator registration tool
+        run: pnpm signatures:build
       - name: API contract matches the implemented schemas
         run: pnpm api:generate && git diff --exit-code -- public/openapi.json
       # Routine native logic runs in isolated jobs below. Run42108232836

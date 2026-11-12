@@ -55,6 +55,10 @@ test('account callback retains only the exact bound academy and connection; an e
   assert.equal(await receive(other),'ignored');assert.equal(await receive(foreign),'ignored');assert.equal(await receive(own,randomUUID(),randomUUID()),'ignored');assert.equal(await receive(own,document,randomUUID(),'template'),'ignored');
   const rows=(await f.pg.query('SELECT academy_id,connection_id,event_id,resource_id FROM public.signature_webhook_inbox')).rows;assert.deepEqual(rows,[{academy_id:f.a,connection_id:f.connection,event_id:event,resource_id:document}]);
   assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='signature.webhook.received'")).rows.length,1);assert.equal((await f.pg.query('SELECT * FROM public.signature_webhook_conflicts')).rows.length,0);
+  await f.pg.query("UPDATE public.academies SET status='provisioning' WHERE id=$1",[f.a]);
+  assert.equal(await receive(own,randomUUID(),randomUUID()),'ignored');await assert.rejects(receive(own,document,randomUUID()),/SIGNATURE_CONNECTION_UNAVAILABLE/);
+  assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.signature_webhook_inbox')).rows[0].n,1);
+  await f.pg.query("UPDATE public.academies SET status='active' WHERE id=$1",[f.a]);assert.equal(await receive(own,document,randomUUID()),'recorded');
   await assert.rejects(f.pg.query('UPDATE public.signature_connections SET bound_documents_only=false WHERE id=$1',[f.connection]),/SIGNATURE_CONNECTION_IDENTITY_IMMUTABLE/);
   for(const role of ['kavosh_runtime','kavosh_signature_ingest']){await f.pg.exec('SET ROLE '+role);try{await assert.rejects(f.pg.query('SELECT public.signature_callback_document_bound($1,$2,$3)',[f.a,f.connection,document]),/permission denied/i);}finally{await f.pg.exec('RESET ROLE');}}
  }finally{await f.pg.close();}
