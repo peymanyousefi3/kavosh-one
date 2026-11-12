@@ -1,0 +1,22 @@
+{
+  "origin": "https://one.kavosh.ai",
+  "runtimeSourceCommit": "3ba3721",
+  "databaseMigrationSourceCommit": "b5508ed",
+  "schemaRevision": 389,
+  "apiVersion": "0.432.0",
+  "currentRelease": "/srv/kavosh-one/releases/3ba3721",
+  "previousReleaseRetained": "/srv/kavosh-one/releases/ac4eeff",
+  "stagedSourceArchiveSha256": "6bbf798c701ddea11c26a916ca0203a5991ee066910f85441875f647df11115b",
+  "serviceUnitSha256": "bb19ad75a3e207b822a3c9c7ece46d0041ce88167db85ea02ec2fcf431dd684d",
+  "build": { "linux": true, "cpuLimitPercentOfOneCore": 100, "memoryLimitMiB": 2048, "runtimeStrictTypecheck": true, "fullProjectStrictTypecheckSeparatelyPassed": true, "exitStatus": 0, "elapsedSeconds": 44.979, "reportedPeakMemory": "1.6G", "runtimeAndTestCoverageGuardPassed": true },
+  "buildRepairs": ["External node_modules symlink refused by Turbopack: replaced with an independent dependency copy without altering the previous release", "Full test corpus exceeded the isolated 2GiB build limit: strict production-only configuration now includes every runtime source; full test/operator typechecking remains unchanged and separately mandatory"],
+  "packagedHttpSmoke": { "actualStandaloneLinuxPackage": true, "temporaryPort": 3111, "liveCredentials": false, "outsideNetworkBlocked": true, "passed": true, "testServerStopped": true },
+  "packagedSpreadsheetSmoke": { "actualAppUser": true, "readOnlyFilesystem": true, "privateNetwork": true, "syntheticXlsxBytes": 2837, "passed": true, "memoryPeakMiB": 31.5 },
+  "publicAcceptance": { "https": true, "databaseReadiness": true, "protectedAnonymousRequestsDenied": 3, "spoofedProxyHeadersIgnored": true, "reservedCloudflareHeaderRejectedAtEdge": true, "crossOriginRejected": true, "malformedLoginRejected": true, "oversizedBodyRejected": true, "concurrentReadinessRequests": 5 },
+  "callbackNativeCi": { "runId": 43330784789, "focusedRetentionStep": "success", "wholeRunAtLastObservation": "in_progress", "noWholeRunSuccessClaim": true },
+  "databaseBackup": { "id": "6b3809d4-0717-4db0-b847-34eb28cc5d80", "recordedAt": "2026-11-12T23:51:57.928Z", "schemaRevision": 389, "complete": true, "independentDriveCopyVerified": true },
+  "configurationBackup": { "id": "83a1507e-c276-401b-8ae7-85841b60adaf", "createdAt": "2026-11-12T23:52:05.555Z", "ciphertextSha256": "29bbdd8c09cc6a9e2f5c8b7de455292b716934b610ce9986dd938022fe168e49", "independentDriveCopyVerified": true },
+  "landingPreservation": { "processId": 536773, "startedAt": "2026-11-06T01:33:33Z", "httpsStatus": 200, "filesAndRoutesChanged": false },
+  "activation": { "registeredSigningStreams": 0, "humanAccounts": 0, "newExternalMessages": 0, "financialWrites": 0, "newBoldSignWebhookCreated": false },
+  "limitations": ["Full goal, complete user journeys and all production integrations remain unfinished", "Owner approved a BoldSign account callback, but it is not created or activated yet", "Current initial academy is provisioning; native data-event ingestion remains restricted to active/read-only academies and needs a tested pre-activation discard strategy before account-wide callback activation", "Automatic provider completion reconciliation is still required for early callbacks acknowledged before a transport binding", "Latest backups were copied and independently read back, not restored as a complete host", "Permanent Google authorization, media backup and independent recovery-key escrow remain launch gates", "No UI or visual PDF design performed; Stripe remains deferred"]
+}

@@ -8,6 +8,10 @@ import { runInNewContext } from 'node:vm';
 // systemd, PostgreSQL TLS and public HTTP acceptance are independently verified
 // by the live deployment receipt and scripts/check-deployment.mjs.
 const source = name => readFileSync(new URL('../deploy/ovh/' + name, import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
+test('requested Next shutdown is not a false crash, while real failures and OOM remain failures',()=>{
+ const unit=readFileSync(new URL('../deploy/ovh/kavosh-one.service',import.meta.url),'utf8');
+ assert.deepEqual(unit.match(/^SuccessExitStatus=.*$/gm),['SuccessExitStatus=143']);assert.match(unit,/^Restart=on-failure$/m);assert.match(unit,/^NoNewPrivileges=true$/m);assert.match(unit,/^ProtectSystem=strict$/m);
+});
 function fixture({ wrongHash = false, failValidation = false, failReload = false } = {}) {
  const original = Buffer.from('kavosh.ai {\n reverse_proxy 127.0.0.1:3000\n}\n');
  const config = '/etc/caddy/Caddyfile', files = new Map([[config, original], ['/etc/kavosh-one/web.env', Buffer.from('EDGE_AUTH_SECRET=' + 's'.repeat(64) + '\n')]]), output = [], commands = [];

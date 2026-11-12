@@ -14,6 +14,8 @@ EnvironmentFile=/etc/kavosh-one/web.env
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
+# The packaged Next server exits 143 for a requested SIGTERM, not a crash.
+SuccessExitStatus=143
 TimeoutStopSec=30
 KillMode=control-group
 UMask=0077
