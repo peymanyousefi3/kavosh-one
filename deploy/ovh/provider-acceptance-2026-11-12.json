@@ -41,7 +41,16 @@
     "messageHistoryAndBalanceAccessDenied": true,
     "smsSent": false,
     "productionMessagingActivated": false,
-    "blocker": "Twilio limited trial requires owner upgrade before creating a production messaging service; no number purchased or account charged"
+    "accountUpgradeObserved": true,
+    "productionMessagingServiceCreated": true,
+    "productionServiceConfigurationStoredRootOnlyOnVps": true,
+    "latestPostUpgradeCredentialCheckPassed": false,
+    "latestPostUpgradeCredentialCheckStatus": 401,
+    "latestPostUpgradeCredentialCheckCode": 20003,
+    "sameFailureWithoutMessagingServiceSid": true,
+    "sameFailureOnIndependentNetwork": true,
+    "savedKeyIdentifierRegionAndMessagesCreateOnlyPermissionMatchConsole": true,
+    "blocker": "Owner primary compliance profile is required before obtaining a sending number. Saved key is also currently rejected with 20003 after upgrade; do not activate workers or claim delivery until resolved. No number purchased and no SMS sent by setup."
   },
   "realPersonalDataUsed": false
 }
