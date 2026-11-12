@@ -27,6 +27,7 @@ import { completeInventoryExport } from './inventory-report-export.ts';
 import { completeAgingExport } from './aging-report-export.ts';
 import { completeBankReconciliationExport } from './bank-reconciliation-export.ts';
 import { completeLearningExport } from './learning-report-export.ts';
+import {completePrivacyRequestExport} from './privacy-request-report.ts';
 import { completePerformanceExport } from './student-performance-export.ts';
 import { completeAttributionExport } from './attribution-report-export.ts';
 import { completeProfitabilityExport } from './profitability-report-export.ts';
@@ -68,6 +69,7 @@ export async function financialReportExport(ctx:ApiContext):Promise<Reply|null>{
  const path='reports/finance/'+m[1],url=new URL(ctx.request.url);url.pathname='/api/v1/'+path;return financialReportCsv(await completeFinancialReport({...ctx,path,request:new Request(url,{method:'GET'})}));
 }
 export async function exportConfiguredFinancialReport(ctx:ApiContext,configuration:Parameters<typeof configuredReportContext>[1],overrides:Record<string,string>,provenance:{id:string;version:number}){
+ if(configuration.reportId==='administration.privacy-requests'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePrivacyRequestExport(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(!catalogueReport(configuration.reportId).csv)throw new ApiError(409,'REPORT_FORMAT_NOT_AVAILABLE');financialExportParameters(ctx.request);
  if(['finance.cash-flow','finance.cash-movements'].includes(configuration.reportId)){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return (configuration.reportId==='finance.cash-flow'?cashFlowExport:cashMovementExport)(context,{...provenance,dateWindow:resolvedDateWindow});}
  if(configuration.reportId==='payroll.scheduled-costs'){const {context,resolvedDateWindow}=await resolveConfiguredReportContext(ctx,configuration,overrides);return completePayrollForecastExport(context,{...provenance,dateWindow:resolvedDateWindow});}

@@ -1,4 +1,12 @@
 {
+  "privacySummary430Acceptance": {
+    "schema": 387,
+    "api": "0.430",
+    "implementation": "One-statement operational privacy receipt-window summary and state/category/month/current-subject-hub chart data. Current subject and applicable original self/guardian scopes apply before aggregation. Explicit receipt zone and original request-zone overdue calculations; latest reviewed target survives clarification. JSON, formula-safe CSV and real XLSX reuse the report catalogue and saved civil-window presets. No private intake, response, contact or case identifiers are copied. Bounded complete selections refuse rather than truncate; background export is explicitly unsupported. No notification, erasure, disclosure or statutory-compliance determination.",
+    "verification": "213 native privacy/report-preset/API-contract tests passed,0 failed,0 skipped in31407.954791ms. Actual386to387 migration preserves prior saved financial presets,cases,revisions,audit and validator OIDs/owners/ACLs/config. Independent ZIP/XML XLSX inspection passed. Strict TypeScript,production build and actual HTTP32487 smoke passed. Three historical profile-consent migration checks previously failed on hosted c91c3ec because the new privacy_reminder_id column is null on preserved historical event sources. Checks now compare every original field while explicitly requiring no nonnull reminder references;all three selected actual upgrades passed locally. New report SQL month alias and a test year alias were corrected after native syntax failures. No prolonged stress or real external messages.",
+    "externalStorage20261112": "Owner supplied signed-in Chrome access. Actual Cloudflare R2 overview shows R2 is not yet enrolled and requires a usage-based subscription acceptance. No subscription accepted,billing changed,DNS changed,bucket created or credential generated. Owner asked to complete enrollment themselves before live storage tests. Existing local/fake storage checks are not represented as live provider proof.",
+    "hostedStatus": "Previous c91c3ec backend run43267111229 has11 successful jobs,one business-logic6 failure from the three historical assertions corrected here,and business-logic1 still running at last observation. Secret run43267111048 succeeded. This checkpoint needs its own hosted verification;no all-green or complete-backend claim."
+  },
   "privacyReminder429Acceptance": {
     "schema": 386,
     "api": "0.429",

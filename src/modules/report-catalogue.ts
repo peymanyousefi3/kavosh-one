@@ -29,6 +29,7 @@ import { payrollRemittanceReport,payrollRemittanceReportContract } from './payro
 import { pollResults,pollResultsContract } from './poll-results.ts';
 import { sessionEvidenceReport,sessionEvidenceReportContract } from './session-evidence-report.ts';
 import { sessionFollowUp,sessionFollowUpContract } from './session-follow-up.ts';
+import {privacyRequestReport,privacyRequestReportContract} from './privacy-request-report.ts';
 import { studentPerformance,studentPerformanceReportContract } from './student-performance.ts';
 import { expenseCostReport,expenseCostReportContract } from './expense-cost-report.ts';
 import { manualIncomeCostReport,manualIncomeCostReportContract } from './manual-income-cost-report.ts';
@@ -40,6 +41,7 @@ import { reportDateWindow,reportWindowInputs,reportWindowSupported,reportWindowP
 type Contract={path:string;summary:string;querySchema?:z.ZodType};
 type Entry={id:string;path:string;summary:string;schema:z.ZodType;handler:(ctx:ApiContext)=>Promise<Reply|null>;capability:Capability;csv:boolean;backgroundCsv:boolean};
 const groups:{contracts:readonly Contract[];handler:Entry['handler'];capability:Capability;csv?:boolean;backgroundCsv?:boolean}[]=[
+ {contracts:privacyRequestReportContract,handler:privacyRequestReport,capability:'privacy-requests.view',csv:true},
  {contracts:cashMovementsContract,handler:cashMovements,capability:'financial-reports.view',csv:true,backgroundCsv:true},
  {contracts:cashFlowReportContract,handler:cashFlowReport,capability:'cash-flow.view',csv:true,backgroundCsv:true},
  {contracts:assetCurrencyValuationContract,handler:assetCurrencyValuation,capability:'currency-valuation.view',csv:true},
