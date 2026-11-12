@@ -9,6 +9,6 @@
   "productionAccountApproved": true,
   "currentPlan": { "name": "Free", "monthlyEmailLimit": 100, "observedUse": 1, "paidPlanEnabled": false },
   "mailboxAccess": { "imapOrPopUsed": false, "mailReadMoveOrDeleteImplemented": false, "googleWorkspaceRoutingRetained": true, "postmarkIsParallelOutboundOnly": true },
-  "routineAuthenticationWorkerEnabled": false,
-  "limitations": [ "Free allowance is for integration checks, not the anticipated full academy volume", "Routine outbound workers still require isolated deployment and per-academy activation", "SMTP acceptance alone is not delivery; this test was separately checked in Postmark Activity" ]
+  "routineAuthenticationWorkerEnabled": true,
+  "limitations": [ "Free allowance is for integration checks, not the anticipated full academy volume", "Academy notification workers still need per-academy activation; no academy or human account is active yet", "SMTP acceptance alone is not delivery; this test was separately checked in Postmark Activity" ]
 }

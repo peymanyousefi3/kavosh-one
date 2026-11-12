@@ -22,6 +22,7 @@
     "auth:invite": "node --import tsx scripts/invite.ts",
     "platform:owner": "node --import tsx scripts/register-platform-owner.ts",
     "auth:deliver": "node --import tsx scripts/deliver-auth.ts",
+    "auth:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .auth-worker scripts/deliver-auth.ts",
     "notifications:process": "node --import tsx scripts/process-notifications.ts",
     "platform:notices": "node --import tsx scripts/process-platform-notices.ts",
     "notifications:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .notification-worker scripts/process-notifications.ts scripts/process-platform-notices.ts",
