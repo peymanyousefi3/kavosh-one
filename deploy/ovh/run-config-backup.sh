@@ -20,6 +20,7 @@ env -i PATH=/usr/bin:/bin LANG=C /usr/bin/tar -C / -cf - \
  etc/systemd/system/kavosh-one-role-export.service \
  etc/systemd/system/kavosh-one-scanner.service \
  etc/systemd/system/kavosh-one-auth-delivery.service \
+ etc/systemd/system/kavosh-one-file-inspection.service \
  etc/systemd/system/kavosh-one-parser@.service \
  -C /run/kavosh-one-role-export roles.sql 2>/dev/null \
  | env -i PATH=/usr/bin:/bin LANG=C /opt/kavosh-one-tools/age --encrypt --recipient "$BACKUP_AGE_RECIPIENT" > "$task_directory/configuration.tar.age.partial" 2>/dev/null

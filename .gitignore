@@ -11,6 +11,7 @@ node_modules/
 .next/
 .notification-worker/
 .auth-worker/
+.inspection-worker/
 .recovery-tool/
 dist/
 coverage/

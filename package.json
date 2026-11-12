@@ -31,6 +31,7 @@
     "messages:process": "node --import tsx scripts/process-messages.ts",
     "messages:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .notification-worker scripts/process-messages.ts",
     "files:inspect": "node --import tsx scripts/inspect-files.ts",
+    "files:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .inspection-worker scripts/inspect-files.ts deploy/ovh/check-file-inspection.ts deploy/ovh/probe-file-inspection.ts && cp src/files/signature-detector.mjs .inspection-worker/src/files/signature-detector.mjs",
     "signatures:register": "node --import tsx scripts/register-signature-webhook.ts",
     "payments:register": "node --import tsx scripts/register-payment-webhook.ts",
     "api:generate": "node --import tsx scripts/generate-api.ts",
