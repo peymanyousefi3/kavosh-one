@@ -1,0 +1,14 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "provider": "Postmark",
+  "sender": "info@kavosh.ai",
+  "transport": "SMTP with mandatory STARTTLS and verified certificates",
+  "credential": { "smtpOnly": true, "messageStream": "outbound", "storedRootOnlyOnVps": true, "storedOnMac": false, "googleMailboxCredentialUsed": false },
+  "dns": { "originalRecordsCompared": 18, "allOriginalRecordsUnchanged": true, "addedRecords": [ { "type": "TXT", "name": "20261112214624pm._domainkey.kavosh.ai" }, { "type": "CNAME", "name": "pm-bounces.kavosh.ai", "target": "pm.mtasv.net", "proxied": false } ], "bothVerifiedByPostmark": true, "mxRecordsChanged": false, "existingSpfRecordsChanged": false, "dmarcPolicyChanged": false, "websiteRecordsChanged": false },
+  "liveCheck": { "authenticatedTlsConnectionVerified": true, "testMessagesSent": 1, "testRecipientWasExistingVerifiedSender": true, "providerAccepted": true, "postmarkDeliveredEventObserved": true, "recipientInboxPlacementIndependentlyVerified": false, "automaticRetriesPerformed": false },
+  "productionAccountApproved": true,
+  "currentPlan": { "name": "Free", "monthlyEmailLimit": 100, "observedUse": 1, "paidPlanEnabled": false },
+  "mailboxAccess": { "imapOrPopUsed": false, "mailReadMoveOrDeleteImplemented": false, "googleWorkspaceRoutingRetained": true, "postmarkIsParallelOutboundOnly": true },
+  "routineAuthenticationWorkerEnabled": false,
+  "limitations": [ "Free allowance is for integration checks, not the anticipated full academy volume", "Routine outbound workers still require isolated deployment and per-academy activation", "SMTP acceptance alone is not delivery; this test was separately checked in Postmark Activity" ]
+}

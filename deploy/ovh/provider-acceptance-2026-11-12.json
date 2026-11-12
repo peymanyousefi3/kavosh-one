@@ -55,7 +55,7 @@
     "latestPostUpgradeCredentialCheckCode": 21604,
     "earlierAuthenticationRejectionNoLongerReproduces": true,
     "savedKeyIdentifierRegionAndMessagesCreateOnlyPermissionMatchConsole": true,
-    "blocker": "Provider delivery is proven for one owner-approved Canadian recipient. Routine authentication delivery still requires production SMTP configuration; academy notification workers remain disabled pending per-academy setup. US/international delivery is not verified."
+    "blocker": "Provider delivery is proven for one owner-approved Canadian recipient, and SMTP is now separately configured and tested. Routine workers still require isolated deployment and per-academy activation. US/international delivery is not verified."
   },
   "realAcademyStudentOrFinanceDataUsed": false,
   "ownerSuppliedSmsTestRecipientUsed": true,

@@ -27,12 +27,22 @@ async function responseJson(response:Response){
  finally{if(!done)void reader.cancel().catch(()=>{});reader.releaseLock();}
 }
 const twilioReceipt=z.object({sid:z.string().regex(/^SM[a-fA-F0-9]{32}$/),account_sid:z.string(),messaging_service_sid:z.string(),to:z.string(),status:z.enum(['accepted','queued','sending','sent','delivered']),error_code:z.null()});
+function smtpTransport(smtp:z.infer<typeof smtpConnection>){
+ if(process.env.NODE_TLS_REJECT_UNAUTHORIZED==='0')throw new MessageDeliveryError('not_attempted','INSECURE_TRANSPORT_ENVIRONMENT');
+ return nodemailer.createTransport({host:smtp.host,port:smtp.port,secure:smtp.port===465,requireTLS:true,tls:{rejectUnauthorized:true,minVersion:'TLSv1.2'},auth:{user:smtp.user,pass:smtp.password},connectionTimeout:5000,greetingTimeout:5000,socketTimeout:10000,disableFileAccess:true,disableUrlAccess:true});
+}
+// Explicit operator check, not part of the send-only worker interface.
+export async function verifySmtpConnection(configuration:z.input<typeof smtpConnection>){
+ const transport=smtpTransport(smtpConnection.parse(configuration));
+ try{if(await transport.verify()!==true)throw new Error('UNCONFIRMED');return {authenticated:true as const,deliveryConfirmed:false as const};}
+ catch{throw new MessageDeliveryError('not_attempted','EMAIL_CONNECTION_NOT_VERIFIED');}
+}
 // No IO at construction. No arbitrary provider URL,TLS downgrade,attachments
 // or message-selected sender. Reused by auth and isolated operational workers.
 export function messageTransport(configuration:MessageConnection,send:typeof fetch=fetch){
  if(process.env.NODE_TLS_REJECT_UNAUTHORIZED==='0')throw new MessageDeliveryError('not_attempted','INSECURE_TRANSPORT_ENVIRONMENT');
  const config=messageConnection.parse(configuration),smtp=config.smtp,twilio=config.twilio;
- const transport=smtp?nodemailer.createTransport({host:smtp.host,port:smtp.port,secure:smtp.port===465,requireTLS:true,tls:{rejectUnauthorized:true,minVersion:'TLSv1.2'},auth:{user:smtp.user,pass:smtp.password},connectionTimeout:5000,greetingTimeout:5000,socketTimeout:10000,disableFileAccess:true,disableUrlAccess:true}):null;
+ const transport=smtp?smtpTransport(smtp):null;
  return {
   channels:[...(smtp?['email' as const]:[]),...(twilio?['sms' as const]:[])],
   async email(message:z.input<typeof emailMessage>):Promise<MessageAcceptance>{

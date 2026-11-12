@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import nodemailer from 'nodemailer';
-import { configuredOperationalDelivery,messageConnection,messageTransport,MessageDeliveryError } from '../src/integrations/message-delivery.ts';
+import { configuredOperationalDelivery,messageConnection,messageTransport,verifySmtpConnection,MessageDeliveryError } from '../src/integrations/message-delivery.ts';
 import { providerDelivery } from '../src/auth/delivery.ts';
 
 const twilio={accountSid:'AC'+'a'.repeat(32),authToken:'synthetic-provider-token-not-real',messagingServiceSid:'MG'+'b'.repeat(32)};
@@ -66,4 +66,12 @@ test('SMTP rejects unclear acceptance and sanitizes provider failures without in
  let calls=0;let value:unknown={accepted:['someone-else@example.test'],rejected:[],messageId:'<wrong@example.test>'};
  t.mock.method(nodemailer,'createTransport',()=>({async sendMail(){calls++;if(value instanceof Error)throw value;return value;}}));
  const transport=messageTransport({smtp});for(const result of [value,{accepted:[email.to],rejected:[email.to],messageId:'<rejected@example.test>'},{accepted:[email.to],rejected:[]},new Error('private '+smtp.password)]){value=result;await assert.rejects(transport.email(email),e=>outcome('outcome_unknown')(e)&&e instanceof Error&&!e.message.includes(smtp.password));}assert.equal(calls,4);
+});
+
+test('SMTP connection verification reuses the protected transport without sending mail or claiming delivery',async t=>{
+ let verifies=0,sends=0,result:unknown=true;
+ t.mock.method(nodemailer,'createTransport',()=>({async verify(){verifies++;if(result instanceof Error)throw result;return result;},async sendMail(){sends++;throw Error('SHOULD_NOT_SEND');}}));
+ assert.equal(verifies,0);assert.deepEqual(await verifySmtpConnection(smtp),{authenticated:true,deliveryConfirmed:false});assert.equal(sends,0);
+ for(const value of [false,undefined,new Error('private '+smtp.password)]){result=value;await assert.rejects(verifySmtpConnection(smtp),e=>e instanceof MessageDeliveryError&&e.outcome==='not_attempted'&&e.message==='EMAIL_CONNECTION_NOT_VERIFIED');}
+ assert.equal(verifies,4);assert.equal(sends,0);await assert.rejects(verifySmtpConnection({...smtp,port:25}));assert.equal(verifies,4);
 });
