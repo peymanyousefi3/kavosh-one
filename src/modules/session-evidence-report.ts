@@ -17,7 +17,7 @@ export function sessionEvidenceChecks(r:Omit<EvidenceSnapshot,'sourceDigests'>){
 // ponytail: synchronous output stops at 200 staff; refuse larger checklists
 // until the shared background-report workflow handles them without truncation.
 const authoritySQL=`SELECT s.id,s.class_id,s.hub_id FROM public.class_sessions s WHERE s.id=$1 AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($2::jsonb) scope WHERE public.scope_contains(scope,jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',s.class_id,'hubId',s.hub_id)))) IS NOT TRUE)`;
-const sql=`WITH permitted AS MATERIALIZED(${authoritySQL}) SELECT public.session_evidence_snapshot(id) snapshot FROM permitted`;
+const sql=(readOnly:boolean)=>`WITH permitted AS MATERIALIZED(${authoritySQL}) SELECT public.${readOnly?'session_evidence_snapshot_read':'session_evidence_snapshot'}(id) snapshot FROM permitted`;
 
 export async function sessionEvidenceReport(ctx:ApiContext):Promise<Reply|null>{
  const match=/^reports\/learning\/sessions\/([^/]+)\/evidence$/.exec(ctx.path);if(!match)return null;if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');
@@ -25,13 +25,13 @@ export async function sessionEvidenceReport(ctx:ApiContext):Promise<Reply|null>{
 }
 export async function sessionEvidenceData(ctx:ApiContext,id:string){
  const params=new URL(ctx.request.url).searchParams;if([...params].length)throw new ApiError(400,'INVALID_QUERY');await lockApprovalWrites(ctx);
- const {sourceDigests:_sourceDigests,...r}=await sessionEvidenceSnapshot(ctx,id);
+ const {sourceDigests:_sourceDigests,...r}=await sessionEvidenceSnapshot(ctx,id,[],true);
  return {...r,staff:r.staff.map(s=>({...s,scheduleChanged:s.entryId?s.sessionVersion!==r.sessionVersion:null})),...sessionEvidenceChecks(r),
  expectedStaffBasis:'current_effective_assignments_on_verified_session_local_day',savedTimeBasis:'all_retained_session_time_including_retired_assignments',mediaBasis:'metadata_references_not_verified_uploads',approvalState:'not_determined_by_this_report',payrollEligibility:'not_determined_by_this_report',earnedLiability:'not_determined_by_this_report',permissionsAppliedBeforeProjection:true};
 }
 export const sessionEvidenceReportContract=[{path:'/api/v1/reports/learning/sessions/{id}/evidence',method:'get',summary:'Same-snapshot staff evidence checklist: complete current attendance/report sources, pending media references, each effective staff member and retained delivered time; requires all six source permissions, no private bodies, no payroll approval or earned-liability decision; 200-person synchronous bound'}] as const;
-export async function sessionEvidenceSnapshot(ctx:ApiContext,id:string,extra:Capability[]=[]){
- const scopes=[...sessionEvidenceCapabilities,...extra].map(c=>permissionScope(ctx,c));const r=(await ctx.db.query<{snapshot:EvidenceSnapshot|null}>(sql,[id,JSON.stringify(scopes)])).rows[0]?.snapshot;if(!r)throw new ApiError(404,'NOT_FOUND');if(r.staffCount>200||r.rosterTooLarge)throw new ApiError(422,'SESSION_EVIDENCE_REQUIRES_BACKGROUND_JOB');return r;
+export async function sessionEvidenceSnapshot(ctx:ApiContext,id:string,extra:Capability[]=[],readOnly=false){
+ const scopes=[...sessionEvidenceCapabilities,...extra].map(c=>permissionScope(ctx,c));const r=(await ctx.db.query<{snapshot:EvidenceSnapshot|null}>(sql(readOnly),[id,JSON.stringify(scopes)])).rows[0]?.snapshot;if(!r)throw new ApiError(404,'NOT_FOUND');if(r.staffCount>200||r.rosterTooLarge)throw new ApiError(422,'SESSION_EVIDENCE_REQUIRES_BACKGROUND_JOB');return r;
 }
 export async function sessionEvidenceAuthority(ctx:ApiContext,id:string,extra:Capability[]=[]){
  const scopes=[...sessionEvidenceCapabilities,...extra].map(c=>permissionScope(ctx,c)),r=(await ctx.db.query<{class_id:string;hub_id:string}>(authoritySQL,[id,JSON.stringify(scopes)])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return {all:false,hubs:[],classes:[{id:r.class_id,hubId:r.hub_id}]};

@@ -40,7 +40,7 @@ export async function payrunReadiness(ctx:ApiContext,run:{id:string;person_id:st
  if(!refs.allowed)throw new ApiError(404,'NOT_FOUND');assertPayrunReadinessBounds(refs.sessions,refs.entries);
  const sources=await payrunRecordedSources(ctx,run);
  const ids=[...new Set(refs.refs.map(r=>r.sessionId))].sort();
- const rows=(await ctx.db.query<Session>(`WITH snapshots AS MATERIALIZED(SELECT id,public.session_evidence_snapshot(id) snapshot FROM public.class_sessions WHERE id=ANY($1::uuid[]))
+const rows=(await ctx.db.query<Session>(`WITH snapshots AS MATERIALIZED(SELECT id,public.session_evidence_snapshot_read(id) snapshot FROM public.class_sessions WHERE id=ANY($1::uuid[]))
  SELECT s.snapshot,r.version "reviewVersion",r.decision,r.waive_report "waiveReport",r.waive_media "waiveMedia",coalesce(r.source=s.snapshot-ARRAY['snapshotAt','sessionStarted','sessionEnded'],false) "reviewCurrent" FROM snapshots s LEFT JOIN public.session_evidence_reviews r ON r.session_id=s.id ORDER BY s.id`,[ids])).rows;
  if(rows.some(r=>r.snapshot.staffCount>200||r.snapshot.rosterTooLarge))throw new ApiError(422,'PAYRUN_READINESS_REQUIRES_BACKGROUND_JOB');
  const bySession=new Map<string,Ref[]>();for(const ref of refs.refs)if(ref.entryId!==null){const group=bySession.get(ref.sessionId)??[];group.push(ref);bySession.set(ref.sessionId,group);}

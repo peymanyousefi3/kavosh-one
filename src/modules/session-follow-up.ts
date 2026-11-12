@@ -14,7 +14,7 @@ function sourceCTEs(maximum?:number){return `WITH selected AS MATERIALIZED(
  AND(s.starts_at,s.id)>(coalesce($6::timestamptz,'-infinity'),coalesce($7::uuid,'00000000-0000-0000-0000-000000000000'::uuid))
  AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements($8::jsonb) scope WHERE public.scope_contains(scope,jsonb_build_object('all',false,'hubs','[]'::jsonb,'classes',jsonb_build_array(jsonb_build_object('id',s.class_id,'hubId',s.hub_id)))) IS NOT TRUE)
  ORDER BY s.starts_at,s.id LIMIT ${maximum===undefined?'$9':maximum+1}
-),snapshots AS MATERIALIZED(SELECT p.academy_id,p.id,p.starts_at,public.session_evidence_snapshot(p.id) snapshot FROM selected p ORDER BY p.starts_at,p.id${maximum===undefined?'':' LIMIT '+maximum})`;}
+),snapshots AS MATERIALIZED(SELECT p.academy_id,p.id,p.starts_at,public.session_evidence_snapshot_read(p.id) snapshot FROM selected p ORDER BY p.starts_at,p.id${maximum===undefined?'':' LIMIT '+maximum})`;}
 const projectionSQL=`SELECT p.snapshot,to_char(p.starts_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') starts_at,
  to_char(((p.snapshot->>'endsAt')::timestamptz+$10::integer*interval '1 minute') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') due_at,
  (p.snapshot->>'endsAt')::timestamptz+$10::integer*interval '1 minute'<=statement_timestamp() past_due,

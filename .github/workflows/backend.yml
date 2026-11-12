@@ -444,7 +444,7 @@ jobs:
           TEST_VIDEO_FIXTURE_ENCODER: /usr/bin/ffmpeg
       - name: Quick real full-video/audio decode and adverse-case checks,no live services
         run: >-
-          docker run --rm --network host
+          docker run --rm --init --network host
           --env VIDEO_VALIDATION_TEST_REQUIRED --env VIDEO_CODEC_TEST_REQUIRED --env TEST_DATABASE_URL
           --env TEST_VIDEO_CODEC_FIXTURES=/fixtures
           --mount "type=bind,source=$RUNNER_TEMP/kavosh-video-codec-fixtures,target=/fixtures,readonly"
@@ -464,7 +464,7 @@ jobs:
           fi
       - name: Run actual private resource-limited video service
         run: >-
-          docker run --detach --name kavosh-video-ci --network none --read-only
+          docker run --detach --init --name kavosh-video-ci --network none --read-only
           --cap-drop ALL --security-opt no-new-privileges:true
           --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64
           --tmpfs /run/kavosh-video:rw,noexec,nosuid,nodev,size=1m,uid=10003,gid=10001,mode=0750
