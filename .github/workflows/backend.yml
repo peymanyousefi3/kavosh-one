@@ -31,7 +31,7 @@ jobs:
       - run: npm install --global pnpm@11.25.0
       - run: pnpm install --frozen-lockfile
       - name: Isolated deployment preservation and rollback logic (no live server access)
-        run: node --test tests/ovh-deployment.test.mjs tests/scheduled-backups.test.mjs
+        run: node --test tests/ovh-deployment.test.mjs tests/scheduled-backups.test.mjs tests/config-backup.test.mjs
       - name: Verify the official pinned encryption tool before execution
         run: |
           install -d -m 700 /tmp/kavosh-backup-tools

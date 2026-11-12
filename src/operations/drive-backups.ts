@@ -12,7 +12,7 @@ const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'
 const secret=z.string().min(1).max(16384).regex(/^[\x21-\x7e]+$/);
 export const driveBackupCredentials=z.object({clientId:z.string().regex(/^[A-Za-z0-9._-]{1,200}\.apps\.googleusercontent\.com$/),clientSecret:secret,
  folderId:z.string().regex(/^[A-Za-z0-9_-]{10,200}$/),token:z.object({access_token:secret,refresh_token:secret,token_type:z.literal('Bearer'),expiry:z.iso.datetime(),scope:z.literal('https://www.googleapis.com/auth/drive.file')}).strict()}).strict();
-const input=z.object({rclone:path,archive:path,workDirectory:path,backupId:z.string().uuid().transform(v=>v.toLowerCase()),
+const input=z.object({rclone:path,archive:path,workDirectory:path,backupId:z.string().uuid().transform(v=>v.toLowerCase()),kind:z.enum(['database','configuration']).default('database'),
  expectedSha256:z.string().regex(/^[a-f0-9]{64}$/),expectedBytes:z.number().int().min(22).max(1_099_511_627_776),drive:driveBackupCredentials,
  timeoutMs:z.number().int().min(1000).max(3_600_000).default(900000),bandwidthMiBPerSecond:z.number().int().min(1).max(64).default(4)}).strict();
 let active=false;
@@ -52,7 +52,8 @@ export async function copyEncryptedBackupToDrive(raw:unknown,externalSignal?:Abo
    RCLONE_CONFIG_KAVOSH_BACKUP_TYPE:'drive',RCLONE_CONFIG_KAVOSH_BACKUP_SCOPE:'drive.file',RCLONE_CONFIG_KAVOSH_BACKUP_ROOT_FOLDER_ID:i.drive.folderId,
    RCLONE_CONFIG_KAVOSH_BACKUP_CLIENT_ID:i.drive.clientId,RCLONE_CONFIG_KAVOSH_BACKUP_CLIENT_SECRET:i.drive.clientSecret,RCLONE_CONFIG_KAVOSH_BACKUP_TOKEN:JSON.stringify(i.drive.token)};
   const flags=['--config','/dev/null','--log-level','ERROR','--stats','0','--retries','1','--low-level-retries','1','--checkers','1','--transfers','1','--multi-thread-streams','0','--buffer-size','1M','--drive-chunk-size','8M','--bwlimit',i.bandwidthMiBPerSecond+'M','--contimeout','10s','--timeout','30s'];
-  const remote='kavosh_backup:backup-'+i.backupId+'/database.dump.age';
+  const filename=i.kind==='configuration'?'configuration.tar.age':'database.dump.age';
+  const remote='kavosh_backup:backup-'+i.backupId+'/'+filename;
   async function command(args:string[],verify=false){
    if(controller.signal.aborted)throw new RecoveryError('RECOVERY_CANCELLED');
    const child=spawn(binary,[...args,...flags],{env:environment,detached:process.platform!=='win32'});child.stdin.end();
@@ -76,7 +77,7 @@ export async function copyEncryptedBackupToDrive(raw:unknown,externalSignal?:Abo
    finally{controller.signal.removeEventListener('abort',stop);if(child.exitCode===null&&child.signalCode===null)stop();await Promise.allSettled([ended,...transfer?[transfer]:[]]);if(killTimer)clearTimeout(killTimer);}
   }
   attempted=true;await command(['copyto',staged,remote,'--immutable','--checksum','--no-update-modtime']);await command(['cat',remote],true);
-  return {backupId:i.backupId,ciphertextSha256:i.expectedSha256,encryptedBytes:i.expectedBytes,provider:'google_drive',scope:'one_encrypted_database_archive',independentCopyVerified:true,verifiedAt:new Date().toISOString(),verification:'full_download_sha256_and_exact_length',sourceDeleted:false,remoteDeletionPerformed:false,remoteWormRetentionVerified:false,restoreVerified:false,mediaIncluded:false};
+  return {backupId:i.backupId,ciphertextSha256:i.expectedSha256,encryptedBytes:i.expectedBytes,provider:'google_drive',scope:i.kind==='configuration'?'one_encrypted_configuration_archive':'one_encrypted_database_archive',independentCopyVerified:true,verifiedAt:new Date().toISOString(),verification:'full_download_sha256_and_exact_length',sourceDeleted:false,remoteDeletionPerformed:false,remoteWormRetentionVerified:false,restoreVerified:false,mediaIncluded:false};
  }catch(error){if(controller.signal.aborted)throw new RecoveryError(attempted?'DRIVE_BACKUP_COPY_UNVERIFIED':'RECOVERY_CANCELLED');if(error instanceof RecoveryError)throw error;throw new RecoveryError(attempted?'DRIVE_BACKUP_COPY_UNVERIFIED':'DRIVE_BACKUP_PREPARATION_FAILED');}
  finally{clearTimeout(timer);externalSignal?.removeEventListener('abort',cancel);controller.abort();let cleanupFailed=false;const cleanup=(error:unknown)=>{if((error as {code?:string})?.code!=='ENOENT')cleanupFailed=true;};if(owned&&staged)await unlink(staged).catch(cleanup);if(folder)await rmdir(folder).catch(cleanup);active=false;if(cleanupFailed)throw new RecoveryError('DRIVE_BACKUP_LOCAL_CLEANUP_FAILED');}
 }

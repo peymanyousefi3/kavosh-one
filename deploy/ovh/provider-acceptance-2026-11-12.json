@@ -1,0 +1,30 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "storage": {
+    "separateBucketScopedCredentials": 4,
+    "serverOnlyScannerAndWriterIpRestrictions": true,
+    "liveProviderChecksPassed": 14,
+    "syntheticBytes": 768,
+    "syntheticObjectsRemoved": true,
+    "readOnlyScannerAndDownloaderWriteDenialsVerified": true,
+    "crossBucketDenialsVerified": true,
+    "conditionalUploadAndImmutablePromotionVerified": true,
+    "expiredDownloadAndAnonymousAccessDenied": true,
+    "corsPreflightChecksPassed": 10,
+    "onlyAllowedBrowserOrigin": "https://one.kavosh.ai",
+    "unexpectedOriginsMethodsAndHeadersDenied": true,
+    "publicBucketsEnabled": false,
+    "antivirusEngineVerifiedOnVps": false,
+    "browserEndToEndVerified": false,
+    "applicationMediaWorkflowActivated": false
+  },
+  "sms": {
+    "restrictedMessagesCreateCredentialStoredOnVps": true,
+    "authenticatedMissingRecipientResponse": 21604,
+    "messageHistoryAndBalanceAccessDenied": true,
+    "smsSent": false,
+    "productionMessagingActivated": false,
+    "blocker": "Twilio limited trial requires owner upgrade before creating a production messaging service; no number purchased or account charged"
+  },
+  "realPersonalDataUsed": false
+}

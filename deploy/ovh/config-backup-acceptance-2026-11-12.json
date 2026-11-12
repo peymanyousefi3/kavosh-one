@@ -1,0 +1,20 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "backupId": "18b2fac0-93be-4502-bea6-c84c07cff6f1",
+  "encryptedBytes": 92376,
+  "ciphertextSha256": "8a4aadd6387b1942a4805c3195a35b41a5d860fe66a4f478443eaecfbbb6b78e",
+  "independentDriveDownloadVerified": true,
+  "authenticatedOffServerDecryptionVerified": true,
+  "requiredFilesChecked": 12,
+  "archiveEntriesChecked": 29,
+  "passwordFreeRolesVerified": true,
+  "landingPageExcluded": true,
+  "privateRecoveryKeyTransferredToVps": false,
+  "temporaryPlaintextArchiveRemoved": true,
+  "configurationApplied": false,
+  "fullServerRebuildVerified": false,
+  "schedule": { "enabled": true, "timeZone": "America/Toronto", "time": "03:05", "maximumRandomDelaySeconds": 120, "nextObservedRun": "2026-11-13T03:06:11-05:00" },
+  "isolation": { "rootJobCannotChangeIdentity": true, "separatePasswordFreeExportUser": "postgres", "networkFamilyRestrictionRetained": true, "writableBackupDirectoriesNonExecutable": true },
+  "landingPage": { "processIdStill": 536773, "processStartStill": "2026-11-06T01:33:33Z" },
+  "limitations": [ "Google connection remains Testing and expires after seven days until legitimate public branding and owner authorization are completed", "Media files are not included", "This verifies archive recovery, not an automatic configuration restore or full clean-host rebuild", "Independent recovery-key escrow beyond this Mac is not yet verified" ]
+}

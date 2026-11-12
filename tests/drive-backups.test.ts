@@ -55,6 +55,14 @@ test('Drive backup rejects unverified digest,size,plaintext,broader scopes and i
  }finally{await f.close();}
 });
 
+test('configuration archives use a distinct fixed destination and never accept caller-chosen remote paths',async()=>{
+ const f=await fixture();try{
+  const result=await copyEncryptedBackupToDrive({...f.input,kind:'configuration'});assert.equal(result.scope,'one_encrypted_configuration_archive');assert.equal(result.independentCopyVerified,true);assert.equal(result.restoreVerified,false);
+  const calls=await f.calls();assert.equal(calls[0].args[2],'kavosh_backup:backup-'+f.input.backupId+'/configuration.tar.age');assert.equal(calls[1].args[1],calls[0].args[2]);
+  await assert.rejects(copyEncryptedBackupToDrive({...f.input,kind:'../private'}),{code:'INVALID_DRIVE_BACKUP_CONFIGURATION'});assert.equal((await f.calls()).length,2);
+ }finally{await f.close();}
+});
+
 test('Drive backup refuses symlinks,hardlinks and public working directories without deleting existing files',async()=>{
  const f=await fixture(),alias=join(f.source,'alias.age');try{
   await symlink(f.archive,alias);try{await assert.rejects(copyEncryptedBackupToDrive({...f.input,archive:alias}),{code:'UNSAFE_RECOVERY_FILE'});}finally{await unlink(alias);}
@@ -82,6 +90,7 @@ test('explicit Drive operator commands verify a retained archive and never print
   const prefix=process.env.RECOVERY_COMPILED_CLI?[process.env.RECOVERY_COMPILED_CLI]:['--import','tsx','scripts/database-recovery.ts'];
   const args=[...prefix,'copy-drive',f.input.backupId,f.archive,f.input.expectedSha256,String(f.input.expectedBytes)],environment={PATH:process.env.PATH,NODE_ENV:'test' as const,RECOVERY_WORK_DIRECTORY:f.work,RCLONE_BIN:f.input.rclone,BACKUP_DRIVE_CONNECTION_JSON:JSON.stringify(f.input.drive),BACKUP_DATABASE_URL:'postgresql://PRIVATE:PRIVATE@invalid/PRIVATE'};
   const response=await run(process.execPath,args,{env:environment,timeout:5000});const result=JSON.parse(response.stdout);assert.equal(result.independentCopyVerified,true);assert.equal(result.restoreVerified,false);assert.equal(response.stderr,'');assert.doesNotMatch(response.stdout,/synthetic-client-secret|synthetic-access|synthetic-refresh|postgresql:/);assert.deepEqual((await f.calls()).map(c=>c.command),['copyto','cat']);
+  const configuration=JSON.parse((await run(process.execPath,[...prefix,'copy-config',f.input.backupId,f.archive,f.input.expectedSha256,String(f.input.expectedBytes)],{env:environment,timeout:5000})).stdout);assert.equal(configuration.scope,'one_encrypted_configuration_archive');assert.equal(configuration.independentCopyVerified,true);assert.equal((await f.calls()).at(-1)?.args[1],'kavosh_backup:backup-'+f.input.backupId+'/configuration.tar.age');
   await assert.rejects(run(process.execPath,args,{env:{...environment,BACKUP_DRIVE_CONNECTION_JSON:'PRIVATE_INVALID_JSON'},timeout:5000}),error=>{const e=error as Error&{stdout:string;stderr:string};assert.equal(e.stdout,'');assert.equal(e.stderr.trim(),'INVALID_DRIVE_BACKUP_CONFIGURATION');return true;});
   await assert.rejects(run(process.execPath,[...prefix,'backup'],{env:environment,timeout:5000}),error=>{const e=error as Error&{stdout:string;stderr:string};assert.equal(e.stdout,'');assert.equal(e.stderr.trim(),'INVALID_BACKUP_CONFIGURATION');return true;});
  }finally{await f.close();}

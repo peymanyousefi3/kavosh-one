@@ -1,0 +1,27 @@
+[Unit]
+Description=Kavosh One password-free database role export
+After=postgresql@18-main.service
+Requires=postgresql@18-main.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+RuntimeDirectory=kavosh-one-role-export
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+ExecStart=/bin/bash /srv/kavosh-one/deploy/export-backup-roles.sh
+TimeoutStartSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=128M
+CPUQuota=25%
