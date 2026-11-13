@@ -1,11 +1,31 @@
 import assert from 'node:assert/strict';
 import { createHash,createHmac } from 'node:crypto';
 import { test } from 'node:test';
+import {Readable} from 'node:stream';
 import { privateR2 } from '../src/integrations/r2.ts';
 import type { R2Connection } from '../src/integrations/r2-config.ts';
 
 const academy='8fbe4060-32ec-46a9-a97d-78ea54fe50e6',other='aa3135f8-3dfe-4e79-9b67-ab4098319728',file='73e6a708-ad23-484b-9b12-91db85854593';
 const config:R2Connection={accountId:'a'.repeat(32),jurisdiction:'default',bucket:'synthetic-private-files',accessKeyId:'synthetic-access-id',secretAccessKey:'synthetic-r2-secret-not-a-real-key',maximumUploadBytes:1000000};
+test('media inventory pages stay scoped to the school and stage,bind metadata and expose no backup-completion claim',async()=>{
+ let requests=0,destroyed=false;
+ const prefix=`academies/${academy}/clean/`,xml=(id:string,truncated:boolean)=>`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>${config.bucket}</Name><Prefix>${prefix}</Prefix><KeyCount>1</KeyCount><IsTruncated>${truncated}</IsTruncated>${truncated?'<NextContinuationToken>synthetic-page-two</NextContinuationToken>':''}<Contents><Key>${prefix}${id}</Key><LastModified>2026-11-13T00:00:00.000Z</LastModified><ETag>&quot;synthetic-etag&quot;</ETag><Size>42</Size></Contents></ListBucketResult>`;
+ const store=privateR2(config,academy,{async handle(request:{method:string;hostname:string;query?:Record<string,unknown>}){requests++;assert.equal(request.method,'GET');assert.equal(request.hostname,config.accountId+'.r2.cloudflarestorage.com');assert.equal(request.query?.prefix,prefix);assert.equal(request.query?.['max-keys'],'1');assert.equal(request.query?.['list-type'],'2');assert.equal(request.query?.['continuation-token'],requests===1?undefined:'synthetic-page-two');return{response:{statusCode:200,headers:{'content-type':'application/xml'},body:Readable.from([xml(requests===1?file:other,requests===1)])}};},destroy(){destroyed=true;}});
+ try{
+  const first=await store.mediaInventoryPage('clean',undefined,1);assert.equal(first.nextContinuationToken,'synthetic-page-two');assert.equal(first.completeBackup,false);assert.equal(first.academyId,academy);assert.equal(first.objects[0].fileId,file);assert.equal(first.objects[0].bytes,42);assert.equal(first.objects[0].etag,'"synthetic-etag"');assert.equal(first.objects[0].modifiedAt,'2026-11-13T00:00:00.000Z');
+  const second=await store.mediaInventoryPage('clean',first.nextContinuationToken!,1);assert.equal(second.nextContinuationToken,null);assert.equal(second.objects[0].fileId,other);assert.equal(requests,2);assert.doesNotMatch(JSON.stringify([first,second]),/synthetic-access-id|synthetic-r2-secret/);
+  for(const input of [{stage:'signature-evidence'},{limit:0},{limit:1001},{continuationToken:''},{continuationToken:'x'.repeat(4097)}])await assert.rejects(store.mediaInventoryPage((input.stage??'clean') as 'clean',input.continuationToken,input.limit??1),{code:'INVALID_MEDIA_INVENTORY_REQUEST'});
+  const abort=new AbortController();abort.abort();await assert.rejects(store.mediaInventoryPage('clean',undefined,1,abort.signal),{code:'R2_INVENTORY_CANCELLED'});assert.equal(requests,2);
+ }finally{store.close();}assert.equal(destroyed,true);await assert.rejects(store.mediaInventoryPage('clean'),{code:'R2_CONNECTION_CLOSED'});
+});
+test('inventory rejects foreign objects,invalid metadata,broken cursors,duplicate IDs and oversized provider XML',async()=>{
+ const prefix=`academies/${academy}/quarantine/`,item=`<Contents><Key>${prefix}${file}</Key><LastModified>2026-11-13T00:00:00Z</LastModified><ETag>&quot;etag&quot;</ETag><Size>42</Size></Contents>`;
+ const valid=`<ListBucketResult><Name>${config.bucket}</Name><Prefix>${prefix}</Prefix><KeyCount>1</KeyCount><IsTruncated>false</IsTruncated>${item}</ListBucketResult>`;
+ for(const body of [valid.replace(prefix+file,`academies/${other}/quarantine/${file}`),valid.replace('<Size>42</Size>','<Size>0</Size>'),valid.replace('<IsTruncated>false</IsTruncated>','<IsTruncated>true</IsTruncated>'),valid.replace(item,item+item),valid.replace('<IsTruncated>false</IsTruncated>',''),valid.replace(prefix+file,prefix+'../../private'),'<ListBucketResult>'+ 'x'.repeat(2097153)+'</ListBucketResult>']){
+  const store=privateR2(config,academy,{async handle(){return{response:{statusCode:200,headers:{},body:Readable.from([body])}};},destroy(){}});
+  try{await assert.rejects(store.mediaInventoryPage('quarantine'),error=>{assert.equal((error as {code:string}).code,'R2_INVENTORY_UNAVAILABLE');assert.doesNotMatch(String(error),/synthetic-r2-secret|academies\//);return true;});}finally{store.close();}
+ }
+});
 function fixture(c:R2Connection=config,a=academy) {
   let requests=0,destroyed=0;
   const store=privateR2(c,a,{async handle(){requests++;throw new Error('Tests must never contact storage');},destroy(){destroyed++;}});

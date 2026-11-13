@@ -1,4 +1,4 @@
-import { S3Client,PutObjectCommand,GetObjectCommand,type S3ClientConfig } from '@aws-sdk/client-s3';
+import { S3Client,PutObjectCommand,GetObjectCommand,ListObjectsV2Command,type S3ClientConfig } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
@@ -32,7 +32,15 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
   // cannot bypass our byte meter or enter private diagnostics. Preserve actual
   // close settlement even when a transport ignores cancellation.
   const transport=client.config.requestHandler,send=transport.handle.bind(transport);
-  client.config.requestHandler={...transport,async handle(request,options){const result=await send(request,options);if(![200,206].includes(result.response.statusCode)){const source=result.response.body;if(source instanceof Readable){source.once('error',()=>{});const ended=bodyClosed(source);source.destroy();await ended;}throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');}return result;},destroy(){transport.destroy?.();},...('updateHttpClientConfig'in transport&&typeof transport.updateHttpClientConfig==='function'?{updateHttpClientConfig:transport.updateHttpClientConfig.bind(transport)}:{}),...('httpHandlerConfigs'in transport&&typeof transport.httpHandlerConfigs==='function'?{httpHandlerConfigs:transport.httpHandlerConfigs.bind(transport)}:{})};
+  client.config.requestHandler={...transport,async handle(request,options){const result=await send(request,options);if(![200,206].includes(result.response.statusCode)){const source=result.response.body;if(source instanceof Readable){source.once('error',()=>{});const ended=bodyClosed(source);source.destroy();await ended;}throw new ApiError(502,'R2_INSPECTION_UNAVAILABLE');}
+   // Inventory XML is buffered by the SDK parser. Bound it before parsing,
+   // including chunked responses without a trustworthy Content-Length.
+   if(request.query?.['list-type']==='2'){
+    const source=result.response.body;if(!(source instanceof Readable))throw new ApiError(502,'R2_INVALID_INVENTORY');
+    let bytes=0;const meter=new Transform({transform(chunk:Buffer,_encoding,done){bytes+=chunk.length;if(bytes>2097152){done(new ApiError(502,'R2_INVALID_INVENTORY'));return;}done(null,chunk);}});
+    void pipeline(source,meter).catch(()=>{});result.response.body=meter;
+   }
+   return result;},destroy(){transport.destroy?.();},...('updateHttpClientConfig'in transport&&typeof transport.updateHttpClientConfig==='function'?{updateHttpClientConfig:transport.updateHttpClientConfig.bind(transport)}:{}),...('httpHandlerConfigs'in transport&&typeof transport.httpHandlerConfigs==='function'?{httpHandlerConfigs:transport.httpHandlerConfigs.bind(transport)}:{})};
   function key(stage:'quarantine'|'clean'|'signature-evidence',fileId:string) {
     if(closed)throw new ApiError(503,'R2_CONNECTION_CLOSED');
     const id=uuid.safeParse(fileId);if(!id.success)throw new ApiError(400,'INVALID_FILE_ID');
@@ -88,6 +96,29 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
   return {
     storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),
     maximumUploadBytes:c.maximumUploadBytes,
+    // Operator backup building block only;not an API authorization boundary or
+    // a complete backup. Stream pages instead of buffering a whole academy.
+    async mediaInventoryPage(stage:'quarantine'|'clean',continuationToken?:string,limit=1000,signal?:AbortSignal){
+     if(closed)throw new ApiError(503,'R2_CONNECTION_CLOSED');
+     const input=z.object({stage:z.enum(['quarantine','clean']),continuationToken:z.string().min(1).max(4096).optional(),limit:z.number().int().min(1).max(1000)}).safeParse({stage,continuationToken,limit});
+     if(!input.success)throw new ApiError(400,'INVALID_MEDIA_INVENTORY_REQUEST');
+     if(signal?.aborted)throw new ApiError(502,'R2_INVENTORY_CANCELLED');
+     const prefix=`academies/${academy.data}/${stage}/`;
+     try{
+      const response=await client.send(new ListObjectsV2Command({Bucket:c.bucket,Prefix:prefix,MaxKeys:limit,...continuationToken?{ContinuationToken:continuationToken}:{}}),{abortSignal:signal?AbortSignal.any([signal,AbortSignal.timeout(30000)]):AbortSignal.timeout(30000)});
+      if(response.Name!==c.bucket||response.Prefix!==prefix||typeof response.IsTruncated!=='boolean'||(response.Contents?.length??0)>limit)throw new Error();
+      const objects=(response.Contents??[]).map(object=>{
+       if(!object.Key?.startsWith(prefix))throw new Error();
+       const fileId=uuid.parse(object.Key.slice(prefix.length));if(object.Key!==prefix+fileId)throw new Error();
+       const metadata=z.object({fileId:uuid,bytes:z.number().int().positive().max(4294967296),etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),modifiedAt:z.iso.datetime()}).parse({fileId,bytes:object.Size,etag:object.ETag,modifiedAt:object.LastModified?.toISOString()});
+       return metadata;
+      });
+      if(new Set(objects.map(object=>object.fileId)).size!==objects.length||response.KeyCount!==undefined&&response.KeyCount!==objects.length)throw new Error();
+      const next=response.IsTruncated?z.string().min(1).max(4096).parse(response.NextContinuationToken):null;
+      if(next===continuationToken||!response.IsTruncated&&response.NextContinuationToken!==undefined)throw new Error();
+      return{academyId:academy.data,storageTargetId:createHash('sha256').update(JSON.stringify([c.accountId,c.jurisdiction,c.bucket])).digest('hex'),stage,objects,nextContinuationToken:next,completeBackup:false as const};
+     }catch{throw new ApiError(502,signal?.aborted?'R2_INVENTORY_CANCELLED':'R2_INVENTORY_UNAVAILABLE');}
+    },
     inspectQuarantine<T>(fileId:string,claims:z.input<typeof inspectionClaims>,inspect:(source:Readable,signal:AbortSignal)=>Promise<T>,timeoutMs=120000,signal?:AbortSignal){return inspectStored('quarantine',fileId,claims,inspect,timeoutMs,signal);},
     // Optional lifecycle observer lets buffering callers retain admission until
     // actual IO/inspection settlement,not merely a timeout's early rejection.
