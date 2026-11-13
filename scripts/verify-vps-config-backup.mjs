@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, openSync, closeSync, readFileSync, statSync, unlinkSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, openSync, closeSync,readdirSync,writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 let stage = 'arguments', directory, encrypted, plaintext;
 const get = service => {
@@ -16,22 +16,23 @@ try {
  const receipt = JSON.parse(execFileSync('/usr/bin/ssh', ['-F', '.local-tools/ovh.ssh-config', 'kavosh-one-production', 'sudo cat /var/lib/kavosh-one-config-backups/latest.json'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 }));
  assert.match(receipt.id, /^[a-f0-9-]{36}$/); assert.match(receipt.ciphertextSha256, /^[a-f0-9]{64}$/);
  assert.equal(receipt.offsite.independentCopyVerified, true); assert.equal(receipt.offsite.scope, 'one_encrypted_configuration_archive');
- assert.ok(receipt.encryptedBytes > 0 && receipt.encryptedBytes <= 16777216);
+ assert.ok(Number.isSafeInteger(receipt.encryptedBytes)&&receipt.encryptedBytes > 0 && receipt.encryptedBytes <= 16777216);
  const drive = get('kavosh-one-drive-backup-connection');
  assert.equal(drive.token.scope, 'https://www.googleapis.com/auth/drive.file');
  directory = mkdtempSync('/private/tmp/kavosh-one-config-proof-'); encrypted = join(directory, 'configuration.tar.age'); plaintext = join(directory, 'configuration.tar');
  stage = 'independent Drive download';
- execFileSync('/opt/homebrew/bin/rclone', ['copyto', 'kavosh_backup:backup-' + receipt.id + '/configuration.tar.age', encrypted, '--config', '/dev/null', '--immutable', '--log-level', 'ERROR', '--stats', '0', '--retries', '1', '--low-level-retries', '1'], { env: { PATH: process.env.PATH, RCLONE_CONFIG_KAVOSH_BACKUP_TYPE: 'drive', RCLONE_CONFIG_KAVOSH_BACKUP_SCOPE: 'drive.file', RCLONE_CONFIG_KAVOSH_BACKUP_ROOT_FOLDER_ID: drive.folderId, RCLONE_CONFIG_KAVOSH_BACKUP_CLIENT_ID: drive.clientId, RCLONE_CONFIG_KAVOSH_BACKUP_CLIENT_SECRET: drive.clientSecret, RCLONE_CONFIG_KAVOSH_BACKUP_TOKEN: JSON.stringify(drive.token) }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 });
- assert.equal(statSync(encrypted).size, receipt.encryptedBytes);
- assert.equal(createHash('sha256').update(readFileSync(encrypted)).digest('hex'), receipt.ciphertextSha256);
+ const downloaded=execFileSync('/opt/homebrew/bin/rclone', ['cat', 'kavosh_backup:backup-' + receipt.id + '/configuration.tar.age', '--config', '/dev/null', '--log-level', 'ERROR', '--stats', '0', '--retries', '1', '--low-level-retries', '1'], { env: { PATH: process.env.PATH, RCLONE_CONFIG_KAVOSH_BACKUP_TYPE: 'drive', RCLONE_CONFIG_KAVOSH_BACKUP_SCOPE: 'drive.file', RCLONE_CONFIG_KAVOSH_BACKUP_ROOT_FOLDER_ID: drive.folderId, RCLONE_CONFIG_KAVOSH_BACKUP_CLIENT_ID: drive.clientId, RCLONE_CONFIG_KAVOSH_BACKUP_CLIENT_SECRET: drive.clientSecret, RCLONE_CONFIG_KAVOSH_BACKUP_TOKEN: JSON.stringify(drive.token) }, stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000,maxBuffer:receipt.encryptedBytes });
+ try{assert.equal(downloaded.length,receipt.encryptedBytes);assert.equal(createHash('sha256').update(downloaded).digest('hex'),receipt.ciphertextSha256);writeFileSync(encrypted,downloaded,{flag:'wx',mode:0o600});}finally{downloaded.fill(0);}
  stage = 'complete authenticated off-server decryption';
  const recovery = get('kavosh-one-production-backup-recovery'), output = openSync(plaintext, 'wx', 0o600);
  try { execFileSync('/opt/homebrew/bin/age', ['--decrypt', '--identity', '-', encrypted], { input: recovery.identity, stdio: ['pipe', output, 'pipe'], timeout: 30000 }); } finally { closeSync(output); recovery.identity = ''; }
  stage = 'archive paths and credential completeness';
  const entries = execFileSync('/usr/bin/tar', ['-tf', plaintext], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim().split('\n');
- const required = ['roles.sql', 'etc/kavosh-one/web.env', 'etc/kavosh-one/backup.env', 'etc/kavosh-one/drive.json', 'etc/kavosh-one/twilio-credentials.json', 'etc/kavosh-one/r2-upload.json', 'etc/kavosh-one/r2-scan.json', 'etc/kavosh-one/r2-promote.json', 'etc/kavosh-one/r2-download.json', 'etc/kavosh-one-tls/server.crt', 'etc/caddy/kavosh-one.caddy', 'etc/systemd/system/kavosh-one-role-export.service', 'etc/kavosh-one-scanner/clamd.conf', 'etc/apparmor.d/local/usr.sbin.clamd', 'etc/systemd/system/kavosh-one-scanner.service'];
+ const units=readdirSync(new URL('../deploy/ovh/',import.meta.url)).filter(name=>/^kavosh-one.*\.(?:service|timer)$/.test(name));
+ const required = [...new Set(['roles.sql', 'etc/kavosh-one/web.env', 'etc/kavosh-one/backup.env', 'etc/kavosh-one/drive.json', 'etc/kavosh-one/twilio-credentials.json', 'etc/kavosh-one/r2-upload.json', 'etc/kavosh-one/r2-scan.json', 'etc/kavosh-one/r2-promote.json', 'etc/kavosh-one/r2-download.json', 'etc/kavosh-one-tls/server.crt', 'etc/caddy/kavosh-one.caddy', 'etc/kavosh-one-scanner/clamd.conf', 'etc/apparmor.d/local/usr.sbin.clamd','etc/apparmor.d/kavosh-one-parser',...units.map(name=>'etc/systemd/system/'+name),...['auth-delivery','file-inspection','file-promotion','file-verification','background-notifications','background-reports','background-messages','background-platform-notices'].map(name=>'etc/kavosh-one/'+name+'.env')])];
  for (const file of required) assert.ok(entries.includes(file));
- for (const name of entries) assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name));
+ assert.equal(new Set(entries).size,entries.length);
+ for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name));}
  const content = name => execFileSync('/usr/bin/tar', ['-xOf', plaintext, name], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1048576 });
  for (const name of required) {
   const bytes = content(name);

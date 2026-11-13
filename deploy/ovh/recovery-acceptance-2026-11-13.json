@@ -26,5 +26,6 @@
   "messagesSent": 0,
   "webServicesChangedByThisProof": false,
   "landingProcessAfterProof": 653511,
+  "settingsArchiveAcceptance": {"id":"c14f5135-b78f-4c65-a18e-1560970425f1","encryptedBytes":143592,"independentDriveDownloadVerified":true,"authenticatedOffServerDecryptionVerified":true,"requiredFilesChecked":35,"archiveEntriesChecked":66,"allCheckedInOneServicesAndTimersRequired":true,"currentWorkerEnvironmentFilesRequired":true,"parserAndScannerPoliciesRequired":true,"passwordFreeRoleExportVerified":true,"foreignAndTraversingArchivePathsRejected":true,"privateRecoveryKeyTransferredToVps":false,"configurationApplied":false,"temporaryProofFilesRemoved":true,"fullServerRebuildVerified":false},
   "limitations": ["Global roles were already present;their reconstruction is unverified","Sequence values are not covered by the snapshot comparison","Media recovery and full-server reconstruction remain unverified","Google authorization remains Testing","Owner-independent recovery-key escrow remains unverified","This is bounded explicit acceptance up to256MiB per database archive,not sustained production load testing or complete user-journey acceptance"]
 }

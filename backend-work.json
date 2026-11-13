@@ -1,4 +1,10 @@
 {
+  "currentSettingsArchiveCompletenessAcceptance": {
+    "fix": "The recovery verifier's old allowlist omitted the already-backed-up Kavosh parser policy and its short fixed required list omitted several current workers. Require every checked-in One service/timer plus current worker environment files and both parser/scanner policies. Reject duplicate,absolute,traversing and foreign landing paths. Independently bound downloaded ciphertext before private local writing;verify hash before age decryption. No configuration,role or secret was applied to the VPS.",
+    "logicChecks": "Five configuration checks passed,including missing parser policy,dormant signing unit,worker environment,foreign landing file,traversal,duplicates,password-bearing role export and corrupt ciphertext failures. Required-file/content checks never print credentials.",
+    "actualAcceptance": "Existing settings archivec14f5135-b78f-4c65-a18e-1560970425f1,143592encryptedbytes,was independently downloaded from real Drive and authenticated with the Mac Keychain recovery key. All35required files and66archive entries passed;password-free roles and landing exclusion verified. Temporary decrypted/encrypted files removed;recovery key not sent to VPS.",
+    "remaining": "This confirms archive completeness and off-server decryptability,not reconstruction of OS users,global database roles,service dependencies,media or a full server. No UI work performed."
+  },
   "liveOriginalSnapshotRestoreAcceptance": {
     "receipt": "deploy/ovh/recovery-acceptance-2026-11-13.json",
     "implemented": "On-demand --snapshot-proof reuses the existing backup runner,retains the local receipt before either immutable copy,and independently verifies database and encrypted companion. Ordinary nightly mode remains single-pass. Restore verifier downloads both independently from Drive,authenticates both off-server,and compares the quarantined native restore with the actual exported-snapshot baseline,not a later mutable production database. Existing bounded-memory SHA256 verifier is reused;old unbounded MD5 string aggregation removed.",
