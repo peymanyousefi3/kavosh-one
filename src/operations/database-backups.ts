@@ -9,7 +9,7 @@ import pg from 'pg';
 import { z } from 'zod';
 import { expectedSchemaRevision } from '../core/database.ts';
 import { isDeepStrictEqual } from 'node:util';
-import { backupVerification,databaseVerificationSnapshot } from './database-verification.ts';
+import { backupVerification,databaseVerificationSnapshot,clusterVerificationSnapshot } from './database-verification.ts';
 import {RecoveryError} from './recovery-error.ts';
 import {captureMediaReferencePlan} from './media-reference-plan.ts';
 import {privateDirectory,regularFile,nativeRecoveryIdentity} from './recovery-files.ts';
@@ -22,7 +22,7 @@ const common=z.object({
  age:path,workDirectory:path,timeoutMs:z.number().int().min(1000).max(3_600_000).default(900_000),
  maximumBytes:z.number().int().min(1_048_576).max(1_099_511_627_776).default(21_474_836_480)
 });
-const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false),mediaReferenceSnapshot:z.boolean().default(false)}).strict();
+const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false),mediaReferenceSnapshot:z.boolean().default(false),clusterVerification:z.boolean().default(false)}).strict();
 const restoreInput=common.extend({
  pgRestore:path,archive:path,identityFile:path,expectedSha256:z.string().regex(/^[a-f0-9]{64}$/),
  expectedRevision:z.number().int().min(expectedSchemaRevision).max(2147483647),confirmation:z.string().max(100),expectedVerification:backupVerification.optional()
@@ -104,7 +104,7 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
   passwordPath=join(folder,'connection.pgpass');await passwordFile(passwordPath,c.passwordEntry);passwordOwned=true;
   const timeout=AbortSignal.timeout(i.timeoutMs),signal=externalSignal?AbortSignal.any([timeout,externalSignal]):timeout,result=await encryptedDump(i,{...c.env,PGPASSFILE:passwordPath},state.snapshot,archive,signal);
   archiveOwned=true;await unlink(passwordPath);passwordOwned=false;
-  const verification=i.verificationSnapshot?{archiveSha256:result.sha256,snapshot:await databaseVerificationSnapshot(client,signal)}:null;
+  const verification=i.verificationSnapshot||i.clusterVerification?{archiveSha256:result.sha256,snapshot:await databaseVerificationSnapshot(client,signal),...i.clusterVerification?{cluster:await clusterVerificationSnapshot(client,signal)}:{}}:null;
   let mediaReferencePlan=null;
   if(i.mediaReferenceSnapshot){referencePath=join(folder,'media-references.jsonl');const plan=await open(referencePath,'wx',0o600);referenceOwned=true;try{mediaReferencePlan={filename:'media-references.jsonl' as const,...await captureMediaReferencePlan(client,plan,{databaseBackupId:id,archiveSha256:result.sha256,schemaRevision:state.revision},signal)};}finally{await plan.close();}}
   await client.query('COMMIT');
@@ -210,7 +210,7 @@ export async function restoreDatabaseBackup(raw:unknown,externalSignal?:AbortSig
    if(!isDeepStrictEqual(actual,i.expectedVerification.snapshot))throw new RecoveryError('RESTORED_SNAPSHOT_MISMATCH');
    await client.query('COMMIT');
   }
-  return {restored:true,verifiedSchemaRevision:revision,archiveSha256:i.expectedSha256,backupSnapshotVerified:!!i.expectedVerification,sequenceValuesVerified:false,applicationActivationAllowed:false,ordinaryClientConnectionsBlocked:true,requiresPrivacyAndOutboxReconciliation:true,rolesRestored:false,mediaRestored:false};
+  return {restored:true,verifiedSchemaRevision:revision,archiveSha256:i.expectedSha256,backupSnapshotVerified:!!i.expectedVerification,sequenceValuesVerified:false,applicationActivationAllowed:false,ordinaryClientConnectionsBlocked:true,requiresPrivacyAndOutboxReconciliation:true,rolesRestored:false,databaseAccessRestored:false,requiresIsolatedClusterForDatabaseAccessRecovery:true,mediaRestored:false};
  }catch(e){if(e instanceof RecoveryError)throw e;throw new RecoveryError('DATABASE_RESTORE_FAILED');}
  finally{
   await client?.end().catch(()=>{});

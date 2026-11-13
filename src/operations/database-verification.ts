@@ -6,7 +6,8 @@ const digest=z.string().regex(/^[a-f0-9]{64}$/),fingerprint=z.object({rows:z.num
 export const databaseVerification=z.object({format:z.literal('kavosh-database-verification-v1'),schemaRevision:z.number().int().positive(),
  tables:z.array(z.object({schema:z.string().min(1).max(63),name:z.string().min(1).max(63),fingerprint}).strict()).max(10000),
  relations:fingerprint,functions:fingerprint,policies:fingerprint,sequenceValuesCovered:z.literal(false),globalRolesCovered:z.literal(false)}).strict();
-export const backupVerification=z.object({archiveSha256:digest,snapshot:databaseVerification}).strict();
+const clusterVerification=z.object({databaseAccess:fingerprint,globalRoleProperties:fingerprint}).strict();
+export const backupVerification=z.object({archiveSha256:digest,snapshot:databaseVerification,cluster:clusterVerification.optional()}).strict();
 const namespaces="n.nspname!~'^pg_' AND n.nspname<>'information_schema'";
 const quote=(name:string)=>'"'+name.replaceAll('"','""')+'"';
 
@@ -28,6 +29,21 @@ export function fingerprintQuery(client:Pick<pg.Client,'query'>,sql:string,signa
   q.once('end',()=>failure||signal?.aborted?reject(failure??new Error('VERIFICATION_CANCELLED')):resolve({rows,sha256:hash.digest('hex')}));
   client.query(q);
  });
+}
+// Separate from table/RLS equality;never expose raw role or database settings.
+export function databaseAccessFingerprint(client:Pick<pg.Client,'query'>,signal?:AbortSignal){
+ return fingerprintQuery(client,`SELECT jsonb_build_object('name',d.datname,'owner',pg_get_userbyid(d.datdba),'encoding',pg_encoding_to_char(d.encoding),'collation',d.datcollate,'ctype',d.datctype,'provider',to_jsonb(d)->>'datlocprovider','locale',coalesce(to_jsonb(d)->>'datlocale',to_jsonb(d)->>'daticulocale'),'collationVersion',d.datcollversion,'connections',d.datconnlimit,'allowed',d.datallowconn,'template',d.datistemplate,'acl',(SELECT jsonb_agg(jsonb_build_array(pg_get_userbyid(a.grantor),a.grantee=0,CASE WHEN a.grantee=0 THEN NULL ELSE pg_get_userbyid(a.grantee) END,a.privilege_type,a.is_grantable) ORDER BY pg_get_userbyid(a.grantor) COLLATE "C",a.grantee=0,pg_get_userbyid(a.grantee) COLLATE "C",a.privilege_type COLLATE "C",a.is_grantable) FROM aclexplode(coalesce(d.datacl,acldefault('d',d.datdba))) a),'settings',(SELECT jsonb_agg(jsonb_build_object('allRoles',s.setrole=0,'role',CASE WHEN s.setrole=0 THEN NULL ELSE pg_get_userbyid(s.setrole) END,'values',(SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM unnest(s.setconfig) v)) ORDER BY s.setrole=0,pg_get_userbyid(s.setrole) COLLATE "C") FROM pg_db_role_setting s WHERE s.setdatabase=d.oid))::text value FROM pg_database d WHERE d.datname=current_database()`,signal);
+}
+export async function clusterVerificationSnapshot(client:pg.Client,signal?:AbortSignal,excludedBootstrap?:string){
+ if(signal?.aborted)throw new Error('VERIFICATION_CANCELLED');
+ const state=(await client.query<{isolation:string;read_only:string;unfiltered:boolean}>("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only,(SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user) unfiltered")).rows[0];
+ if(state?.isolation!=='repeatable read'||state.read_only!=='on'||state.unfiltered!==true)throw new Error('VERIFICATION_SNAPSHOT_REQUIRED');
+ return clusterVerification.parse({databaseAccess:await databaseAccessFingerprint(client,signal),globalRoleProperties:await globalRolePropertiesFingerprint(client,signal,excludedBootstrap)});
+}
+export function globalRolePropertiesFingerprint(client:Pick<pg.Client,'query'>,signal?:AbortSignal,excludedBootstrap?:string){
+ if(excludedBootstrap!==undefined&&(!/^kavosh_recovery_bootstrap_[a-f0-9]{16,32}$/.test(excludedBootstrap)||/[\x00-\x1f\x7f]/.test(excludedBootstrap)))throw new Error('INVALID_RECOVERY_BOOTSTRAP');
+ const exclude=excludedBootstrap?"'"+excludedBootstrap+"'":"NULL";
+ return fingerprintQuery(client,`SELECT value FROM(SELECT 'role' kind,r.rolname name,'' secondary,to_jsonb(t)::text value FROM pg_roles r CROSS JOIN LATERAL(SELECT r.rolname,r.rolsuper,r.rolinherit,r.rolcreaterole,r.rolcreatedb,r.rolcanlogin,r.rolreplication,r.rolbypassrls,r.rolconnlimit,r.rolvaliduntil AT TIME ZONE 'UTC' rolvaliduntil,(SELECT jsonb_agg(v ORDER BY v COLLATE "C") FROM unnest(r.rolconfig) v) configuration) t WHERE r.rolname IS DISTINCT FROM ${exclude} UNION ALL SELECT 'membership',r.rolname,m.rolname,to_jsonb(t)::text FROM pg_auth_members a JOIN pg_roles r ON r.oid=a.roleid JOIN pg_roles m ON m.oid=a.member JOIN pg_roles g ON g.oid=a.grantor CROSS JOIN LATERAL(SELECT r.rolname role,m.rolname member,g.rolname grantor,a.admin_option,a.inherit_option,a.set_option) t WHERE r.rolname IS DISTINCT FROM ${exclude} AND m.rolname IS DISTINCT FROM ${exclude}) records ORDER BY kind COLLATE "C",name COLLATE "C",secondary COLLATE "C",value COLLATE "C"`,signal);
 }
 
 // The caller MUST hold its original REPEATABLE READ transaction. Capture after

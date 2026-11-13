@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import pg from 'pg';
-import { fingerprintQuery,databaseVerificationSnapshot } from '../src/operations/database-verification.ts';
+import { fingerprintQuery,databaseVerificationSnapshot,backupVerification } from '../src/operations/database-verification.ts';
 import { operationsFixture } from './operations-fixture.ts';
 
 function rows(values:unknown[],error=false){return {query(q:pg.Query){for(const value of values)q.emit('row',{value});q.emit(error?'error':'end',error?new Error('PRIVATE_DATABASE_DIAGNOSTIC'):undefined);return q;}} as Pick<pg.Client,'query'>;}
+test('cluster proof is explicit and backward compatible;partial or extra proof fields are refused',()=>{
+ const fp={rows:0,sha256:'a'.repeat(64)},original={archiveSha256:'b'.repeat(64),snapshot:{format:'kavosh-database-verification-v1',schemaRevision:396,tables:[],relations:fp,functions:fp,policies:fp,sequenceValuesCovered:false,globalRolesCovered:false}};
+ assert.deepEqual(backupVerification.parse(original),original);
+ const cluster={databaseAccess:{...fp,rows:1},globalRoleProperties:fp};assert.deepEqual(backupVerification.parse({...original,cluster}),{...original,cluster});
+ for(const invalid of [{databaseAccess:fp},{...cluster,passwordsRestored:true},{...cluster,databaseAccess:{rows:1,sha256:'invalid'}}])assert.throws(()=>backupVerification.parse({...original,cluster:invalid}));
+});
 test('verification hashes framed rows without accumulating values and detects changed,missing,duplicate and ambiguously concatenated rows',async()=>{
  const reference=await fingerprintQuery(rows(['ab','c']),'synthetic');assert.equal(reference.rows,2);assert.match(reference.sha256,/^[a-f0-9]{64}$/);
  assert.deepEqual(await fingerprintQuery(rows(['ab','c']),'synthetic'),reference);
