@@ -1,0 +1,53 @@
+{
+  "date": "2026-11-13",
+  "scope": "Private agreement storage,restricted connection,disabled worker preactivation and independent encrypted settings recovery. Not signed-document backup coverage or full backend completion.",
+  "ownerApproved": {"privateStorage":true,"restrictedKeyAndVpsEncryptedBackup":true},
+  "bucket": {"name":"kavosh-one-production-agreements","publicAccess":"disabled","storageClass":"Standard","locationHint":"Eastern North America","existingBucketsChanged":false},
+  "credential": {"scope":"object read/write restricted to this bucket","accountAdminPermission":false,"vpsFile":"/etc/kavosh-one/signature-vault-production.json","owner":"root","mode":"0600","secretPrinted":false,"secretCommitted":false,"temporaryMacTransferFileRemoved":true},
+  "worker": {
+    "runtimeSource":"3a2e8bc729be1b5e9ac22cd8832f522f2ee51c04",
+    "schema":407,
+    "package":"/srv/kavosh-one/operations/signature-completion-v1",
+    "user":"kavosh-one-signature-completion","uid":975,"gid":969,
+    "databaseLogin":"kavosh_one_signature_completion","databaseConnectionLimit":2,
+    "enabled":false,"started":false,"existingAgreementsChanged":0,
+    "preactivationUnit":"kavosh-one-signature-acceptance-407.service",
+    "preactivationInvocation":"349844f08ffb46c38d8ffeb8779d3339",
+    "preactivationResult":"success",
+    "ownTlsLoginVerified":true,"identitySchemaDenied":true,"webSecretsUnreadable":true,"directJobReadDenied":true,"jobsClaimed":0,"providerRequests":0,
+    "packageVerification":{"rootOwned":true,"groupAndOtherWritesDenied":true,"internalDependencyLinks":554,"entriesChecked":25859}
+  },
+  "storageAcceptance": {
+    "unit":"kavosh-one-signature-vault-acceptance-20261113c.service",
+    "invocation":"d9bf2b91d03c401ba9cbb75d02d74bb5",
+    "result":"success","execMainStatus":0,
+    "storageTargetId":"c7f8e858b624bebc7b8ccf70e6f44b066a3de9fe0aa0037f1c768ecdfbaab61a",
+    "syntheticAcademyId":"22ecdcaf-d64d-4b75-a476-d15f7c037f02",
+    "sourceFingerprint":"f4427fb36b34c153ee0ced7c1e37b9bd8399b203784b512ae471418bf6873b09",
+    "artifacts":[
+      {"kind":"document","id":"95d50dd2-2fcd-8e48-be97-ebb8ffcfdc85","sha256":"849d12062b500260a81fe4eb8e29545a297440ecf31084ddf5b4a174be1ced14","bytes":59},
+      {"kind":"audit","id":"fd472721-1a79-8e04-ac45-e4ae0ac803de","sha256":"016a627adac677fe8e9ac9bb618f3443033c7b876d0ddcc3753d1b085a7530f0","bytes":61},
+      {"kind":"properties","id":"1860fe9f-af6e-8390-ab8b-d73f4611c992","sha256":"1fa997122f62057aef96a5a29fa040aaf31ec85d72504ec258f508ecf4f13544","bytes":37}
+    ],
+    "completeByteReadBackVerified":true,"sameSourceCreateOnceReplayVerified":true,"otherProductionBucketsDenied":2,"anonymousReadDenied":true,"syntheticArtifactsRetained":3,"existingObjectsChanged":0,"realPeopleUsed":false,"databaseRequests":0,"providerRequests":0,
+    "preflightCorrections":"First two attempts stopped before storage IO because the probe expected ordinary service-owned credentials. Actual metadata showed systemd root:root0440 credentials under root:root0550 per-service access controls;the final probe validates these exact read-only modes. No key replaced or permission weakened. Initial package containment check found missing workspace sources;copied the unchanged accepted release workers before the successful554-link containment check."
+  },
+  "settingsBackup": {
+    "producerInvocation":"143dfef02fa04d26a16514f9abef7ce6",
+    "backupId":"cac3d149-88e4-4e57-9ec0-f6b6d5ad5466",
+    "ciphertextSha256":"046390b5c949a5135feb6c40fce29d9bec44d44b618bb50ff81335bd58785f39",
+    "encryptedBytes":164072,"requiredFilesChecked":48,"archiveEntriesChecked":79,
+    "independentDriveDownloadVerified":true,"authenticatedOffServerDecryptionVerified":true,"agreementWorkerVaultBindingVerified":true,"databaseTlsKeyPairVerified":true,"configurationApplied":false,"privateRecoveryKeyTransferredToVps":false,
+    "sourceIncludes":"Original academy identity,BoldSign production connection,new private archive key,disabled completion environment and original authentication-rules backup. Exact archived worker/archive/provider/academy/database bindings verified without printing values.",
+    "signedDocumentBytesIncluded":false
+  },
+  "preservation": {
+    "webPid":739737,"landingPid":653511,"automaticRestartsObserved":0,"readiness":true,"dailyBackupTimersEnabled":true,
+    "caddyfileSha256":"10dda8a775670386aa48c264e78c4b04577a576855d29314143c3ed7eee33aad",
+    "oneCaddySha256":"320aa2ea533bdfcabe94b9137c048700dcdeaf2c49b1dedeef61a75b794a06bb",
+    "landingUnitSha256":"c7a8372cf2b09421221cee84272969067e5ece370338bf0375d9f6337a0668f5",
+    "landingDnsInboxAndExistingAgreementsChanged":false
+  },
+  "localChecks":{"passed":10,"failed":0,"skipped":0,"durationMs":231.838125,"scope":"Backup completeness,exact private signing bindings,TLS matching,corruption/path/secret guards and explicit operator execution refusal."},
+  "remaining":"Implement and verify signed-document/audit/properties byte backup and recovery before enabling unattended agreement completion. Ordinary media backups explicitly exclude signing evidence. No actual agreement downloaded,sent,modified or deleted;no admission,payroll,legal certification,UI or whole-backend completion."
+}
