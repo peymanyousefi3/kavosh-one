@@ -709,3 +709,6 @@ test('collector capacity documents date and direction without accepting client b
 test('operational health documents owner-only read access and same-VPS evidence without control or delivery claims',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path=api.paths['/api/platform/v1/operations/health'];assert.ok(path.get);assert.equal(path.post,undefined);assert.match(path.get.summary,/Verified MFA platform owner only/);assert.match(path.get.summary,/stale observations critical/);assert.match(path.get.summary,/not independent uptime/);assert.match(path.get.summary,/No credentials,service control/);
 });
+test('audit comparison is a separate read route with recorded-only evidence and explicit completeness limits',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path=api.paths['/api/v1/audit-events/{id}/diff'];assert.ok(path.get);assert.equal(path.post,undefined);assert.equal(path.get.requestBody,undefined);assert.match(path.get.summary,/already-authorized redacted/);assert.match(path.get.summary,/not_recorded/);assert.match(path.get.summary,/limit_exceeded/);assert.match(path.get.summary,/No current-record lookup/);
+});

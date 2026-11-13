@@ -9,6 +9,7 @@ import { videoRangeSchema,isVideoReadPath,type VideoRange } from '../files/video
 import { reportSpreadsheet,spreadsheetMime } from '../reports/spreadsheet.ts';
 import { profileQrReplySchema,profileQrTarget,profileQrFilename,renderProfileQr } from '../profiles/qr.ts';
 import { profileShareId } from '../profiles/share-id.ts';
+import {auditDiff} from './audit-diff.ts';
 
 const id = z.string().uuid().transform(s => s.toLowerCase());
 const name = z.string().trim().min(1).max(200);
@@ -25,7 +26,8 @@ export interface ApiContext { db:Connection; credential:Credential; grants:Grant
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'},
  {path:'/api/v1/audit-events',method:'get',querySchema:auditQuery,summary:'Current audit.view school/hub intersection before exact actor,entity,request,action,actor-kind and inclusive offset timestamp filters and UUID cursor pagination. Explicit area/hub denials exclude global events. Immutable redacted change metadata only;no credential/session IDs,automatic diff,private-source reveal or additional authority. Timestamp precision at most6fractional digits.'},
- {path:'/api/v1/audit-events/{id}',method:'get',summary:'Read one exact retained change-history event under the same current audit scope,tenant isolation,explicit denials and private approval-reason redaction as its directory. Unknown or out-of-scope events return404.'}] as const;
+ {path:'/api/v1/audit-events/{id}',method:'get',summary:'Read one exact retained change-history event under the same current audit scope,tenant isolation,explicit denials and private approval-reason redaction as its directory. Unknown or out-of-scope events return404.'},
+ {path:'/api/v1/audit-events/{id}/diff',method:'get',summary:'Bounded field-by-field comparison of this already-authorized redacted event before/after snapshots only. Missing snapshots are not_recorded;over100fields/64KiB/depth12 is limit_exceeded,never a partial complete diff. Arrays are atomic;presence distinguishes missing from null. No current-record lookup or additional private source access.'}] as const;
 
 export async function jsonBody(request: Request,maximumBytes=16_384) {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) throw new ApiError(415, 'JSON_REQUIRED');
@@ -126,7 +128,7 @@ function permit(scope: Scope) {
 async function operation(db: Connection, c: Credential, grants: Grant[], request: Request, path: string, requestId: string): Promise<Reply> {
   const url = new URL(request.url);
   const isRead = request.method === 'GET';
-  const personPath=/^people\/([^/]+)$/.exec(path),personId=personPath&&isRead?id.parse(personPath[1]):null,auditPath=/^audit-events(?:\/([^/]+))?$/.exec(path),auditId=auditPath?.[1]&&isRead?id.parse(auditPath[1]):null;
+  const personPath=/^people\/([^/]+)$/.exec(path),personId=personPath&&isRead?id.parse(personPath[1]):null,auditPath=/^audit-events(?:\/([^/]+)(\/diff)?)?$/.exec(path),auditId=auditPath?.[1]&&isRead?id.parse(auditPath[1]):null;
   let capability: Capability;
   if (path === 'hubs') capability = isRead ? 'hubs.view' : 'hubs.edit';
   else if (path === 'people'||personId) capability = isRead ? 'people.view' : 'people.edit';
@@ -151,7 +153,7 @@ async function operation(db: Connection, c: Credential, grants: Grant[], request
       AND($5::uuid IS NULL OR id=$5) AND($6::uuid IS NULL OR id>$6) AND($7::uuid IS NULL OR actor_id=$7) AND($8::uuid IS NULL OR entity_id=$8) AND($9::uuid IS NULL OR request_id=$9)
       AND($10::text IS NULL OR action=$10) AND($11::text IS NULL OR actor_kind=$11) AND($12::timestamptz IS NULL OR created_at>=$12) AND($13::timestamptz IS NULL OR created_at<=$13) ORDER BY id LIMIT $14`,
       [scope.all&&!scope.excludedHubs?.length&&!scope.excludedAreas?.length,scope.all,scope.hubs,scope.excludedHubs??[],auditId,q.after??null,q.actorId??null,q.entityId??null,q.requestId??null,q.action??null,q.actorKind??null,q.from??null,q.through??null,q.limit+1])).rows;
-    if(auditId){if(!rows.length)throw new ApiError(404,'NOT_FOUND');return {status:200,body:{data:rows[0]}};}
+    if(auditId){if(!rows.length)throw new ApiError(404,'NOT_FOUND');const event=rows[0];return {status:200,body:{data:auditPath[2]?{eventId:event.id,entityId:event.entity_id,action:event.action,...auditDiff(event.changes)}:event}};}
     return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
   }
   if (isRead) {
