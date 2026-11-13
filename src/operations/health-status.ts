@@ -16,7 +16,8 @@ export function operationalHealthStatus(raw:unknown,now=Date.now()){
 }
 export async function readOperationalHealthStatus(directory='/run/kavosh-one-health',now=Date.now()){
  const before=await lstat(directory);
- if(!before.isDirectory()||before.isSymbolicLink()||(before.mode&0o777)!==0o750||await realpath(directory)!==resolve(directory))throw new Error('UNSAFE_HEALTH_DIRECTORY');
+ // Host-generated /run metadata is read at runtime,not a bundled project asset.
+ if(!before.isDirectory()||before.isSymbolicLink()||(before.mode&0o777)!==0o750||await realpath(/* turbopackIgnore: true */ directory)!==resolve(/* turbopackIgnore: true */ directory))throw new Error('UNSAFE_HEALTH_DIRECTORY');
  const path=directory+'/status.json',metadata=await lstat(path);
  if(!metadata.isFile()||metadata.isSymbolicLink()||metadata.nlink!==1||metadata.uid!==before.uid||(metadata.mode&0o777)!==0o640||metadata.size>16384)throw new Error('UNSAFE_HEALTH_FILE');
  const file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);

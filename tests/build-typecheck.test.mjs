@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
+test('host-only health metadata paths are runtime reads,not whole-project build tracing',()=>{
+ const source=readFileSync(new URL('../src/operations/health-status.ts',import.meta.url),'utf8');
+ for(const call of ['realpath','resolve'])assert.ok(source.includes(call+'(/* turbopackIgnore: true */ directory)'));
+ assert.ok(source.includes("directory='/run/kavosh-one-health'"));assert.ok(source.includes("throw new Error('UNSAFE_HEALTH_DIRECTORY')"));
+});
 test('production build keeps strict checking of every runtime source while CI still checks all tests and operator scripts',()=>{
  const root=new URL('../',import.meta.url),config=name=>JSON.parse(execFileSync(process.execPath,['node_modules/typescript/bin/tsc','--showConfig','--project',name],{cwd:root,encoding:'utf8',maxBuffer:2097152,timeout:15000})),full=config('tsconfig.json'),build=config('tsconfig.build.json'),runtime=full.files.filter(f=>/^\.\/(?:app|src)\//.test(f));
  assert.ok(runtime.length>200);for(const file of runtime)assert.ok(build.files.includes(file),'Missing runtime typecheck: '+file);
