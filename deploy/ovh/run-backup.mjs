@@ -19,7 +19,7 @@ function command(args, additional = {}) {
  catch { throw new Error('BACKUP_OPERATOR_FAILED'); }
 }
 try {
- const args=process.argv.slice(2),clusterProof=args.length===1&&args[0]==='--cluster-proof',includeMedia=args.length===1&&args[0]==='--media-backup',mediaPlan=clusterProof||includeMedia||args.length===1&&args[0]==='--media-reference-plan',proof=mediaPlan||args.length===1&&args[0]==='--snapshot-proof';
+ const args=process.argv.slice(2),includeMedia=args.length===1&&args[0]==='--media-backup',clusterProof=includeMedia||args.length===1&&args[0]==='--cluster-proof',mediaPlan=clusterProof||args.length===1&&args[0]==='--media-reference-plan',proof=mediaPlan||args.length===1&&args[0]==='--snapshot-proof';
  if(args.length&&!proof)throw new Error('INVALID_BACKUP_ARGUMENTS');
  if(cli!=='/srv/kavosh-one/current/.recovery-tool/scripts/database-recovery.js'&&!/^\/srv\/kavosh-one\/operations\/recovery-[a-f0-9]{7,40}\/scripts\/database-recovery\.js$/.test(cli))throw new Error('INVALID_BACKUP_OPERATOR');
  if (process.env.DATABASE_URL || process.env.AUTH_SECRET || process.env.MIGRATION_DATABASE_URL) throw new Error('SHARED_WEB_CREDENTIALS_REFUSED');

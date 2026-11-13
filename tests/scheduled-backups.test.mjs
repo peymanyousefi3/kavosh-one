@@ -5,12 +5,12 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 const source = readFileSync(new URL('../deploy/ovh/run-backup.mjs', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
 function run({ failLocal = false, failOffsite = false, lowDisk = false, invalidReceipt = false, sharedWebEnvironment = false,proof=false,mediaPlan=false,clusterProof=false,invalidCluster=false,includeMedia=false,failBatch=false,invalidBatch=false,failPlanCopy=false,invalidPlan=false,cli,failProofCopy=false,invalidProof=false,args,failHistoryWrite=false,failLatestWrite=false } = {}) {
- mediaPlan=mediaPlan||includeMedia||clusterProof;
+ const explicitClusterProof=clusterProof;clusterProof=clusterProof||includeMedia;mediaPlan=mediaPlan||includeMedia||clusterProof;
  proof=proof||mediaPlan;
  const directory = '/var/lib/kavosh-one-backups', id = '95da438f-a532-4a86-84af-b9507a1318d3';
  const backup = { id, ciphertextSha256: 'a'.repeat(64), encryptedBytes: 7117143, completeDatabase: true, schemaRevision: 388, archivePath: join(directory, 'backup-' + id, 'database.dump.age'),...(proof?{verification:{archiveSha256:invalidProof?'b'.repeat(64):'a'.repeat(64),snapshot:{schemaRevision:388}},verificationArchive:{filename:'verification.json.age',ciphertextSha256:'c'.repeat(64),encryptedBytes:1234}}:{}),...(mediaPlan?{mediaReferencePlan:{filename:'media-references.jsonl',databaseBackupId:invalidPlan?'wrong':id,archiveSha256:'a'.repeat(64),schemaRevision:388,signedEvidenceIncluded:false,scope:'recorded_ordinary_file_objects'},mediaReferenceArchive:{filename:'media-references.jsonl.age',ciphertextSha256:'d'.repeat(64),encryptedBytes:2345}}:{}) };
  if(clusterProof&&!invalidCluster)backup.verification.cluster={databaseAccess:{rows:1,sha256:'e'.repeat(64)},globalRoleProperties:{rows:30,sha256:'f'.repeat(64)}};
- if(clusterProof)args??=['--cluster-proof'];
+ if(explicitClusterProof)args??=['--cluster-proof'];
  const files = new Map([[join(directory, 'latest.json'), 'original-good-receipt']]), logs = [], calls = [];
  const context = { Buffer, JSON, Date, Number, Error, join, randomUUID: () => 'new-status', process: {argv:['node','script',...args??(includeMedia?['--media-backup']:mediaPlan?['--media-reference-plan']:proof?['--snapshot-proof']:[])], env: { NODE_ENV: 'production', CREDENTIALS_DIRECTORY: '/run/credentials/backup',...(cli?{KAVOSH_BACKUP_OPERATOR_CLI:cli}:{}), ...(sharedWebEnvironment ? { AUTH_SECRET: 'private-synthetic-auth' } : {}) } },
   console: { log: x => logs.push(x), error: x => logs.push(x) }, statfsSync: () => ({ bavail: lowDisk ? 1n : 3000000000n, bsize: 1n }),
@@ -25,6 +25,8 @@ test('explicit cluster proof captures role/access baselines with all three copie
  const failed=run({clusterProof:true,invalidCluster:true});assert.equal(failed.context.process.exitCode,1);assert.equal(failed.latest,'original-good-receipt');assert.equal(failed.calls.length,1);
 });
 test('full-media mode binds the exact database proof,requires verified batch delivery and retains earlier successful archives on failure',()=>{
+ const baseline=run({includeMedia:true});assert.equal(baseline.calls[0].args[1],'backup-cluster-proof');assert.equal(JSON.parse(baseline.latest).localBackup.verification.cluster.databaseAccess.rows,1);
+ const missing=run({includeMedia:true,invalidCluster:true});assert.equal(missing.context.process.exitCode,1);assert.equal(missing.latest,'original-good-receipt');assert.equal(missing.calls.length,1);
  const good=run({includeMedia:true}),receipt=JSON.parse(good.latest);assert.equal(good.context.process.exitCode,undefined);assert.equal(good.calls.length,5);assert.equal(good.calls[4].args[1],'backup-media-batch');assert.equal(good.calls[4].options.timeout,21600000);const source=JSON.parse(good.calls[4].options.env.MEDIA_REFERENCE_PLAN_JSON);assert.equal(source.databaseBackupId,receipt.localBackup.id);assert.ok(source.file.endsWith('/media-references.jsonl'));assert.equal(receipt.ordinaryMediaOffsiteVerified,true);assert.equal(JSON.parse(good.logs[0]).signedEvidenceIncluded,false);
  for(const options of [{failBatch:true},{invalidBatch:true}]){const failed=run({includeMedia:true,...options}),retained=JSON.parse(failed.latest);assert.equal(failed.context.process.exitCode,1);assert.equal(retained.snapshotBaselineOffsiteVerified,true);assert.equal(retained.mediaReferencePlanOffsiteVerified,true);assert.equal(retained.ordinaryMediaOffsiteVerified,false);assert.equal(retained.mediaBatch,null);assert.equal(retained.offsiteFailure,'BACKUP_OR_OFFSITE_VERIFICATION_FAILED');assert.ok(!failed.logs.join('').includes('private media failure'));}
 });
