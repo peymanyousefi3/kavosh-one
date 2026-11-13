@@ -8,7 +8,7 @@ import { platformContract } from '../src/platform/api.ts';
 import { profileShareId } from '../src/profiles/share-id.ts';
 const file=new URL('../public/openapi.json',import.meta.url);
 const api=JSON.parse(await readFile(file,'utf8'));
-api.info.version='0.435.0';
+api.info.version='0.436.0';
 for(const path of Object.keys(api.paths))if(path.startsWith('/api/media/'))delete api.paths[path];
 api.paths['/api/public/v1/profiles/{id}']={get:{security:[],summary:'Default-off reviewed school/hub and consented student/worker profile JSON. Accepts canonical UUID or22character canonical short sharing ID with the SAME consent,identity and keyed budget gates. Short IDs are not access credentials. Native current-publication,pinned consent,owner,moderation and draft-version gates;no private legal/family/student records,media or HTML rendering. Trusted proxy and keyed per-IP budget required;no-store,not a visual profile page.',parameters:[{name:'id',in:'path',required:true,schema:z.toJSONSchema(profileShareId,{io:'input'})}],responses:{'200':{description:'Reviewed organization or consented student/worker profile,plain text localized content and canonical links only'},'404':{description:'Disabled,unknown,withdrawn or no longer currently published'},'429':{description:'Public read budget exhausted'},'503':{description:'Configuration or isolated reader unavailable'}}}};
 api.paths['/api/public/v1/profiles/{id}/achievements']={get:{security:[],summary:'Default-off anonymous academic detail for one exact public student profile,never a student directory. Same current consent,visibility,moderation,identity,proxy and keyed budget checks as its profile;additionally requires separate exact human-reviewed academic release and current awarded revisions. Canonical/short public handles only,no private award IDs,grades,consent artifacts,reasons,media or certificate PDF generation. Academy content pinned;every retry rechecked,no-store.',parameters:api.paths['/api/public/v1/profiles/{id}'].get.parameters,responses:{'200':{description:'Current approved public academic profile and separately selected school-issued achievements'},'404':{description:'Disabled,nonpublic,unreviewed,withdrawn or stale'},'429':{description:'Shared persistent public-profile budget exhausted'},'503':{description:'Unsafe configuration,source projection or isolated reader unavailable'}}}};
@@ -70,7 +70,9 @@ api.paths['/api/webhooks/stripe/{connectionId}']={post:{security:[],summary:'Rec
 api.paths=Object.fromEntries(Object.keys(api.paths).sort().map(path=>[path,api.paths[path]]));
 for(const endpoint of platformContract){
  const parameters:Record<string,unknown>[]=[];
- for(const [,name] of endpoint.path.matchAll(/\{([^}]+)\}/g))parameters.push({name,in:'path',required:true,schema:{type:'string',format:'uuid'}});
+ const pathSchemas='pathSchemas'in endpoint?endpoint.pathSchemas as Record<string,z.ZodType>:{};
+ for(const [,name] of endpoint.path.matchAll(/\{([^}]+)\}/g))parameters.push({name,in:'path',required:true,schema:pathSchemas[name]?z.toJSONSchema(pathSchemas[name],{io:'input'}):{type:'string',format:'uuid'}});
+ if('accessPurposeRequired'in endpoint&&endpoint.accessPurposeRequired)parameters.push({name:'X-Access-Purpose',in:'header',required:true,schema:{type:'string',minLength:1,maxLength:500},description:'Operational access reason;do not include health,credential or payment details.'});
  if(endpoint.method==='post')parameters.push({$ref:'#/components/parameters/idempotency'},{name:'Origin',in:'header',required:true,schema:{type:'string',format:'uri'}});
  if('querySchema' in endpoint){const query=z.toJSONSchema(endpoint.querySchema,{io:'input'});for(const [name,schema] of Object.entries(query.properties??{}))parameters.push({name,in:'query',schema});}
  api.paths[endpoint.path]??={};api.paths[endpoint.path][endpoint.method]={summary:endpoint.summary,security:[{humanSession:[]}],parameters,

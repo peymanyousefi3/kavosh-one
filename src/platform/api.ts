@@ -9,6 +9,8 @@ const id=z.string().uuid().transform(v=>v.toLowerCase()),name=z.string().trim().
 const provision=z.object({name,masterName:name,masterEmail:z.string().email().max(254).transform(v=>v.toLowerCase()),reason}).strict();
 const change=z.object({expectedVersion:z.number().int().positive().max(2147483647),name:name.optional(),status:z.enum(['provisioning','active','read_only','suspended']).optional(),reason}).strict().refine(v=>v.name!==undefined||v.status!==undefined);
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),after:id.optional()}).strict();
+const directoryCollection=z.enum(['hubs','people','courses','classes','students']);
+const accessPurpose=z.string().trim().min(1).max(500).refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v));
 const invitation=z.object({expectedVersion:z.number().int().positive().max(2147483647),reason}).strict();
 const revokeInvitation=invitation.extend({invitationRequestKey:id}).strict();
 const planDefinition=z.object({name,description:z.string().max(2000),currencyCode:z.string().regex(/^[A-Z]{3}$/),unitScale:z.number().int().min(0).max(18),amountMinor:z.string().regex(/^(0|[1-9][0-9]{0,37})$/),periodMonths:z.number().int().min(1).max(36),graceDays:z.number().int().min(0).max(365),active:z.boolean()}).strict();
@@ -30,6 +32,7 @@ const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/records/{collection}',method:'get',pathSchemas:{collection:directoryCollection},accessPurposeRequired:true,querySchema:paging,summary:'Verified MFA platform owner inspects one exact school directory: hubs,people,courses,classes or students. Required X-Access-Purpose is privately audited;bounded keyset pages,explicit school predicates and RLS. Fixed projections exclude identity secrets,care vaults and financial records;not complete business browsing. No master impersonation,new membership,permission change or external action.'},
  {path:'/api/platform/v1/operations/health',method:'get',summary:'Verified MFA platform owner only: bounded read-only operational health,with stale observations critical. Same-VPS evidence,not independent uptime or delivered external alerts. No credentials,service control or school business data.'},
  {path:'/api/platform/v1/academies/{id}/retention',method:'get',summary:'Verified platform-owner-only current school preservation status,active legal-hold count and live database deletion/bulk-clearing guard coverage with explicit operational exceptions. Missing or disabled guards remain visible. Identity and external storage are outside this coverage;no deletion authorization or statutory retention certification.'},
  {path:'/api/platform/v1/academies/{id}/legal-holds',method:'get',summary:'Verified owner-only bounded immutable academy-wide legal-hold and release history;no school subscription or access change',querySchema:paging},
@@ -92,9 +95,13 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const cancellationTarget=/^academies\/([a-f0-9-]{36})\/subscription\/cancellations(?:\/([a-f0-9-]{36})(?:\/(withdraw|confirm))?)?$/.exec(path);
    const noticeTarget=/^notifications\/([a-f0-9-]{36})\/read$/.exec(path);
    const holdTarget=/^academies\/([a-f0-9-]{36})\/(retention|legal-holds)(?:\/([a-f0-9-]{36})(\/release)?)?$/.exec(path);
+   const directoryTarget=/^academies\/([a-f0-9-]{36})\/records\/([^/]+)$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(path==='operations/health'){
+   if(directoryTarget){
+    if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
+    input={...paging.parse(Object.fromEntries(pairs)),academyId:id.parse(directoryTarget[1]),collection:directoryCollection.parse(directoryTarget[2]),purpose:accessPurpose.parse(request.headers.get('x-access-purpose'))};operation='academies.directory';
+   }else if(path==='operations/health'){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={};operation='operations.health';
    }else if(holdTarget){
     const academyId=id.parse(holdTarget[1]),holdId=holdTarget[3]?id.parse(holdTarget[3]):undefined;if(holdTarget[2]==='retention'){

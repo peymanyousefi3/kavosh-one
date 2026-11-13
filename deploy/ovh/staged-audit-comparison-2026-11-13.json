@@ -1,0 +1,60 @@
+{
+  "status": "staged_checks_passed_not_activated",
+  "runtimeSourceCommit": "ed0fb97b2b6fc4e060868ebbd9accc7246b1f0b1",
+  "sourceArchiveSha256": "3f599cee4b7e102a1d7cf05c82c1e829d58b8e9bd7ef079d5cfeed5401c202d2",
+  "stagedRelease": "/srv/kavosh-one/releases/ed0fb97",
+  "schemaRevision": 397,
+  "apiVersion": "0.435.0",
+  "packagedContractSha256": "5690bc794d770add6cb9e3f203c4ff6e8d8d2a065d4a898b600bed76b839490b",
+  "build": {
+    "unit": "kavosh-one-build-ed0fb97.service",
+    "account": "kavosh-one-build",
+    "privateNetwork": true,
+    "productionCredentialPathsInaccessible": true,
+    "dependencyLockMatchedPreviousStagedRelease": true,
+    "copiedBuildCacheFromCredentialFreeStagingOnly": true,
+    "memoryLimitBytes": 2147483648,
+    "cpuQuotaPercent": 75,
+    "reportedPeakMemory": "1.3G",
+    "wallSeconds": 89.592,
+    "cpuSeconds": 67.193,
+    "exitStatus": 0,
+    "completed": ["strict_next_standalone", "auth", "background", "files", "signatures", "database_recovery", "operational_health"]
+  },
+  "packagedChecks": {
+    "unit": "kavosh-one-smoke-ed0fb97.service",
+    "rootOwnedReadOnlyPackage": true,
+    "privateNetwork": true,
+    "productionCredentials": false,
+    "hostPortOpened": false,
+    "httpAuthorizationHeadersAndContract": "passed",
+    "spreadsheetRuntime": "passed",
+    "spreadsheetBytes": 2837,
+    "wallSeconds": 19.468,
+    "cpuSeconds": 9.753,
+    "reportedPeakMemory": "201.1M",
+    "exitStatus": 0
+  },
+  "reusedNativeAuthorizationProof": {
+    "receipt": "deploy/ovh/staged-owner-health-2026-11-13.json",
+    "sourceDiffAgainstDd3748bEmptyFor": ["src/platform/api.ts", "src/operations/health-status.ts", "tests/platform-health.test.ts", "db/migrations/397_platform_operational_health.sql"]
+  },
+  "nativeAuditRegression": {
+    "githubRun": 43413840737,
+    "job": 131846680104,
+    "jobConclusion": "success",
+    "observedPassingCases": [
+      {"number": 176, "name": "audit field comparison preserves missing versus null,atomic arrays,object key order and bounded complete results"},
+      {"number": 177, "name": "real bot rename produces an authorized field comparison without private reasons and retains hub/school/revocation gates"},
+      {"number": 182, "name": "audit exact detail and directory retain legacy private approval reason redaction without rewriting history"}
+    ],
+    "redundantVpsNativeAuditTestStarted": false,
+    "wholeRunConclusionClaimed": false
+  },
+  "preservation": {"liveWebMainPid": 653820, "productionSchemaChanged": false, "productionReleaseSwitched": false},
+  "limitations": [
+    "The later schema398/API0.436 directory source is not part of this staged artifact.",
+    "No live owner session,external message or full user journey is certified.",
+    "Only the specific hosted audit job is certified here,not the whole still-running release workflow."
+  ]
+}

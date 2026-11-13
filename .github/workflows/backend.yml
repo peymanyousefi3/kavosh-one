@@ -266,7 +266,7 @@ jobs:
         run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
       - name: Native owner-health access and immutable audit
         if: matrix.group == 1
-        run: node --import tsx --test tests/platform-health.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/platform-health.test.ts tests/platform-directories.test.ts
   learning:
     runs-on: ubuntu-latest
     timeout-minutes: 30
