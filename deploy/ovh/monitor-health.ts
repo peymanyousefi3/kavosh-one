@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {constants} from 'node:fs';
-import {open,rename,realpath,statfs,unlink} from 'node:fs/promises';
+import {lstat,open,rename,realpath,statfs,unlink} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {privateDirectory,regularFile} from '../../src/operations/recovery-files.ts';
 import {evaluateOperationalHealth,healthObservation,systemdExitTime} from '../../src/operations/operational-health.ts';
@@ -22,6 +22,11 @@ try{
  const timer=(name:string)=>{const active=properties.get(name)?.ActiveState;return active&&active!=='unknown'?active==='active':null;};
  const disk=await statfs('/var/lib/kavosh-one-backups',{bigint:true}),result=evaluateOperationalHealth({observedAt:new Date().toISOString(),ready,freeBackupDiskBytes:String(disk.bavail*disk.bsize),web,backup,configuration,backupTimerActive:timer('kavosh-one-backup.timer'),configurationTimerActive:timer('kavosh-one-config-backup.timer')});
  temporary=current+'.'+randomUUID()+'.next';const out=await open(temporary,'wx',0o600);try{await out.writeFile(JSON.stringify(result)+'\n');await out.sync();}finally{await out.close();}await rename(temporary,current);temporary=undefined;
+ // Only this credential-free fixed-schema observation is shared with the web
+ // identity. Its group cannot write here or enter the private history directory.
+ const shared='/run/kavosh-one-health',sharedStat=await lstat(shared);
+ if(process.env.RUNTIME_DIRECTORY!==shared||await realpath(shared)!==shared||!sharedStat.isDirectory()||sharedStat.isSymbolicLink()||sharedStat.uid!==process.getuid?.()||(sharedStat.mode&0o777)!==0o750)throw new Error('INVALID_SHARED_HEALTH_DIRECTORY');
+ const published=shared+'/status.json';temporary=published+'.'+randomUUID()+'.next';const metadata=await open(temporary,'wx',0o600);try{await metadata.writeFile(JSON.stringify(result)+'\n');await metadata.chmod(0o640);await metadata.sync();}finally{await metadata.close();}await rename(temporary,published);temporary=undefined;
  console.log(JSON.stringify({observedAt:result.observedAt,status:result.status,issues:result.issues,managerFailure,readinessVerified:ready,independentUptimeVerified:false,externalMessagesSent:0}));
  if(result.status==='critical')process.exitCode=1;
 }catch{console.error('KAVOSH_ONE_HEALTH_MONITOR_FAILED: inspect private status; no credentials or diagnostic bodies were logged.');process.exitCode=1;}

@@ -9,6 +9,9 @@ User=kavosh-one-monitor
 Group=kavosh-one-monitor
 StateDirectory=kavosh-one-health
 StateDirectoryMode=0700
+RuntimeDirectory=kavosh-one-health
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node /srv/kavosh-one/operations/health-monitor/deploy/ovh/monitor-health.js
 TimeoutStartSec=30s

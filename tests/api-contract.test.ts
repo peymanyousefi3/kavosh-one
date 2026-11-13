@@ -706,3 +706,6 @@ test('collector capacity documents date and direction without accepting client b
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/collectors/{id}/remittance-capacity',q=api.paths[path].get.parameters;
  for(const name of ['holdingAccountId','on','direction'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['amount','available','approved','sourceStamp','activity'])assert.ok(!q.some((p:any)=>p.name===name));assert.deepEqual(q.find((p:any)=>p.name==='direction').schema.enum,['to_academy','to_collector']);assert.match(api.paths['/api/v1/finance/collectors/{id}/remittances'].post.summary,/full dated-timeline capacity/);
 });
+test('operational health documents owner-only read access and same-VPS evidence without control or delivery claims',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path=api.paths['/api/platform/v1/operations/health'];assert.ok(path.get);assert.equal(path.post,undefined);assert.match(path.get.summary,/Verified MFA platform owner only/);assert.match(path.get.summary,/stale observations critical/);assert.match(path.get.summary,/not independent uptime/);assert.match(path.get.summary,/No credentials,service control/);
+});

@@ -1,0 +1,41 @@
+{
+  "sourceRevision": "6bc13ef",
+  "liveMonitor": {
+    "observedAt": "2026-11-13T10:48:09.041Z",
+    "status": "healthy",
+    "issues": [],
+    "timerEnabled": true,
+    "schedule": "each minute UTC, up to five seconds jitter",
+    "identity": "dedicated locked non-login kavosh-one-monitor",
+    "capabilityBoundingSet": [],
+    "ambientCapabilities": [],
+    "noNewPrivileges": true,
+    "credentialEnvironmentFiles": [],
+    "privateStateDirectoryMode": "0700",
+    "privateStateFileMode": "0600",
+    "observationVantage": "same-vps",
+    "independentUptimeVerified": false,
+    "externalMessagesSent": 0
+  },
+  "settingsRecovery": {
+    "backupId": "29fa0dc6-c6a2-4fa7-b97a-a6a4e0f1a3a6",
+    "encryptedBytes": 153832,
+    "ciphertextSha256": "f2508b11ee9ce95ee6fc042f43182b08bc89a5293edbc25126ba330a59d22125",
+    "independentDriveDownloadVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "requiredFilesChecked": 40,
+    "archiveEntriesChecked": 72,
+    "passwordFreeRolesVerified": true,
+    "mediaBackupOperator": "/srv/kavosh-one/operations/recovery-6347e76/scripts/database-recovery.js",
+    "landingPageExcluded": true,
+    "privateRecoveryKeyTransferredToVps": false,
+    "configurationApplied": false,
+    "fullServerRebuildVerified": false
+  },
+  "preservation": {"webMainPid": 653820, "landingHttpsStatus": 200},
+  "limitations": [
+    "This acceptance covers the existing standalone monitor, not the new owner API or shared metadata runtime publication.",
+    "The owner API and its schema397 audit branch are source-tested, not deployed by this receipt.",
+    "No central incident delivery, independent external uptime certification or full-host rebuild is claimed."
+  ]
+}

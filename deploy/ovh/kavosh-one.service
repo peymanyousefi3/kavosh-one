@@ -9,6 +9,7 @@ StartLimitBurst=5
 Type=simple
 User=kavosh-one
 Group=kavosh-one
+SupplementaryGroups=kavosh-one-monitor
 WorkingDirectory=/srv/kavosh-one/current/.next/standalone
 EnvironmentFile=/etc/kavosh-one/web.env
 ExecStart=/usr/bin/node server.js

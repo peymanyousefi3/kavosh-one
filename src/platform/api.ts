@@ -3,6 +3,7 @@ import { createHmac } from 'node:crypto';
 import { jsonBody } from '../core/api.ts';
 import { assertSchemaReady,type Connection,type Database } from '../core/database.ts';
 import { ApiError } from '../core/policy.ts';
+import {operationalHealthStatus} from '../operations/health-status.ts';
 
 const id=z.string().uuid().transform(v=>v.toLowerCase()),name=z.string().trim().min(1).max(200),reason=z.string().trim().min(1).max(2000);
 const provision=z.object({name,masterName:name,masterEmail:z.string().email().max(254).transform(v=>v.toLowerCase()),reason}).strict();
@@ -29,6 +30,7 @@ const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/operations/health',method:'get',summary:'Verified MFA platform owner only: bounded read-only operational health,with stale observations critical. Same-VPS evidence,not independent uptime or delivered external alerts. No credentials,service control or school business data.'},
  {path:'/api/platform/v1/academies/{id}/retention',method:'get',summary:'Verified platform-owner-only current school preservation status,active legal-hold count and live database deletion/bulk-clearing guard coverage with explicit operational exceptions. Missing or disabled guards remain visible. Identity and external storage are outside this coverage;no deletion authorization or statutory retention certification.'},
  {path:'/api/platform/v1/academies/{id}/legal-holds',method:'get',summary:'Verified owner-only bounded immutable academy-wide legal-hold and release history;no school subscription or access change',querySchema:paging},
  {path:'/api/platform/v1/academies/{id}/legal-holds',method:'post',summary:'Verified MFA owner records an academy-wide preservation hold with private case reference and reason,immutable audit and exact retries. No automatic expiry,deletion or external storage certification.',schema:legalHoldCreate},
@@ -75,7 +77,7 @@ export async function assertPlatformRole(db:Connection){
  if(result.rows[0]?.safe!==true)throw new Error('UNSAFE_PLATFORM_DATABASE_ROLE');
 }
 
-export function createPlatformApi(database:Database,resolve:(request:Request)=>Promise<PlatformSession|null>,enabled=false,options:{invitationSecret?:string}={}){
+export function createPlatformApi(database:Database,resolve:(request:Request)=>Promise<PlatformSession|null>,enabled=false,options:{invitationSecret?:string;readOperationalHealth?:()=>Promise<unknown>}={}){
  return async(request:Request,path:string)=>{
   const headers={'Cache-Control':'no-store','Pragma':'no-cache','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'};
   let db:Connection|undefined,transaction=false,destroy=false;
@@ -92,7 +94,9 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const holdTarget=/^academies\/([a-f0-9-]{36})\/(retention|legal-holds)(?:\/([a-f0-9-]{36})(\/release)?)?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(holdTarget){
+   if(path==='operations/health'){
+    if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={};operation='operations.health';
+   }else if(holdTarget){
     const academyId=id.parse(holdTarget[1]),holdId=holdTarget[3]?id.parse(holdTarget[3]):undefined;if(holdTarget[2]==='retention'){
      if(holdId)throw new ApiError(404,'NOT_FOUND');if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId};operation='retention.get';
     }else if(request.method==='GET'&&!holdTarget[4]){
@@ -171,6 +175,13 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
     responseBody={data:{...body.data.data,privateInvitation}};
    }
    await db.query('COMMIT');transaction=false;
+   if(operation==='operations.health'){
+    // The database gateway rechecks live owner/MFA authority and commits an
+    // immutable access record before the bounded metadata file is read.
+    if(!z.object({operationalHealthAccessGranted:z.literal(true)}).strict().safeParse(value.body).success)throw new Error('INVALID_PLATFORM_RESULT');
+    if(!options.readOperationalHealth)throw new ApiError(503,'OPERATIONAL_HEALTH_UNAVAILABLE');
+    try{responseBody={data:operationalHealthStatus(await options.readOperationalHealth())};}catch{throw new ApiError(503,'OPERATIONAL_HEALTH_UNAVAILABLE');}
+   }
    return Response.json(responseBody,{status:value.status,headers});
   }catch(error){
    if(transaction)try{await db!.query('ROLLBACK');}catch{destroy=true;}
