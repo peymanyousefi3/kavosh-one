@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { ApiError } from '../core/policy.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
+export const r2ObjectStage=z.enum(['quarantine','clean','signature-evidence']);
 export const r2Connection=z.object({accountId:z.string().regex(/^[a-fA-F0-9]{32}$/).transform(v=>v.toLowerCase()),
   jurisdiction:z.enum(['default','eu']),bucket:z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/).refine(v=>!v.includes('..')),
   accessKeyId:z.string().min(1).max(200).regex(/^[\x21-\x7e]+$/),secretAccessKey:z.string().min(16).max(4096).regex(/^[\x21-\x7e]+$/),

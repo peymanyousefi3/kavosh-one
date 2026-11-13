@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { Readable,Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { ApiError } from '../core/policy.ts';
-import { r2Connection as connection,type R2Connection } from './r2-config.ts';
+import { r2Connection as connection,r2ObjectStage,type R2Connection } from './r2-config.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase());
 const uploadMetadata=z.object({contentType:z.string().regex(/^[a-z0-9][a-z0-9.+-]{0,99}\/[a-z0-9][a-z0-9.+-]{0,99}$/),bytes:z.number().int().positive().safe()}).strict();
@@ -98,9 +98,9 @@ export function privateR2(config:R2Connection,academyId:string,handler?:S3Client
     maximumUploadBytes:c.maximumUploadBytes,
     // Operator backup building block only;not an API authorization boundary or
     // a complete backup. Stream pages instead of buffering a whole academy.
-    async mediaInventoryPage(stage:'quarantine'|'clean',continuationToken?:string,limit=1000,signal?:AbortSignal){
+    async mediaInventoryPage(stage:z.infer<typeof r2ObjectStage>,continuationToken?:string,limit=1000,signal?:AbortSignal){
      if(closed)throw new ApiError(503,'R2_CONNECTION_CLOSED');
-     const input=z.object({stage:z.enum(['quarantine','clean']),continuationToken:z.string().min(1).max(4096).optional(),limit:z.number().int().min(1).max(1000)}).safeParse({stage,continuationToken,limit});
+     const input=z.object({stage:r2ObjectStage,continuationToken:z.string().min(1).max(4096).optional(),limit:z.number().int().min(1).max(1000)}).safeParse({stage,continuationToken,limit});
      if(!input.success)throw new ApiError(400,'INVALID_MEDIA_INVENTORY_REQUEST');
      if(signal?.aborted)throw new ApiError(502,'R2_INVENTORY_CANCELLED');
      const prefix=`academies/${academy.data}/${stage}/`;

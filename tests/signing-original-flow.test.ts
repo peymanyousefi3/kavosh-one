@@ -27,6 +27,7 @@ import { createPdfValidationServer } from '../src/files/pdf-service.ts';
 import { clamdPeer,clamdVersionString } from './fixtures/clamd-peer.ts';
 import { createPublicProfileApi } from '../src/profiles/public-api.ts';
 import { checkAcademicProfile } from './academic-profile-check.ts';
+import {checkSignatureBackupReferences} from './signature-backup-reference-check.ts';
 
 const python=process.env.TEST_PDF_PYTHON_BINARY;
 if(process.env.PDF_VALIDATION_TEST_REQUIRED==='true'&&!python)throw new Error('PDF_TEST_INTERPRETER_REQUIRED');
@@ -167,6 +168,7 @@ for(const [environment,profileChoices,selfSigner] of [['Test',true,false],['Live
    const beforeEvidence=(await f.pg.query('SELECT id FROM public.signature_completion_evidence ORDER BY id')).rows,beforeEvents=(await f.pg.query("SELECT id FROM public.outbox_events WHERE event_type='signature.completion.evidence.critical' ORDER BY id")).rows;
    propertiesJson=JSON.stringify({...providerProperties,extraProviderObservation:'PRIVATE retained only in archive'});await f.pg.exec('REVOKE INSERT ON public.outbox_events FROM kavosh_signature_completion_policy');try{await assert.rejects(processEnrollmentCompletion(completionTask,completionServices,{enabled:true}),{code:'SIGNATURE_COMPLETION_RETENTION_UNAVAILABLE'});}finally{await f.pg.exec('GRANT INSERT ON public.outbox_events TO kavosh_signature_completion_policy');}assert.deepEqual((await f.pg.query('SELECT id FROM public.signature_completion_evidence ORDER BY id')).rows,beforeEvidence);assert.deepEqual((await f.pg.query("SELECT id FROM public.outbox_events WHERE event_type='signature.completion.evidence.critical' ORDER BY id")).rows,beforeEvents);
    assert.equal((await processEnrollmentCompletion(completionTask,completionServices,{enabled:true})).inserted,true,'same retained immutable artifacts recover after DB/event rollback without re-sending');
+   await checkSignatureBackupReferences(f.pg);
    const directory='signature-send-requests/'+(await f.pg.query<{request_id:string}>('SELECT a.request_id FROM public.signature_dispatch_starts s JOIN public.signature_send_attempts a ON a.academy_id=s.academy_id AND a.id=s.attempt_id WHERE s.id=$1',[original.startId])).rows[0].request_id+'/completion-evidence';
    assert.equal((await f.request(directory,undefined,'manager')).response.status,404,'ordinary signing viewing does not automatically grant the new completion feature');await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'signature-completions.view','allow')",[f.a,f.managerRole]);
    const page1=await f.request(directory+'?limit=1',undefined,'manager');assert.equal(page1.response.status,200,JSON.stringify(page1.body));assert.equal(page1.body.data.length,1);assert.ok(page1.body.nextCursor);assert.equal(page1.body.data[0].sourceCorrespondenceCurrent,true);assert.equal(page1.body.data[0].admissionCleared,false);assert.equal(page1.body.data[0].reviewPending,true);assert.equal(page1.body.data[0].providerStatusFreshlyChecked,false);

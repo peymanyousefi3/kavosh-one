@@ -5,10 +5,12 @@ import {resolve} from 'node:path';
 import {r2Connection} from '../../src/integrations/r2-config.ts';
 
 const operator=/^\/srv\/kavosh-one\/operations\/recovery-[a-f0-9]{7,40}\/scripts\/database-recovery\.js$/;
-export function mediaBackupConfiguration(cli:string,quarantine:unknown,clean:unknown){
+export function mediaBackupConfiguration(cli:string,quarantine:unknown,clean:unknown,signatureArchive?:unknown){
  if(!operator.test(cli))throw Error('INVALID_BACKUP_OPERATOR');const scan=r2Connection.parse(quarantine),download=r2Connection.parse(clean);
  if(scan.bucket!=='kavosh-one-production-quarantine'||download.bucket!=='kavosh-one-production-clean'||scan.accountId!==download.accountId||scan.accessKeyId===download.accessKeyId)throw Error('SEPARATE_READ_ONLY_STORAGE_REQUIRED');
- return{readers:JSON.stringify([{stage:'quarantine',configuration:scan},{stage:'clean',configuration:download}])+'\n',environment:'KAVOSH_BACKUP_OPERATOR_CLI='+cli+'\n',dropin:'[Service]\nEnvironmentFile=/etc/kavosh-one/media-backup.env\nLoadCredential=media-readers.json:/etc/kavosh-one/media-readers.json\nExecStart=\nExecStart=/usr/bin/flock --nonblock --conflict-exit-code 75 /var/lib/kavosh-one-backups/backup.lock /usr/bin/node /srv/kavosh-one/deploy/run-backup.mjs --media-backup\nTimeoutStartSec=7h\n'};
+ const archive=signatureArchive===undefined?null:r2Connection.parse(signatureArchive);
+ if(archive&&(archive.bucket!=='kavosh-one-production-agreements'||archive.accountId!==scan.accountId||archive.jurisdiction!==scan.jurisdiction||new Set([scan.accessKeyId,download.accessKeyId,archive.accessKeyId]).size!==3))throw Error('SEPARATE_READ_ONLY_STORAGE_REQUIRED');
+ return{readers:JSON.stringify([{stage:'quarantine',configuration:scan},{stage:'clean',configuration:download},...archive?[{stage:'signature-evidence',configuration:archive}]:[]])+'\n',environment:'KAVOSH_BACKUP_OPERATOR_CLI='+cli+'\n'+(archive?'KAVOSH_BACKUP_SIGNED_EVIDENCE_ENABLED=true\n':''),dropin:'[Service]\nEnvironmentFile=/etc/kavosh-one/media-backup.env\nLoadCredential=media-readers.json:/etc/kavosh-one/media-readers.json\nExecStart=\nExecStart=/usr/bin/flock --nonblock --conflict-exit-code 75 /var/lib/kavosh-one-backups/backup.lock /usr/bin/node /srv/kavosh-one/deploy/run-backup.mjs --media-backup\nTimeoutStartSec=7h\n'};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
  const created:string[]=[];let reloaded=false;

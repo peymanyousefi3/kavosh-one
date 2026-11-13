@@ -9,7 +9,7 @@ import {Readable} from 'node:stream';
 import {createHash} from 'node:crypto';
 import {backupMediaObject,backupMediaCollection} from '../src/operations/media-backups.ts';
 import {r2TargetId} from '../src/integrations/r2-config.ts';
-import {encryptRecoveryStream} from '../src/operations/database-backups.ts';
+import {encryptRecoveryStream,backupDatabase} from '../src/operations/database-backups.ts';
 import {copyEncryptedBackupToDrive} from '../src/operations/drive-backups.ts';
 import {driveBackupFixture} from './drive-backup-fixture.ts';
 
@@ -20,6 +20,7 @@ test('media backup rejects missing configuration,wrong targets and pre-cancellat
  const input={configuration,academyId,fileId,stage:'clean',storageTargetId:'0'.repeat(64),bytes:42,etag:'"original"',modifiedAt:'2026-11-13T00:00:00Z',age:'/private/synthetic/age',recipient:'age1'+'q'.repeat(58),workDirectory:'/private/synthetic'};
  await assert.rejects(backupMediaObject(input),{code:'MEDIA_BACKUP_TARGET_MISMATCH'});
  await assert.rejects(backupMediaObject({...input,storageTargetId:r2TargetId(configuration)},AbortSignal.abort()),{code:'RECOVERY_CANCELLED'});
+ await assert.rejects(backupDatabase({databaseUrl:'postgresql://synthetic:synthetic@127.0.0.1:9/synthetic',age:input.age,pgDump:'/private/synthetic/pg_dump',workDirectory:input.workDirectory,recipient:input.recipient,mediaReferenceSnapshot:false,signedEvidenceReferenceSnapshot:true},AbortSignal.abort()),{code:'INVALID_BACKUP_CONFIGURATION'});
  const prefix=process.env.RECOVERY_COMPILED_CLI?[process.env.RECOVERY_COMPILED_CLI]:['--import','tsx','scripts/database-recovery.ts'];
  await assert.rejects(run(process.execPath,[...prefix,'backup-media',academyId,'clean',fileId,'a'.repeat(64),'42','"original"','2026-11-13T00:00:00Z'],{env:{PATH:process.env.PATH,NODE_ENV:'test',MEDIA_BACKUP_CONNECTION_JSON:'PRIVATE_MALFORMED_CONFIGURATION'},timeout:5000}),error=>{const r=error as Error&{stdout:string;stderr:string};assert.equal(r.stdout,'');assert.equal(r.stderr.trim(),'INVALID_MEDIA_BACKUP_CONFIGURATION');return true;});
  await assert.rejects(run(process.execPath,[...prefix,'backup-media-collection',academyId],{env:{PATH:process.env.PATH,NODE_ENV:'test',MEDIA_BACKUP_TARGETS_JSON:'PRIVATE_MALFORMED_CONFIGURATION'},timeout:5000}),error=>{const r=error as Error&{stdout:string;stderr:string};assert.equal(r.stdout,'');assert.equal(r.stderr.trim(),'INVALID_MEDIA_COLLECTION_CONFIGURATION');return true;});

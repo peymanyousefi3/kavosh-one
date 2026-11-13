@@ -22,7 +22,7 @@ const common=z.object({
  age:path,workDirectory:path,timeoutMs:z.number().int().min(1000).max(3_600_000).default(900_000),
  maximumBytes:z.number().int().min(1_048_576).max(1_099_511_627_776).default(21_474_836_480)
 });
-const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false),mediaReferenceSnapshot:z.boolean().default(false),clusterVerification:z.boolean().default(false)}).strict();
+const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false),mediaReferenceSnapshot:z.boolean().default(false),signedEvidenceReferenceSnapshot:z.boolean().default(false),clusterVerification:z.boolean().default(false)}).strict().refine(i=>!i.signedEvidenceReferenceSnapshot||i.mediaReferenceSnapshot);
 const restoreInput=common.extend({
  pgRestore:path,archive:path,identityFile:path,expectedSha256:z.string().regex(/^[a-f0-9]{64}$/),
  expectedRevision:z.number().int().min(expectedSchemaRevision).max(2147483647),confirmation:z.string().max(100),expectedVerification:backupVerification.optional()
@@ -106,7 +106,7 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
   archiveOwned=true;await unlink(passwordPath);passwordOwned=false;
   const verification=i.verificationSnapshot||i.clusterVerification?{archiveSha256:result.sha256,snapshot:await databaseVerificationSnapshot(client,signal),...i.clusterVerification?{cluster:await clusterVerificationSnapshot(client,signal)}:{}}:null;
   let mediaReferencePlan=null;
-  if(i.mediaReferenceSnapshot){referencePath=join(folder,'media-references.jsonl');const plan=await open(referencePath,'wx',0o600);referenceOwned=true;try{mediaReferencePlan={filename:'media-references.jsonl' as const,...await captureMediaReferencePlan(client,plan,{databaseBackupId:id,archiveSha256:result.sha256,schemaRevision:state.revision},signal)};}finally{await plan.close();}}
+  if(i.mediaReferenceSnapshot){referencePath=join(folder,'media-references.jsonl');const plan=await open(referencePath,'wx',0o600);referenceOwned=true;try{mediaReferencePlan={filename:'media-references.jsonl' as const,...await captureMediaReferencePlan(client,plan,{databaseBackupId:id,archiveSha256:result.sha256,schemaRevision:state.revision},signal,i.signedEvidenceReferenceSnapshot)};}finally{await plan.close();}}
   await client.query('COMMIT');
   let verificationArchive=null;
   if(verification){proofPath=join(folder,'verification.json.age');verificationArchive={filename:'verification.json.age' as const,...await encryptVerification(i,verification,proofPath,signal)};proofOwned=true;}

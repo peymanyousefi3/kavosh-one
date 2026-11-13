@@ -49,7 +49,7 @@ test('reference capture uses bounded cursor pages and closes its cursor on confl
  }
 });
 test('actual SQL plan retains historical observed source/destination bytes and distinguishes unconfirmed uploads',async()=>{
- const f=await fixture(),folder=await realpath(await mkdtemp(join(tmpdir(),'kavosh-media-references-'))),file=join(folder,'plan.jsonl');let client:Awaited<ReturnType<NonNullable<typeof f.pg.runtime>['connect']>>|undefined;
+ const f=await fixture(),folder=await realpath(await mkdtemp(join(tmpdir(),'kavosh-media-references-'))),file=join(folder,'plan.jsonl'),signedFile=join(folder,'signed-plan.jsonl');let client:Awaited<ReturnType<NonNullable<typeof f.pg.runtime>['connect']>>|undefined;
  try{
   const item=await f.file();assert.equal((await f.copy(item)).response.status,202);
   try{assert.deepEqual(await processOneCopy(f.database as Database,[f.a],randomUUID(),async task=>({outcome:'written_verified',bytes:task.expectedBytes,sha256:task.expectedSha256,source:{storageTargetId:task.sourceTargetId,etag:'"original-source"'},destination:{storageTargetId:task.destinationTargetId,etag:'"stored-destination"'}})),{claimed:true,recorded:true});}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
@@ -70,6 +70,7 @@ test('actual SQL plan retains historical observed source/destination bytes and d
    const planInput={...binding,file,plaintextSha256:result.plaintextSha256,plaintextBytes:result.plaintextBytes},targets=new Set(['clean:'+'b'.repeat(64),'quarantine:'+target]),reader=await openMediaReferencePlan(planInput,f.a,targets);
    try{const observed=[];for await(const ref of reader.referencesForSchool)observed.push(ref);assert.equal(reader.references,2);assert.equal(reader.unconfirmedUploads,1);assert.deepEqual(observed,refs);assert.equal(reader.binding.archiveSha256,binding.archiveSha256);}finally{await reader.close();}
    await assert.rejects(openMediaReferencePlan(planInput,f.a,new Set()),{code:'MEDIA_REFERENCE_TARGET_MISSING'});await assert.rejects(openMediaReferencePlan({...planInput,archiveSha256:'f'.repeat(64)},f.a,targets),{code:'MEDIA_REFERENCE_BINDING_MISMATCH'});
+   const signedOutput=await open(signedFile,'wx',0o600);let signed;try{signed=await captureMediaReferencePlan(c,signedOutput,binding,undefined,true);}finally{await signedOutput.close();}assert.equal(signed.signedEvidenceIncluded,true);assert.equal(signed.scope,'recorded_ordinary_and_signed_evidence_objects');assert.equal(signed.references,2);assert.deepEqual((await readFile(signedFile,'utf8')).trim().split('\n').map(line=>JSON.parse(line)).filter(row=>row.type==='reference'),refs);
   }finally{await c.query('ROLLBACK');}
- }finally{client?.release();await unlink(file).catch(()=>{});await rmdir(folder);await f.pg.close();}
+ }finally{client?.release();await unlink(file).catch(()=>{});await unlink(signedFile).catch(()=>{});await rmdir(folder);await f.pg.close();}
 });

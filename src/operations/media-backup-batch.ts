@@ -4,7 +4,7 @@ import {createReadStream,constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {z} from 'zod';
 import type {S3ClientConfig} from '@aws-sdk/client-s3';
-import {r2Connection,r2TargetId} from '../integrations/r2-config.ts';
+import {r2Connection,r2TargetId,r2ObjectStage} from '../integrations/r2-config.ts';
 import {openMediaReferencePlan,mediaReferencePlanInput} from './media-reference-plan.ts';
 import {backupMediaCollection} from './media-backups.ts';
 import {encryptRecoveryStream,RecoveryError} from './database-backups.ts';
@@ -13,7 +13,7 @@ import {copyEncryptedBackupToDrive,driveBackupCredentials} from './drive-backups
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'));
 const input=z.object({age:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),workDirectory:path,referencePlan:mediaReferencePlanInput,
- targets:z.array(z.object({stage:z.enum(['clean','quarantine']),configuration:r2Connection}).strict()).min(1).max(128).refine(v=>new Set(v.map(t=>t.stage+':'+r2TargetId(t.configuration))).size===v.length),
+ targets:z.array(z.object({stage:r2ObjectStage,configuration:r2Connection}).strict()).min(1).max(128).refine(v=>new Set(v.map(t=>t.stage+':'+r2TargetId(t.configuration))).size===v.length),
  offsite:z.object({rclone:path,drive:driveBackupCredentials}).strict(),maximumAcademies:z.number().int().min(1).max(10000).default(1000),maximumObjects:z.number().int().positive().max(10000000).default(1000000),maximumSourceBytes:z.number().int().positive().max(1099511627776).default(1099511627776),timeoutMs:z.number().int().min(1000).max(86400000).default(21600000)}).strict();
 
 // One host-level lock must cover database+media. School membership comes from
@@ -26,13 +26,13 @@ export async function backupMediaBatch(raw:unknown,signal?:AbortSignal,handler?:
  try{
   if(plan.academies>i.maximumAcademies)throw new RecoveryError('MEDIA_BATCH_SIZE_LIMIT');await mkdir(folder,{mode:0o700});output=await open(spool,'wx',0o600);
   const record=async(value:unknown)=>{const line=JSON.stringify(value)+'\n';journalBytes+=Buffer.byteLength(line);if(journalBytes>8388608)throw new RecoveryError('MEDIA_BATCH_SIZE_LIMIT');await output!.writeFile(line);await output!.sync();};
-  await record({type:'header',format:'kavosh-media-batch-v1',id,referenceBinding:plan.binding,expectedAcademies:plan.academies});
+  await record({type:'header',format:'kavosh-media-batch-v1',id,referenceBinding:plan.binding,expectedAcademies:plan.academies,...plan.signedEvidenceIncluded?{signedEvidenceIncluded:true}:{}});
   // Split in linear passes before storage IO: only bounded school metadata is
   // retained,not all file references or a repeated global scan for each school.
   const plans=join(folder,'reference-plans');await mkdir(plans,{mode:0o700});
   const schools=new Map<string,{file:string;hash:ReturnType<typeof createHash>;bytes:number;references:number;unconfirmedUploads:number;plaintextSha256?:string}>();
   for await(const school of plan.academiesForBackup){
-   const file=join(plans,school.academyId+'.jsonl'),text=JSON.stringify({type:'header',format:'kavosh-media-reference-plan-v1',databaseBackupId:plan.binding.databaseBackupId,archiveSha256:plan.binding.archiveSha256,schemaRevision:plan.binding.schemaRevision,scope:'recorded_ordinary_file_objects',signedEvidenceIncluded:false})+'\n'+JSON.stringify(school)+'\n',f=await open(file,'wx',0o600);try{await f.writeFile(text);}finally{await f.close();}
+   const file=join(plans,school.academyId+'.jsonl'),text=JSON.stringify({type:'header',format:'kavosh-media-reference-plan-v1',databaseBackupId:plan.binding.databaseBackupId,archiveSha256:plan.binding.archiveSha256,schemaRevision:plan.binding.schemaRevision,scope:plan.signedEvidenceIncluded?'recorded_ordinary_and_signed_evidence_objects':'recorded_ordinary_file_objects',signedEvidenceIncluded:plan.signedEvidenceIncluded})+'\n'+JSON.stringify(school)+'\n',f=await open(file,'wx',0o600);try{await f.writeFile(text);}finally{await f.close();}
    schools.set(school.academyId,{file,hash:createHash('sha256').update(text),bytes:Buffer.byteLength(text),references:0,unconfirmedUploads:school.unconfirmedUploads});
   }
   let writer:Awaited<ReturnType<typeof open>>|undefined,current='',pending='';
@@ -53,7 +53,7 @@ export async function backupMediaBatch(raw:unknown,signal?:AbortSignal,handler?:
    await record({type:'collection',academyId,id:collection.id,catalog:collection.catalog,offsite:collection.offsite,objects:collection.objects,sourceBytes:collection.sourceBytes,reusedObjects:collection.reusedObjects,referenceCoverage:collection.referenceCoverage});
   }
   if(academies!==plan.academies||references!==plan.references||unconfirmed!==plan.unconfirmedUploads)throw new RecoveryError('MEDIA_BATCH_INCOMPLETE');
-  const result={format:'kavosh-media-batch-backup-v1',id,referenceBinding:plan.binding,academies,objects,sourceBytes,reusedObjects,recordedReferences:references,unconfirmedUploads:unconfirmed,ordinaryRecordedMediaBackedUp:true,signedEvidenceIncluded:false,atomicStorageSnapshot:false,completeMediaBackup:false,restoreVerified:false};
+  const result={format:'kavosh-media-batch-backup-v1',id,referenceBinding:plan.binding,academies,objects,sourceBytes,reusedObjects,recordedReferences:references,unconfirmedUploads:unconfirmed,ordinaryRecordedMediaBackedUp:true,signedEvidenceIncluded:plan.signedEvidenceIncluded,atomicStorageSnapshot:false,completeMediaBackup:false,restoreVerified:false};
   await record({type:'complete',...result});await output.close();output=undefined;
   const encrypted=await encryptRecoveryStream({age:i.age,recipient:i.recipient,file:archive,maximumBytes:16777216},createReadStream(spool),abort);await unlink(spool);
   const manifest={...result,catalog:{filename:'collections.jsonl.age',...encrypted},offsite:null as Awaited<ReturnType<typeof copyEncryptedBackupToDrive>>|null};

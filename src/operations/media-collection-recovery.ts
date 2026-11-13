@@ -9,10 +9,11 @@ import {privateDirectory,nativeRecoveryIdentity,stageRecoveryArchive} from './re
 import {recordedMediaReference,mediaReferenceCoverage} from './media-reference-plan.ts';
 import {recoverMediaObject} from './media-recovery.ts';
 import {authenticatedRecoveryRecords} from './recovery-json-records.ts';
+import {r2ObjectStage} from '../integrations/r2-config.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0')),sha=z.string().regex(/^[a-f0-9]{64}$/),uuid=z.string().uuid(),count=z.number().int().nonnegative().safe();
 const input=z.object({age:path,identityFile:path,archive:path,archiveDirectory:path,workDirectory:path,academyId:uuid,collectionId:uuid,expectedSha256:sha,expectedBytes:z.number().int().min(22).max(1074070016),expectedReferenceCoverage:mediaReferenceCoverage.optional(),maximumCatalogBytes:z.number().int().min(1024).max(1073741824).default(268435456),maximumObjects:count.max(10000000).default(1000000),maximumSourceBytes:count.max(1099511627776).default(1099511627776),timeoutMs:z.number().int().min(1000).max(86400000).default(3600000)}).strict();
-const target=z.object({stage:z.enum(['clean','quarantine']),storageTargetId:sha}).strict();
+const target=z.object({stage:r2ObjectStage,storageTargetId:sha}).strict();
 const header=z.object({type:z.literal('header'),format:z.literal('kavosh-media-catalog-v1'),id:uuid,academyId:uuid,startedAt:z.iso.datetime(),targets:z.array(target).min(1).max(128),referenceBinding:z.unknown().optional()}).strict();
 const object=z.object({type:z.literal('object'),id:uuid,source:recordedMediaReference.extend({etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),modifiedAt:z.iso.datetime()}),archive:z.object({filename:z.literal('media.bin.age'),ciphertextSha256:sha,encryptedBytes:z.number().int().min(22).max(4296146944)}).strict(),offsite:z.unknown()}).strict();
 const inventory=target.extend({objects:count,bytes:count,sha256:sha}).strict();
@@ -34,11 +35,12 @@ export async function recoverMediaCollection(raw:unknown,signal?:AbortSignal){
   try{catalogProof=await decryptRecoveryStream({age:i.age,identityFile:i.identityFile,file:clear,maximumBytes:i.maximumCatalogBytes},encrypted.createReadStream({autoClose:true}),abort);clearOwned=true;}finally{await encrypted.close().catch(()=>{});}
   await unlink(cipher);cipherOwned=false;catalog=await open(clear,constants.O_RDONLY|constants.O_NOFOLLOW);const records=await authenticatedRecoveryRecords(catalog,catalogProof,i.maximumCatalogBytes,abort);
   let phase='header',objects=0,sourceBytes=0,last='',catalogHeader:z.infer<typeof header>|undefined;
-  const totals=new Map<string,{stage:'clean'|'quarantine';storageTargetId:string;objects:number;bytes:number;hash:ReturnType<typeof createHash>}>();
+  const totals=new Map<string,{stage:z.infer<typeof r2ObjectStage>;storageTargetId:string;objects:number;bytes:number;hash:ReturnType<typeof createHash>}>();
   for await(const row of records()){
    if(phase==='header'){
     catalogHeader=header.parse(row);if(catalogHeader.id!==i.collectionId||catalogHeader.academyId!==i.academyId)throw new RecoveryError('MEDIA_RECOVERY_SCOPE_MISMATCH');
     if(i.expectedReferenceCoverage&&!isDeepStrictEqual(catalogHeader.referenceBinding,i.expectedReferenceCoverage.binding))throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');
+    if(i.expectedReferenceCoverage?.signedEvidenceIncluded===false&&catalogHeader.targets.some(t=>t.stage==='signature-evidence'))throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');
     for(const t of catalogHeader.targets){const key=t.stage+':'+t.storageTargetId;if(totals.has(key))throw new RecoveryError('INVALID_MEDIA_RECOVERY_CATALOG');totals.set(key,{...t,objects:0,bytes:0,hash:createHash('sha256')});}phase='objects';continue;
    }
    if(phase==='complete')throw new RecoveryError('INVALID_MEDIA_RECOVERY_CATALOG');

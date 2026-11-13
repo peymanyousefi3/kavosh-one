@@ -5,14 +5,14 @@ import {join,isAbsolute} from 'node:path';
 import {z} from 'zod';
 import type {S3ClientConfig} from '@aws-sdk/client-s3';
 import {privateR2} from '../integrations/r2.ts';
-import {r2Connection,r2TargetId} from '../integrations/r2-config.ts';
+import {r2Connection,r2TargetId,r2ObjectStage} from '../integrations/r2-config.ts';
 import {privateDirectory,encryptRecoveryStream,RecoveryError} from './database-backups.ts';
 import {copyEncryptedBackupToDrive,driveBackupCredentials} from './drive-backups.ts';
 import {mediaReferencePlanInput,openMediaReferencePlan,mediaReferenceKey} from './media-reference-plan.ts';
 import {prepareMediaArchiveReuse,findReusableMediaArchive,rememberMediaArchive} from './media-archive-reuse.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'));
-const input=z.object({configuration:r2Connection,academyId:z.string().uuid().transform(v=>v.toLowerCase()),fileId:z.string().uuid().transform(v=>v.toLowerCase()),stage:z.enum(['quarantine','clean']),
+const input=z.object({configuration:r2Connection,academyId:z.string().uuid().transform(v=>v.toLowerCase()),fileId:z.string().uuid().transform(v=>v.toLowerCase()),stage:r2ObjectStage,
  storageTargetId:z.string().regex(/^[a-f0-9]{64}$/),bytes:z.number().int().positive().max(4294967296),etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),modifiedAt:z.iso.datetime(),
  age:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),workDirectory:path,timeoutMs:z.number().int().min(1000).max(600000).default(120000)}).strict();
 
@@ -32,7 +32,7 @@ async function archiveMediaObject(i:z.infer<typeof input>,reader:ReturnType<type
  const deadline=AbortSignal.timeout(i.timeoutMs),abort=signal?AbortSignal.any([signal,deadline]):deadline;
  try{
   await mkdir(folder,{mode:0o700});owned=true;
-  const inspect=i.stage==='clean'?reader.inspectClean:reader.inspectQuarantine;
+  const inspect=i.stage==='signature-evidence'?reader.inspectSignatureEvidence:i.stage==='clean'?reader.inspectClean:reader.inspectQuarantine;
   const stored=await inspect(i.fileId,{bytes:i.bytes,ifMatch:i.etag},async source=>{const result=await encryptRecoveryStream({age:i.age,recipient:i.recipient,file:archive,maximumBytes:i.bytes+Math.ceil(i.bytes/65536)*16+65536},source,abort);archiveOwned=true;return result;},i.timeoutMs,abort);
   const manifest={format:'kavosh-media-object-backup-v1',id,createdAt:new Date().toISOString(),source:{academyId:i.academyId,fileId:i.fileId,stage:i.stage,storageTargetId:i.storageTargetId,bytes:stored.bytes,sha256:stored.sha256,etag:stored.provider.etag,modifiedAt:i.modifiedAt},archive:{filename:'media.bin.age',...stored.inspection},sourceDeleted:false,completeMediaBackup:false,independentCopyVerified:false,restoreVerified:false};
   const file=await open(metadata,'wx',0o600);metadataOwned=true;try{await file.writeFile(JSON.stringify(manifest)+'\n');await file.sync();}finally{await file.close();}
@@ -80,7 +80,7 @@ export async function backupMediaCollection(raw:unknown,signal?:AbortSignal,hand
   return{storageTargetId:t.targetId,stage:t.stage,objects:count,bytes,sha256:hash.digest('hex')};
  }
  try{
-  if(i.referencePlan){referenceReader=await openMediaReferencePlan(i.referencePlan,i.academyId,new Set(i.targets.map(t=>t.stage+':'+r2TargetId(t.configuration))),abort);currentReference=await referenceReader.referencesForSchool.next();}
+  if(i.referencePlan){referenceReader=await openMediaReferencePlan(i.referencePlan,i.academyId,new Set(i.targets.map(t=>t.stage+':'+r2TargetId(t.configuration))),abort);if(!referenceReader.signedEvidenceIncluded&&i.targets.some(t=>t.stage==='signature-evidence'))throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');currentReference=await referenceReader.referencesForSchool.next();}
   for(const target of i.targets){const targetId=r2TargetId(target.configuration),reader=privateR2(target.configuration,i.academyId,handler?.(targetId));targets.push({...target,targetId,reader});}
   targets.sort((a,b)=>{const left=a.stage+':'+a.targetId,right=b.stage+':'+b.targetId;return left<right?-1:left>right?1:0;});
   if(i.reuseExistingArchives)await prepareMediaArchiveReuse(i.workDirectory);
@@ -101,7 +101,7 @@ export async function backupMediaCollection(raw:unknown,signal?:AbortSignal,hand
   }));
   if(currentReference&&!currentReference.done||referenceReader&&matchedReferences!==referenceReader.references)throw new RecoveryError('MEDIA_REFERENCE_OBJECT_MISSING');
   for(let n=0;n<targets.length;n++)if(JSON.stringify(await inventory(targets[n]))!==JSON.stringify(inventories[n]))throw new RecoveryError('MEDIA_COLLECTION_SOURCE_CHANGED');
-  const referenceCoverage=referenceReader?{binding:referenceReader.binding,recordedReferences:matchedReferences,unconfirmedUploads:referenceReader.unconfirmedUploads,signedEvidenceIncluded:false}:null;
+  const referenceCoverage=referenceReader?{binding:referenceReader.binding,recordedReferences:matchedReferences,unconfirmedUploads:referenceReader.unconfirmedUploads,signedEvidenceIncluded:referenceReader.signedEvidenceIncluded}:null;
   await record({type:'complete',objects,sourceBytes,inventories,matchingFinalInventory:true,atomicStorageSnapshot:false,recordedDatabaseReferencesVerified:referenceReader!==undefined,referenceCoverage,databaseReferencesVerified:false});await output.sync();await output.close();output=undefined;
   const encrypted=await encryptRecoveryStream({age:i.age,recipient:i.recipient,file:archive,maximumBytes:i.maximumCatalogBytes+Math.ceil(i.maximumCatalogBytes/65536)*16+65536},createReadStream(spool),abort);archiveOwned=true;
   await unlink(spool);spoolOwned=false;
