@@ -2,7 +2,7 @@
 // apply configuration, restore roles, or print decrypted credentials.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash,createPrivateKey,X509Certificate } from 'node:crypto';
 import { mkdtempSync, openSync, closeSync,readdirSync,readFileSync,writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 let stage = 'arguments', directory, encrypted, plaintext;
@@ -33,6 +33,7 @@ try {
  const operationalHealthProfile='etc/systemd/system/kavosh-one-background@platform-notices.service.d/operational-health.conf';
  const reportRuntimeProfile='etc/systemd/system/kavosh-one-background@reports.service.d/runtime.conf';
  required.push('etc/kavosh-one/media-readers.json','etc/kavosh-one/media-backup.env','etc/systemd/system/kavosh-one-backup.service.d/media.conf',operationalHealthProfile,reportRuntimeProfile);
+ required.push('etc/kavosh-one-tls/server.key');
  for (const file of required) assert.ok(entries.includes(file));
  assert.equal(new Set(entries).size,entries.length);
  for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name)||/^etc\/systemd\/system\/kavosh-one-backup\.service\.d(?:\/?|\/media\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@platform-notices\.service\.d(?:\/?|\/operational-health\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@reports\.service\.d(?:\/?|\/runtime\.conf)$/.test(name));}
@@ -50,7 +51,10 @@ try {
    if(name==='etc/kavosh-one/media-backup.env'){const text=bytes.toString();assert.match(text,/^KAVOSH_BACKUP_OPERATOR_CLI=\/srv\/kavosh-one\/operations\/recovery-[a-f0-9]{7,40}\/scripts\/database-recovery\.js\n$/);assert.equal(text.split('\n').length,2);mediaBackupOperator=text.slice('KAVOSH_BACKUP_OPERATOR_CLI='.length).trim();}
   } finally { bytes.fill(0); }
  }
- console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
+ stage='archived database TLS certificate and private key matching';
+ const certificate=content('etc/kavosh-one-tls/server.crt'),privateKey=content('etc/kavosh-one-tls/server.key');
+ try{assert.ok(new X509Certificate(certificate).checkPrivateKey(createPrivateKey(privateKey)));}finally{certificate.fill(0);privateKey.fill(0);}
+ console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,databaseTlsKeyPairVerified:true,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
 } catch { console.error('CONFIG_BACKUP_ACCEPTANCE_FAILED: ' + stage); process.exitCode = 1; }
 finally {
  for (const file of [plaintext, encrypted]) if (file) try { unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') { console.error('CONFIG_PROOF_CLEANUP_REQUIRED'); process.exitCode = 1; } }
