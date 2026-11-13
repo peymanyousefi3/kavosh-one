@@ -1,5 +1,31 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { processOneSubscription } from '../src/automations/subscription-worker.ts';
+import { processOneNotification } from '../src/automations/notification-worker.ts';
+import type { Database } from '../src/core/database.ts';
+
+export async function completionWatcherCheck(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'pg'|'a'|'hub'|'actors'>){
+ // The original signing test deliberately expired its starter's login. Use a
+ // separate synthetic verified login,never resurrect the expired credential.
+ const session=randomUUID();await f.pg.query(`INSERT INTO identity.session(id,token,"userId","expiresAt","updatedAt","mfaVerified") VALUES($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp(),true)`,[session,'synthetic-watch-login-'+randomUUID(),f.actors.master.user]);
+ const request:typeof f.request=async(...args)=>{const prior=f.actors.master.session;f.actors.master.session=session;try{return await f.request(...args);}finally{f.actors.master.session=prior;}};
+ const definition={name:'Disposable broad watcher',enabled:true,trigger:{kind:'domain_event',eventTypes:['*']},condition:{op:'exists',field:'entityId'},actions:[{kind:'notify',channels:['portal'],audience:{kind:'school_master'},title:{en:'Review event'},body:{en:'Review linked case'}}],execution:{mode:'automatic',maxRecipientsPerEvent:10,maxDailyDeliveries:100,maxDailySms:0,cooldownSeconds:0,maxChainDepth:1}};
+ const create=async(code:string)=>{const r=await request('automations/rules',{hubId:f.hub,code,definition,reason:'Synthetic queue regression'});assert.equal(r.response.status,201,JSON.stringify(r.body));return r.body.data;};
+ const rule=await create('SIGNING_QUEUE_WATCH'),watch=await request('automations/rules/'+rule.id+'/subscriptions',{expectedVersion:1,reason:'Synthetic broad watcher'});assert.equal(watch.response.status,201,JSON.stringify(watch.body));
+ const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_automation_worker');return c;}};
+ const step=async()=>{try{return await processOneSubscription(database,[f.a]);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}};
+ return async()=>{
+  const incident=(await f.pg.query<{id:string}>('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1',[f.a])).rows[0];assert.ok(incident);
+  assert.equal((await step()).outcome,'ignored','disabled signing delivery must be consumed,not retried');
+  assert.equal((await f.pg.query('SELECT outcome FROM public.automation_subscription_events WHERE subscription_id=$1 AND event_id=$2',[watch.body.data.id,incident.id])).rows[0]?.outcome,'ignored');
+  assert.equal((await f.pg.query('SELECT status,failure_count FROM public.automation_subscriptions WHERE id=$1',[watch.body.data.id])).rows[0]?.failure_count,0);
+  assert.equal((await f.pg.query('SELECT id FROM public.notification_jobs WHERE rule_id=$1',[rule.id])).rows.length,0);
+  await create('SIGNING_QUEUE_NEXT');assert.equal((await step()).outcome,'queued','the same watcher must continue with an ordinary later event');
+  assert.equal((await f.pg.query('SELECT id FROM public.notification_jobs WHERE rule_id=$1',[rule.id])).rows.length,1);
+  try{assert.equal((await processOneNotification(database,[f.a])).outcome,'succeeded','consume this synthetic portal-only job before later queue assertions');}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+  const stopped=await request('automations/subscriptions/'+watch.body.data.id+'/stop',{});assert.equal(stopped.response.status,200,JSON.stringify(stopped.body));
+ };
+}
 import type { operationsFixture } from './operations-fixture.ts';
 import { assertSignatureCompletionRole } from '../src/integrations/signature-completion-source.ts';
 

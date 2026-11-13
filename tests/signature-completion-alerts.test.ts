@@ -6,6 +6,16 @@ import { operationsFixture } from './operations-fixture.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
 import { requireCurrentSessionEvent,type BoundEvent } from '../src/modules/automation-events.ts';
 import { assertRuntimeRole } from '../src/core/database.ts';
+import { subscriptionEventDispatchable } from '../src/automations/subscription-worker.ts';
+
+test('disabled signing custom delivery is ignored by broad watchers without blocking ordinary events',()=>{
+ for(const current of [false,true])assert.equal(subscriptionEventDispatchable({source_kind:'signature_check',source_current:current}),false);
+ for(const kind of ['session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'] as const){
+  assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:false}),false);
+  assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:true}),true);
+ }
+ for(const kind of ['approval','audit','work_signature','account_security','report_job','pay_statement','checkout'] as const)assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:true}),true);
+});
 
 test('event catalogue advertises every accepted read filter without advertising custom delivery',async()=>{
  const f=await operationsFixture();try{

@@ -7,7 +7,7 @@ import { permissionScope,lockApprovalWrites } from '../core/approvals.ts';
 import { lockFinanceBook } from '../core/finance-lock.ts';
 import { automationDefinition,ruleSample,simulateRule } from '../core/automation-rules.ts';
 import { automationRuleHeader,automationRuleRevision } from '../modules/automation-rules.ts';
-import { pendingSubscriptionEvent } from '../modules/automation-events.ts';
+import { pendingSubscriptionEvent,type BoundEvent } from '../modules/automation-events.ts';
 import { notificationJobs } from '../modules/notification-jobs.ts';
 import { lockAcademyTopology } from '../modules/academy.ts';
 import { nextSessionReminder } from './session-reminders.ts';
@@ -20,6 +20,11 @@ import { nextPayrollReminder,watchesPayrollReminders } from './payroll-reminders
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),academies=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
 type Lease={id:string;academy_id:string;lease_token:string};
+// Consume disabled custom sources as ignored,not retry failures. Their mandatory
+// portal alerts are independent;one such event must not exhaust a broad watcher.
+export function subscriptionEventDispatchable(event:Pick<BoundEvent,'source_kind'|'source_current'>){
+ return event.source_kind!=='signature_check'&&(!['session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'].includes(event.source_kind)||event.source_current);
+}
 // One short DB-only step. No provider credentials,external IO,synthetic master
 // or assumed worker authority. Existing queue/notification worker owns delivery.
 export async function processOneSubscription(database:Database,allowedAcademies:string[],signal?:AbortSignal){
@@ -42,7 +47,7 @@ export async function processOneSubscription(database:Database,allowedAcademies:
    await lockAcademyTopology(ctx);
    const version=(await db.query<{version:number}>('SELECT version FROM public.automation_rules WHERE id=$1 FOR SHARE',[header.id])).rows[0]?.version;if(version!==header.version)throw new ApiError(409,'AUTOMATION_RULE_CHANGED');
    const event=await nextPrivacyReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextStatementReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextPayrollReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextExpenseReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextTuitionReminder(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionFollowUp(ctx,lease.id,lease.lease_token,header,definition)??await nextSessionReminder(ctx,lease.id,lease.lease_token,header,definition)??await pendingSubscriptionEvent(ctx,lease.id,sub.initial_snapshot,sub.activation_transaction);let outcome:'idle'|'ignored'|'queued'=event?'ignored':'idle',jobId:string|null=null;
-   if(event&&(!['session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'].includes(event.source_kind)||event.source_current)&&definition.execution.mode==='automatic'&&simulateRule(definition,header.hub_id,ruleSample.parse(event.projection),z.enum(['en','fr','zh-CN']).parse(sub.locale)).eligibleByConfiguration){
+   if(event&&subscriptionEventDispatchable(event)&&definition.execution.mode==='automatic'&&simulateRule(definition,header.hub_id,ruleSample.parse(event.projection),z.enum(['en','fr','zh-CN']).parse(sub.locale)).eligibleByConfiguration){
     const path='automations/rules/'+header.id+'/queue',request=new Request('https://internal.invalid/api/v1/'+path,{method:'POST',headers:{'content-type':'application/json','idempotency-key':randomUUID()},body:JSON.stringify({eventId:event.id,expectedVersion:header.version,locale:sub.locale})});
     const reply=await notificationJobs({...ctx,path,request});if(!reply||![200,202].includes(reply.status))throw new Error('SUBSCRIPTION_QUEUE_FAILED');jobId=uuid.parse((reply.body as {data:{id:string}}).data.id);outcome='queued';
    }
