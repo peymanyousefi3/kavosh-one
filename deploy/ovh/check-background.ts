@@ -7,7 +7,6 @@ import {z} from 'zod';
 import {assertRuntimeRole,assertSchemaReady,type Database} from '../../src/core/database.ts';
 import {postgresOptions} from '../../src/core/postgres-config.ts';
 import {assertPlatformNoticeWorker} from '../../src/platform/notice-worker.ts';
-import {configuredOperationalDelivery} from '../../src/integrations/message-delivery.ts';
 let pool:pg.Pool|undefined;
 try{
  const mode=z.enum(['notifications','reports','messages','platform-notices']).parse(process.argv[2]);assert.equal(process.argv.length,3);assert.notEqual(process.getuid?.(),0);
@@ -20,7 +19,11 @@ try{
   const r=await c.query<{tls:boolean;login:string;identityAccess:boolean}>('SELECT current_user login,(SELECT ssl FROM pg_stat_ssl WHERE pid=pg_backend_pid()) tls,has_schema_privilege(current_user,\'identity\',\'usage\') "identityAccess"');assert.equal(r.rows[0].tls,true);assert.equal(r.rows[0].identityAccess,false);assert.equal(r.rows[0].login,'kavosh_one_'+mode.replaceAll('-','_'));
  }finally{try{await c.query('ROLLBACK');}finally{c.release();}}
  const ids=mode==='platform-notices'?[]:z.array(z.string().uuid()).length(1).parse(JSON.parse(process.env[name+'_ACADEMIES']!));
- if(mode==='messages')assert.ok(configuredOperationalDelivery(ids[0])); // Factory validates configuration without IO.
+ if(mode==='messages'){
+  // Non-delivery workers intentionally have no SMTP dependencies or keys.
+  const {configuredOperationalDelivery}=await import('../../src/integrations/message-delivery.ts');
+  assert.ok(configuredOperationalDelivery(ids[0])); // Validates without IO.
+ }
  console.log(JSON.stringify({mode,actualWorkerUid:process.getuid?.(),roleSafetyVerified:true,ownTlsDatabaseLoginVerified:true,identitySchemaDenied:true,webSecretsUnreadable:true,providerCredentialsSeparated:true,readOnlyIsolationCheck:true,queueState:'not_examined',jobsClaimed:0,messagesSent:0,financialPostingsCreated:0}));
 }catch{console.error('BACKGROUND_WORKER_ISOLATION_CHECK_FAILED');process.exitCode=1;}
 finally{await pool?.end();}
