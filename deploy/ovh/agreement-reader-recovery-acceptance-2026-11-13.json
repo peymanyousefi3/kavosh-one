@@ -1,0 +1,62 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "storage": "live_cloudflare_r2",
+  "reader": {
+    "permissions": "Object Read only",
+    "bucket": "kavosh-one-production-agreements",
+    "otherBucketsIncluded": false,
+    "expires": false,
+    "serverFileRootOwned": true,
+    "serverFileMode": "0600",
+    "acceptanceUnit": "kavosh-one-agreement-reader-acceptance-20261113.service",
+    "invocationId": "2600d3ddafb6414f8474ea440ef4ab14",
+    "result": "success",
+    "exitCode": 0,
+    "cpuSeconds": 0.985538,
+    "peakMemoryBytes": 41721856,
+    "syntheticArtifactsReadAndHashVerified": 3,
+    "sourceBytesVerified": 157,
+    "otherProductionBucketsDenied": 2,
+    "createOnlyWriteDenied": true,
+    "deleteRequests": 0,
+    "realAgreementsAccessed": 0,
+    "databaseRequests": 0,
+    "providerRequests": 0,
+    "activeBackupConfigurationChanged": false
+  },
+  "settingsRecovery": {
+    "backupId": "28eb99c7-ed2e-4d52-8a7d-0cf91866909b",
+    "producerInvocationId": "2fc8033354e844cf8cb31e9e544d33e8",
+    "ciphertextSha256": "da9d73c374524142577187093dc046a0f3b49d3f820a2f132a7520aadb091db6",
+    "encryptedBytes": 164072,
+    "independentDriveDownloadVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "requiredFilesChecked": 49,
+    "archiveEntriesChecked": 80,
+    "databaseTlsKeyPairVerified": true,
+    "agreementWorkerVaultBindingVerified": true,
+    "agreementBackupReaderIncluded": true,
+    "signedEvidenceBackupConfigured": false,
+    "reportRuntimeProfileSha256": "51d154ff7370bca41b13af909cd9a948e11283325ba9cc9e0b892f632f17cb18",
+    "configurationApplied": false,
+    "privateRecoveryKeyTransferredToVps": false,
+    "landingPageExcluded": true
+  },
+  "ownerRecoveryCustody": {
+    "application": "Apple Passwords",
+    "recordsSaved": ["Kavosh One — Backup Recovery Key", "Kavosh One — Agreement Backup Reader"],
+    "existingRecoveryIdentityValidatedAgainstRecipient": true,
+    "existingBackupsRekeyed": false,
+    "autofillWebsiteAssigned": false,
+    "iCloudPasswordsObservedEnabled": true,
+    "independentSecondDeviceArrivalVerified": false,
+    "plaintextTemporaryHandoffDirectoryRemoved": true,
+    "transientComputerUseBindingsReset": true
+  },
+  "limitations": [
+    "This verifies restricted reader permissions and encrypted settings recovery,not actual signed-document byte backup or restoration.",
+    "No delete request was made;do not interpret the write-denial test as testing every IAM action.",
+    "iCloud delivery to another device and clean-host recovery have not been independently verified.",
+    "Production remains runtime3a2e8bc/schema407;completion worker remains disabled."
+  ]
+}
