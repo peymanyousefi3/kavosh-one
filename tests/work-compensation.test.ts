@@ -24,6 +24,18 @@ test('hourly overlap selection is stable on equal rates and rounds the aggregate
  const intervals=[{key:'b',start:0,end:60000,rateMinor:1n},{key:'a',start:30000,end:90000,rateMinor:1n}],r=highestHourlySegments(intervals);assert.equal(r.milliseconds,90000n);assert.equal(r.minor,0n);assert.equal(r.segments[1].key,'a');assert.deepEqual(highestHourlySegments([...intervals].reverse()),r);
  assert.throws(()=>highestHourlySegments([{key:'a',start:2,end:1,rateMinor:10n}]),/INVALID_HOURLY_INTERVALS/);
 });
+test('explicit bounded background hourly planning handles 2000 sources while ordinary payroll keeps its 200-source guard',()=>{
+ const intervals=Array.from({length:2000},(_,i)=>({key:String(i).padStart(4,'0'),start:i*60000,end:(i+1)*60000,rateMinor:1n})),started=performance.now();
+ assert.throws(()=>highestHourlySegments(intervals),/INVALID_HOURLY_INTERVALS/);
+ const r=highestHourlySegments(intervals,{maximumIntervals:2000});assert.equal(r.minor,33n);assert.equal(r.milliseconds,120000000n);assert.equal(r.segments.length,2000);
+ assert.deepEqual(highestHourlySegments([...intervals].reverse(),{maximumIntervals:2000}),r);
+ const overlap=intervals.map(i=>({...i,start:0,end:3600000,rateMinor:9007199254740993n})),tied=highestHourlySegments(overlap,{maximumIntervals:2000});
+ assert.equal(tied.minor,9007199254740993n);assert.equal(tied.milliseconds,3600000n);assert.equal(tied.segments.length,1);assert.equal(tied.segments[0].key,'0000');
+ const clipped=highestHourlySegments(overlap,{maximumIntervals:2000,window:{start:0,end:1800000},excluded:[{start:0,end:900000}]});assert.equal(clipped.milliseconds,900000n);assert.equal(clipped.minor,2251799813685248n);
+ for(const options of [{maximumIntervals:2001},{maximumIntervals:NaN},{maximumIntervals:null}])assert.throws(()=>highestHourlySegments([] ,options as never),/INVALID_HOURLY_INTERVALS/);
+ assert.throws(()=>highestHourlySegments([...intervals,{...intervals[0],key:'overflow'}],{maximumIntervals:2000}),/INVALID_HOURLY_INTERVALS/);
+ console.log(JSON.stringify({case:'bounded-2000-hourly-sources',elapsedMs:Math.ceil(performance.now()-started),productionCapacityTest:false}));
+});
 test('compensation definitions and scenarios reject ambiguous amounts, duplicate keys, unknown components and unused inputs',()=>{
  for(const invalid of [[{...base,code:'BAD',kind:'hourly',amount:'0.001'}],[{...base,code:'BAD',kind:'tuition_percentage',percent:'100.0001',basis:'session_net'}],[{...base,code:'BAD',kind:'hourly',amount:'1'},{...base,code:'BAD',kind:'hourly',amount:'2'}]])assert.throws(()=>validateCompensationRules(invalid,2));
  for(const s of [[{key:'a',componentCode:'UNKNOWN'}],[{key:'a',componentCode:'PERCENT'}],[{key:'a',componentCode:'SALARY',tuitionAmount:'1'}],[{key:'a',componentCode:'HIGH',startsAt:'2026-01-02T10:00:00Z',endsAt:'2026-01-02T10:00:00Z'}]])assert.throws(()=>configuredCompensationPreview(rules,s,2));

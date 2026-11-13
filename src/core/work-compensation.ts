@@ -33,17 +33,20 @@ export function validateCompensationRules(raw:unknown,scale:number){
 }
 export type HourlyInterval={key:string;start:number;end:number;rateMinor:bigint};
 export type HourlyWindow={start:number;end:number};
-export function highestHourlySegments(intervals:HourlyInterval[],options:{window?:HourlyWindow;excluded?:HourlyWindow[]}={}){
- if(!Array.isArray(intervals)||intervals.length>200||new Set(intervals.map(i=>i.key)).size!==intervals.length||intervals.some(i=>typeof i.key!=='string'||!i.key.length||i.key.length>100||!Number.isSafeInteger(i.start)||!Number.isSafeInteger(i.end)||i.end<i.start||i.end-i.start>86400000||typeof i.rateMinor!=='bigint'||i.rateMinor<0n))throw new ApiError(400,'INVALID_HOURLY_INTERVALS');
+export function highestHourlySegments(intervals:HourlyInterval[],options:{window?:HourlyWindow;excluded?:HourlyWindow[];maximumIntervals?:200|2000}={}){
+ // Only the separately bounded background forecast opts into the larger set;
+ // recorded payroll and previews retain their existing 200-source limit.
+ const maximum=options.maximumIntervals===undefined?200:options.maximumIntervals;
+ if(![200,2000].includes(maximum)||!Array.isArray(intervals)||intervals.length>maximum||new Set(intervals.map(i=>i.key)).size!==intervals.length||intervals.some(i=>typeof i.key!=='string'||!i.key.length||i.key.length>100||!Number.isSafeInteger(i.start)||!Number.isSafeInteger(i.end)||i.end<i.start||i.end-i.start>86400000||typeof i.rateMinor!=='bigint'||i.rateMinor<0n))throw new ApiError(400,'INVALID_HOURLY_INTERVALS');
  // The API bounds service dates to 366 civil days. Leave a UTC-offset margin
  // here so a supported civil range does not fail across daylight-saving time.
  const validWindow=(w:HourlyWindow)=>w&&Number.isSafeInteger(w.start)&&Number.isSafeInteger(w.end)&&w.end>w.start&&Number.isSafeInteger(w.end-w.start)&&w.end-w.start<=368*86400000;
  const excluded=options.excluded??[];
  if(options.window&&!validWindow(options.window)||!Array.isArray(excluded)||excluded.length>200||excluded.some(w=>!validWindow(w)))throw new ApiError(400,'INVALID_HOURLY_WINDOW');
  const points=[...new Set([...intervals.flatMap(i=>[i.start,i.end]),...excluded.flatMap(i=>[i.start,i.end]),...options.window?[options.window.start,options.window.end]:[]])].sort((a,b)=>a-b),segments:{start:number;end:number;key:string;rateMinor:bigint}[]=[];
- // ponytail: at most 200 inputs and 200 retained claims; the bounded scan
- // avoids fragmenting inputs into an unbounded intermediate interval list.
- // Larger payroll periods need the planned background/chunked calculation.
+ // ponytail: bounded scan, normally 200 inputs (2000 for background forecasts)
+ // and 200 retained claims. Larger jobs need a sweep-line implementation;
+ // do not split groups and round independently, which changes payable cents.
  for(let p=0;p<points.length-1;p++){const start=points[p],end=points[p+1];let winner:HourlyInterval|undefined;
   if(options.window&&(start<options.window.start||end>options.window.end)||excluded.some(i=>i.start<=start&&i.end>=end))continue;
   for(const i of intervals)if(i.start<=start&&i.end>=end&&(!winner||i.rateMinor>winner.rateMinor||(i.rateMinor===winner.rateMinor&&i.key<winner.key)))winner=i;

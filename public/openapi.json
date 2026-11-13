@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.442.0",
+    "version": "0.443.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -78597,7 +78597,7 @@
     },
     "/api/v1/reports/payroll/scheduled-costs/export": {
       "get": {
-        "summary": "Complete source-scoped scheduled-work forecast CSV with exact separate-currency totals,salary dates and allocation details,highest-rate nonduplicated hourly plans and pinned segments,and every unpriced review case. Reuses the original same-snapshot read and current rights;not earned payroll,cash-flow certainty,statutory calculation or payment. Original source limits plus10000detail rows/4MiB fail without partial files;larger selections may use requester-bound background jobs within their separately advertised source ceilings. Saved presets retain their exact provenance and resolved dates.",
+        "summary": "Complete source-scoped scheduled-work forecast CSV with exact separate-currency totals,salary dates and allocation details,highest-rate nonduplicated hourly plans and pinned segments,and every unpriced review case. Reuses the original same-snapshot read and current rights;not earned payroll,cash-flow certainty,statutory calculation or payment. Original source limits plus10000detail rows/4MiB fail without partial files;larger selections may use requester-bound background jobs with at most2000session sources,including a single worker,within their separately advertised source ceilings. Saved presets retain their exact provenance and resolved dates.",
         "parameters": [
           {
             "name": "from",
@@ -78686,7 +78686,7 @@
     },
     "/api/v1/reports/payroll/scheduled-costs/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Complete source-scoped scheduled-work forecast CSV with exact separate-currency totals,salary dates and allocation details,highest-rate nonduplicated hourly plans and pinned segments,and every unpriced review case. Reuses the original same-snapshot read and current rights;not earned payroll,cash-flow certainty,statutory calculation or payment. Original source limits plus10000detail rows/4MiB fail without partial files;larger selections may use requester-bound background jobs within their separately advertised source ceilings. Saved presets retain their exact provenance and resolved dates.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Complete source-scoped scheduled-work forecast CSV with exact separate-currency totals,salary dates and allocation details,highest-rate nonduplicated hourly plans and pinned segments,and every unpriced review case. Reuses the original same-snapshot read and current rights;not earned payroll,cash-flow certainty,statutory calculation or payment. Original source limits plus10000detail rows/4MiB fail without partial files;larger selections may use requester-bound background jobs with at most2000session sources,including a single worker,within their separately advertised source ceilings. Saved presets retain their exact provenance and resolved dates.",
         "parameters": [
           {
             "name": "from",
