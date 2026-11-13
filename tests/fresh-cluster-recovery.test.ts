@@ -6,7 +6,7 @@ import {promisify} from 'node:util';
 import {mkdir,chown,writeFile,readFile,rm} from 'node:fs/promises';
 import pg from 'pg';
 import {testDatabase} from './database.ts';
-import {canonicalRoleExport,isolatedClusterRecoveryPlan} from '../src/operations/role-recovery.ts';
+import {canonicalRoleExport,roleExportForRestore,isolatedClusterRecoveryPlan} from '../src/operations/role-recovery.ts';
 import {clusterVerificationSnapshot} from '../src/operations/database-verification.ts';
 
 // CI-only: the entire host is disposable. Never run recovered superuser SQL
@@ -15,8 +15,10 @@ import {clusterVerificationSnapshot} from '../src/operations/database-verificati
 test('fresh native cluster rebuild preserves global roles and original database access/settings without touching the source',{
  skip:process.env.CI!=='true'||process.env.KAVOSH_FRESH_CLUSTER_TEST!=='true'||!process.env.TEST_DATABASE_URL||process.getuid?.()!==0
 },async()=>{
- const run=promisify(execFile),id=randomUUID().replaceAll('-',''),directory='/var/lib/kavosh-one-recovery-'+id,bootstrap='kavosh_recovery_bootstrap_'+id;
+ const run=promisify(execFile),id=randomUUID().replaceAll('-',''),directory='/var/lib/kavosh-one-recovery-'+id;
  const source=new URL(process.env.TEST_DATABASE_URL!);assert.ok(['127.0.0.1','localhost'].includes(source.hostname));
+ const administrator=new pg.Client({connectionString:source.toString()});let bootstrap:string;
+ try{await administrator.connect();bootstrap=(await administrator.query('SELECT rolname FROM pg_roles WHERE oid=10')).rows[0].rolname;}finally{await administrator.end();}
  const plan=isolatedClusterRecoveryPlan(directory,bootstrap,process.env.RECOVERY_POSTGRES_BIN??'');
  const uid=Number((await run('/usr/bin/id',['-u','postgres'])).stdout.trim()),gid=Number((await run('/usr/bin/id',['-g','postgres'])).stdout.trim());
  const env={PATH:'/usr/local/bin:/usr/bin:/bin',NODE_ENV:'test' as const,LANG:'C',TZ:'UTC',PGHOST:source.hostname,PGPORT:source.port||'5432',PGUSER:decodeURIComponent(source.username),PGPASSWORD:decodeURIComponent(source.password)};
@@ -32,16 +34,16 @@ test('fresh native cluster rebuild preserves global roles and original database 
   const baseline=await capture(sourceClient);
   await mkdir(directory,{mode:0o700});owned=true;await chown(directory,uid,gid);await mkdir(plan.socket,{mode:0o700});await chown(plan.socket,uid,gid);
   const roleText=(await run(plan.initdb[0].replace(/initdb$/,'pg_dumpall'),['--roles-only','--no-role-passwords','--no-password'],{env,timeout:10000,maxBuffer:4194304})).stdout;
-  await writeFile(directory+'/roles.sql',roleText,{mode:0o600});await chown(directory+'/roles.sql',uid,gid);
+  await writeFile(directory+'/roles.sql',roleExportForRestore(roleText,bootstrap),{mode:0o600});await chown(directory+'/roles.sql',uid,gid);
   await run(plan.initdb[0].replace(/initdb$/,'pg_dump'),['--format=custom','--no-password','--file',directory+'/database.dump','--dbname',name],{env,timeout:10000});await chown(directory+'/database.dump',uid,gid);
   await tool(plan.initdb);await tool(plan.start);started=true;await tool(plan.roles);await tool(plan.database);
   restored=new pg.Client({host:plan.socket,port:plan.port,user:bootstrap,database:name});await restored.connect();
-  assert.deepEqual(await capture(restored,bootstrap),baseline);
+  assert.deepEqual(await capture(restored),baseline);
   assert.deepEqual((await restored.query('SELECT * FROM public.recovery_record')).rows,[{id:1,value:'SYNTHETIC_ONLY'}]);
   assert.equal((await restored.query('SHOW listen_addresses')).rows[0].listen_addresses,'');
   const exported=(await tool([plan.initdb[0].replace(/initdb$/,'pg_dumpall'),'--roles-only','--no-role-passwords','--no-password','--host',plan.socket,'--port',String(plan.port),'--username',bootstrap,'--database','postgres'])).stdout;
-  assert.deepEqual(canonicalRoleExport(exported,bootstrap),canonicalRoleExport(roleText));
-  await restored.query('REVOKE CONNECT ON DATABASE '+quote+' FROM '+role);assert.notDeepEqual(await capture(restored,bootstrap),baseline);
+  assert.deepEqual(canonicalRoleExport(exported),canonicalRoleExport(roleText));
+  await restored.query('REVOKE CONNECT ON DATABASE '+quote+' FROM '+role);assert.notDeepEqual(await capture(restored),baseline);
   assert.deepEqual(await capture(sourceClient),baseline,'isolated rebuild must not change source privileges/settings/roles');
   assert.equal((await readFile(directory+'/roles.sql','utf8')).includes('PASSWORD'),false);
  }finally{

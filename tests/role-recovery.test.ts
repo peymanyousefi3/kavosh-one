@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import pg from 'pg';
-import {canonicalRoleExport,isolatedClusterRecoveryPlan,databaseAccessFingerprint} from '../src/operations/role-recovery.ts';
+import {canonicalRoleExport,roleExportForRestore,isolatedClusterRecoveryPlan,databaseAccessFingerprint} from '../src/operations/role-recovery.ts';
 import {operationsFixture} from './operations-fixture.ts';
 import {globalRolePropertiesFingerprint,clusterVerificationSnapshot} from '../src/operations/database-verification.ts';
 
@@ -16,14 +16,20 @@ test('only the generated bootstrap role is excluded; malformed or password-beari
  assert.deepEqual(canonicalRoleExport(source+' CREATE ROLE '+bootstrap+'; ALTER ROLE '+bootstrap+' WITH SUPERUSER LOGIN;',bootstrap),canonicalRoleExport(source));
  assert.notDeepEqual(canonicalRoleExport(source+' CREATE ROLE '+bootstrap+'_other;',bootstrap),canonicalRoleExport(source));
  for(const sql of ['CREATE ROLE a','CREATE ROLE "a;','CREATE ROLE a; /* unfinished','CREATE ROLE a; COMMENT ON ROLE a IS $q$unfinished;','\\! unsafe\nCREATE ROLE a;','CREATE ROLE a; ALTER ROLE a WITH PASSWORD \'not-a-real-credential\';','CREATE ROLE a; ALTER ROLE a PASSWORD NULL;'])assert.throws(()=>canonicalRoleExport(sql));
+ for(const value of ["$$synthetic$$","$quoted$synthetic$quoted$","E'synthetic'","U&'synthetic'"])assert.throws(()=>canonicalRoleExport('CREATE ROLE a; ALTER ROLE a PASSWORD '+value+';'),{code:'ROLE_PASSWORD_EXPORT_REFUSED'});
  assert.throws(()=>canonicalRoleExport(source,'postgres'));assert.throws(()=>canonicalRoleExport('x'.repeat(4194305)));
 });
 test('cluster reconstruction can target only its own private socket/data directory and never a shared instance',()=>{
  const directory='/var/lib/kavosh-one-recovery-'+'b'.repeat(32),role='kavosh_recovery_bootstrap_'+'c'.repeat(32),plan=isolatedClusterRecoveryPlan(directory,role,'/usr/lib/postgresql/18/bin');
  assert.equal(plan.networkListeningAllowed,false);assert.equal(plan.applicationActivationAllowed,false);assert.ok(plan.start.includes("-h '' -k "+directory+'/socket -p 55493 -c unix_socket_permissions=0700 -c shared_buffers=16MB -c max_connections=20'));assert.ok(plan.database.includes('--create'));assert.ok(!plan.database.includes('--clean'));assert.ok(!plan.database.includes('--no-owner'));assert.ok(!plan.database.includes('--no-acl'));assert.ok(plan.roles.includes('--single-transaction'));assert.ok(!JSON.stringify(plan).includes('/var/run/postgresql'));
  for(const path of ['/','/var/lib/postgresql/18/main','/var/lib/kavosh-one-backups',directory+'/../postgresql',directory+'\n'])assert.throws(()=>isolatedClusterRecoveryPlan(path,role,'/usr/lib/postgresql/18/bin'));
- assert.throws(()=>isolatedClusterRecoveryPlan(directory,role,'/tmp/tools'));assert.throws(()=>isolatedClusterRecoveryPlan(directory,'postgres','/usr/lib/postgresql/18/bin'));
+ assert.throws(()=>isolatedClusterRecoveryPlan(directory,role,'/tmp/tools'));assert.throws(()=>isolatedClusterRecoveryPlan(directory,'invalid role','/usr/lib/postgresql/18/bin'));
  assert.throws(()=>isolatedClusterRecoveryPlan(directory,role+'\n','/usr/lib/postgresql/18/bin'));assert.throws(()=>canonicalRoleExport('CREATE ROLE postgres;',role+'\n'));
+});
+test('role restoration preserves source bootstrap identity and ordered grants,removing only the duplicate bootstrap creation',()=>{
+ const source='CREATE ROLE postgres; ALTER ROLE postgres WITH SUPERUSER LOGIN; CREATE ROLE worker; GRANT worker TO postgres WITH ADMIN TRUE GRANTED BY postgres;';
+ assert.equal(roleExportForRestore(source,'postgres'),'ALTER ROLE postgres WITH SUPERUSER LOGIN;\nCREATE ROLE worker;\nGRANT worker TO postgres WITH ADMIN TRUE GRANTED BY postgres;\n');
+ assert.throws(()=>roleExportForRestore(source,'missing'),{code:'SOURCE_BOOTSTRAP_REQUIRED'});assert.throws(()=>roleExportForRestore(source+' CREATE ROLE postgres;','postgres'),{code:'SOURCE_BOOTSTRAP_REQUIRED'});assert.throws(()=>roleExportForRestore(source,'postgres\n'),{code:'INVALID_SOURCE_BOOTSTRAP'});
 });
 test('actual database access fingerprint detects PUBLIC privileges and database-scoped settings without exposing values',async()=>{
  const f=await operationsFixture(),native=f.pg.runtime?await f.pg.runtime.connect():undefined;
