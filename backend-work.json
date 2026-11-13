@@ -1,4 +1,11 @@
 {
+  "liveOriginalSnapshotRestoreAcceptance": {
+    "receipt": "deploy/ovh/recovery-acceptance-2026-11-13.json",
+    "implemented": "On-demand --snapshot-proof reuses the existing backup runner,retains the local receipt before either immutable copy,and independently verifies database and encrypted companion. Ordinary nightly mode remains single-pass. Restore verifier downloads both independently from Drive,authenticates both off-server,and compares the quarantined native restore with the actual exported-snapshot baseline,not a later mutable production database. Existing bounded-memory SHA256 verifier is reused;old unbounded MD5 string aggregation removed.",
+    "nativeAcceptance": "Actual schema396 backup396bbea2-f104-4f43-aa42-eb5db4ea2cf7,7247308encryptedbytes;actual Drive downloads,Mac Keychain/age decryption and PostgreSQL18 restore matched432tables/716rows plus original owners/grants/functions/RLS. Recovery key never sent to VPS. Temporary recovery database and all four local encrypted/plaintext test files removed;production source received no restore commands.",
+    "debugging": "First bounded download used rclone copyto with --max-size,which the real tool explicitly rejects for single-file copies. Fixed the actual cause with read-only cat and an exact maxBuffer bound,then size/SHA256 checks before private local write. No failure was counted as a pass and no provider error or credential was printed unredacted.",
+    "remaining": "Global-role reconstruction,sequence values,media and full-server rebuild are not certified by this proof. Independent recovery-key escrow and permanent Google authorization remain gates. Signing vault approval is still pending;no UI work or landing modifications."
+  },
   "production433And396Acceptance": {
     "receipt": "deploy/ovh/backend-release-2026-11-13.json",
     "runtime": "Verified Linux e51ee94 package activated with matching isolated worker bundles;schema396 and API0.433.0. Hosted d2a04dd release-source gates completed13/13 successfully. Migration371a25e ran through the existing local OS postgres identity,no new owner password or web TLS exception.",
