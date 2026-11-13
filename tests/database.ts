@@ -29,7 +29,9 @@ export async function testDatabase(template?:string): Promise<TestDatabase> {
   // This exact, generated disposable database is the only teardown target.
   const name = `kavosh_test_${randomUUID().replaceAll('-','')}`;
   try{await admin.connect();
-  await admin.query(`CREATE DATABASE "${name}"${template?` TEMPLATE "${template}"`:''}`);
+  // template1 may have an active maintenance/test connection. Blank fixtures
+  // and fresh schema seeds use pristine template0;owned sealed clones stay explicit.
+  await admin.query(`CREATE DATABASE "${name}" TEMPLATE "${template??'template0'}"`);
   created=true;
   url.pathname=`/${name}`;
   const client = new pg.Client({ connectionString: url.toString() });
@@ -73,7 +75,7 @@ async function installTestSchema(db:{exec(sql:string):Promise<unknown>}){
 async function makeSchemaTemplate(connectionString:string){
  const url=new URL(connectionString);if(!['localhost','127.0.0.1','[::1]'].includes(url.hostname))throw new Error('Test schema templates require isolated loopback PostgreSQL');
  const name='kavosh_schema_'+randomUUID().replaceAll('-',''),owner=new pg.Client({connectionString});let created=false;
- try{await owner.connect();await owner.query(`CREATE DATABASE "${name}"`);created=true;url.pathname='/'+name;const seed=new pg.Client({connectionString:url.toString()});
+ try{await owner.connect();await owner.query(`CREATE DATABASE "${name}" TEMPLATE template0`);created=true;url.pathname='/'+name;const seed=new pg.Client({connectionString:url.toString()});
   try{await seed.connect();await installTestSchema({exec:sql=>seed.query(sql)});if((await seed.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0]?.revision!==expectedSchemaRevision)throw new Error('Fixture schema is not current');}finally{await seed.end();}
   // Seal the seed after its owner connection closes. Test clients and
   // background maintenance must not modify the source between fixture copies.
