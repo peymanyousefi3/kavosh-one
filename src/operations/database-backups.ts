@@ -148,17 +148,17 @@ export async function encryptRecoveryStream(raw:unknown,source:Readable,signal:A
   await Promise.allSettled(tasks);clearTimeout(kill);await output.close().catch(()=>{});if(!success)await unlink(file).catch(()=>{});
  }
 }
-// The caller authenticates ciphertext first. No consumer receives plaintext
-// until the entire age stream and exact source length/hash have passed.
+// The caller authenticates ciphertext first. Bounded catalogs need parsing;
+// exact object recovery additionally requires its recorded source length/hash.
 export async function decryptRecoveryStream(raw:unknown,source:Readable,signal:AbortSignal){
- const parsed=z.object({age:path,identityFile:path,file:path,expectedBytes:z.number().int().positive().max(4294967296),expectedSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict().safeParse(raw);
+ const base=z.object({age:path,identityFile:path,file:path}),parsed=z.union([base.extend({expectedBytes:z.number().int().positive().max(4294967296),expectedSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),base.extend({maximumBytes:z.number().int().positive().max(1073741824)}).strict()]).safeParse(raw);
  if(!parsed.success||!(source instanceof Readable))throw new RecoveryError('INVALID_STREAM_RECOVERY_CONFIGURATION');if(signal.aborted)throw new RecoveryError('RECOVERY_CANCELLED');
  const i=parsed.data;await privateDirectory(dirname(i.file));await nativeRecoveryIdentity(i.identityFile);
  const output=await open(i.file,'wx',0o600),hash=createHash('sha256'),tasks:Promise<unknown>[]=[];let child:ChildProcessWithoutNullStreams|undefined,success=false,sizeError:RecoveryError|undefined;
  try{
   child=spawn(i.age,['--decrypt','--identity',i.identityFile],{env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV??'production',LANG:'C'},signal});
-  tasks.push(completed(child),pipeline(source,child.stdin,{signal}),pipeline(child.stdout,counter(i.expectedBytes,hash,error=>{sizeError=error;}),output.createWriteStream({autoClose:true}),{signal}));await Promise.all(tasks);
-  const bytes=(await syncFile(i.file)).size,sha256=hash.digest('hex');if(bytes!==i.expectedBytes||sha256!==i.expectedSha256)throw new RecoveryError('RECOVERED_MEDIA_CONTENT_MISMATCH');success=true;return{bytes,sha256};
+  tasks.push(completed(child),pipeline(source,child.stdin,{signal}),pipeline(child.stdout,counter('expectedBytes'in i?i.expectedBytes:i.maximumBytes,hash,error=>{sizeError=error;}),output.createWriteStream({autoClose:true}),{signal}));await Promise.all(tasks);
+  const bytes=(await syncFile(i.file)).size,sha256=hash.digest('hex');if('expectedBytes'in i&&(bytes!==i.expectedBytes||sha256!==i.expectedSha256))throw new RecoveryError('RECOVERED_MEDIA_CONTENT_MISMATCH');success=true;return{bytes,sha256};
  }catch(error){if(sizeError)throw sizeError;if(error instanceof RecoveryError)throw error;throw new RecoveryError(signal.aborted?'RECOVERY_CANCELLED':'STREAM_RECOVERY_FAILED');}
  finally{
   if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');const kill=setTimeout(()=>{if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');},1000);kill.unref();await Promise.allSettled(tasks);clearTimeout(kill);await output.close().catch(()=>{});if(!success)await unlink(i.file).catch(()=>{});

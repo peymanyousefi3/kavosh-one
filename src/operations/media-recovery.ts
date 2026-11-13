@@ -1,12 +1,10 @@
-import {createHash,randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {constants} from 'node:fs';
 import {open,mkdir,unlink,rmdir,statfs} from 'node:fs/promises';
 import {join,isAbsolute} from 'node:path';
-import {Transform} from 'node:stream';
-import {pipeline} from 'node:stream/promises';
 import {z} from 'zod';
 import {RecoveryError,decryptRecoveryStream} from './database-backups.ts';
-import {privateDirectory,regularFile,nativeRecoveryIdentity} from './recovery-files.ts';
+import {privateDirectory,regularFile,nativeRecoveryIdentity,stageRecoveryArchive} from './recovery-files.ts';
 import {recordedMediaReference} from './media-reference-plan.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'));
@@ -24,13 +22,7 @@ export async function recoverMediaObject(raw:unknown,signal?:AbortSignal){
   await privateDirectory(i.workDirectory);await nativeRecoveryIdentity(i.identityFile);const before=await regularFile(i.archive);if(before.size!==i.expectedBytes)throw new RecoveryError('BACKUP_DIGEST_MISMATCH');
   const disk=await statfs(i.workDirectory,{bigint:true});if(disk.bavail*disk.bsize<BigInt(i.expectedBytes)+BigInt(i.source.bytes)+67108864n)throw new RecoveryError('MEDIA_RECOVERY_DISK_CAPACITY_LOW');
   await mkdir(folder,{mode:0o700});owned=true;
-  const source=await open(i.archive,constants.O_RDONLY|constants.O_NOFOLLOW),hash=createHash('sha256');let bytes=0;
-  try{
-   const current=await source.stat();if(current.ino!==before.ino||current.dev!==before.dev||current.size!==before.size||current.nlink!==1)throw new RecoveryError('UNSAFE_RECOVERY_FILE');
-   const target=await open(cipher,'wx',0o600);cipherOwned=true;
-   try{await pipeline(source.createReadStream({autoClose:true}),new Transform({transform(chunk:Buffer,_encoding,done){bytes+=chunk.length;if(bytes>i.expectedBytes)return done(new RecoveryError('BACKUP_DIGEST_MISMATCH'));hash.update(chunk);done(null,chunk);}}),target.createWriteStream({autoClose:true}),{signal:abort});}finally{await target.close().catch(()=>{});}
-  }finally{await source.close().catch(()=>{});}
-  if(bytes!==i.expectedBytes||hash.digest('hex')!==i.expectedSha256)throw new RecoveryError('BACKUP_DIGEST_MISMATCH');
+  await stageRecoveryArchive(i.archive,cipher,i.expectedBytes,i.expectedSha256,abort);cipherOwned=true;
   const encrypted=await open(cipher,constants.O_RDONLY|constants.O_NOFOLLOW);
   try{await decryptRecoveryStream({age:i.age,identityFile:i.identityFile,file:clear,expectedBytes:i.source.bytes,expectedSha256:i.source.sha256},encrypted.createReadStream({autoClose:true}),abort);clearOwned=true;}finally{await encrypted.close().catch(()=>{});}
   const result={format:'kavosh-media-object-recovery-v1',id,source:i.source,ciphertextSha256:i.expectedSha256,encryptedBytes:i.expectedBytes,authenticatedDecryption:true,exactContentVerified:true,recoveredAt:new Date().toISOString(),sourceOrRemoteObjectsModified:false,applicationActivationAllowed:false,completeMediaRestore:false};

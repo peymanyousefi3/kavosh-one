@@ -1,0 +1,24 @@
+{
+  "scope": "existing_two_synthetic_objects_only_not_production_academy_restore",
+  "collectionId": "0894f5ee-70d2-4282-80b7-3c7b02d9d8dd",
+  "catalogCiphertextSha256": "43bf1638e450f65322a78efb201e8456b0ed4a3ca5d03a6a5c52e625e1a97b31",
+  "catalogEncryptedBytes": 3376,
+  "verifier": "scripts/verify-general-media-recovery.mjs --execute",
+  "actualDriveDownloads": 3,
+  "generalCollectionRecoveryToolVerified": true,
+  "fullCatalogValidatedBeforeObjectExtraction": true,
+  "exactSyntheticObjectsRecovered": 2,
+  "exactSyntheticBytesRecovered": 1536,
+  "authenticatedDecryptionAndContentHashesPassed": true,
+  "privateTemporaryRecoveryFilesRemoved": true,
+  "recoveryKeyTransferredToVps": false,
+  "sourceOrRemoteObjectsModified": false,
+  "productionMediaRestoreVerified": false,
+  "applicationActivated": false,
+  "limitations": [
+    "No real academy media restored or republished",
+    "Database/privacy/outbox reconciliation remains separate before application activation",
+    "Signing evidence storage remains outside ordinary-file scope pending authorization",
+    "Production incremental backup scheduling and full-host recovery remain unfinished"
+  ]
+}
