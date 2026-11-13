@@ -31,7 +31,7 @@ test('every checked-in Kavosh One service and timer is covered by the encrypted 
  for(const name of units)assert.ok(script.split(/\s+/).includes('etc/systemd/system/'+name),'Missing backup coverage: '+name);
  assert.doesNotMatch(script,/\betc\/systemd\/system\/(?:kavosh\.service|\*)/);
 });
-function verifyConfig({remove,extra,duplicate=false,password=false,corrupt=false}={}){
+function verifyConfig({remove,extra,duplicate=false,password=false,corrupt=false,invalidOperator=false}={}){
  const units=readdirSync(new URL('../deploy/ovh/',import.meta.url)).filter(name=>/^kavosh-one.*\.(?:service|timer)$/.test(name));
  const entries=['roles.sql','etc/kavosh-one/web.env','etc/kavosh-one/backup.env','etc/kavosh-one/drive.json','etc/kavosh-one/twilio-credentials.json','etc/kavosh-one/r2-upload.json','etc/kavosh-one/r2-scan.json','etc/kavosh-one/r2-promote.json','etc/kavosh-one/r2-download.json','etc/kavosh-one-tls/server.crt','etc/caddy/kavosh-one.caddy','etc/kavosh-one-scanner/clamd.conf','etc/apparmor.d/local/usr.sbin.clamd','etc/apparmor.d/kavosh-one-parser',...units.map(name=>'etc/systemd/system/'+name),...['auth-delivery','file-inspection','file-promotion','file-verification','background-notifications','background-reports','background-messages','background-platform-notices'].map(name=>'etc/kavosh-one/'+name+'.env')].filter(name=>name!==remove);
  for(const name of ['etc/kavosh-one/media-readers.json','etc/kavosh-one/media-backup.env','etc/systemd/system/kavosh-one-backup.service.d/media.conf'])if(name!==remove)entries.push(name);
@@ -44,6 +44,7 @@ function verifyConfig({remove,extra,duplicate=false,password=false,corrupt=false
   if(binary==='/opt/homebrew/bin/rclone'){assert.equal(args[0],'cat');assert.equal(options.maxBuffer,cipher.length);return Buffer.from(cipher);}
   if(binary==='/opt/homebrew/bin/age'){assert.equal(options.input,'PRIVATE_RECOVERY_SECRET');return Buffer.alloc(0);}
   assert.equal(binary,'/usr/bin/tar');if(args[0]==='-tf')return Buffer.from(entries.join('\n'));
+  if(args.at(-1)==='etc/kavosh-one/media-backup.env')return Buffer.from('KAVOSH_BACKUP_OPERATOR_CLI='+(invalidOperator?'/tmp/untrusted.js':'/srv/kavosh-one/operations/recovery-6347e76/scripts/database-recovery.js')+'\n');
   return Buffer.from(args.at(-1)==='roles.sql'?'CREATE ROLE synthetic;'+(password?" ALTER ROLE synthetic PASSWORD 'PRIVATE_PASSWORD';":''):args.at(-1).endsWith('.json')?'{"private":"PRIVATE_VALUE"}':'PRIVATE_VALUE');
  }};
  const source=readFileSync(new URL('../scripts/verify-vps-config-backup.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replaceAll('import.meta.url',JSON.stringify(import.meta.url));
@@ -51,6 +52,7 @@ function verifyConfig({remove,extra,duplicate=false,password=false,corrupt=false
 }
 test('settings recovery checks every current unit,worker credential and parser policy without applying configuration',()=>{
  const r=verifyConfig();assert.equal(r.exitCode,undefined,JSON.stringify(r.logs));assert.equal(JSON.parse(r.logs.at(-1)).configurationApplied,false);assert.equal(r.removed.length,3);assert.equal(r.commands.filter(([binary])=>binary==='/usr/bin/ssh').length,1);
+ assert.equal(JSON.parse(r.logs.at(-1)).mediaBackupOperator,'/srv/kavosh-one/operations/recovery-6347e76/scripts/database-recovery.js');const bad=verifyConfig({invalidOperator:true});assert.equal(bad.exitCode,1);assert.equal(bad.removed.length,3);assert.ok(!bad.logs.some(line=>line.includes('configurationApplied')));
 });
 test('missing current files,foreign paths,traversal,duplicates,password exports and corrupt ciphertext fail closed',()=>{
  for(const options of [{remove:'etc/apparmor.d/kavosh-one-parser'},{remove:'etc/systemd/system/kavosh-one-signature-completion.service'},{remove:'etc/kavosh-one/background-messages.env'},{remove:'etc/kavosh-one/media-readers.json'},{remove:'etc/systemd/system/kavosh-one-backup.service.d/media.conf'},{extra:'etc/systemd/system/kavosh-one-backup.service.d/foreign.conf'},{extra:'etc/caddy/Caddyfile'},{extra:'etc/kavosh-one/../../caddy/Caddyfile'},{duplicate:true},{password:true},{corrupt:true}]){const r=verifyConfig(options);assert.equal(r.exitCode,1,JSON.stringify(options));assert.equal(r.removed.length,3);assert.ok(!r.logs.some(s=>s.includes('configurationApplied')));if(options.corrupt)assert.ok(!r.commands.some(([binary])=>binary==='/opt/homebrew/bin/age'));}

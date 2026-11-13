@@ -1,0 +1,62 @@
+{
+  "runnerSourceCommit": "c03faf0",
+  "isolatedOperator": "/srv/kavosh-one/operations/recovery-6347e76/scripts/database-recovery.js",
+  "previousRunnerAndEnvironmentCopiesRetained": true,
+  "scheduledBackupService": {
+    "exitStatus": 0,
+    "wallSeconds": 39.394,
+    "cpuSeconds": 9.273,
+    "peakMemoryMiB": 94.2,
+    "backupId": "aa18e292-94d6-448a-b32a-bace82b07bbe",
+    "schemaRevision": 396,
+    "encryptedBytes": 7247308,
+    "ciphertextSha256": "382dcb0ec36a6273be9ee15314e8740f5a3c21a181e68d4b8f95d7115b5ce14c",
+    "databaseAccessBaselineRows": 1,
+    "globalRoleBaselineRows": 91,
+    "snapshotBaselineOffsiteVerified": true,
+    "mediaReferencePlanOffsiteVerified": true,
+    "ordinaryMediaOffsiteVerified": true,
+    "independentMacDriveDownloadAndAuthenticatedClusterBaselineVerified": true
+  },
+  "ordinaryMedia": {
+    "batchId": "51445dca-9109-4226-8d19-bf69887ee1b5",
+    "academies": 1,
+    "objects": 0,
+    "recordedReferences": 0,
+    "unconfirmedUploads": 0,
+    "catalogEncryptedBytes": 2381,
+    "catalogCiphertextSha256": "c12d9caf2e5e4ee3929dd311330a13cd2859e3440e0ec7f9e2ae4de87e625b6a",
+    "vpsIndependentCopyAndReadbackVerified": true,
+    "signedEvidenceIncluded": false
+  },
+  "settingsArchive": {
+    "id": "c3cd7cd7-acc4-45f5-a069-b862203418aa",
+    "encryptedBytes": 153832,
+    "ciphertextSha256": "68f86f2586598582d555bab710f777ae6e2a68e09c57fce0b3bbd7205b495bd1",
+    "wallSeconds": 10.636,
+    "peakMemoryMiB": 43,
+    "independentMacDownloadAndAuthenticatedDecryptionVerified": true,
+    "requiredFilesChecked": 38,
+    "archiveEntriesChecked": 70,
+    "newPinnedOperatorPathVerified": true,
+    "passwordFreeRolesVerified": true,
+    "configurationApplied": false
+  },
+  "backupTimerChanged": false,
+  "bothTimersActive": true,
+  "memoryLimitBytes": 536870912,
+  "cpuQuotaPercent": 50,
+  "nice": 15,
+  "idleIoSchedulingRetained": true,
+  "credentialsOrStoragePermissionsChanged": false,
+  "privateRecoveryKeyTransferredToVps": false,
+  "liveWebPidBeforeAndAfter": 653820,
+  "landingHttpStatus": 200,
+  "automaticDeletionEnabled": false,
+  "fullServerRebuildVerified": false,
+  "limitations": [
+    "The live ordinary-media inventory is empty; nonempty behavior is separately tested.",
+    "The prior real isolated-cluster restore used backup 171a9ad4, not this new backup.",
+    "Permanent Google OAuth authorization, signing-vault authorization, privacy/session/outbox reconciliation and full-host/application activation acceptance remain open."
+  ]
+}

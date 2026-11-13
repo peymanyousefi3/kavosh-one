@@ -35,15 +35,17 @@ try {
  assert.equal(new Set(entries).size,entries.length);
  for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name)||/^etc\/systemd\/system\/kavosh-one-backup\.service\.d(?:\/?|\/media\.conf)$/.test(name));}
  const content = name => execFileSync('/usr/bin/tar', ['-xOf', plaintext, name], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1048576 });
+ let mediaBackupOperator;
  for (const name of required) {
   const bytes = content(name);
   try {
    assert.ok(bytes.length > 0);
    if (name.endsWith('.json')) assert.equal(typeof JSON.parse(bytes.toString()), 'object');
    if (name === 'roles.sql') { assert.ok(bytes.includes(Buffer.from('CREATE ROLE'))); assert.ok(!/\bPASSWORD\s+'/i.test(bytes.toString())); }
+   if(name==='etc/kavosh-one/media-backup.env'){const text=bytes.toString();assert.match(text,/^KAVOSH_BACKUP_OPERATOR_CLI=\/srv\/kavosh-one\/operations\/recovery-[a-f0-9]{7,40}\/scripts\/database-recovery\.js\n$/);assert.equal(text.split('\n').length,2);mediaBackupOperator=text.slice('KAVOSH_BACKUP_OPERATOR_CLI='.length).trim();}
   } finally { bytes.fill(0); }
  }
- console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
+ console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,mediaBackupOperator, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
 } catch { console.error('CONFIG_BACKUP_ACCEPTANCE_FAILED: ' + stage); process.exitCode = 1; }
 finally {
  for (const file of [plaintext, encrypted]) if (file) try { unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') { console.error('CONFIG_PROOF_CLEANUP_REQUIRED'); process.exitCode = 1; } }
