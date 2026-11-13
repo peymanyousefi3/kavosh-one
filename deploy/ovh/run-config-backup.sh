@@ -26,6 +26,7 @@ env -i PATH=/usr/bin:/bin LANG=C /usr/bin/tar -C / -cf - \
  etc/systemd/system/kavosh-one-file-copy@.service \
  etc/systemd/system/kavosh-one-background@.service \
  etc/systemd/system/kavosh-one-background@platform-notices.service.d \
+ etc/systemd/system/kavosh-one-background@reports.service.d \
  etc/systemd/system/kavosh-one-signature-completion.service \
  etc/systemd/system/kavosh-one-parser@.service \
  -C /run/kavosh-one-role-export roles.sql 2>/dev/null \
