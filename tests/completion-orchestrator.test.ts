@@ -21,6 +21,13 @@ test('unavailable native authority selects no provider and a pending bound docum
  const absent=fixture();absent.missing();assert.equal((await processEnrollmentCompletion(absent.task,absent.services,{enabled:true})).state,'source_unavailable');assert.equal(absent.counts().selected,0);assert.equal(absent.counts().providerReads,0);assert.equal(absent.counts().connections,0);
  const f=fixture(),result=await processEnrollmentCompletion(f.task,f.services,{enabled:true});assert.equal(result.state,'not_completed');assert.equal(result.evidenceRecorded,false);assert.equal(result.admissionCleared,false);assert.deepEqual(f.counts(),{connections:0,queries:3,providerReads:1,selected:1});
 });
+test('leased completion source changes fail before selecting credentials or accessing the provider',async()=>{
+ const f=fixture();
+ for(const sourceFingerprint of ['invalid','a'.repeat(64)])await assert.rejects(processEnrollmentCompletion(f.task,f.services,{enabled:true,sourceFingerprint}),{code:'SIGNATURE_COMPLETION_SOURCE_CHANGED'});
+ assert.equal(f.counts().selected,0);assert.equal(f.counts().providerReads,0);assert.equal(f.counts().connections,0);
+ assert.equal((await processEnrollmentCompletion(f.task,f.services,{enabled:true,sourceFingerprint:f.source.sourceFingerprint})).state,'not_completed');
+ assert.equal(f.counts().providerReads,1);
+});
 test('provider/storage configuration failures are redacted and invalid evidence targets cause zero provider IO',async()=>{
  const f=fixture();for(const services of [{...f.services,providers:()=>null},{...f.services,evidenceStores:()=>null},{...f.services,providers:()=>{throw Error('PRIVATE operator credentials');}},{...f.services,evidenceStores:()=>{throw Error('PRIVATE operator credentials');}},{...f.services,evidenceStores:()=>({...f.services.evidenceStores(f.task.academyId),targetId:'0'.repeat(64)})}])await assert.rejects(processEnrollmentCompletion(f.task,services,{enabled:true}),e=>{assert.equal((e as {code:string}).code,'SIGNATURE_COMPLETION_NOT_CONFIGURED');assert.doesNotMatch(String(e),/PRIVATE|credentials/);return true;});assert.equal(f.counts().providerReads,0);assert.equal(f.counts().connections,0);
 });

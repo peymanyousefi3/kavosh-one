@@ -13,12 +13,15 @@ type Services={database:Database;providers:(academyId:string,connectionId:string
 // Explicit operator-only composition,no route/daemon/env activation. The task
 // selects ONLY academy/start;native historical authority chooses all signer,
 // document,package and routing identities. Never issue a provider POST here.
-async function processCompletion(purpose:'unified_enrollment'|'worker_services',raw:unknown,services:Services,options:{enabled?:boolean;signal?:AbortSignal}={}){
+type CompletionOptions={enabled?:boolean;signal?:AbortSignal;sourceFingerprint?:string};
+async function processCompletion(purpose:'unified_enrollment'|'worker_services',raw:unknown,services:Services,options:CompletionOptions={}){
  const parsed=task.safeParse(raw);if(!parsed.success)throw new ApiError(400,'INVALID_SIGNATURE_COMPLETION_TARGET');
  if(options.enabled!==true)return {state:'disabled' as const,evidenceRecorded:false,admissionCleared:false,providerMutationPerformed:false};
  if(options.signal?.aborted)throw new ApiError(503,'SIGNATURE_COMPLETION_INTERRUPTED');
  const work=purpose==='worker_services',source=await(work?loadWorkSignatureCompletionSource:loadSignatureCompletionSource)(services.database,parsed.data);
  if(!source)return {state:'source_unavailable' as const,evidenceRecorded:false,admissionCleared:false,providerMutationPerformed:false};
+ // A leased job must not retrieve a replacement document after its source changes.
+ if(options.sourceFingerprint!==undefined&&(!/^[a-f0-9]{64}$/.test(options.sourceFingerprint)||options.sourceFingerprint!==source.sourceFingerprint))throw new ApiError(409,'SIGNATURE_COMPLETION_SOURCE_CHANGED');
  let provider:ReturnType<Services['providers']>,store:ReturnType<Services['evidenceStores']>;
  try{provider=services.providers(source.academyId,source.connectionId,source.connectionTargetId);store=services.evidenceStores(source.academyId);}catch{throw new ApiError(503,'SIGNATURE_COMPLETION_NOT_CONFIGURED');}
  if(!provider||!store)throw new ApiError(503,'SIGNATURE_COMPLETION_NOT_CONFIGURED');
@@ -31,11 +34,19 @@ async function processCompletion(purpose:'unified_enrollment'|'worker_services',
    persisted=await(work?recordWorkSignatureCompletionEvidence:recordSignatureCompletionEvidence)(services.database,{academyId:s.academyId,startId:s.startId,sourceFingerprint:s.sourceFingerprint,propertiesJson:evidence.properties.bytes.toString('utf8'),storage:{receipt:retained.receipt,storageTargetId:retained.storageTargetId,etags:retained.etags}});
    return retained.receipt;
  };
- const result=work?await reconcileWorkCompletion(provider,source,{fetch:services.providerFetch,retain,matchSigner:(s,role,o)=>matchWorkSignatureCompletionSigner(services.database,s,role,o)},{signal:options.signal})
- :await reconcileEnrollmentCompletion(provider,source,{fetch:services.providerFetch,retain,matchSigner:(s,o)=>matchSignatureCompletionSigner(services.database,s,o)},{signal:options.signal});
+ // Matches the native queue's four-request reservation. Never let a provider
+ // adapter silently add retries, a fifth request, or a mutating operation.
+ let providerCalls=0;
+ const readOnlyFetch:typeof fetch=(input,init)=>{
+  const method=init?.method??(input instanceof Request?input.method:'GET');
+  if(method.toUpperCase()!=='GET'||++providerCalls>4)throw new ApiError(503,'SIGNATURE_COMPLETION_REQUEST_BUDGET_EXCEEDED');
+  return (services.providerFetch??fetch)(input,init);
+ };
+ const result=work?await reconcileWorkCompletion(provider,source,{fetch:readOnlyFetch,retain,matchSigner:(s,role,o)=>matchWorkSignatureCompletionSigner(services.database,s,role,o)},{signal:options.signal})
+ :await reconcileEnrollmentCompletion(provider,source,{fetch:readOnlyFetch,retain,matchSigner:(s,o)=>matchSignatureCompletionSigner(services.database,s,o)},{signal:options.signal});
  if(result.state==='not_completed')return {...result,evidenceRecorded:false};
  if(!persisted)throw new ApiError(503,'SIGNATURE_COMPLETION_EVIDENCE_UNAVAILABLE');
  return {state:persisted.state,id:persisted.id,inserted:persisted.inserted,evidenceRecorded:true,reviewPending:true,admissionCleared:false,legalValidityCertified:false,malwareFreeVerified:false,providerMutationPerformed:false};
 }
-export const processEnrollmentCompletion=(raw:unknown,services:Services,options:{enabled?:boolean;signal?:AbortSignal}={})=>processCompletion('unified_enrollment',raw,services,options);
-export const processWorkCompletion=async(raw:unknown,services:Services,options:{enabled?:boolean;signal?:AbortSignal}={})=>({...await processCompletion('worker_services',raw,services,options),purpose:'worker_services' as const,signedByBothPartiesVerified:false,legallyEffective:false,paymentCleared:false});
+export const processEnrollmentCompletion=(raw:unknown,services:Services,options:CompletionOptions={})=>processCompletion('unified_enrollment',raw,services,options);
+export const processWorkCompletion=async(raw:unknown,services:Services,options:CompletionOptions={})=>({...await processCompletion('worker_services',raw,services,options),purpose:'worker_services' as const,signedByBothPartiesVerified:false,legallyEffective:false,paymentCleared:false});
