@@ -9,8 +9,15 @@ const id=z.string().uuid().transform(v=>v.toLowerCase()),name=z.string().trim().
 const provision=z.object({name,masterName:name,masterEmail:z.string().email().max(254).transform(v=>v.toLowerCase()),reason}).strict();
 const change=z.object({expectedVersion:z.number().int().positive().max(2147483647),name:name.optional(),status:z.enum(['provisioning','active','read_only','suspended']).optional(),reason}).strict().refine(v=>v.name!==undefined||v.status!==undefined);
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),after:id.optional()}).strict();
-const directoryCollection=z.enum(['hubs','people','courses','classes','students']);
-const accessPurpose=z.string().trim().min(1).max(500).refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v));
+const directoryCollection=z.enum(['hubs','people','courses','classes','students','finance-accounts','finance-journals']);
+const accessPurpose=z.string().refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)).trim().min(1).max(500);
+function readAccessPurpose(request:Request){
+ const value=z.string().max(6005).parse(request.headers.get('x-access-purpose'));let decoded=value;
+ // Fetch headers cannot carry arbitrary Unicode directly. Keep existing raw
+ // ASCII clients; the reserved utf8: prefix carries encodeURIComponent(text).
+ if(/^utf8:/i.test(value))try{decoded=decodeURIComponent(value.slice(5));}catch{throw new ApiError(400,'INVALID_INPUT');}
+ return accessPurpose.parse(decoded);
+}
 const invitation=z.object({expectedVersion:z.number().int().positive().max(2147483647),reason}).strict();
 const revokeInvitation=invitation.extend({invitationRequestKey:id}).strict();
 const planDefinition=z.object({name,description:z.string().max(2000),currencyCode:z.string().regex(/^[A-Z]{3}$/),unitScale:z.number().int().min(0).max(18),amountMinor:z.string().regex(/^(0|[1-9][0-9]{0,37})$/),periodMonths:z.number().int().min(1).max(36),graceDays:z.number().int().min(0).max(365),active:z.boolean()}).strict();
@@ -32,7 +39,8 @@ const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
- {path:'/api/platform/v1/academies/{id}/records/{collection}',method:'get',pathSchemas:{collection:directoryCollection},accessPurposeRequired:true,querySchema:paging,summary:'Verified MFA platform owner inspects one exact school directory: hubs,people,courses,classes or students. Required X-Access-Purpose is privately audited;bounded keyset pages,explicit school predicates and RLS. Fixed projections exclude identity secrets,care vaults and financial records;not complete business browsing. No master impersonation,new membership,permission change or external action.'},
+ {path:'/api/platform/v1/academies/{id}/finance/journals/{journalId}',method:'get',accessPurposeRequired:true,summary:'Verified MFA platform owner reads one immutable school-bound posted journal and ALL2to200lines,with historical account labels and pinned currency units. Monetary minor units are exact decimal strings;no FX,netting or balance inference. Required private purpose audit;no school-master impersonation,posting,payment,credentials or counterparty detail.'},
+ {path:'/api/platform/v1/academies/{id}/records/{collection}',method:'get',pathSchemas:{collection:directoryCollection},accessPurposeRequired:true,querySchema:paging,summary:'Verified MFA platform owner inspects exact school directories: hubs,people,courses,classes,students,finance-accounts or finance-journals. Required X-Access-Purpose is privately audited;bounded keyset pages,explicit school predicates and RLS. Account definitions and posted journal headers are not balances or payment proof. Fixed projections exclude identity secrets and care vaults;not complete business browsing. No master impersonation,new membership,permission change or external action.'},
  {path:'/api/platform/v1/operations/health',method:'get',summary:'Verified MFA platform owner only: bounded read-only operational health,with stale observations critical. Same-VPS evidence,not independent uptime or delivered external alerts. No credentials,service control or school business data.'},
  {path:'/api/platform/v1/academies/{id}/retention',method:'get',summary:'Verified platform-owner-only current school preservation status,active legal-hold count and live database deletion/bulk-clearing guard coverage with explicit operational exceptions. Missing or disabled guards remain visible. Identity and external storage are outside this coverage;no deletion authorization or statutory retention certification.'},
  {path:'/api/platform/v1/academies/{id}/legal-holds',method:'get',summary:'Verified owner-only bounded immutable academy-wide legal-hold and release history;no school subscription or access change',querySchema:paging},
@@ -96,11 +104,14 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const noticeTarget=/^notifications\/([a-f0-9-]{36})\/read$/.exec(path);
    const holdTarget=/^academies\/([a-f0-9-]{36})\/(retention|legal-holds)(?:\/([a-f0-9-]{36})(\/release)?)?$/.exec(path);
    const directoryTarget=/^academies\/([a-f0-9-]{36})\/records\/([^/]+)$/.exec(path);
+   const journalTarget=/^academies\/([a-f0-9-]{36})\/finance\/journals\/([a-f0-9-]{36})$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(directoryTarget){
+   if(journalTarget){
+    if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId:id.parse(journalTarget[1]),journalId:id.parse(journalTarget[2]),purpose:readAccessPurpose(request)};operation='academies.journal';
+   }else if(directoryTarget){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
-    input={...paging.parse(Object.fromEntries(pairs)),academyId:id.parse(directoryTarget[1]),collection:directoryCollection.parse(directoryTarget[2]),purpose:accessPurpose.parse(request.headers.get('x-access-purpose'))};operation='academies.directory';
+    input={...paging.parse(Object.fromEntries(pairs)),academyId:id.parse(directoryTarget[1]),collection:directoryCollection.parse(directoryTarget[2]),purpose:readAccessPurpose(request)};operation='academies.directory';
    }else if(path==='operations/health'){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={};operation='operations.health';
    }else if(holdTarget){
@@ -198,7 +209,7 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    else if(error&&typeof error==='object'&&'message' in error){
     const message=String(error.message);
     if(message==='PLATFORM_OWNER_REQUIRED'){status=403;code=message;}
-    else if(message==='PLATFORM_ACADEMY_NOT_FOUND'||message==='PLATFORM_PLAN_NOT_FOUND'){status=404;code=message;}
+    else if(message==='PLATFORM_ACADEMY_NOT_FOUND'||message==='PLATFORM_PLAN_NOT_FOUND'||message==='PLATFORM_RECORD_NOT_FOUND'){status=404;code=message;}
     else if(message==='PLATFORM_PLAN_VERSION_CHANGED'){status=409;code=message;}
     else if(message==='PLATFORM_CANCELLATION_NOT_FOUND'||message==='PLATFORM_NOTIFICATION_NOT_FOUND'||message==='PLATFORM_HOLD_NOT_FOUND'){status=404;code=message;}
     else if(message==='PLATFORM_HOLD_ALREADY_ACTIVE'||message==='PLATFORM_HOLD_ALREADY_RELEASED'){status=409;code=message;}

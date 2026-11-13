@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.436.0",
+    "version": "0.437.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -3554,6 +3554,59 @@
         }
       }
     },
+    "/api/platform/v1/academies/{id}/finance/journals/{journalId}": {
+      "get": {
+        "summary": "Verified MFA platform owner reads one immutable school-bound posted journal and ALL2to200lines,with historical account labels and pinned currency units. Monetary minor units are exact decimal strings;no FX,netting or balance inference. Required private purpose audit;no school-master impersonation,posting,payment,credentials or counterparty detail.",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "journalId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Access-Purpose",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 6005
+            },
+            "description": "Operational access reason,at most500decoded UTF-16 code units. Raw ASCII is supported;for Unicode or a literal reserved prefix,use utf8: followed by encodeURIComponent(reason). Malformed UTF-8,controls and oversized values are rejected. Do not include health,credential or payment details."
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants,academy selection and bot credentials confer no platform authority. Every successful read and change is audited. Reference subscription prices and licence assignments are not invoices or verified payments. School cancellation intent records a native720-hour waiting period;withdrawals retain the original clock. Only explicit owner review of the current subscription can confirm operational restriction after that wait. Records remain retained for separate retention review:no deletion,refund or provider-payment cancellation is performed. Master invitations return a private48-hour token only for the existing pending master;retries preserve expiry and cannot return superseded,expired or consumed tokens. Exact invitation revocation binds its original issue,school version and token hash and cannot cancel a replacement;pre-tracking issues require reissue. All exact mutation retries are historical receipts,not current availability or fresh action authority. No plaintext invitation token enters database history. Keep returned tokens private. Cross-school business-record browsing,live billing and deletion remain separate work. No external message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current data or version-checked change; exact retries are historical receipts"
+          },
+          "201": {
+            "description": "Platform record created atomically; no verification,activation,payment,cancellation or deletion bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/platform/v1/academies/{id}/legal-holds": {
       "get": {
         "summary": "Verified owner-only bounded immutable academy-wide legal-hold and release history;no school subscription or access change",
@@ -3959,7 +4012,7 @@
     },
     "/api/platform/v1/academies/{id}/records/{collection}": {
       "get": {
-        "summary": "Verified MFA platform owner inspects one exact school directory: hubs,people,courses,classes or students. Required X-Access-Purpose is privately audited;bounded keyset pages,explicit school predicates and RLS. Fixed projections exclude identity secrets,care vaults and financial records;not complete business browsing. No master impersonation,new membership,permission change or external action.",
+        "summary": "Verified MFA platform owner inspects exact school directories: hubs,people,courses,classes,students,finance-accounts or finance-journals. Required X-Access-Purpose is privately audited;bounded keyset pages,explicit school predicates and RLS. Account definitions and posted journal headers are not balances or payment proof. Fixed projections exclude identity secrets and care vaults;not complete business browsing. No master impersonation,new membership,permission change or external action.",
         "security": [
           {
             "humanSession": []
@@ -3987,7 +4040,9 @@
                 "people",
                 "courses",
                 "classes",
-                "students"
+                "students",
+                "finance-accounts",
+                "finance-journals"
               ]
             }
           },
@@ -3998,9 +4053,9 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 500
+              "maxLength": 6005
             },
-            "description": "Operational access reason;do not include health,credential or payment details."
+            "description": "Operational access reason,at most500decoded UTF-16 code units. Raw ASCII is supported;for Unicode or a literal reserved prefix,use utf8: followed by encodeURIComponent(reason). Malformed UTF-8,controls and oversized values are rejected. Do not include health,credential or payment details."
           },
           {
             "name": "limit",

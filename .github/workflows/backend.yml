@@ -264,7 +264,7 @@ jobs:
       - run: pnpm messages:build
       - name: Native owner access, school isolation and immutable audit
         if: matrix.group == 1
-        run: node --import tsx --test --test-concurrency=1 tests/platform-health.test.ts tests/platform-directories.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/platform-health.test.ts tests/platform-directories.test.ts tests/platform-finance.test.ts
       - name: Complete assigned quick-logic group without dropping or duplicating files
         run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
   learning:
