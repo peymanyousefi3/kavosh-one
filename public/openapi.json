@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.439.0",
+    "version": "0.440.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -79172,7 +79172,7 @@
     },
     "/api/v1/reports/payroll/t4a-consolidated-working-paper": {
       "get": {
-        "summary": "One-person/payer/year reviewed payroll plus immutably linked person supplier-payment working paper. Current whole-source authorization for both domains;exact CAD annual/RP/monthly totals and namespaced payment references,unresolved warnings and separate source snapshot times. Sequential snapshots,not an atomic year-end certificate;economic duplicates,aliases,external,FX and zero-net/noncash require further review. No official form or CRA filing. Combined500payment/4MiB bound refuses truncation.",
+        "summary": "One-person/payer/year reviewed payroll plus immutably linked person supplier-payment working paper. Current whole-source authorization for both domains;exact CAD annual/RP/monthly totals and namespaced payment references,unresolved warnings. Payroll,supplier money/recognition and person link share one database statement snapshot;concurrently changed configuration links require retry. Not a year-end certificate;economic duplicates,aliases,external,FX and zero-net/noncash require further review. No official form or CRA filing. Combined500payment/4MiB bound refuses truncation.",
         "parameters": [
           {
             "name": "personId",

@@ -4,13 +4,28 @@ import { randomUUID } from 'node:crypto';
 import { consolidatedT4aFixture as fixture } from './t4a-consolidated-fixture.ts';
 import { spreadsheetRows } from './spreadsheet-reader.ts';
 import { upgradeToCurrent } from './migration-upgrade.ts';
+import { setTimeout as delay } from 'node:timers/promises';
 
 test('consolidated annual report combines real payroll and immutable person supplier payments exactly without private notes',async()=>{
  const f=await fixture();try{
  assert.equal((await f.request(f.recordPath,f.recordInput)).response.status,200);assert.equal((await f.request(f.supplierPath,f.supplierInput)).response.status,200);
  const before=(await f.pg.query('SELECT * FROM public.finance_journals ORDER BY id')).rows,r=await f.request(f.report());assert.equal(r.response.status,200,JSON.stringify({body:r.body,errors:f.metrics.queryFailures}));const d=r.body.data;
- assert.equal(d.linkedSupplierPayeeId,f.payee.id);assert.equal(d.paymentCount,2);assert.equal(d.recognizedPaymentCount,2);assert.equal(d.unresolvedPaymentCount,0);assert.equal(d.totals.reportableIncome.minor,'49425');assert.equal(d.totals.gross.minor,'55850');assert.equal(d.totals.net.minor,'55000');assert.equal(d.totals.excludedGstHst.minor,'6425');assert.equal(d.totals.fields.find((x:{box:string})=>x.box==='022').amount.minor,'850');assert.equal(d.slips.length,1);assert.deepEqual(d.slips[0].reportingAccountVersions,[1]);assert.deepEqual(d.chartData.map((x:{month:string})=>x.month),['2026-02','2026-11']);assert.deepEqual(d.paymentSources.map((x:{sourceKind:string})=>x.sourceKind),['payroll','expense']);assert.equal(d.yearToDateComplete,false);assert.equal(d.isOfficialT4A,false);assert.match(d.sourceConsistency,/not_a_single_atomic/);assert.doesNotMatch(JSON.stringify(d),/PRIVATE_|123456789RP/);assert.deepEqual((await f.pg.query('SELECT * FROM public.finance_journals ORDER BY id')).rows,before);
+ assert.equal(d.linkedSupplierPayeeId,f.payee.id);assert.equal(d.paymentCount,2);assert.equal(d.recognizedPaymentCount,2);assert.equal(d.unresolvedPaymentCount,0);assert.equal(d.totals.reportableIncome.minor,'49425');assert.equal(d.totals.gross.minor,'55850');assert.equal(d.totals.net.minor,'55000');assert.equal(d.totals.excludedGstHst.minor,'6425');assert.equal(d.totals.fields.find((x:{box:string})=>x.box==='022').amount.minor,'850');assert.equal(d.slips.length,1);assert.deepEqual(d.slips[0].reportingAccountVersions,[1]);assert.deepEqual(d.chartData.map((x:{month:string})=>x.month),['2026-02','2026-11']);assert.deepEqual(d.paymentSources.map((x:{sourceKind:string})=>x.sourceKind),['payroll','expense']);assert.equal(d.yearToDateComplete,false);assert.equal(d.isOfficialT4A,false);assert.equal(d.sourceConsistency,'single_statement_payroll_supplier_and_person_link_snapshot');assert.equal(d.sourceSnapshots.payroll,d.sourceSnapshots.supplier);assert.doesNotMatch(JSON.stringify(d),/PRIVATE_|123456789RP/);assert.deepEqual((await f.pg.query('SELECT * FROM public.finance_journals ORDER BY id')).rows,before);
  const csv=await f.request(f.report('/export'));assert.equal(csv.response.status,200);assert.match(csv.body,/49425/);assert.match(csv.body,/coverage/);assert.match(csv.body,/payroll/);assert.match(csv.body,/expense/);assert.doesNotMatch(csv.body,/PRIVATE_|123456789RP/);
+ }finally{await f.pg.close();}
+});
+test('combined report retains one actual snapshot when a supplier review changes before the report returns',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{
+ assert.equal((await f.request(f.recordPath,f.recordInput)).response.status,200);assert.equal((await f.request(f.supplierPath,f.supplierInput)).response.status,200);
+ const runtime=f.pg.runtime!,connect=runtime.connect.bind(runtime);let reached!:()=>void,release!:()=>void,reads=0,pending:ReturnType<typeof f.request>|undefined;
+ const ready=new Promise<void>(r=>reached=r),gate=new Promise<void>(r=>release=r);
+ runtime.connect=async()=>{const c=await connect();return {async query<Row>(sql:string,params?:unknown[]){const result=await c.query<Row>(sql,params);if(sql.startsWith('WITH payroll_source AS MATERIALIZED')){reads++;reached();await gate;}return result;},release(destroy?:boolean){c.release(destroy);}};};
+ try{
+ pending=f.request(f.report());await Promise.race([ready,delay(3000,undefined,{ref:false}).then(()=>{throw new Error('T4A_COMBINED_SNAPSHOT_NOT_CAPTURED');})]);
+ const corrected=await f.request(f.supplierPath,{...f.supplierInput,expectedVersion:1,definition:{...f.supplierInput.definition,allocation:{...f.supplierInput.definition.allocation,income:[{box:'048',amount:'43.25'}],gstHst:'6.75'}}});assert.equal(corrected.response.status,200,JSON.stringify(corrected.body));
+ release();const r=await pending;assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(reads,1);assert.equal(r.body.data.totals.reportableIncome.minor,'49425');assert.equal(r.body.data.sourceSnapshots.payroll,r.body.data.sourceSnapshots.supplier);assert.equal(r.body.data.paymentSources.find((p:{sourceKind:string})=>p.sourceKind==='expense').recognitionVersion,1);
+ runtime.connect=connect;const fresh=await f.request(f.report());assert.equal(fresh.response.status,200);assert.equal(fresh.body.data.totals.reportableIncome.minor,'49325');assert.equal(fresh.body.data.paymentSources.find((p:{sourceKind:string})=>p.sourceKind==='expense').recognitionVersion,2);
+ }finally{release();runtime.connect=connect;await Promise.allSettled(pending?[pending]:[]);}
  }finally{await f.pg.close();}
 });
 test('consolidated report keeps unresolved supplier records visible and fails closed when either source permission is revoked',async()=>{
@@ -24,6 +39,20 @@ test('consolidated report keeps unresolved supplier records visible and fails cl
 test('consolidated report is centralized with reviewed reusable presets and actual formula-safe Excel export',async()=>{
  const f=await fixture();try{
  assert.equal((await f.request(f.recordPath,f.recordInput)).response.status,200);assert.equal((await f.request(f.supplierPath,f.supplierInput)).response.status,200);const saved=await f.request('reports/presets',{anchor:{kind:'academy'},definition:{name:'Annual combined services',reportId:'payroll.t4a-consolidated-working-paper',parameters:f.parameters},reason:'Synthetic saved combined report'});assert.equal(saved.response.status,201,JSON.stringify(saved.body));const path='reports/presets/'+saved.body.data.id;assert.equal((await f.request(path+'/run')).body.data.totals.reportableIncome.minor,'49425');const xlsx=await f.request(path+'/export.xlsx');assert.equal(xlsx.response.status,200,JSON.stringify(xlsx.body));const rows=spreadsheetRows(xlsx.body);assert.ok(rows.some(r=>r[0]==='annual_total'&&r[1]==='reportableIncome'&&r[10]==='49425'));assert.doesNotMatch(JSON.stringify(rows),/PRIVATE_|123456789RP/);const entry=(await f.request('reports/catalogue')).body.data.find((x:{id:string})=>x.id==='payroll.t4a-consolidated-working-paper');assert.deepEqual(entry.formats,['json','csv','xlsx']);assert.deepEqual(entry.backgroundJobFormats,['csv']);await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(path+'/run')).response.status,200);
+ }finally{await f.pg.close();}
+});
+test('concurrent person payee creation waits the existing policy gate and appears in the next complete report',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const f=await fixture();try{
+ const runtime=f.pg.runtime!,connect=runtime.connect.bind(runtime);let reached!:()=>void,release!:()=>void,pending:ReturnType<typeof f.request>|undefined,creation:ReturnType<typeof f.request>|undefined;
+ const ready=new Promise<void>(r=>reached=r),gate=new Promise<void>(r=>release=r);
+ runtime.connect=async()=>{const c=await connect();return {async query<Row>(sql:string,params?:unknown[]){const result=await c.query<Row>(sql,params);if(sql.startsWith("SELECT id FROM public.financial_payees WHERE kind='person' AND person_id=")){reached();await gate;}return result;},release(destroy?:boolean){c.release(destroy);}};};
+ try{
+ pending=f.request(f.report('',{personId:f.actors.peer.person}));await Promise.race([ready,delay(3000,undefined,{ref:false}).then(()=>{throw new Error('T4A_PERSON_LINK_CHECK_NOT_REACHED');})]);
+ creation=f.request('finance/payees',{kind:'person',personId:f.actors.peer.person,code:'CONCURRENT-LINK',name:'Synthetic newly linked person',legalName:'Synthetic test person',reason:'Synthetic person link race'});
+ let waiting=false;const deadline=performance.now()+2000;while(performance.now()<deadline){waiting=(await f.pg.query("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory'")).rows.length>0;if(waiting)break;await delay(10);}assert.equal(waiting,true,'payee creation must wait for the current report policy snapshot');
+ release();const r=await pending;assert.equal(r.response.status,200,JSON.stringify(r.body));assert.equal(r.body.data.linkedSupplierPayeeId,null);assert.equal(r.body.data.paymentCount,0);const linked=await creation;assert.equal(linked.response.status,201,JSON.stringify(linked.body));
+ runtime.connect=connect;const fresh=await f.request(f.report('',{personId:f.actors.peer.person}));assert.equal(fresh.response.status,200,JSON.stringify(fresh.body));assert.equal(fresh.body.data.linkedSupplierPayeeId,linked.body.data.id);assert.equal(fresh.body.data.paymentCount,0);assert.equal(fresh.body.data.sourceSnapshots.payroll,fresh.body.data.sourceSnapshots.supplier);
+ }finally{release();runtime.connect=connect;await Promise.allSettled([pending,creation].filter(Boolean));}
  }finally{await f.pg.close();}
 });
 test('consolidated source queries reject duplicate selectors overrides and caller amounts',async()=>{
