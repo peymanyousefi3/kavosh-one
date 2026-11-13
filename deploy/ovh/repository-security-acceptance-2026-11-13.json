@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-11-13T10:25:10.720Z",
+  "repository": "peymanyousefi3/kavosh-one",
+  "readOnlyGitHubMetadataCheck": {
+    "openAlerts": 0,
+    "resolvedAlerts": 3,
+    "resolvedAlertNumbers": [1, 2, 3],
+    "resolution": "used_in_tests",
+    "reportedSecretType": "stripe_webhook_signing_secret",
+    "reportedValidity": {"active": 0, "inactive": 0, "unknown": 3},
+    "serverSideHideSecretRequested": true,
+    "apiVersion": "2026-03-10",
+    "metadataOnlyCliProjection": true,
+    "secretValuesPrintedOrPersisted": false,
+    "alertStateChanged": false,
+    "providerValidityVerified": false,
+    "providerKeysRotated": false
+  },
+  "productionDependencyAdvisoryCheck": {
+    "command": "pnpm audit --prod --json",
+    "exitStatus": 0,
+    "dependencies": 127,
+    "optionalDependencies": 40,
+    "totalDependencies": 167,
+    "reportedVulnerabilities": {"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0},
+    "scope": "root production lockfile,not a full host/Python/supply-chain penetration test"
+  },
+  "operatorGuardTests": {"passed": 3, "failed": 0, "skipped": 0, "durationMs": 52.419208},
+  "repositoryVisibilityChanged": false,
+  "scannerExceptionsChanged": false,
+  "applicationOrLandingDeploymentChanged": false,
+  "wholePlatformSecurityCertified": false
+}
