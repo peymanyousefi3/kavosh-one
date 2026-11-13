@@ -7,11 +7,11 @@ import { runInNewContext } from 'node:vm';
 
 // Command doubles exercise the verifier, not a real restore or cloud service.
 const source = readFileSync(new URL('../scripts/verify-vps-backup.mjs', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
-function run({ mismatch = false, restoreFails = false,missingProof=false,wrongProofDigest=false,proofDecryptFails=false,args=['--execute'] } = {}) {
+function run({ mismatch = false, restoreFails = false,clusterProof=false,missingProof=false,wrongProofDigest=false,proofDecryptFails=false,args=['--execute'] } = {}) {
  const ciphertext = Buffer.from('synthetic encrypted backup bytes'), id = '90f95990-a8ec-4db3-b763-b8a1f63a78ab';
  const digest=createHash('sha256').update(ciphertext).digest('hex');
  const snapshot = { format:'kavosh-database-verification-v1',schemaRevision:396,tables:[{schema:'public',name:'signature_ingest_limits',fingerprint:{rows:1,sha256:'a'.repeat(64)}}],relations:{rows:1,sha256:'b'.repeat(64)},functions:{rows:1,sha256:'c'.repeat(64)},policies:{rows:1,sha256:'d'.repeat(64)},sequenceValuesCovered:false,globalRolesCovered:false };
- const verification={archiveSha256:digest,snapshot};
+ const verification={archiveSha256:digest,snapshot,...clusterProof?{cluster:{databaseAccess:{rows:1,sha256:'e'.repeat(64)},globalRoleProperties:{rows:30,sha256:'f'.repeat(64)}}}:{}};
  const backup = { id, ciphertextSha256:digest,encryptedBytes:ciphertext.length,serverMajor:18,schemaRevision:396,verification,verificationArchive:{filename:'verification.json.age',ciphertextSha256:wrongProofDigest?'e'.repeat(64):digest,encryptedBytes:ciphertext.length} };
  const commands = [], logs = [], removed = [];
  const context = { assert, Buffer, JSON, join, createHash, randomUUID: () => id, process: { platform: 'darwin', argv: ['node', 'script', '--execute'], env: {}, umask() {} },
@@ -37,6 +37,10 @@ function run({ mismatch = false, restoreFails = false,missingProof=false,wrongPr
  runInNewContext('process.argv='+JSON.stringify(['node','script',...args])+';\n'+source, context);
  return { logs, commands, removed, exitCode: context.process.exitCode };
 }
+test('cluster baseline verification authenticates both independent archives without issuing any SQL or restore command',()=>{
+ const args=['--verify-cluster-baseline','90f95990-a8ec-4db3-b763-b8a1f63a78ab'],r=run({clusterProof:true,args});assert.equal(r.exitCode,undefined,JSON.stringify(r.logs));const receipt=JSON.parse(r.logs.at(-1));assert.equal(receipt.exactSnapshotClusterBaselineAuthenticated,true);assert.equal(receipt.actualIsolatedPostgresRestoreVerified,false);assert.equal(r.commands.filter(([bin])=>bin==='/usr/bin/ssh').length,1);assert.equal(r.commands.filter(([bin])=>bin==='/opt/homebrew/bin/rclone').length,2);assert.equal(r.removed.length,5);
+ for(const options of [{args},{clusterProof:true,args:['--verify-cluster-baseline']},{clusterProof:true,args,proofDecryptFails:true}]){const bad=run(options);assert.equal(bad.exitCode,1);assert.ok(!bad.commands.some(([_,a])=>/CREATE DATABASE|pg_restore|psql/.test(a.at(-1))));assert.ok(!bad.logs.some(line=>line.includes('exactSnapshotClusterBaselineAuthenticated')));}
+});
 test('restore verifier accepts only complete equality and removes its isolated target and temporary files', () => {
  const r = run(); assert.equal(r.exitCode, undefined, JSON.stringify(r.logs)); assert.equal(JSON.parse(r.logs.at(-1)).actualIsolatedPostgresRestoreVerified, true);
  assert.ok(r.commands.some(([_, args]) => args.at(-1).includes('DROP DATABASE "kavosh_recovery_90f95990a8ec4db3b763b8a1f63a78ab"'))); assert.equal(r.removed.length, 5);

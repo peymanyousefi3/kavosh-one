@@ -23,7 +23,7 @@ try{await c.connect();await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ 
 }
 let stage = 'configuration', directory, encrypted, plaintext, proofEncrypted,proofPlaintext,target, created = false, cleanupFailed = false;
 try {
- assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(args.length===1||args.length===2);assert.equal(args[0],'--execute');const selected=args[1];if(selected!==undefined)assert.match(selected,/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);process.umask(0o077);
+ assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(args.length===1||args.length===2);assert.ok(['--execute','--verify-cluster-baseline'].includes(args[0]));const verifyOnly=args[0]==='--verify-cluster-baseline',selected=args[1];if(verifyOnly)assert.ok(selected);if(selected!==undefined)assert.match(selected,/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);process.umask(0o077);
  stage = 'private backup receipt'; const receipt = JSON.parse(remote('sudo -u kavosh-one-backup cat /var/lib/kavosh-one-backups/'+(selected?'backup-'+selected+'/delivery-status.json':'latest.json')).toString());
  if(selected)assert.equal(receipt.localBackup?.id,selected);
  const backup = receipt.localBackup; assert.match(backup.id, /^[a-f0-9-]{36}$/); assert.match(backup.ciphertextSha256, /^[a-f0-9]{64}$/); assert.equal(receipt.offsiteCopy.independentCopyVerified, true); assert.equal(receipt.offsiteCopy.ciphertextSha256, backup.ciphertextSha256); assert.equal(backup.serverMajor, 18);
@@ -45,6 +45,10 @@ try {
  try{for(const [cipher,path]of [[encrypted,plaintext],[proofEncrypted,proofPlaintext]]){const clear=openSync(path,'wx',0o600);try{execFileSync('/opt/homebrew/bin/age',['--decrypt','--identity','-',cipher],{input:recovery.identity,stdio:['pipe',clear,'pipe'],timeout:30000});}finally{closeSync(clear);}}}finally{recovery.identity='';}
  // No restored SQL is executed until the entire age file authenticates.
  stage='authenticated original snapshot baseline';assert.ok(statSync(proofPlaintext).size<=2097152);const verification=JSON.parse(readFileSync(proofPlaintext,'utf8'));assert.equal(verification.archiveSha256,backup.ciphertextSha256);assert.equal(verification.snapshot.schemaRevision,backup.schemaRevision);assert.equal(verification.snapshot.format,'kavosh-database-verification-v1');assert.deepEqual(verification,backup.verification);const source=verification.snapshot;
+ if(verifyOnly){
+  stage='authenticated cluster baseline';const cluster=verification.cluster;assert.ok(cluster);assert.equal(cluster.databaseAccess?.rows,1);assert.ok(Number.isSafeInteger(cluster.globalRoleProperties?.rows)&&cluster.globalRoleProperties.rows>0);for(const fingerprint of [cluster.databaseAccess,cluster.globalRoleProperties])assert.match(fingerprint.sha256,/^[a-f0-9]{64}$/);
+  console.log(JSON.stringify({backupId:backup.id,ciphertextSha256:backup.ciphertextSha256,encryptedBytes:backup.encryptedBytes,sourceSchemaRevision:source.schemaRevision,independentDriveDownloadVerified:true,independentEncryptedCompanionDownloadVerified:true,authenticatedOffServerDecryptionVerified:true,exactSnapshotClusterBaselineAuthenticated:true,databaseAccessBaselineRows:cluster.databaseAccess.rows,globalRoleBaselineRows:cluster.globalRoleProperties.rows,sourceDatabaseRestoreCommandsIssued:0,actualIsolatedPostgresRestoreVerified:false,privateRecoveryKeyTransferredToVps:false,fullServerRebuildVerified:false}));
+ }else{
  stage = 'new isolated recovery database'; target = 'kavosh_recovery_' + randomUUID().replaceAll('-', '');
  sql('postgres', 'CREATE DATABASE "' + target + '" CONNECTION LIMIT 0;'); created = true;
  stage = 'native PostgreSQL restore with original ownership and ACLs'; const input = openSync(plaintext, 'r');
@@ -54,6 +58,7 @@ try {
  assert.deepEqual(restored, source);
  assert.equal(sql('postgres', "SELECT datconnlimit FROM pg_database WHERE datname='" + target + "';"), '0');
  console.log(JSON.stringify({ backupId: backup.id, ciphertextSha256: backup.ciphertextSha256, encryptedBytes: backup.encryptedBytes, sourceSchemaRevision: source.schemaRevision, permanentTablesCompared: source.tables.length, rowsCompared: source.tables.reduce((n,t)=>n+t.fingerprint.rows,0), originalDataPermissionsFunctionsAndPoliciesMatch: true, originalExportedSnapshotMatched:true, independentDriveDownloadVerified: true, independentEncryptedCompanionDownloadVerified:true,actualIsolatedPostgresRestoreVerified: true, sourceDatabaseRestoreCommandsIssued:0,privateRecoveryKeyTransferredToVps: false, recoveredDatabaseOrdinaryConnectionsBlocked: true, globalRoleRecoveryVerified: false,sequenceValuesRecoveryVerified:false, mediaRecoveryVerified: false }));
+ }
 } catch(error) {
  const diagnostic=String(error?.stderr??''),reason=/invalid_grant|invalid_client|unauthorized|invalid authentication|401/i.test(diagnostic)?'authentication':/not found|directory not found|404/i.test(diagnostic)?'not_found':/permission|forbidden|403/i.test(diagnostic)?'permission':error?.code==='ERR_ASSERTION'?'integrity_or_contract':error?.code==='ENOENT'?'local_tool_missing':'unclassified';
  console.error('VPS_RESTORE_ACCEPTANCE_FAILED: '+stage+' ['+reason+']');process.exitCode=1;
