@@ -22,6 +22,19 @@ test('backup and restore reject configuration and never leak supplied credential
   const r=e as Error&{stdout:string;stderr:string};assert.equal(r.stdout,'');assert.equal(r.stderr.trim(),'INVALID_BACKUP_CONFIGURATION');assert.ok(!r.stderr.includes(secret));return true;
  });
 });
+test('restore proof input uses a bounded private file;malformed,public,symlink and oversized inputs fail without database access',async()=>{
+ const directory=await realpath(await mkdtemp(join(tmpdir(),'kavosh-proof-input-'))),file=join(directory,'verification.json'),alias=join(directory,'verification-alias.json');
+ const privateText='PRIVATE_'+randomUUID(),args=['--import','tsx','scripts/database-recovery.ts','restore','/private/tmp/synthetic.age','a'.repeat(64),String(expectedSchemaRevision),'RESTORE:kavosh_recovery_synthetic'];
+ const check=async(path:string,code='INVALID_RESTORE_VERIFICATION')=>assert.rejects(run(process.execPath,args,{env:{PATH:process.env.PATH,NODE_ENV:'test',RESTORE_VERIFICATION_FILE:path},timeout:5000}),e=>{const r=e as Error&{stdout:string;stderr:string};assert.equal(r.stdout,'');assert.equal(r.stderr.trim(),code);assert.ok(!r.stderr.includes(privateText));return true;});
+ try{
+  await chmod(directory,0o700);await writeFile(file,JSON.stringify({privateText}),{mode:0o600});await check(file);
+  await chmod(file,0o644);await check(file);await chmod(file,0o600);
+  await symlink(file,alias);await check(alias);await unlink(alias);
+  await writeFile(file,Buffer.alloc(2097153));await check(file);
+  const fp={rows:0,sha256:'b'.repeat(64)},verification={archiveSha256:'a'.repeat(64),snapshot:{format:'kavosh-database-verification-v1',schemaRevision:expectedSchemaRevision,tables:[],relations:fp,functions:fp,policies:fp,sequenceValuesCovered:false,globalRolesCovered:false}};
+  await writeFile(file,JSON.stringify({format:'kavosh-database-backup-v1',verification}));await check(file,'INVALID_RESTORE_CONFIGURATION');
+ }finally{await unlink(alias).catch(()=>{});await unlink(file).catch(()=>{});await rmdir(directory);}
+});
 test('real encrypted full database backup preserves money,identity,ownership and RLS;corruption,unsafe roles,source races and existing targets fail closed',{
  skip:!process.env.TEST_DATABASE_URL||!process.env.AGE_BIN||!process.env.AGE_KEYGEN_BIN||!process.env.PG_DUMP_BIN||!process.env.PG_RESTORE_BIN
 },async()=>{
@@ -33,7 +46,7 @@ test('real encrypted full database backup preserves money,identity,ownership and
   await f.pg.exec(`CREATE ROLE "${role}" LOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION INHERIT PASSWORD '${password}'`);roleCreated=true;
   await f.pg.exec(`GRANT EXECUTE ON FUNCTION public.schema_revision() TO "${role}"`);
   const backupUrl=new URL(source);backupUrl.username=role;backupUrl.password=password;
-  const common={workDirectory:directory,age:resolve(process.env.AGE_BIN!),sslMode:'disable',timeoutMs:30000},options={...common,databaseUrl:backupUrl.toString(),pgDump:resolve(process.env.PG_DUMP_BIN!),recipient};
+  const common={workDirectory:directory,age:resolve(process.env.AGE_BIN!),sslMode:'disable',timeoutMs:30000},options={...common,databaseUrl:backupUrl.toString(),pgDump:resolve(process.env.PG_DUMP_BIN!),recipient,verificationSnapshot:true};
   await assert.rejects(backupDatabase(options,AbortSignal.abort()),{code:'RECOVERY_CANCELLED'});
   await assert.rejects(backupDatabase({...options,sslMode:'verify-full'}),{code:'RECOVERY_DATABASE_CA_REQUIRED'});
   await chmod(directory,0o755);try{await assert.rejects(backupDatabase(options),{code:'PRIVATE_RECOVERY_DIRECTORY_REQUIRED'});}finally{await chmod(directory,0o700);}
@@ -52,17 +65,25 @@ test('real encrypted full database backup preserves money,identity,ownership and
   await f.pg.exec('BEGIN;LOCK TABLE public.recovery_test_private IN ACCESS EXCLUSIVE MODE');
   const changedText='COMMITTED_AFTER_SNAPSHOT_'+randomUUID();
   try{
-   pending=command?run(process.execPath,[command,'backup'],{env:{...operatorEnv,BACKUP_DATABASE_URL:backupUrl.toString(),BACKUP_AGE_RECIPIENT:recipient,PG_DUMP_BIN:options.pgDump},timeout:30000}).then(r=>JSON.parse(r.stdout)):backupDatabase(options);void pending.catch(()=>{});
+   pending=command?run(process.execPath,[command,'backup-proof'],{env:{...operatorEnv,BACKUP_DATABASE_URL:backupUrl.toString(),BACKUP_AGE_RECIPIENT:recipient,PG_DUMP_BIN:options.pgDump},timeout:30000}).then(r=>JSON.parse(r.stdout)):backupDatabase(options);void pending.catch(()=>{});
    let waiting=false;const deadline=Date.now()+4500;while(Date.now()<deadline){await f.pg.query('SELECT pg_stat_clear_snapshot()');waiting=(await f.pg.query<{n:number}>("SELECT count(*)::integer n FROM pg_stat_activity WHERE datname=$1 AND usename=$2 AND application_name='kavosh-backup-dump' AND wait_event_type='Lock' AND wait_event='relation'",[sourceName,role])).rows[0].n>0;if(waiting)break;await delay(5);}
    assert.equal(waiting,true,'Native pg_dump must actually wait after importing its exported snapshot');
    await f.pg.query('UPDATE public.recovery_test_private SET payload=$2 WHERE academy_id=$1',[f.a,changedText]);await f.pg.exec('COMMIT');released=true;
   }finally{if(!released)await f.pg.exec('ROLLBACK');if(!released)await pending?.catch(()=>{});}
   const backup=await pending!;archivePath=backup.archivePath;backupFolder=join(directory,'backup-'+backup.id);manifestPath=join(backupFolder,'manifest.json');
+  assert.ok(backup.verification);assert.equal(backup.verification.archiveSha256,backup.ciphertextSha256);assert.equal(backup.verification.snapshot.tables.find(t=>t.schema==='public'&&t.name==='recovery_test_private')?.fingerprint.rows,2);
   assert.equal((await f.pg.query<{payload:string}>('SELECT payload FROM public.recovery_test_private WHERE academy_id=$1',[f.a])).rows[0].payload,changedText);
   const bytes=await readFile(archivePath);assert.equal(bytes.subarray(0,22).toString(),'age-encryption.org/v1\n');assert.equal(bytes.includes(Buffer.from(privateText)),false);assert.equal(backup.ciphertextSha256,createHash('sha256').update(bytes).digest('hex'));assert.equal(backup.restoreVerified,false);assert.equal(backup.rolesIncluded,false);assert.equal(backup.mediaIncluded,false);assert.equal((await lstat(archivePath)).mode&0o777,0o600);assert.equal((await lstat(backupFolder)).mode&0o777,0o700);const metadata=await readFile(manifestPath,'utf8');assert.ok(![password,privateText,'postgresql:'].some(v=>metadata.includes(v)));
   assert.ok(backup.encryptedBytes>1_048_576,'The actual full-schema fixture must exceed the deliberate smaller cap');await assert.rejects(backupDatabase({...options,maximumBytes:1_048_576}),{code:'RECOVERY_SIZE_LIMIT'});assert.equal((await readdir(directory)).filter(v=>v.startsWith('backup-')).length,1);
   await f.pg.query(`CREATE DATABASE "${target}"`);targetCreated=true;const targetUrl=new URL(source);targetUrl.pathname='/'+target;recovery=new pg.Client({connectionString:targetUrl.toString()});await recovery.connect();
-  const restore={...common,databaseUrl:targetUrl.toString(),pgRestore:resolve(process.env.PG_RESTORE_BIN!),archive:archivePath,identityFile:identity,expectedSha256:backup.ciphertextSha256,expectedRevision:expectedSchemaRevision,confirmation:'RESTORE:'+target};
+  const restore={...common,databaseUrl:targetUrl.toString(),pgRestore:resolve(process.env.PG_RESTORE_BIN!),archive:archivePath,identityFile:identity,expectedSha256:backup.ciphertextSha256,expectedRevision:expectedSchemaRevision,confirmation:'RESTORE:'+target,expectedVerification:backup.verification};
+  await assert.rejects(restoreDatabaseBackup({...restore,expectedVerification:{...backup.verification,archiveSha256:'0'.repeat(64)}}),{code:'INVALID_RESTORE_VERIFICATION'});
+  const badTarget=target+'_bad',badUrl=new URL(targetUrl);badUrl.pathname='/'+badTarget;await f.pg.query(`CREATE DATABASE "${badTarget}"`);
+  try{
+   const wrong=structuredClone(backup.verification);wrong.snapshot.tables[0].fingerprint.sha256='0'.repeat(64);
+   await assert.rejects(restoreDatabaseBackup({...restore,databaseUrl:badUrl.toString(),confirmation:'RESTORE:'+badTarget,expectedVerification:wrong}),{code:'RESTORED_SNAPSHOT_MISMATCH'});
+   assert.equal((await f.pg.query<{limit:number}>('SELECT datconnlimit AS limit FROM pg_database WHERE datname=$1',[badTarget])).rows[0].limit,0,'mismatch leaves the isolated target quarantined,not activated');
+  }finally{await f.pg.query(`DROP DATABASE "${badTarget}"`);}
   const ordinaryUrl=new URL(targetUrl);ordinaryUrl.username=role;ordinaryUrl.password=password;
   await assert.rejects(restoreDatabaseBackup({...restore,databaseUrl:ordinaryUrl.toString()}),{code:'OFFLINE_RESTORE_ADMIN_REQUIRED'});
   const ordinary=new pg.Client({connectionString:ordinaryUrl.toString()});await ordinary.connect();try{await assert.rejects(restoreDatabaseBackup(restore),{code:'RESTORE_TARGET_IN_USE'});}finally{await ordinary.end();}
@@ -74,7 +95,7 @@ test('real encrypted full database backup preserves money,identity,ownership and
   const corrupt=join(directory,'corrupt.age');await writeFile(corrupt,bytes.subarray(0,bytes.length-20),{mode:0o600});try{await assert.rejects(restoreDatabaseBackup({...restore,archive:corrupt,expectedSha256:createHash('sha256').update(await readFile(corrupt)).digest('hex')}),{code:'RECOVERY_TOOL_FAILED'});}finally{await unlink(corrupt);}
   assert.equal((await recovery.query("SELECT count(*)::integer n FROM pg_class c JOIN pg_namespace s ON s.oid=c.relnamespace WHERE s.nspname='public'")).rows[0].n,0);assert.equal((await readdir(directory)).filter(v=>v.startsWith('restore-')).length,0);
   await recovery.query('CREATE TABLE public.recovery_sentinel(id integer);INSERT INTO public.recovery_sentinel VALUES(7)');try{await assert.rejects(restoreDatabaseBackup(restore),{code:'EMPTY_RESTORE_TARGET_REQUIRED'});assert.equal((await recovery.query('SELECT id FROM public.recovery_sentinel')).rows[0].id,7);}finally{await recovery.query('DROP TABLE public.recovery_sentinel');}
-  const result:Awaited<ReturnType<typeof restoreDatabaseBackup>>=command?JSON.parse((await run(process.execPath,[command,'restore',restore.archive,restore.expectedSha256,String(restore.expectedRevision),restore.confirmation],{env:{...operatorEnv,RESTORE_DATABASE_URL:targetUrl.toString(),RESTORE_AGE_IDENTITY_FILE:identity,PG_RESTORE_BIN:restore.pgRestore},timeout:30000})).stdout):await restoreDatabaseBackup(restore);assert.equal(result.restored,true);assert.equal(result.applicationActivationAllowed,false);assert.equal(result.requiresPrivacyAndOutboxReconciliation,true);assert.ok(isDeepStrictEqual((await recovery.query(snapshot)).rows[0].data,before),'Restored financial,identity or private records differ');
+  const result:Awaited<ReturnType<typeof restoreDatabaseBackup>>=command?JSON.parse((await run(process.execPath,[command,'restore',restore.archive,restore.expectedSha256,String(restore.expectedRevision),restore.confirmation],{env:{...operatorEnv,RESTORE_DATABASE_URL:targetUrl.toString(),RESTORE_AGE_IDENTITY_FILE:identity,PG_RESTORE_BIN:restore.pgRestore,RESTORE_VERIFICATION_FILE:manifestPath},timeout:30000})).stdout):await restoreDatabaseBackup(restore);assert.equal(result.restored,true);assert.equal(result.backupSnapshotVerified,true);assert.equal(result.sequenceValuesVerified,false);assert.equal(result.applicationActivationAllowed,false);assert.equal(result.requiresPrivacyAndOutboxReconciliation,true);assert.ok(isDeepStrictEqual((await recovery.query(snapshot)).rows[0].data,before),'Restored financial,identity or private records differ');
   assert.deepEqual((await readdir(backupFolder)).sort(),['database.dump.age','manifest.json']);
   assert.equal(result.ordinaryClientConnectionsBlocked,true);assert.equal((await f.pg.query<{limit:number}>('SELECT datconnlimit AS limit FROM pg_database WHERE datname=$1',[target])).rows[0].limit,0);
   const blocked=new pg.Client({connectionString:ordinaryUrl.toString()});try{await assert.rejects(blocked.connect(),(e:unknown)=>(e as {code:string}).code==='53300');}finally{await blocked.end();}

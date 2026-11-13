@@ -8,6 +8,8 @@ import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
 import { z } from 'zod';
 import { expectedSchemaRevision } from '../core/database.ts';
+import { isDeepStrictEqual } from 'node:util';
+import { backupVerification,databaseVerificationSnapshot } from './database-verification.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'));
 const common=z.object({
@@ -15,10 +17,10 @@ const common=z.object({
  age:path,workDirectory:path,timeoutMs:z.number().int().min(1000).max(3_600_000).default(900_000),
  maximumBytes:z.number().int().min(1_048_576).max(1_099_511_627_776).default(21_474_836_480)
 });
-const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/)}).strict();
+const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false)}).strict();
 const restoreInput=common.extend({
  pgRestore:path,archive:path,identityFile:path,expectedSha256:z.string().regex(/^[a-f0-9]{64}$/),
- expectedRevision:z.number().int().min(expectedSchemaRevision).max(2147483647),confirmation:z.string().max(100)
+ expectedRevision:z.number().int().min(expectedSchemaRevision).max(2147483647),confirmation:z.string().max(100),expectedVerification:backupVerification.optional()
 }).strict();
 export class RecoveryError extends Error {
  constructor(readonly code:string){super(code);this.name='RecoveryError';}
@@ -108,8 +110,10 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
   const id=randomUUID(),createdAt=new Date().toISOString();folder=join(i.workDirectory,'backup-'+id);await mkdir(folder,{mode:0o700});folderOwned=true;archive=join(folder,'database.dump.age');metadata=join(folder,'manifest.json');
   passwordPath=join(folder,'connection.pgpass');await passwordFile(passwordPath,c.passwordEntry);passwordOwned=true;
   const timeout=AbortSignal.timeout(i.timeoutMs),signal=externalSignal?AbortSignal.any([timeout,externalSignal]):timeout,result=await encryptedDump(i,{...c.env,PGPASSFILE:passwordPath},state.snapshot,archive,signal);
-  archiveOwned=true;await unlink(passwordPath);passwordOwned=false;await client.query('COMMIT');
-  const manifest={format:'kavosh-database-backup-v1',scope:'database_schema_and_data',id,createdAt,schemaRevision:state.revision,serverMajor:state.server_major,ciphertextSha256:result.sha256,encryptedBytes:result.bytes,completeDatabase:true,databaseConfigurationIncluded:false,rolesIncluded:false,mediaIncluded:false,restoreVerified:false,independentCopyVerified:false};
+  archiveOwned=true;await unlink(passwordPath);passwordOwned=false;
+  const verification=i.verificationSnapshot?{archiveSha256:result.sha256,snapshot:await databaseVerificationSnapshot(client,signal)}:null;
+  await client.query('COMMIT');
+  const manifest={format:'kavosh-database-backup-v1',scope:'database_schema_and_data',id,createdAt,schemaRevision:state.revision,serverMajor:state.server_major,ciphertextSha256:result.sha256,encryptedBytes:result.bytes,completeDatabase:true,databaseConfigurationIncluded:false,rolesIncluded:false,mediaIncluded:false,restoreVerified:false,independentCopyVerified:false,verification};
   const f=await open(metadata,'wx',0o600);metadataOwned=true;try{await f.writeFile(JSON.stringify(manifest)+'\n');await f.sync();}finally{await f.close();}
   await syncDirectory(folder);await syncDirectory(i.workDirectory);
   succeeded=true;return {...manifest,archivePath:archive};
@@ -122,6 +126,7 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
 }
 export async function restoreDatabaseBackup(raw:unknown,externalSignal?:AbortSignal){
  const parsed=restoreInput.safeParse(raw);if(!parsed.success)throw new RecoveryError('INVALID_RESTORE_CONFIGURATION');const i=parsed.data;
+ if(i.expectedVerification&&(i.expectedVerification.archiveSha256!==i.expectedSha256||i.expectedVerification.snapshot.schemaRevision!==i.expectedRevision))throw new RecoveryError('INVALID_RESTORE_VERIFICATION');
  if(externalSignal?.aborted)throw new RecoveryError('RECOVERY_CANCELLED');
  let client:pg.Client|undefined,folder:string|undefined,ciphertext:string|undefined,plaintext:string|undefined,passwordPath:string|undefined,folderOwned=false,ciphertextOwned=false,plaintextOwned=false,passwordOwned=false;
  try{
@@ -160,7 +165,13 @@ export async function restoreDatabaseBackup(raw:unknown,externalSignal?:AbortSig
   restore.stdin.end();restore.stdout.resume();try{await completed(restore);}finally{if(restore.exitCode===null&&!restore.killed)restore.kill('SIGTERM');}
   const revision=(await client.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0]?.revision;
   if(revision!==i.expectedRevision)throw new RecoveryError('RESTORED_SCHEMA_MISMATCH');
-  return {restored:true,verifiedSchemaRevision:revision,archiveSha256:i.expectedSha256,applicationActivationAllowed:false,ordinaryClientConnectionsBlocked:true,requiresPrivacyAndOutboxReconciliation:true,rolesRestored:false,mediaRestored:false};
+  if(i.expectedVerification){
+   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+   const actual=await databaseVerificationSnapshot(client,signal);
+   if(!isDeepStrictEqual(actual,i.expectedVerification.snapshot))throw new RecoveryError('RESTORED_SNAPSHOT_MISMATCH');
+   await client.query('COMMIT');
+  }
+  return {restored:true,verifiedSchemaRevision:revision,archiveSha256:i.expectedSha256,backupSnapshotVerified:!!i.expectedVerification,sequenceValuesVerified:false,applicationActivationAllowed:false,ordinaryClientConnectionsBlocked:true,requiresPrivacyAndOutboxReconciliation:true,rolesRestored:false,mediaRestored:false};
  }catch(e){if(e instanceof RecoveryError)throw e;throw new RecoveryError('DATABASE_RESTORE_FAILED');}
  finally{
   await client?.end().catch(()=>{});
