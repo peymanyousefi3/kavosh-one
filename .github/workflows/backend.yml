@@ -262,11 +262,11 @@ jobs:
       - run: pnpm notifications:build
       - run: pnpm reports:build
       - run: pnpm messages:build
-      - name: Complete assigned quick-logic group without dropping or duplicating files
-        run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
-      - name: Native owner-health access and immutable audit
+      - name: Native owner access, school isolation and immutable audit
         if: matrix.group == 1
         run: node --import tsx --test --test-concurrency=1 tests/platform-health.test.ts tests/platform-directories.test.ts
+      - name: Complete assigned quick-logic group without dropping or duplicating files
+        run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
   learning:
     runs-on: ubuntu-latest
     timeout-minutes: 30
