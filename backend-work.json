@@ -1,4 +1,9 @@
 {
+  "nativeLockFixtureCorrection": {
+    "evidence": "21d41c5 early native PDF job131699551449 stopped at the new competing-writer fixture,with permission denied reading/locking signature_completion_jobs in all five selected original-flow cases. tests/database.ts intentionally sets kavosh_runtime on every runtime.connect;the test incorrectly assumed its lock-holder connection was still the disposable database owner. This result does not validate the later deferred-delivery fix.",
+    "change": "Explicitly RESET ROLE on that one disposable test-owner connection before simulating an administrative row lock. The competing claimant still uses the restricted completion-worker role,and production runtime retains no UPDATE/job-lock grant. No application function,migration,assertion or lock requirement was relaxed.",
+    "verification": "Full TypeScript and whitespace checks passed. This branch is native-only and awaits current-head GitHub acceptance;embedded passes cannot verify it. Early native ordering successfully surfaced the failure before the larger PDF suite. Production remains unchanged."
+  },
   "historicalPrivacy394ReferenceCorrection": {
     "nativeFailure": "eca665e business-logic6 job131692265172 failed three historical profile-consent upgrade comparisons (342to343,326to327,325to326). The exact native diff adds signature_completion_incident_id:null to otherwise retained event-source rows after upgrading to current schema. No changed private withdrawal value was shown by that diff.",
     "fix": "The existing snapshots already account for the later nullable privacy_reminder_id column. They now also exclude the new nullable signing reference from old-shape comparisons while separately asserting that BOTH reference columns remain NULL for all retained historical sources. Every original field,withdrawal,notice,credential and existing function-authority assertion stays intact;no migration,privacy rule,record or API behavior changed.",

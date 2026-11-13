@@ -178,6 +178,10 @@ export async function checkCompletionQueue(pg:Pick<Awaited<ReturnType<typeof ope
  if(pg.runtime){
   await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE start_id=$1",[start]);
   const holder=await pg.runtime.connect();try{
+   // runtime.connect deliberately sets the restricted application role. This
+   // disposable fixture's owner simulates a competing administrative writer;
+   // do not grant the real application UPDATE rights merely for a row lock.
+   await holder.query('RESET ROLE');
    await holder.query('BEGIN');await holder.query('SELECT start_id FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3 FOR UPDATE',[academy,purpose,start]);
    assert.deepEqual(await claim(),[],'a genuinely row-locked due job must be skipped by another native claimant');
   }finally{await holder.query('ROLLBACK');holder.release();}
