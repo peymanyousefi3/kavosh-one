@@ -24,6 +24,7 @@
     "auth:deliver": "node --import tsx scripts/deliver-auth.ts",
     "auth:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .auth-worker scripts/deliver-auth.ts",
     "notifications:process": "node --import tsx scripts/process-notifications.ts",
+    "signatures:inspect": "node --import tsx scripts/inspect-signature-evidence.ts",
     "platform:notices": "node --import tsx scripts/process-platform-notices.ts",
     "notifications:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .notification-worker scripts/process-notifications.ts scripts/process-platform-notices.ts",
     "reports:process": "node --import tsx scripts/process-reports.ts",
@@ -34,7 +35,7 @@
     "files:inspect": "node --import tsx scripts/inspect-files.ts",
     "files:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .inspection-worker scripts/inspect-files.ts scripts/process-file-copies.ts deploy/ovh/check-file-inspection.ts deploy/ovh/probe-file-inspection.ts deploy/ovh/check-file-copies.ts && cp src/files/signature-detector.mjs .inspection-worker/src/files/signature-detector.mjs",
     "signatures:register": "node --import tsx scripts/register-signature-webhook.ts",
-    "signatures:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .signature-worker scripts/register-signature-webhook.ts scripts/process-signature-completions.ts deploy/ovh/check-signature-ingest.ts deploy/ovh/provision-signature-completion.ts deploy/ovh/check-signature-completion.ts",
+    "signatures:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .signature-worker scripts/register-signature-webhook.ts scripts/process-signature-completions.ts scripts/inspect-signature-evidence.ts deploy/ovh/check-signature-ingest.ts deploy/ovh/provision-signature-completion.ts deploy/ovh/check-signature-completion.ts",
     "payments:register": "node --import tsx scripts/register-payment-webhook.ts",
     "api:generate": "node --import tsx scripts/generate-api.ts",
     "secrets:check": "node scripts/check-secrets.mjs"
