@@ -2,7 +2,7 @@ import { spawn,type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash,randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat,realpath,open,mkdir,unlink,rmdir } from 'node:fs/promises';
-import { isAbsolute,join,resolve } from 'node:path';
+import { isAbsolute,join,resolve,dirname } from 'node:path';
 import { Readable,Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
@@ -130,15 +130,25 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
 // after host loss. Its plaintext is never written to disk by the backup job.
 async function encryptVerification(i:z.infer<typeof backupInput>,value:z.infer<typeof backupVerification>,file:string,signal:AbortSignal){
  const bytes=Buffer.from(JSON.stringify(value));if(bytes.length>2097152)throw new RecoveryError('VERIFICATION_SIZE_LIMIT');
- const output=await open(file,'wx',0o600),hash=createHash('sha256'),tasks:Promise<unknown>[]=[];let child:ChildProcessWithoutNullStreams|undefined,success=false;
+ try{return await encryptRecoveryStream({age:i.age,recipient:i.recipient,file,maximumBytes:4194304},Readable.from([bytes]),signal);}finally{bytes.fill(0);}
+}
+// Shared streaming encryption for verification companions and media objects.
+// Only ciphertext is written;exclusive creation never replaces an old archive.
+export async function encryptRecoveryStream(raw:unknown,source:Readable,signal:AbortSignal){
+ const parsed=z.object({age:path,recipient:backupInput.shape.recipient,file:path,maximumBytes:z.number().int().min(22).max(1099511627776)}).strict().safeParse(raw);
+ if(!parsed.success||!(source instanceof Readable))throw new RecoveryError('INVALID_STREAM_BACKUP_CONFIGURATION');
+ if(signal.aborted)throw new RecoveryError('RECOVERY_CANCELLED');
+ const i=parsed.data,file=i.file;await privateDirectory(dirname(file));
+ const output=await open(file,'wx',0o600),hash=createHash('sha256'),tasks:Promise<unknown>[]=[];let child:ChildProcessWithoutNullStreams|undefined,success=false,sizeError:RecoveryError|undefined;
  try{
   child=spawn(i.age,['--encrypt','--recipient',i.recipient],{env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV??'production',LANG:'C'},signal});
-  tasks.push(completed(child),pipeline(Readable.from([bytes]),child.stdin,{signal}),pipeline(child.stdout,counter(4194304,hash),output.createWriteStream({autoClose:true}),{signal}));
+  tasks.push(completed(child),pipeline(source,child.stdin,{signal}),pipeline(child.stdout,counter(i.maximumBytes,hash,error=>{sizeError=error;}),output.createWriteStream({autoClose:true}),{signal}));
   await Promise.all(tasks);const result={ciphertextSha256:hash.digest('hex'),encryptedBytes:(await syncFile(file)).size};success=true;return result;
+ }catch(error){if(sizeError)throw sizeError;if(error instanceof RecoveryError)throw error;throw new RecoveryError(signal.aborted?'RECOVERY_CANCELLED':'STREAM_BACKUP_FAILED');
  }finally{
   if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');
   const kill=setTimeout(()=>{if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');},1000);kill.unref();
-  await Promise.allSettled(tasks);clearTimeout(kill);bytes.fill(0);await output.close().catch(()=>{});if(!success)await unlink(file).catch(()=>{});
+  await Promise.allSettled(tasks);clearTimeout(kill);await output.close().catch(()=>{});if(!success)await unlink(file).catch(()=>{});
  }
 }
 export async function restoreDatabaseBackup(raw:unknown,externalSignal?:AbortSignal){

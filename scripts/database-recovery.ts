@@ -1,6 +1,7 @@
 import { backupDatabase,restoreDatabaseBackup,RecoveryError,privateDirectory,regularFile } from '../src/operations/database-backups.ts';
 import {copyEncryptedBackupToDrive,driveBackupCredentials} from '../src/operations/drive-backups.ts';
 import {backupVerification} from '../src/operations/database-verification.ts';
+import {backupMediaObject} from '../src/operations/media-backups.ts';
 import {constants} from 'node:fs';
 import {open} from 'node:fs/promises';
 import {dirname,isAbsolute} from 'node:path';
@@ -19,6 +20,8 @@ try{
   console.log('copy-drive BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: retry one existing encrypted archive using RCLONE_BIN,BACKUP_DRIVE_CONNECTION_JSON,RECOVERY_WORK_DIRECTORY.');
   console.log('copy-config BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: same guarded transport for an encrypted configuration archive;does not restore or apply credentials/roles.');
   console.log('copy-verification BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: retry only the encrypted verification companion to its fixed destination;never accepts plaintext proof or changes remote files.');
+  console.log('backup-media ACADEMY_ID STAGE FILE_ID TARGET_ID BYTES ETAG MODIFIED_AT: explicit one-object archive using MEDIA_BACKUP_CONNECTION_JSON,BACKUP_AGE_RECIPIENT,RECOVERY_WORK_DIRECTORY,AGE_BIN. Conditional source read;no plaintext staging. Not a complete media snapshot.');
+  console.log('copy-media BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: copy and independently read back one encrypted media object to a fixed destination;not a complete media backup.');
   console.log('Drive credentials must be injected from Keychain or a server secret manager,never command arguments or source. Only app-created file access;no Drive sync,delete,pruning or sharing changes. This does not schedule backups or verify a full restore/media recovery.');
   console.log('restore ARCHIVE TRUSTED_SHA256 EXPECTED_REVISION RESTORE:kavosh_recovery_NAME: RESTORE_DATABASE_URL,RESTORE_AGE_IDENTITY_FILE,RECOVERY_WORK_DIRECTORY,AGE_BIN,PG_RESTORE_BIN');
   console.log('Optional RESTORE_VERIFICATION_FILE: private600 backup-proof manifest/envelope in a private700 folder,maximum2MiB. Requires exact archive hash/revision and matching restored MVCC rows/ownership/functions/RLS before backupSnapshotVerified=true. Never compare against a later mutable live database.');
@@ -29,7 +32,11 @@ try{
  }else{
   const common={age:process.env.AGE_BIN,workDirectory:process.env.RECOVERY_WORK_DIRECTORY,sslMode:process.env.RECOVERY_DATABASE_SSL_MODE??'verify-full',caFile:process.env.RECOVERY_DATABASE_CA_FILE};
   if((action==='backup'||action==='backup-proof')&&args.length===0)console.log(JSON.stringify(await backupDatabase({...common,databaseUrl:process.env.BACKUP_DATABASE_URL,pgDump:process.env.PG_DUMP_BIN,recipient:process.env.BACKUP_AGE_RECIPIENT,verificationSnapshot:action==='backup-proof'},controller.signal)));
-  else if((['backup-drive','backup-proof-drive'].includes(action??'')&&args.length===0)||(['copy-drive','copy-config','copy-verification'].includes(action??'')&&args.length===4)){
+  else if(action==='backup-media'&&args.length===7){
+   let configuration;try{const text=process.env.MEDIA_BACKUP_CONNECTION_JSON;if(!text||Buffer.byteLength(text)>65536)throw new Error();configuration=JSON.parse(text);}catch{throw new RecoveryError('INVALID_MEDIA_BACKUP_CONFIGURATION');}
+   console.log(JSON.stringify(await backupMediaObject({configuration,academyId:args[0],stage:args[1],fileId:args[2],storageTargetId:args[3],bytes:Number(args[4]),etag:args[5],modifiedAt:args[6],age:common.age,workDirectory:common.workDirectory,recipient:process.env.BACKUP_AGE_RECIPIENT},controller.signal)));
+  }
+  else if((['backup-drive','backup-proof-drive'].includes(action??'')&&args.length===0)||(['copy-drive','copy-config','copy-verification','copy-media'].includes(action??'')&&args.length===4)){
    const connection=process.env.BACKUP_DRIVE_CONNECTION_JSON;if(!connection||Buffer.byteLength(connection)>65536)throw new RecoveryError('INVALID_DRIVE_BACKUP_CONFIGURATION');
    let drive:ReturnType<typeof driveBackupCredentials.parse>;try{drive=driveBackupCredentials.parse(JSON.parse(connection));}catch{throw new RecoveryError('INVALID_DRIVE_BACKUP_CONFIGURATION');}
    const transfer={rclone:process.env.RCLONE_BIN,workDirectory:common.workDirectory,drive};
@@ -43,7 +50,7 @@ try{
     }
     console.log(JSON.stringify({backup,offsite,verificationOffsite,recoveryBaselineOffsiteVerified:offsite.independentCopyVerified===true&&verificationOffsite?.independentCopyVerified===true}));
    }
-   else console.log(JSON.stringify(await copyEncryptedBackupToDrive({...transfer,kind:action==='copy-config'?'configuration':action==='copy-verification'?'verification':'database',backupId:args[0],archive:args[1],expectedSha256:args[2],expectedBytes:Number(args[3])},controller.signal)));
+   else console.log(JSON.stringify(await copyEncryptedBackupToDrive({...transfer,kind:action==='copy-config'?'configuration':action==='copy-verification'?'verification':action==='copy-media'?'media':'database',backupId:args[0],archive:args[1],expectedSha256:args[2],expectedBytes:Number(args[3])},controller.signal)));
   }
   else if(action==='restore'&&args.length===4){
    const file=process.env.RESTORE_VERIFICATION_FILE;let expectedVerification;
