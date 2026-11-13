@@ -1,0 +1,90 @@
+{
+  "status": "pre_update_recovery_verified_release_not_activated",
+  "runtimeSourceCommit": "17738a1d86d8dd516d13d7074d7a553661106193",
+  "configurationSourceCommit": "0a428ce5d00dff00cc078d7598386728281f859e",
+  "runtimeHostedVerification": {
+    "runId": 43450814414,
+    "conclusion": "success",
+    "jobs": 13,
+    "nativeDeductionJobId": 131972163256,
+    "nativeDeductionAllocationCaseMs": 7119.938436,
+    "nativeConcurrentCapacityCaseMs": 6388.986257
+  },
+  "configurationHostedVerificationAtObservation": {
+    "runId": 43451890746,
+    "status": "in_progress",
+    "successfulJobs": 10,
+    "totalJobs": 13,
+    "failedJobs": 0
+  },
+  "stagingReceipt": "deploy/ovh/staged-contractor-reports-2026-11-13.json",
+  "migrationPreflight": {
+    "currentRevision": 401,
+    "recordedFiles": 401,
+    "allAppliedChecksumsMatch": true,
+    "pending": ["402_platform_class_operations.sql", "403_contractor_non_tax_deductions.sql"],
+    "databaseChanged": false
+  },
+  "databaseRollbackBackup": {
+    "id": "1eec3053-7b79-41b7-aa1e-d989f187b395",
+    "producerInvocationId": "cc4b5281848d486c8850a19464de005b",
+    "producerExitStatus": 0,
+    "producerCpuSeconds": 9.191003,
+    "producerPeakMemoryBytes": 122064896,
+    "ciphertextSha256": "99651426f0333575b6cb493aa9224abf17c966d7712c0eb0a38f0b893ca7253b",
+    "encryptedBytes": 7308132,
+    "sourceSchemaRevision": 401,
+    "independentDriveDownloadVerified": true,
+    "independentEncryptedCompanionDownloadVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "actualIsolatedPostgresRestoreVerified": true,
+    "permanentTablesCompared": 436,
+    "rowsCompared": 731,
+    "originalDataPermissionsFunctionsAndPoliciesMatch": true,
+    "originalExportedSnapshotMatched": true,
+    "recoveredDatabaseOrdinaryConnectionsBlocked": true,
+    "sourceDatabaseRestoreCommandsIssued": 0,
+    "privateRecoveryKeyTransferredToVps": false,
+    "globalRoleRecoveryVerified": false,
+    "sequenceValuesRecoveryVerified": false,
+    "mediaRecoveryVerified": false,
+    "producerReportedOrdinaryMediaOffsiteVerified": true,
+    "signedEvidenceIncluded": false
+  },
+  "settingsRollbackBackup": {
+    "id": "7789e0f6-452d-46a7-b4db-da3ecdb4be82",
+    "producerInvocationId": "6ca9ecb7b7584481a9b3cf71d6095189",
+    "producerResult": "success",
+    "ciphertextSha256": "8c6169f2e72978b08c2d01b4ac3aaca8a636e8d2ec91f7972b754de70e3643df",
+    "encryptedBytes": 153832,
+    "independentDriveDownloadVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "requiredFilesChecked": 42,
+    "archiveEntriesChecked": 76,
+    "passwordFreeRolesVerified": true,
+    "pinnedOldVerifierSha256": "0b8cc000225c2be35c803b5e5ad73178bc9e8eddcb15d4a39018056f2ed28419",
+    "liveReportRuntimeProfileSha256": "12ccf68126cea25f0a247012ada9cae68b297b9517041f2e57614ccb2bc98a4a",
+    "operationalHealthProfileSha256": "18777c0e004b8fdc21729ce0e0552a96092d379baaadff3c9c2aa80c4fb90051",
+    "webUnitSha256": "6c890fd52d61bfbdf230f0324c612d8627dcec02396015bc3cf924ce8ecf427d",
+    "backgroundTemplateSha256": "a1fe22866c0df4b58c2e94d2f221ff57abe81f6445f4de046069f05b7c23fe94",
+    "landingPageExcluded": true,
+    "configurationApplied": false,
+    "privateRecoveryKeyTransferredToVps": false,
+    "fullServerRebuildVerified": false
+  },
+  "preservation": {
+    "liveRelease": "releases/5340c1a",
+    "productionSchemaChanged": false,
+    "productionReleaseSwitched": false,
+    "reportRuntimeProfileInstalled": false,
+    "backupSchedulesChanged": false,
+    "existingBackupsDeleted": false,
+    "providerMessagesSent": 0,
+    "financialWritesPerformed": 0
+  },
+  "nextGates": [
+    "Complete exact runtime/configuration hosted runs43450814414and43451890746.",
+    "Coordinate graceful report-worker pause and401to403migration,install exact new report-only runtime profile,authenticate fresh42file settings archive against the new profile,then perform own-login TLS/schema/isolation acceptance before activation.",
+    "After release activation,verify public exact contract/security/readiness,landing preservation and post-update recovery. This pre-update receipt does not prove production403or complete-backend delivery."
+  ]
+}
