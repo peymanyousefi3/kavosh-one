@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {evaluateOperationalHealth,operationalWorkerUnits} from '../src/operations/operational-health.ts';
 import {operationalHealthStatus,readOperationalHealthStatus} from '../src/operations/health-status.ts';
 import {createPlatformApi} from '../src/platform/api.ts';
-import type {Database} from '../src/core/database.ts';
+import {expectedSchemaRevision,type Database} from '../src/core/database.ts';
 const now=Date.now(),completed={active:'inactive',result:'success',exitStatus:0,lastSuccessfulExitAt:new Date(now-3600000).toISOString()},normal=evaluateOperationalHealth({observedAt:new Date(now).toISOString(),ready:true,freeBackupDiskBytes:'50000000000',web:{...completed,active:'active'},backup:completed,configuration:completed,backupTimerActive:true,configurationTimerActive:true,workers:Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,{...completed,active:'active'}]))});
 test('owner status recomputes findings and marks stale/future samples critical instead of retaining a green label',()=>{
  assert.equal(operationalHealthStatus(normal,now).status,'healthy');assert.equal(operationalHealthStatus(normal,now+180000).status,'healthy');assert.equal(operationalHealthStatus(normal,now+180001).issues.at(-1)?.code,'MONITOR_OBSERVATION_STALE');assert.equal(operationalHealthStatus(normal,now-30001).issues.at(-1)?.code,'MONITOR_CLOCK_INCONSISTENT');
@@ -28,11 +28,12 @@ test('shared health file is bounded,strict,read-only metadata;unsafe permissions
  }finally{await rm(directory,{recursive:true,force:true});}
 });
 test('platform health authorizes and rate-limits before reading;bots,nonowners and unavailable state cannot leak metadata',async()=>{
- let reads=0,allowed=true,deny=false,queries=0;
- const database:Database={async connect(){return {async query<Row>(sql:string){queries++;if(sql.startsWith('SELECT platform_private.consume_request_budget(')){if(deny)throw Error('PLATFORM_OWNER_REQUIRED');return {rows:[{allowed}] as Row[]};}if(sql.startsWith('SELECT platform_private.request('))return {rows:[{result:{status:200,body:{operationalHealthAccessGranted:true}}}] as Row[]};return {rows:[{safe:true,revision:400}] as Row[]};},release(){}};}};
+ let reads=0,allowed=true,deny=false,queries=0,revision=expectedSchemaRevision;
+ const database:Database={async connect(){return {async query<Row>(sql:string){queries++;if(sql.startsWith('SELECT platform_private.consume_request_budget(')){if(deny)throw Error('PLATFORM_OWNER_REQUIRED');return {rows:[{allowed}] as Row[]};}if(sql.startsWith('SELECT platform_private.request('))return {rows:[{result:{status:200,body:{operationalHealthAccessGranted:true}}}] as Row[]};return {rows:[{safe:true,revision}] as Row[]};},release(){}};}};
  const api=createPlatformApi(database,async r=>r.headers.has('x-human')?{userId:'00000000-0000-4000-8000-000000000001',sessionId:'00000000-0000-4000-8000-000000000002'}:null,true,{readOperationalHealth:async()=>{reads++;return normal;}});
  const request=(headers:Record<string,string>={},suffix='',method='GET')=>api(new Request('https://example.test/api/platform/v1/operations/health'+suffix,{method,headers}), 'operations/health');
  assert.equal((await request()).status,401);assert.equal((await request({'x-human':'1',authorization:'Bearer synthetic'})).status,401);assert.equal(reads,0);assert.equal(queries,0);
+ revision=expectedSchemaRevision-1;assert.equal((await request({'x-human':'1'})).status,503);assert.equal(reads,0);revision=expectedSchemaRevision;
  deny=true;assert.equal((await request({'x-human':'1'})).status,403);assert.equal(reads,0);deny=false;allowed=false;assert.equal((await request({'x-human':'1'})).status,429);assert.equal(reads,0);allowed=true;
  const response=await request({'x-human':'1'});assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal((await response.json()).data.status,'healthy');assert.equal(reads,1);
  assert.equal((await request({'x-human':'1'},'?path=/etc/private')).status,400);assert.equal((await request({'x-human':'1'},'','POST')).status,405);assert.equal(reads,1);

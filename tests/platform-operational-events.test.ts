@@ -8,7 +8,7 @@ import {createPlatformApi,assertPlatformRole} from '../src/platform/api.ts';
 import {recordOperationalHealth} from '../src/platform/operational-events.ts';
 import {processPlatformNotices} from '../src/platform/notice-worker.ts';
 import {evaluateOperationalHealth,operationalWorkerUnits} from '../src/operations/operational-health.ts';
-import type {Database} from '../src/core/database.ts';
+import {expectedSchemaRevision,type Database} from '../src/core/database.ts';
 
 test('durable operational transitions share the owner inbox without false recoveries,duplicate alerts or loss of cancellation history',async()=>{
  const f=await operationsFixture({throughSchema:399});try{
@@ -54,7 +54,9 @@ test('durable operational transitions share the owner inbox without false recove
 });
 
 test('operational collector checks role and its exclusive claim before reading metadata or recording effects',async()=>{
- let reads=0,releases=0,safe=false,claimed=true;const queries:string[]=[];
- const database:Database={async connect(){return {async query<Row>(sql:string){queries.push(sql);return {rows:[sql.startsWith('SELECT public.schema_revision')?{revision:400}:sql.includes(' AS safe ')?{safe}:sql.startsWith('SELECT pg_try_advisory')?{claimed}:{}] as Row[]};},release(){releases++;}};}};
- const read=async()=>{reads++;throw Error('Must not read');};await assert.rejects(recordOperationalHealth(database,read),/UNSAFE_PLATFORM_NOTICE_WORKER/);assert.equal(reads,0);assert.ok(!queries.includes('BEGIN'));safe=true;claimed=false;assert.deepEqual(await recordOperationalHealth(database,read),{claimed:false,changed:0,sourceAccepted:false});assert.equal(reads,0);assert.equal(releases,2);assert.equal(queries.at(-1),'ROLLBACK');assert.ok(!queries.some(q=>q.startsWith('SELECT platform_private.record_operational_health')));
+ let reads=0,releases=0,safe=false,claimed=true,revision=expectedSchemaRevision;const queries:string[]=[];
+ const database:Database={async connect(){return {async query<Row>(sql:string){queries.push(sql);return {rows:[sql.startsWith('SELECT public.schema_revision')?{revision}:sql.includes(' AS safe ')?{safe}:sql.startsWith('SELECT pg_try_advisory')?{claimed}:{}] as Row[]};},release(){releases++;}};}};
+ const read=async()=>{reads++;throw Error('Must not read');};await assert.rejects(recordOperationalHealth(database,read),/UNSAFE_PLATFORM_NOTICE_WORKER/);assert.equal(reads,0);assert.ok(!queries.includes('BEGIN'));
+ revision=expectedSchemaRevision-1;await assert.rejects(recordOperationalHealth(database,read),/SCHEMA_NOT_CURRENT/);assert.equal(reads,0);assert.ok(!queries.includes('BEGIN'));revision=expectedSchemaRevision;
+ safe=true;claimed=false;assert.deepEqual(await recordOperationalHealth(database,read),{claimed:false,changed:0,sourceAccepted:false});assert.equal(reads,0);assert.equal(releases,3);assert.equal(queries.at(-1),'ROLLBACK');assert.ok(!queries.some(q=>q.startsWith('SELECT platform_private.record_operational_health')));
 });
