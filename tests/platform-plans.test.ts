@@ -124,7 +124,7 @@ test('platform notice brief native concurrent publishers never duplicate a remin
  const f=await fixture();try{await historicalCancellation(f);const start=performance.now(),results=await Promise.all([publishNotices(f),publishNotices(f)]);assert.equal(results.reduce((n,r)=>n+r.published,0),2);assert.equal((await f.pg.query('SELECT * FROM platform_private.owner_notifications')).rows.length,2);assert.equal((await f.request('subscription-cancellations?readiness=ready')).body.data.length,1);console.info('Platform notice concurrent publishers ms:',Math.round(performance.now()-start));}finally{await f.pg.close();}
 });
 test('platform notice CLI refuses disabled or shared-secret environments without printing their values',()=>{
- const secret=randomBytes(24).toString('hex');for(const config of [{PLATFORM_NOTICE_WORKER_ENABLED:'false'},{PLATFORM_NOTICE_WORKER_ENABLED:'true',AUTH_SECRET:secret}]){
+ const secret=randomBytes(24).toString('hex');for(const config of [{PLATFORM_NOTICE_WORKER_ENABLED:'false'},{PLATFORM_NOTICE_WORKER_ENABLED:'true',AUTH_SECRET:secret},{PLATFORM_NOTICE_WORKER_ENABLED:'true',PLATFORM_OPERATIONAL_HEALTH_ENABLED:'invalid'}]){
   const r=spawnSync(process.execPath,['--import','tsx',fileURLToPath(new URL('../scripts/process-platform-notices.ts',import.meta.url))],{encoding:'utf8',timeout:5000,env:{PATH:process.env.PATH,NODE_ENV:'production',...config}});assert.equal(r.status,1);assert.equal(r.stdout,'');assert.match(r.stderr,/check isolated configuration/);assert.equal(r.stderr.includes(secret),false);
  }
 });

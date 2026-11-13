@@ -5,6 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { quickCheckGroups,quickCheckGroupCount,verifyQuickCheckFiles } from '../scripts/run-quick-checks.mjs';
 
 const prefix="node --import tsx --test --test-concurrency=1 --test-skip-pattern='large|one thousand' ";
+test('durable operational inbox runs in the early native owner gate without omitting existing owner fixtures',async()=>{
+ const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  business-logic:')[1]?.split('  learning:')[0];assert.ok(job);const command=job.split('\n').find(line=>line.includes('tests/platform-health.test.ts'))!;assert.ok(command);assert.deepEqual(command.match(/tests\/[^ ]+\.test\.ts/g),['tests/platform-health.test.ts','tests/platform-directories.test.ts','tests/platform-finance.test.ts','tests/platform-operational-events.test.ts']);assert.equal(job.match(/tests\/platform-operational-events\.test\.ts/g)?.length,1);
+});
 test('native signing failures run first without omitting or repeating the remaining PDF regressions',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  pdf-parser:')[1]?.split('  scanner-engine:')[0];assert.ok(job);
  const pattern=new RegExp(job.match(/SIGNING_SOURCE_PATTERN: '([^']+)'/)![1]),commands=job.split('\n').filter(line=>line.includes('node --import tsx --test'));

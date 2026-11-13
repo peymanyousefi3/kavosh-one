@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.438.0",
+    "version": "0.439.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -4820,7 +4820,7 @@
     },
     "/api/platform/v1/notifications": {
       "get": {
-        "summary": "Verified owner-only durable internal cancellation alerts; current source/actionability rechecked on read. Reading never confirms a case or removes it from the review queue. No external delivery claim.",
+        "summary": "Verified owner-only unified durable internal cancellation and operational failure/recovery alerts; current source/actionability rechecked on read. Recurrences retain separate history. Reading never confirms a case,resolves a fault or removes its review evidence. Missing/stale monitor data cannot prove recovery. No external delivery or queue-progress claim.",
         "security": [
           {
             "humanSession": []
@@ -4883,7 +4883,7 @@
     },
     "/api/platform/v1/notifications/{id}/read": {
       "post": {
-        "summary": "Owner marks one internal alert read idempotently,without cancelling,confirming or deleting its source case",
+        "summary": "Owner marks one globally identified internal cancellation or operational alert read idempotently,without cancelling,confirming,resolving or deleting its source",
         "security": [
           {
             "humanSession": []
