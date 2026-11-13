@@ -40,6 +40,12 @@ DO $$ DECLARE t text;BEGIN FOREACH t IN ARRAY ARRAY['signature_completion_jobs',
 END LOOP;END $$;
 GRANT SELECT,INSERT,UPDATE ON public.signature_completion_jobs TO kavosh_signature_completion_policy;
 GRANT SELECT,INSERT ON public.signature_completion_job_attempts TO kavosh_signature_completion_policy;
+-- Web users see scoped operational metadata only, never worker identity,
+-- lease tokens, source/document/provider routing or credential material.
+CREATE POLICY completion_job_tenant_read ON public.signature_completion_jobs FOR SELECT TO kavosh_runtime USING(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid);
+CREATE POLICY completion_attempt_tenant_read ON public.signature_completion_job_attempts FOR SELECT TO kavosh_runtime USING(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid);
+GRANT SELECT(academy_id,purpose,start_id,created_at,poll_until,state,available_at,attempt_no,failures,last_finished_at,last_outcome,evidence_id) ON public.signature_completion_jobs TO kavosh_runtime;
+GRANT SELECT(academy_id,purpose,start_id,attempt_no,started_at,finished_at,outcome,evidence_id) ON public.signature_completion_job_attempts TO kavosh_runtime;
 GRANT SELECT(options) ON public.signature_send_requests,public.work_signature_send_requests TO kavosh_signature_completion_policy;
 GRANT SELECT(created_at) ON public.signature_dispatch_starts,public.work_signature_dispatch_starts TO kavosh_signature_completion_policy;
 GRANT SELECT(id,status) ON public.academies TO kavosh_signature_completion_policy;

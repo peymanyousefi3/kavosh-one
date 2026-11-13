@@ -3,6 +3,21 @@ import { randomUUID } from 'node:crypto';
 import type { operationsFixture } from './operations-fixture.ts';
 import { assertSignatureCompletionRole } from '../src/integrations/signature-completion-source.ts';
 
+export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'a'|'b'|'pg'|'managerRole'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
+ const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check';
+ const first=await f.request(path+'?limit=1');assert.equal(first.response.status,200,JSON.stringify(first.body));
+ assert.equal(first.body.data.state,'queued');assert.equal(first.body.data.attemptCount,2);assert.equal(first.body.attempts.length,1);assert.equal(first.body.attempts[0].attemptNo,1);assert.equal(first.body.nextAfterAttempt,1);
+ const second=await f.request(path+'?limit=1&afterAttempt=1');assert.equal(second.response.status,200);assert.equal(second.body.attempts[0].attemptNo,2);assert.equal(second.body.nextAfterAttempt,null);
+ assert.equal(first.body.workerLiveness,'not_observed');assert.equal(first.body.admissionCleared,false);assert.equal(first.body.paymentCleared,false);
+ assert.doesNotMatch(JSON.stringify(first.body),/lease_token|worker_id|source_fingerprint|connection_id|document_id|PRIVATE|synthetic-private/);
+ assert.equal((await f.request(path+'?afterAttempt=99')).response.status,404);
+ assert.equal((await f.request(path,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ const capability=purpose==='worker_services'?'work-signature-completions.view':'signature-completions.view';
+ const saved=(await f.pg.query<{effect:string}>('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3 RETURNING effect',[f.a,f.managerRole,capability])).rows;
+ try{assert.equal((await f.request(path,undefined,'manager')).response.status,purpose==='worker_services'?403:404,'removing the current feature permission immediately removes status/history access');}
+ finally{for(const grant of saved)await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,$4)',[f.a,f.managerRole,capability,grant.effect]);}
+}
+
 // Called only after the original-flow fixture has produced a real native,
 // original-bound service receipt. Network responses in that fixture are fake.
 export async function checkCompletionQueue(pg:Pick<Awaited<ReturnType<typeof operationsFixture>>['pg'],'query'|'exec'|'runtime'>,academy:string,foreign:string,start:string,fingerprint:string,purpose:'worker_services'|'unified_enrollment'='worker_services'){
