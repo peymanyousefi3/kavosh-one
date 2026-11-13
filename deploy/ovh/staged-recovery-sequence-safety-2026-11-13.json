@@ -1,0 +1,38 @@
+{
+  "status": "compiled_and_packaged_not_used_for_restore",
+  "sourceCommit": "8b8da84951ce3e4e2f3873cd4edc0d7a8082709c",
+  "nativeHostedGate": {"run": 43490045623, "statusAtObservation": "in_progress", "accepted": false},
+  "completedRecoveryJob": {"id": 132108466409, "conclusion": "success", "fullClusterReconstructionStep": "success", "individualTestLogs": "not_yet_available_while_run_active", "wholeRunAcceptanceClaimed": false},
+  "secretHostedGate": {"run": 43490045571, "conclusion": "success"},
+  "sourceArchiveSha256": "507600aad5113d24b210e71441d88138d8bd5df255bfe91bf1a638e1402e5e3c",
+  "buildHelperSha256": "fc4fb1828350e349128b997d6c0ea8d5ae069668b656855f5fedf18f166f550c",
+  "build": {
+    "unit": "kavosh-one-recovery-build-8b8da84.service",
+    "invocationId": "7fe44308ff6c450c96aa681635fb9687",
+    "result": "success",
+    "mainPidAfterCompletion": 0,
+    "exitStatus": 0,
+    "wallSeconds": 6.531081,
+    "cpuSeconds": 3.283708,
+    "peakMemoryBytes": 201453568,
+    "memoryLimitBytes": 536870912,
+    "cpuQuotaPercent": 50,
+    "actualUid": 977,
+    "privateNetwork": true,
+    "productionCredentialsProvided": false,
+    "networkDependencyInstallPerformed": false
+  },
+  "package": {
+    "path": "/srv/kavosh-one/operations/recovery-8b8da84951ce3e4e2f3873cd4edc0d7a8082709c",
+    "rootOwnedReadOnlyToServiceAccounts": true,
+    "dependencyLinksChecked": 554,
+    "allDependencyLinksWithinPackage": true,
+    "workspaceTargetsIncluded": true,
+    "criticalOriginalSourceFilesComparedWithCommit": true,
+    "compiledSequenceCheckerSha256": "f7d9f77c43d9c2b6f11cb5f6eb7180aac0353d949342a97fe898ca2fa0b02084",
+    "compiledRestoreEntrypointSha256": "156f0705611a8528da00d434d681a16cd16ab95afe434818d77c1ee9f70eb602",
+    "linkCheckerSha256": "aa958176d748cac345ca3d93c93c349ccab7680e2c1dc8db24eceaca071616d0"
+  },
+  "livePreserved": {"release": "062700a", "webPid": 727404, "landingPid": 653511, "dailyBackupOperatorChanged": false, "databaseRestored": false, "productionCredentialsChanged": false},
+  "limits": "This proves isolated Linux compilation and self-contained packaging only. Native hosted compiled-restore acceptance and actual isolated VPS use remain pending. Sequence safety does not claim equality with a past live non-MVCC sequence value,full-host recovery,application activation or entire backend completion."
+}
