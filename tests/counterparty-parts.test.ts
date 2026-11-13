@@ -15,6 +15,7 @@ import {lockAcademyTopology} from '../src/modules/academy.ts';
 import {runFixtureReportWorker} from './report-worker-fixture.ts';
 import {upgradeToCurrent} from './migration-upgrade.ts';
 import {setTimeout as delay} from 'node:timers/promises';
+import {assertPrivateErrorEnvelope} from './redaction-assertions.ts';
 
 async function fixture(throughSchema?:number){const f=await collectorOffsetFixture(throughSchema);try{
  for(const cap of counterpartyReportCapabilities)await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.staffRole,cap]);
@@ -35,7 +36,7 @@ check('real captured sources resume across two bounded steps and publish only a 
  const rows=parse(body,{columns:true,bom:true})as Record<string,string>[];assert.equal(rows.filter(r=>r.section==='event').length,262);assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='closing')?.minor,'2825');assert.equal(body.split('\uFEFF').length,2);assert.doesNotMatch(body,/sourceManifest|sourceScope|authorizationContext/);
  const ordinary=await f.download(id);assert.equal(ordinary.response.status,409);assert.equal(ordinary.body.error.code,'REPORT_MULTIPART_DOWNLOAD_REQUIRED');const state=(await f.request('reports/jobs/'+id,undefined,'staff')).body;assert.equal(state.result.partCount,2);assert.equal(state.result.sha256,undefined);assert.equal(state.data.attempts,1);assert.equal((await f.pg.query("SELECT 1 FROM public.audit_events WHERE action='report.part'")).rows.length,2);
  const first=await f.parts(id,'?limit=1');assert.equal(first.body.nextCursor,1);assert.equal((await f.parts(id,'?after=1&limit=1')).body.data[0].part,2);assert.equal((await f.download(id,3)).response.status,404);assert.equal((await f.parts(id,'','peer')).response.status,404);assert.equal((await f.download(id,1,'master')).response.status,200);assert.equal((await f.request('reports/jobs/'+id+'/parts',undefined,'foreignMaster',{academy:f.b})).response.status,404);
- await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='expenses.view'",[f.staffRole]);for(const r of [await f.parts(id),await f.download(id,1),await f.request('reports/jobs/'+id,undefined,'staff')]){assert.equal(r.response.status,403);assert.doesNotMatch(JSON.stringify(r.body),/sha256|2825|partCount|totalBytes/);}
+ await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='expenses.view'",[f.staffRole]);for(const r of [await f.parts(id),await f.download(id,1),await f.request('reports/jobs/'+id,undefined,'staff')]){assert.equal(r.response.status,403);assertPrivateErrorEnvelope(r.body,'REPORT_SOURCE_ACCESS_CHANGED');}
 });
 check('ordinary small counterparty exports retain the original single-file behavior',async f=>{
  f.setForceParts(false);const q=await f.queue();assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));assert.equal((await f.download(q.body.data.id)).response.status,200);assert.equal((await f.parts(q.body.data.id)).response.status,409);assert.equal((await f.pg.query('SELECT 1 FROM public.counterparty_report_captures')).rows.length,0);assert.equal((await f.pg.query('SELECT 1 FROM public.report_job_parts')).rows.length,0);

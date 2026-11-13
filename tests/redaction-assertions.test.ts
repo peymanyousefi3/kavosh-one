@@ -5,6 +5,11 @@ import { assertAuditEnvelope,assertGenericCriticalNotice,assertPrivateErrorEnvel
 test('private errors accept a canonical request ID containing money-like digits but reject all private additions',()=>{
  const requestId='47fff1f6-f0bb-481c-a8b1-bdaa5412030d',code='REPORT_SOURCE_ACCESS_CHANGED',body={error:{code,requestId}};assert.match(requestId,/12030/);assert.doesNotThrow(()=>assertPrivateErrorEnvelope(body,code));for(const value of [{error:{...body.error,amount:12030}},{...body,sha256:'private'},{error:{...body.error,code:'PRIVATE'}},{error:{...body.error,requestId:'12030'}},{error:{...body.error,message:'PRIVATE source'}}])assert.throws(()=>assertPrivateErrorEnvelope(value,code));
 });
+test('multipart report errors accept the actual harmless2825 trace but reject hashes,counts,amounts and extra text',()=>{
+ const requestId='76adc647-fc8d-4c94-8caa-2a8a2825aa7a',code='REPORT_SOURCE_ACCESS_CHANGED',body={error:{code,requestId}};
+ assert.doesNotThrow(()=>assertPrivateErrorEnvelope(body,code));
+ for(const value of [{...body,sha256:'private'},{...body,partCount:2},{...body,totalBytes:2825},{error:{...body.error,amount:2825}},{error:{...body.error,message:'PRIVATE'}}])assert.throws(()=>assertPrivateErrorEnvelope(value,code));
+});
 
 // The first ID is the actual harmless reference that triggered CI42010122277.
 const id='c543000f-7702-4468-974b-4e6347f55f61',expected={version:2,severity:'critical',hasReason:true,effectiveOn:'2026-07-01',classificationCertified:false};

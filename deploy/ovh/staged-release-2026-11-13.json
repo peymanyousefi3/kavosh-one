@@ -1,0 +1,64 @@
+{
+  "status": "staged_and_packaged_checks_passed_not_activated",
+  "runtimeSourceCommit": "e51ee944c48f66f6d11127b49bbcd0888d530828",
+  "sourceArchiveSha256": "70ed5059b0ebdf31fd623417bc34725a7e038d84c2bb7656cf76278166393e7a",
+  "stagedRelease": "/srv/kavosh-one/releases/e51ee94",
+  "liveReleaseStill": "/srv/kavosh-one/releases/3ba3721",
+  "liveSchemaRevisionStill": 390,
+  "stagedApiVersion": "0.433.0",
+  "dependencyLockSha256": "47fafac5a61d0aa434931f595be55342b35ca65a2309341702f56111903e15c0",
+  "dependencies": "Independent copy of the existing Linux dependency tree;both lockfiles matched before reuse. No dependency or live release directory was changed.",
+  "builder": {
+    "account": "kavosh-one-build",
+    "uid": 977,
+    "groupId": 971,
+    "shell": "/usr/sbin/nologin",
+    "productionCredentialsReadable": false,
+    "liveAppWritable": false,
+    "landingDirectoryWritable": false,
+    "privateNetwork": true,
+    "privateTemporaryFiles": true,
+    "noNewPrivileges": true
+  },
+  "build": {
+    "unit": "kavosh-one-build-e51ee94.service",
+    "exitStatus": 0,
+    "completedAt": "2026-11-13T06:03:13Z",
+    "memoryLimitBytes": 2147483648,
+    "peakMemoryBytes": 2076323840,
+    "cpuLimitPercentOfOneCore": 75,
+    "cpuTimeNanoseconds": 92478705000,
+    "strictProductionTypes": true,
+    "completed": ["next_standalone", "auth_worker", "background_workers", "file_workers", "signing_tools", "database_recovery_tools"],
+    "unitStoppedAfterObservedSuccess": true
+  },
+  "package": {
+    "rootOwnedReadOnly": true,
+    "serverMode": "0644",
+    "releaseDirectoryMode": "0755",
+    "groupOrOtherWritableRegularFilesFound": false,
+    "publicAndStaticAssetsCopied": true,
+    "publicContractDigest": "67bbdda5caf9c12521351938871640193140ddfd49cb0a2d1dda826dd8d2621f"
+  },
+  "packagedChecks": {
+    "unit": "kavosh-one-smoke-e51ee94.service",
+    "exitStatus": 0,
+    "completedAt": "2026-11-13T06:05:00Z",
+    "privateNetwork": true,
+    "readOnlyFilesystem": true,
+    "liveCredentials": false,
+    "port": 3111,
+    "publicPortOpened": false,
+    "httpAuthorizationSecurityHeadersAndApiContract": "passed",
+    "spreadsheetWorker": "passed",
+    "syntheticSpreadsheetBytes": 2837,
+    "peakMemoryBytes": 206110720,
+    "unitStoppedAfterObservedSuccess": true
+  },
+  "freshPreMigrationBackups": {
+    "database": {"id": "da092a71-ff49-4efb-b742-5c084c7f8e91", "schemaRevision": 390, "encryptedBytes": 7132260, "independentDriveCopyVerified": true, "restoreVerified": false, "mediaIncluded": false},
+    "configuration": {"id": "d3835917-cc71-4ad2-87a7-73198acc2251", "encryptedBytes": 143592, "independentDriveCopyVerified": true, "privateAgeKeyOnVps": false, "configurationApplied": false}
+  },
+  "landingPreservation": {"mainPid": 536773, "startedAt": "2026-11-06T01:33:33Z", "httpsStatus": 200, "routesChanged": false, "serviceRestarted": false},
+  "activationHeld": "Hosted verify job131719459355 failed a report-redaction assertion because its random request ID contained2825. Correct the fixture using the existing strict error-envelope helper,retain all private-field checks,and obtain current release acceptance before migration or switching. Full backend and production provider/media/restore acceptance remain unfinished;no UI work performed."
+}
