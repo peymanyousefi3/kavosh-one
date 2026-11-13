@@ -11,3 +11,20 @@ test('production build keeps strict checking of every runtime source while CI st
  const pkg=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8'));assert.equal(pkg.scripts.typecheck,'next typegen && tsc --noEmit');
  const ci=readFileSync(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8');assert.ok(ci.includes('run: pnpm typecheck'));
 });
+test('routine CI compiles all background entrypoints once without dropping standalone compiler checks or runtime assets',()=>{
+ const scripts=JSON.parse(readFileSync(new URL('../package.json',import.meta.url),'utf8')).scripts;
+ const compiler=command=>command.split(' && ')[0].split(' '),combined=compiler(scripts['background:build']),inputs=combined.filter(word=>word.endsWith('.ts'));
+ for(const name of ['notifications:build','reports:build','messages:build']){
+  const standalone=compiler(scripts[name]);
+  assert.deepEqual(standalone.filter(word=>!word.endsWith('.ts')),combined.filter(word=>!word.endsWith('.ts')),'Original strict compiler flags must remain identical');
+  for(const input of standalone.filter(word=>word.endsWith('.ts')))assert.ok(inputs.includes(input),'Missing original daemon: '+input);
+ }
+ for(const input of ['scripts/process-platform-notices.ts','deploy/ovh/check-background.ts'])assert.ok(inputs.includes(input));
+ for(const asset of ['src/reports/xlsx-worker.mjs','scripts/spreadsheet-runtime-smoke.mjs'])assert.ok(scripts['background:build'].includes('cp '+asset+' .notification-worker/'+asset));
+ const ci=readFileSync(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8');
+ for(const [start,end] of [['verify','business-logic'],['business-logic','learning']]){
+  const job=ci.split('  '+start+':\n')[1]?.split('  '+end+':\n')[0];assert.ok(job);
+  assert.equal(job.match(/run: pnpm background:build/g)?.length,1);
+  assert.doesNotMatch(job,/run: pnpm (?:notifications|reports|messages):build/);
+ }
+});
