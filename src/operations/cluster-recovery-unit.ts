@@ -1,5 +1,11 @@
 import {RecoveryError} from './recovery-error.ts';
 
+// A lost SSH observation is not a stopped restore. Both process identities
+// must be explicitly zero before the operator may clean this one-time unit.
+export function isolatedRecoveryStopped(state:Record<string,string>|undefined){
+ return state?.LoadState==='loaded'&&state.MainPID==='0'&&state.ControlPID==='0'&&['inactive','failed'].includes(state.ActiveState);
+}
+
 // Root operator installs this as a one-time /run unit,not a boot service.
 // Input files are already authenticated/decrypted off-server. No key or live
 // account credential enters this unit. The dynamic OS user is not postgres.

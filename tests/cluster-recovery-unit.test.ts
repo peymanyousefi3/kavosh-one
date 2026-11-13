@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {isolatedClusterUnit} from '../src/operations/cluster-recovery-unit.ts';
+import {isolatedClusterUnit,isolatedRecoveryStopped} from '../src/operations/cluster-recovery-unit.ts';
+test('recovery cleanup requires an explicitly stopped same-job observation,never an unknown or live handle',()=>{
+ const stopped={LoadState:'loaded',ActiveState:'inactive',MainPID:'0',ControlPID:'0'};
+ assert.equal(isolatedRecoveryStopped(stopped),true);assert.equal(isolatedRecoveryStopped({...stopped,ActiveState:'failed'}),true);
+ for(const state of [undefined,{},...['active','activating','deactivating','reloading','unknown','maintenance'].map(ActiveState=>({...stopped,ActiveState})),{...stopped,MainPID:'741234'},{...stopped,ControlPID:'741235'},{...stopped,LoadState:'not-found'},{...stopped,LoadState:'unknown'}])assert.equal(isolatedRecoveryStopped(state),false);
+ for(const key of ['LoadState','ActiveState','MainPID','ControlPID']){const missing:Record<string,string>={...stopped};delete missing[key];assert.equal(isolatedRecoveryStopped(missing),false);}
+});
 test('offline restore unit uses a new OS identity,private network,live-path exclusions and only explicit root input copies',()=>{
  const id='a'.repeat(32),operator='/srv/kavosh-one/operations/recovery-5352111',result=isolatedClusterUnit(id,operator),unit=result.unit;
  for(const required of ['DynamicUser=yes','PrivateNetwork=yes','PrivateIPC=yes','ProtectProc=ptraceable','ProtectSystem=strict','NoNewPrivileges=yes','RestrictAddressFamilies=AF_UNIX','CapabilityBoundingSet=','KillMode=control-group','MemoryMax=512M','CPUQuota=50%','/var/lib/postgresql /run/postgresql /etc/postgresql /etc/kavosh-one'])assert.ok(unit.includes(required),required);

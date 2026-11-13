@@ -6,7 +6,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {mkdtempSync,openSync,closeSync,readFileSync,writeFileSync,unlinkSync,rmdirSync,statSync} from 'node:fs';
 import {join} from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
-import {isolatedClusterUnit} from '../src/operations/cluster-recovery-unit.ts';
+import {isolatedClusterUnit,isolatedRecoveryStopped} from '../src/operations/cluster-recovery-unit.ts';
 import {canonicalRoleExport} from '../src/operations/role-recovery.ts';
 import {backupVerification} from '../src/operations/database-verification.ts';
 
@@ -14,9 +14,9 @@ const ssh=['-F','.local-tools/ovh.ssh-config','kavosh-one-production'],quote=(s:
 const remote=(command:string,input?:Buffer)=>execFileSync('/usr/bin/ssh',[...ssh,command],{input,stdio:[input?'pipe':'ignore','pipe','pipe'],timeout:60000,maxBuffer:3145728});
 const get=(service:string)=>{const bytes=execFileSync('/usr/bin/security',['find-generic-password','-a','kavosh-one','-s',service,'-w'],{stdio:['ignore','pipe','pipe']});try{return JSON.parse(bytes.toString());}finally{bytes.fill(0);}};
 let stage='arguments',directory:string|undefined,unit:ReturnType<typeof isolatedClusterUnit>|undefined,staged=false,installed=false;
-let success:Record<string,unknown>|undefined;
+let success:Record<string,unknown>|undefined,serverCleanupDeferred=false;
 const localFiles:string[]=[],stagedFiles=['database.dump','roles-export.sql','verification.json','input.json','unit.service'];
-const properties=(name:string)=>Object.fromEntries(remote('sudo systemctl show '+name+'.service -p ActiveState -p Result -p ExecMainStatus -p MemoryPeak -p CPUUsageNSec').toString().trim().split('\n').map(line=>{const i=line.indexOf('=');return[line.slice(0,i),line.slice(i+1)];}));
+const properties=(name:string)=>Object.fromEntries(remote('sudo systemctl show '+name+'.service -p LoadState -p ActiveState -p MainPID -p ControlPID -p Result -p ExecMainStatus -p MemoryPeak -p CPUUsageNSec').toString().trim().split('\n').map(line=>{const i=line.indexOf('=');return[line.slice(0,i),line.slice(i+1)];}));
 try{
  const args=process.argv.slice(2);assert.equal(args.length,2);assert.equal(args[0],'--execute');assert.match(args[1],/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);assert.equal(process.platform,'darwin');
  const revision=process.env.CLUSTER_RECOVERY_OPERATOR_REVISION;assert.ok(revision&&/^[a-f0-9]{7,40}$/.test(revision)&&!/[\r\n]/.test(revision));process.umask(0o077);
@@ -44,8 +44,8 @@ try{
  const upload=(file:string,content:Buffer)=>remote(destination(file),content);
  const fd=openSync(database,'r');try{const transfer=spawnSync('/usr/bin/ssh',[...ssh,destination('database.dump')],{stdio:[fd,'pipe','pipe'],timeout:60000,maxBuffer:65536});assert.equal(transfer.status,0);}finally{closeSync(fd);}
  try{upload('roles-export.sql',roles);}finally{roles.fill(0);}upload('verification.json',readFileSync(verificationFile));upload('input.json',Buffer.from(JSON.stringify(metadata)));upload('unit.service',Buffer.from(unit.unit));
- stage='isolated service';remote('sudo install -m0644 '+unit.staging+'/unit.service /run/systemd/system/'+unit.name+'.service');installed=true;remote('sudo systemctl daemon-reload && sudo systemctl start --no-block '+unit.name+'.service');
- const deadline=Date.now()+600000;let state=properties(unit.name);while(['activating','active','deactivating'].includes(state.ActiveState)&&Date.now()<deadline){await delay(3000);state=properties(unit.name);}assert.equal(state.ActiveState,'inactive');assert.equal(state.Result,'success');assert.equal(state.ExecMainStatus,'0');
+ stage='isolated service';installed=true;remote('sudo install -m0644 '+unit.staging+'/unit.service /run/systemd/system/'+unit.name+'.service');remote('sudo systemctl daemon-reload && sudo systemctl start --no-block '+unit.name+'.service');console.error('ISOLATED_CLUSTER_RECOVERY_STARTED: '+unit.name);
+ const deadline=Date.now()+600000;let state=properties(unit.name);while(!isolatedRecoveryStopped(state)&&Date.now()<deadline){await delay(3000);state=properties(unit.name);}assert.ok(isolatedRecoveryStopped(state));assert.equal(state.ActiveState,'inactive');assert.equal(state.Result,'success');assert.equal(state.ExecMainStatus,'0');
  stage='restore evidence';const lines=remote('sudo journalctl -u '+unit.name+'.service --no-pager -o cat -n 20').toString().split('\n'),result=JSON.parse(lines.findLast(line=>line.startsWith('{"backupId":'))??'null');assert.equal(result?.backupId,backup.id);
  for(const field of ['originalExportedSnapshotMatched','rolesAndMembershipsVerified','databaseAccessAndSettingsVerified','isolatedPostgresStopped','osIsolationVerified'])assert.equal(result[field],true);assert.equal(result.applicationActivationAllowed,false);
  assert.equal(result.sequenceSafety?.nextGeneratedValuesOutsideRetainedData,true);assert.equal(result.sequenceSafety?.sequenceValuesChanged,false);assert.equal(result.sequenceSafety?.originalLiveSequenceValuesCompared,false);assert.ok(Number.isSafeInteger(result.sequenceSafety?.ownedSequencesChecked)&&result.sequenceSafety.ownedSequencesChecked>=0);assert.equal(result.sequenceValuesVerified,false);
@@ -54,8 +54,12 @@ try{
  success={...result,unitName:unit.name,configurationBackupId:config.id,independentDriveDownloadsVerified:3,privateRecoveryKeyTransferredToVps:false,liveWebProcessUnchanged:true,landingHttpStatus:200,sourceDatabaseRestoreCommandsIssued:0,memoryPeak:state.MemoryPeak,cpuUsageNanoseconds:state.CPUUsageNSec};
 }catch{console.error('ISOLATED_CLUSTER_ACCEPTANCE_FAILED: '+stage);process.exitCode=1;}
 finally{
- if(installed&&unit)try{remote('sudo systemctl stop '+unit.name+'.service && sudo systemctl clean --what=state '+unit.name+'.service');remote('sudo rm -- /run/systemd/system/'+unit.name+'.service && sudo systemctl daemon-reload');}catch{console.error('CLUSTER_SERVICE_CLEANUP_REQUIRED');process.exitCode=1;}
- if(staged&&unit)try{remote('sudo rm -f -- '+stagedFiles.map(file=>unit!.staging+'/'+file).join(' ')+' && sudo rmdir '+unit.staging);}catch{console.error('CLUSTER_INPUT_CLEANUP_REQUIRED');process.exitCode=1;}
+ if(installed&&unit){
+  let observed:Record<string,string>|undefined;try{observed=properties(unit.name);}catch{/* Preserve the same job and private inputs when observation is unavailable. */}
+  if(!isolatedRecoveryStopped(observed)){serverCleanupDeferred=true;console.error('ISOLATED_CLUSTER_OBSERVATION_PENDING: '+unit.name);process.exitCode=1;}
+  else try{remote('sudo systemctl stop '+unit.name+'.service && sudo systemctl clean --what=state '+unit.name+'.service');remote('sudo rm -- /run/systemd/system/'+unit.name+'.service && sudo systemctl daemon-reload');}catch{serverCleanupDeferred=true;console.error('CLUSTER_SERVICE_CLEANUP_REQUIRED: '+unit.name);process.exitCode=1;}
+ }
+ if(staged&&unit&&!serverCleanupDeferred)try{remote('sudo rm -f -- '+stagedFiles.map(file=>unit!.staging+'/'+file).join(' ')+' && sudo rmdir '+unit.staging);}catch{console.error('CLUSTER_INPUT_CLEANUP_REQUIRED');process.exitCode=1;}
  for(const file of localFiles)try{unlinkSync(file);}catch{console.error('CLUSTER_LOCAL_CLEANUP_REQUIRED');process.exitCode=1;}
  if(directory)try{rmdirSync(directory);}catch{console.error('CLUSTER_LOCAL_CLEANUP_REQUIRED');process.exitCode=1;}
 }
