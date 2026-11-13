@@ -5,6 +5,7 @@ import {backupMediaObject,backupMediaCollection} from '../src/operations/media-b
 import {mediaReferencePlanInput} from '../src/operations/media-reference-plan.ts';
 import {recoverMediaObject} from '../src/operations/media-recovery.ts';
 import {recoverMediaCollection} from '../src/operations/media-collection-recovery.ts';
+import {backupMediaBatch} from '../src/operations/media-backup-batch.ts';
 import {constants} from 'node:fs';
 import {open} from 'node:fs/promises';
 import {dirname,isAbsolute} from 'node:path';
@@ -29,6 +30,7 @@ try{
   console.log('copy-media BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: copy and independently read back one encrypted media object to a fixed destination;not a complete media backup.');
   console.log('backup-media-collection ACADEMY_ID: MEDIA_BACKUP_TARGETS_JSON contains explicit stage/configuration readers;uses AGE_BIN,BACKUP_AGE_RECIPIENT,RECOVERY_WORK_DIRECTORY. Optional RCLONE_BIN/BACKUP_DRIVE_CONNECTION_JSON copies every object and encrypted catalog with independent readback. Final inventory must match;not an atomic database/storage snapshot or verified full recovery.');
   console.log('Optional MEDIA_BACKUP_REUSE_ARCHIVES=true: reuse private indexed archives only for exact academy/stage/target/file/size/ETag/date/recipient matches. Every reused ciphertext is freshly hashed;enabled offsite copies still require full independent readback. New versions never replace old archives. Defaults false;serialize operator processes with the host backup lock.');
+  console.log('backup-media-batch: MEDIA_BACKUP_TARGETS_JSON,MEDIA_REFERENCE_PLAN_JSON,BACKUP_DRIVE_CONNECTION_JSON,RCLONE_BIN plus ordinary age/work-directory settings. Streams every school from that exact authenticated snapshot,requires every recorded ordinary reference,and retains an encrypted independently copied batch index. Always uses private archive reuse. Not signing-evidence or full-host recovery;run under the same host backup lock.');
   console.log('copy-media-catalog BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: retry only an encrypted collection catalog at its fixed destination.');
   console.log('recover-media ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: offline isolated extraction using MEDIA_RECOVERY_SOURCE_JSON (academyId,stage,storageTargetId,fileId,bytes,sha256),RESTORE_AGE_IDENTITY_FILE,RECOVERY_WORK_DIRECTORY,AGE_BIN. Use independently retained catalog metadata. Full ciphertext and authenticated plaintext must match;never overwrites source/cloud objects or activates restored data. Keep the recovery key off the VPS.');
   console.log('recover-media-collection ACADEMY_ID COLLECTION_ID CATALOG_ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: authenticate and validate the entire catalog,then recover all objects from MEDIA_RECOVERY_ARCHIVE_DIRECTORY/media-ARCHIVE_UUID/media.bin.age into private isolated folders. Uses AGE_BIN,RESTORE_AGE_IDENTITY_FILE,RECOVERY_WORK_DIRECTORY. Writes a bounded streaming recovery journal;partial recoveries have no complete footer and never activate application access. No cloud writes or overwrite.');
@@ -53,6 +55,10 @@ try{
   else if(action==='recover-media'&&args.length===3){
    let source;try{const text=process.env.MEDIA_RECOVERY_SOURCE_JSON;if(!text||Buffer.byteLength(text)>16384)throw new Error();source=JSON.parse(text);}catch{throw new RecoveryError('INVALID_MEDIA_RECOVERY_CONFIGURATION');}
    console.log(JSON.stringify(await recoverMediaObject({age:common.age,identityFile:process.env.RESTORE_AGE_IDENTITY_FILE,workDirectory:common.workDirectory,archive:args[0],expectedSha256:args[1],expectedBytes:Number(args[2]),source},controller.signal)));
+  }
+  else if(action==='backup-media-batch'&&args.length===0){
+   let targets,referencePlan,drive;try{const t=process.env.MEDIA_BACKUP_TARGETS_JSON,p=process.env.MEDIA_REFERENCE_PLAN_JSON,d=process.env.BACKUP_DRIVE_CONNECTION_JSON;if(!t||!p||!d||Buffer.byteLength(t)>1048576||Buffer.byteLength(p)>16384||Buffer.byteLength(d)>65536)throw new Error();targets=JSON.parse(t);referencePlan=mediaReferencePlanInput.parse(JSON.parse(p));drive=driveBackupCredentials.parse(JSON.parse(d));}catch{throw new RecoveryError('INVALID_MEDIA_BATCH_CONFIGURATION');}
+   console.log(JSON.stringify(await backupMediaBatch({age:common.age,recipient:process.env.BACKUP_AGE_RECIPIENT,workDirectory:common.workDirectory,targets,referencePlan,offsite:{rclone:process.env.RCLONE_BIN,drive}},controller.signal)));
   }
   else if(action==='backup-media-collection'&&args.length===1){
    const reuse=process.env.MEDIA_BACKUP_REUSE_ARCHIVES;if(reuse!==undefined&&reuse!=='true'&&reuse!=='false')throw new RecoveryError('INVALID_MEDIA_COLLECTION_CONFIGURATION');

@@ -1,0 +1,39 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {mkdtemp,realpath,mkdir,writeFile,readFile,readdir,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {Readable} from 'node:stream';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {backupMediaBatch} from '../src/operations/media-backup-batch.ts';
+import {r2TargetId} from '../src/integrations/r2-config.ts';
+import {driveBackupFixture} from './drive-backup-fixture.ts';
+const run=promisify(execFile);
+test('media batch rejects malformed configuration before reading a plan',async()=>{
+ await assert.rejects(backupMediaBatch({}),{code:'INVALID_MEDIA_BATCH_CONFIGURATION'});
+ const prefix=process.env.RECOVERY_COMPILED_CLI?[process.env.RECOVERY_COMPILED_CLI]:['--import','tsx','scripts/database-recovery.ts'];
+ await assert.rejects(run(process.execPath,[...prefix,'backup-media-batch'],{env:{PATH:process.env.PATH,NODE_ENV:'test',MEDIA_BACKUP_TARGETS_JSON:'PRIVATE_INVALID_BATCH'},timeout:5000}),error=>{const result=error as Error&{stdout:string;stderr:string};assert.equal(result.stdout,'');assert.equal(result.stderr.trim(),'INVALID_MEDIA_BATCH_CONFIGURATION');return true;});
+});
+test('whole-snapshot media batch covers every school,keeps tenant archives separate,reuses exact versions and retains failed deliveries',{
+ skip:!process.env.AGE_BIN||!process.env.AGE_KEYGEN_BIN
+},async()=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'kavosh-media-batch-test-'))),work=join(root,'work'),identity=join(root,'identity.txt'),file=join(root,'plan.jsonl'),drive=await driveBackupFixture(),badDrive=await driveBackupFixture('batch-error');
+ try{
+  await mkdir(work,{mode:0o700});await run(process.env.AGE_KEYGEN_BIN!,['--output',identity]);const recipient=(await run(process.env.AGE_KEYGEN_BIN!,['-y',identity])).stdout.trim(),a='aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',b='bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',fileId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',bytes=Buffer.from('PRIVATE_BATCH_MEDIA');
+  const configuration={accountId:'a'.repeat(32),jurisdiction:'default' as const,bucket:'synthetic-batch',accessKeyId:'synthetic-reader',secretAccessKey:'synthetic-secret-not-real',maximumUploadBytes:4194304},binding={databaseBackupId:fileId,archiveSha256:'d'.repeat(64),schemaRevision:396},rows=[{type:'header',format:'kavosh-media-reference-plan-v1',...binding,scope:'recorded_ordinary_file_objects',signedEvidenceIncluded:false},...[[a,1],[b,0]].map(([academyId,unconfirmedUploads])=>({type:'academy',academyId,unconfirmedUploads})),...[a,b].flatMap(academyId=>['clean','quarantine'].map(stage=>({type:'reference',academyId,stage,fileId,storageTargetId:r2TargetId(configuration),bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')}))),{type:'complete',academies:2,references:4,unconfirmedUploads:1}],text=rows.map(row=>JSON.stringify(row)+'\n').join('');await writeFile(file,text,{mode:0o600});
+  const options={age:process.env.AGE_BIN,recipient,workDirectory:work,referencePlan:{...binding,file,plaintextBytes:Buffer.byteLength(text),plaintextSha256:createHash('sha256').update(text).digest('hex')},targets:['clean','quarantine'].map(stage=>({stage,configuration})),offsite:{rclone:drive.input.rclone,drive:drive.input.drive}};
+  let clients=0,downloads=0,missing=false;const handler=()=>{clients++;return{async handle(request:{query?:Record<string,unknown>}){
+   if(request.query?.['list-type']==='2'){const prefix=String(request.query.prefix),empty=missing&&prefix===`academies/${b}/quarantine/`,body=`<ListBucketResult><Name>${configuration.bucket}</Name><Prefix>${prefix}</Prefix><KeyCount>${empty?0:1}</KeyCount><IsTruncated>false</IsTruncated>${empty?'':`<Contents><Key>${prefix}${fileId}</Key><ETag>&quot;original&quot;</ETag><Size>${bytes.length}</Size><LastModified>2026-11-13T00:00:00Z</LastModified></Contents>`}</ListBucketResult>`;return{response:{statusCode:200,headers:{},body:Readable.from([body])}};}
+   downloads++;return{response:{statusCode:200,headers:{etag:'"original"','content-type':'application/octet-stream','content-length':String(bytes.length)},body:Readable.from([bytes])}};
+  },destroy(){}};};
+  await assert.rejects(backupMediaBatch({...options,targets:options.targets.slice(0,1)},undefined,handler),{code:'MEDIA_REFERENCE_TARGET_MISSING'});assert.equal(clients,0);
+  await assert.rejects(backupMediaBatch({...options,maximumAcademies:1},undefined,handler),{code:'MEDIA_BATCH_SIZE_LIMIT'});assert.equal(clients,0);
+  const first=await backupMediaBatch(options,undefined,handler);assert.equal(first.academies,2);assert.equal(first.objects,4);assert.equal(first.recordedReferences,4);assert.equal(first.unconfirmedUploads,1);assert.equal(first.reusedObjects,0);assert.equal(first.offsite?.independentCopyVerified,true);assert.equal(first.completeMediaBackup,false);assert.equal(downloads,4);
+  const second=await backupMediaBatch(options,undefined,handler);assert.equal(second.reusedObjects,4);assert.equal(downloads,4);
+  const remote=drive.remoteFile('kavosh_backup:backup-'+second.id+'/collections.jsonl.age'),decoded=(await run(process.env.AGE_BIN!,['--decrypt','--identity',identity,remote])).stdout,records=decoded.trim().split('\n').map(line=>JSON.parse(line));assert.equal(records[0].referenceBinding.archiveSha256,binding.archiveSha256);assert.equal(records.at(-1).type,'complete');assert.deepEqual(records.filter(row=>row.type==='collection').map(row=>row.academyId),[a,b]);assert.doesNotMatch(decoded,/PRIVATE_BATCH_MEDIA|synthetic-secret|AGE-SECRET/);
+  let before=new Set(await readdir(work));await assert.rejects(backupMediaBatch({...options,offsite:{rclone:badDrive.input.rclone,drive:badDrive.input.drive}},undefined,handler),{code:'DRIVE_BACKUP_COPY_UNVERIFIED'});const failed=(await readdir(work)).find(name=>name.startsWith('media-batch-')&&!before.has(name))!;assert.ok(failed);const retained=JSON.parse(await readFile(join(work,failed,'manifest.json'),'utf8'));assert.equal(retained.offsite,null);assert.equal(retained.ordinaryRecordedMediaBackedUp,true);assert.ok((await readdir(join(work,failed))).includes('collections.jsonl.age'));
+  missing=true;before=new Set(await readdir(work));await assert.rejects(backupMediaBatch(options,undefined,handler),{code:'MEDIA_REFERENCE_OBJECT_MISSING'});const partial=(await readdir(work)).find(name=>name.startsWith('media-batch-')&&!before.has(name))!;assert.ok(partial);const journal=await readFile(join(work,partial,'collections.partial.jsonl'),'utf8');assert.equal(journal.trim().split('\n').length,2);assert.ok(!journal.includes('"type":"complete"'));
+ }finally{await drive.close();await badDrive.close();await rm(root,{recursive:true,force:true});}
+});

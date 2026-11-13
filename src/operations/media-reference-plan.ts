@@ -19,8 +19,8 @@ export const mediaReferenceKey=(reference:Pick<z.infer<typeof recordedMediaRefer
 
 // Two bounded passes: authenticate the complete metadata before cloud IO,
 // then merge ordered references without buffering a school's files in memory.
-export async function openMediaReferencePlan(raw:unknown,academyId:string,targets:ReadonlySet<string>,signal?:AbortSignal){
- const parsed=mediaReferencePlanInput.safeParse(raw),school=uuid.safeParse(academyId);if(!parsed.success||!school.success)throw new RecoveryError('INVALID_MEDIA_REFERENCE_BINDING');const i=parsed.data;
+export async function openMediaReferencePlan(raw:unknown,academyId:string|null,targets:ReadonlySet<string>,signal?:AbortSignal){
+ const parsed=mediaReferencePlanInput.safeParse(raw),school=uuid.safeParse(academyId);if(!parsed.success||academyId!==null&&!school.success)throw new RecoveryError('INVALID_MEDIA_REFERENCE_BINDING');const i=parsed.data;
  let handle:FileHandle|undefined;
  try{
   await privateDirectory(dirname(i.file));const before=await regularFile(i.file,true);if(before.size!==i.plaintextBytes)throw new RecoveryError('MEDIA_REFERENCE_PLAN_CHANGED');
@@ -40,12 +40,14 @@ export async function openMediaReferencePlan(raw:unknown,academyId:string,target
    if(phase==='header'){const h=headerInput.parse(value);if(h.databaseBackupId!==i.databaseBackupId||h.archiveSha256!==i.archiveSha256||h.schemaRevision!==i.schemaRevision)throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');phase='academies';continue;}
    if(phase==='complete')throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');
    if(value.type==='academy'){const a=schoolInput.parse(value);if(phase!=='academies'||a.academyId<=lastSchool)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');lastSchool=a.academyId;academies++;unconfirmed+=a.unconfirmedUploads;if(!Number.isSafeInteger(unconfirmed)||academies>1000000)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');if(a.academyId===academyId)selectedPending=a.unconfirmedUploads;}
-   else if(value.type==='reference'){phase='references';const r=referenceInput.parse(value),key=r.academyId+':'+mediaReferenceKey(r);if(key<=lastReference||++references>10000000)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');lastReference=key;if(r.academyId===academyId){if(!targets.has(r.stage+':'+r.storageTargetId))throw new RecoveryError('MEDIA_REFERENCE_TARGET_MISSING');selectedCount++;}}
+   else if(value.type==='reference'){phase='references';const r=referenceInput.parse(value),key=r.academyId+':'+mediaReferenceKey(r);if(key<=lastReference||++references>10000000)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');lastReference=key;if(academyId===null||r.academyId===academyId){if(!targets.has(r.stage+':'+r.storageTargetId))throw new RecoveryError('MEDIA_REFERENCE_TARGET_MISSING');selectedCount++;}}
    else{const f=footerInput.parse(value);if(f.academies!==academies||f.references!==references||f.unconfirmedUploads!==unconfirmed)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');phase='complete';}
   }
+  if(academyId===null)selectedPending=unconfirmed;
   if(phase!=='complete'||selectedPending===undefined)throw new RecoveryError('MEDIA_REFERENCE_ACADEMY_NOT_FOUND');
-  const referencesForSchool=(async function*(){try{for await(const value of lines())if(value.type==='reference'){const r=referenceInput.parse(value);if(r.academyId===academyId)yield r;}}catch(error){if(error instanceof RecoveryError)throw error;throw new RecoveryError('MEDIA_REFERENCE_PLAN_FAILED');}})();
-  return{binding:{databaseBackupId:i.databaseBackupId,archiveSha256:i.archiveSha256,schemaRevision:i.schemaRevision,plaintextSha256:i.plaintextSha256},references:selectedCount,unconfirmedUploads:selectedPending,signedEvidenceIncluded:false,referencesForSchool,async close(){await referencesForSchool.return(undefined);await file.close();}};
+  const referencesForSchool=(async function*(){try{for await(const value of lines())if(value.type==='reference'){const r=referenceInput.parse(value);if(academyId===null||r.academyId===academyId)yield r;}}catch(error){if(error instanceof RecoveryError)throw error;throw new RecoveryError('MEDIA_REFERENCE_PLAN_FAILED');}})();
+  const academiesForBackup=(async function*(){try{for await(const value of lines())if(value.type==='academy'){const a=schoolInput.parse(value);if(academyId===null||a.academyId===academyId)yield a;}}catch(error){if(error instanceof RecoveryError)throw error;throw new RecoveryError('MEDIA_REFERENCE_PLAN_FAILED');}})();
+  return{binding:{databaseBackupId:i.databaseBackupId,archiveSha256:i.archiveSha256,schemaRevision:i.schemaRevision,plaintextSha256:i.plaintextSha256},academies:academyId===null?academies:1,references:selectedCount,unconfirmedUploads:selectedPending,signedEvidenceIncluded:false,referencesForSchool,academiesForBackup,async close(){try{await referencesForSchool.return(undefined);await academiesForBackup.return(undefined);}finally{await file.close();}}};
  }catch(error){await handle?.close().catch(()=>{});if(error instanceof RecoveryError)throw error;throw new RecoveryError('MEDIA_REFERENCE_PLAN_FAILED');}
 }
 // Historical physical observations only. Pending grants are not fabricated
