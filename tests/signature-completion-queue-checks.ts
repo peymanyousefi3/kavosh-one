@@ -57,6 +57,18 @@ export async function completionWatcherCheck(f:Pick<Awaited<ReturnType<typeof op
 import type { operationsFixture } from './operations-fixture.ts';
 import { assertSignatureCompletionRole } from '../src/integrations/signature-completion-source.ts';
 
+export async function checkAlreadyRecordedCompletion(pg:Pick<Awaited<ReturnType<typeof operationsFixture>>['pg'],'query'|'exec'|'runtime'>,academy:string,start:string,purpose:'worker_services'|'unified_enrollment'){
+ const table=purpose==='worker_services'?'work_signature_completion_evidence':'signature_completion_evidence';
+ const original=(await pg.query<{evidence_id:string}>(`SELECT e.id evidence_id FROM public.${table} e JOIN public.signature_completion_jobs j ON j.academy_id=e.academy_id AND j.start_id=e.start_id AND j.source_fingerprint=e.source_fingerprint WHERE j.academy_id=$1 AND j.start_id=$2 AND j.purpose=$3 AND j.state='queued' ORDER BY e.recorded_at DESC,e.id DESC LIMIT 1`,[academy,start,purpose])).rows[0];assert.ok(original,'fixture must contain actual original-bound persisted evidence,not a fake UUID');
+ const before=await pg.query('SELECT * FROM public.signature_completion_job_attempts WHERE academy_id=$1 AND start_id=$2 ORDER BY attempt_no',[academy,start]),budgets=await pg.query('SELECT * FROM public.signature_completion_request_budgets ORDER BY group_id,window_started'),incidents=await pg.query('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1 AND start_id=$2 ORDER BY id',[academy,start]);
+ const claim=async()=>{const c=pg.runtime?await pg.runtime.connect():{query:pg.query.bind(pg),release(){}};try{await c.query('SET ROLE kavosh_signature_completion_worker');return(await c.query('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[[academy],randomUUID()])).rows;}finally{if(!pg.runtime)await pg.exec('RESET ROLE');c.release();}};
+ for(const result of pg.runtime?await Promise.all([claim(),claim()]):[await claim(),await claim()])assert.deepEqual(result,[],'existing measured evidence must avoid a new provider job');
+ assert.deepEqual((await pg.query('SELECT state,last_outcome,evidence_id FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows,[{state:'complete',last_outcome:'recorded',evidence_id:original.evidence_id}]);
+ assert.deepEqual((await pg.query('SELECT * FROM public.signature_completion_job_attempts WHERE academy_id=$1 AND start_id=$2 ORDER BY attempt_no',[academy,start])).rows,before.rows);
+ assert.deepEqual((await pg.query('SELECT * FROM public.signature_completion_request_budgets ORDER BY group_id,window_started')).rows,budgets.rows,'no new provider-call reservation');
+ assert.deepEqual((await pg.query('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1 AND start_id=$2 ORDER BY id',[academy,start])).rows,incidents.rows,'completion must not republish old failure cases');
+}
+
 export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'approve'|'a'|'pg'|'managerRole'|'staffRole'|'actors'|'metrics'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
  const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check/retries',work=purpose==='worker_services',capability=work?'work-signature-completions.retry':'signature-completions.retry',event=work?'work.signature.completion.retry':'signature.completion.retry';
  assert.equal((await f.request(path)).body.data.length,0);
