@@ -7,6 +7,17 @@ import { upgradeToCurrent } from './migration-upgrade.ts';
 import { requireCurrentSessionEvent,type BoundEvent } from '../src/modules/automation-events.ts';
 import { assertRuntimeRole } from '../src/core/database.ts';
 
+test('event catalogue advertises every accepted read filter without advertising custom delivery',async()=>{
+ const f=await operationsFixture();try{
+  const result=await f.request('automations/events');assert.equal(result.response.status,200,JSON.stringify(result.body));
+  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
+  const filters=api.paths['/api/v1/automations/events'].get.parameters.find((p:{name:string})=>p.name==='sourceKind').schema.enum;
+  assert.deepEqual(result.body.supportedSources,filters);
+  for(const kind of ['signature_check','privacy_due'])assert.ok(result.body.supportedSources.includes(kind));
+  assert.throws(()=>requireCurrentSessionEvent({source_kind:'signature_check',source_current:true} as BoundEvent),{code:'AUTOMATION_SIGNATURE_CHECK_CUSTOM_DELIVERY_NOT_ENABLED'});
+ }finally{await f.pg.close();}
+});
+
 test('actual393to394 preserves old cases without retrospective alerts and retains worker isolation and preservation coverage',async()=>{
  const f=await operationsFixture({throughSchema:393});try{
   const connection=randomUUID(),start=randomUUID();await f.pg.query("INSERT INTO public.signature_connections(academy_id,id,region,environment,enabled) VALUES($1,$2,'CA','Test',true)",[f.a,connection]);
