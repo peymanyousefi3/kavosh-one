@@ -17,7 +17,7 @@
     "test:http": "node tests/http-smoke.mjs",
     "db:migrate": "node --import tsx scripts/migrate.ts",
     "db:recovery": "node --import tsx scripts/database-recovery.ts",
-    "db:recovery:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .recovery-tool scripts/database-recovery.ts deploy/ovh/provision-media-backup.ts",
+    "db:recovery:build": "tsc --ignoreConfig --target es2022 --lib esnext,dom --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir .recovery-tool scripts/database-recovery.ts scripts/restore-isolated-cluster.ts deploy/ovh/provision-media-backup.ts",
     "bootstrap": "node --import tsx scripts/bootstrap.ts",
     "auth:invite": "node --import tsx scripts/invite.ts",
     "platform:owner": "node --import tsx scripts/register-platform-owner.ts",
