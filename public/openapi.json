@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.454.0",
+    "version": "0.455.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -60162,7 +60162,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
               "type": "string",
               "enum": [
                 "true",
@@ -78283,7 +78283,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
               "type": "string",
               "enum": [
                 "true",
@@ -78348,7 +78348,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
               "type": "string",
               "enum": [
                 "true",
@@ -78420,7 +78420,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
               "type": "string",
               "enum": [
                 "true",
