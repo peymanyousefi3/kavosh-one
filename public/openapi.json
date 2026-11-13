@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.441.0",
+    "version": "0.442.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -3329,6 +3329,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -3338,6 +3339,7 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -3554,6 +3556,117 @@
         }
       }
     },
+    "/api/platform/v1/academies/{id}/finance/accounts/{accountId}/ledger": {
+      "get": {
+        "summary": "Verified MFA platform owner inspects one school/account posted ledger. Required private purpose audit;exact opening debit-net,whole-window debit/credit and closing debit-net minor-unit strings share ONE statement snapshot with each bounded date/journal/line keyset page. Totals are never page sums. Pinned account currency precision,current chart label and historical line labels retained;reversals remain separate dated postings. Each page is a live read,not a frozen export. No bank verification,FX,counterparty detail,master impersonation,posting or payment authority.",
+        "security": [
+          {
+            "humanSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "X-Access-Purpose",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 6005
+            },
+            "description": "Operational access reason,at most500decoded UTF-16 code units. Raw ASCII is supported;for Unicode or a literal reserved prefix,use utf8: followed by encodeURIComponent(reason). Malformed UTF-8,controls and oversized values are rejected. Do not include health,credential or payment details."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "through",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "afterPostedOn",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+            }
+          },
+          {
+            "name": "afterJournalId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "afterLineNumber",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          }
+        ],
+        "description": "Disabled by default; separately configured database role and operator-enrolled verified MFA platform owner only. Ordinary school master grants,academy selection and bot credentials confer no platform authority. Every successful read and change is audited. Reference subscription prices and licence assignments are not invoices or verified payments. School cancellation intent records a native720-hour waiting period;withdrawals retain the original clock. Only explicit owner review of the current subscription can confirm operational restriction after that wait. Records remain retained for separate retention review:no deletion,refund or provider-payment cancellation is performed. Master invitations return a private48-hour token only for the existing pending master;retries preserve expiry and cannot return superseded,expired or consumed tokens. Exact invitation revocation binds its original issue,school version and token hash and cannot cancel a replacement;pre-tracking issues require reissue. All exact mutation retries are historical receipts,not current availability or fresh action authority. No plaintext invitation token enters database history. Keep returned tokens private. Cross-school business-record browsing,live billing and deletion remain separate work. No external message,payment,signature or live provider action is performed.",
+        "responses": {
+          "200": {
+            "description": "Audited current data or version-checked change; exact retries are historical receipts"
+          },
+          "201": {
+            "description": "Platform record created atomically; no verification,activation,payment,cancellation or deletion bypass"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/platform/v1/academies/{id}/finance/journals/{journalId}": {
       "get": {
         "summary": "Verified MFA platform owner reads one immutable school-bound posted journal and ALL2to200lines,with historical account labels and pinned currency units. Monetary minor units are exact decimal strings;no FX,netting or balance inference. Required private purpose audit;no school-master impersonation,posting,payment,credentials or counterparty detail.",
@@ -3628,6 +3741,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -3637,6 +3751,7 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -4060,6 +4175,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -4069,6 +4185,7 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -4293,6 +4410,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -4302,6 +4420,7 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -4746,6 +4865,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -4755,6 +4875,7 @@
           {
             "name": "beforeVersion",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "exclusiveMinimum": 0,
@@ -4788,6 +4909,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -4797,6 +4919,7 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -4830,6 +4953,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "default": 50,
               "type": "integer",
@@ -4840,6 +4964,7 @@
           {
             "name": "afterCreatedAt",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "date-time",
@@ -4849,6 +4974,7 @@
           {
             "name": "afterId",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -4858,6 +4984,7 @@
           {
             "name": "unread",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "enum": [
@@ -4974,6 +5101,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -4983,6 +5111,7 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -5370,6 +5499,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "minimum": 1,
@@ -5379,6 +5509,7 @@
           {
             "name": "beforeVersion",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "exclusiveMinimum": 0,
@@ -5412,6 +5543,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "default": 50,
               "type": "integer",
@@ -5422,6 +5554,7 @@
           {
             "name": "academyId",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",
@@ -5431,6 +5564,7 @@
           {
             "name": "readiness",
             "in": "query",
+            "required": false,
             "schema": {
               "default": "all",
               "type": "string",
@@ -5444,6 +5578,7 @@
           {
             "name": "afterReviewAfter",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "date-time",
@@ -5453,6 +5588,7 @@
           {
             "name": "afterId",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "format": "uuid",

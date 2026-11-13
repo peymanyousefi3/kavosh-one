@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('owner account ledger exposes typed dates and paired keyset cursor without balance overrides or mutation',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),r=api.paths['/api/platform/v1/academies/{id}/finance/accounts/{accountId}/ledger'].get,q=r.parameters.filter((p:any)=>p.in==='query');
+ assert.deepEqual(q.map((p:any)=>p.name).sort(),['from','through','limit','afterPostedOn','afterJournalId','afterLineNumber'].sort());assert.equal(q.find((p:any)=>p.name==='limit').schema.maximum,100);assert.equal(q.find((p:any)=>p.name==='afterLineNumber').schema.maximum,200);assert.equal(q.find((p:any)=>p.name==='from').required,true);assert.equal(r.parameters.find((p:any)=>p.in==='header'&&p.name==='X-Access-Purpose').required,true);assert.equal(r.requestBody,undefined);assert.match(r.summary,/Totals are never page sums/);assert.match(r.summary,/No bank verification/);
+});
 test('privacy aggregate reports expose typed receipt filters and complete CSV/Excel aliases without caller clocks or pagination',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/reports/administration/privacy-requests',q=api.paths[path].get.parameters.filter((p:{in:string})=>p.in==='query');assert.deepEqual(q.map((p:{name:string})=>p.name).sort(),['category','from','hubId','state','subjectId','through','timeZone']);for(const k of ['from','through','timeZone'])assert.equal(q.find((p:{name:string})=>p.name===k).required,true);assert.match(api.paths[path].get.summary,/one database snapshot/);assert.match(api.paths[path].get.summary,/before filters and totals/);assert.ok(api.paths[path+'/export'].get);assert.ok(api.paths[path+'/export.xlsx'].get);assert.equal(api.paths[path].post,undefined);
 });

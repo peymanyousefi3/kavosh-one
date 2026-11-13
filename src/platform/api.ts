@@ -4,11 +4,13 @@ import { jsonBody } from '../core/api.ts';
 import { assertSchemaReady,type Connection,type Database } from '../core/database.ts';
 import { ApiError } from '../core/policy.ts';
 import {operationalHealthStatus} from '../operations/health-status.ts';
+import {accountingDate} from '../modules/finance-periods.ts';
 
 const id=z.string().uuid().transform(v=>v.toLowerCase()),name=z.string().trim().min(1).max(200),reason=z.string().trim().min(1).max(2000);
 const provision=z.object({name,masterName:name,masterEmail:z.string().email().max(254).transform(v=>v.toLowerCase()),reason}).strict();
 const change=z.object({expectedVersion:z.number().int().positive().max(2147483647),name:name.optional(),status:z.enum(['provisioning','active','read_only','suspended']).optional(),reason}).strict().refine(v=>v.name!==undefined||v.status!==undefined);
 const paging=z.object({limit:z.coerce.number().int().min(1).max(100).optional(),after:id.optional()}).strict();
+const accountLedgerQuery=z.object({from:accountingDate,through:accountingDate,limit:z.coerce.number().int().min(1).max(100).default(50),afterPostedOn:accountingDate.optional(),afterJournalId:id.optional(),afterLineNumber:z.coerce.number().int().min(1).max(200).optional()}).strict().refine(v=>v.from<=v.through).refine(v=>[v.afterPostedOn,v.afterJournalId,v.afterLineNumber].filter(v=>v!==undefined).length%3===0).refine(v=>v.afterPostedOn===undefined||(v.afterPostedOn>=v.from&&v.afterPostedOn<=v.through));
 const directoryCollection=z.enum(['hubs','people','courses','classes','students','finance-accounts','finance-journals']);
 const accessPurpose=z.string().refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)).trim().min(1).max(500);
 function readAccessPurpose(request:Request){
@@ -39,6 +41,7 @@ const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/finance/accounts/{accountId}/ledger',method:'get',accessPurposeRequired:true,querySchema:accountLedgerQuery,summary:'Verified MFA platform owner inspects one school/account posted ledger. Required private purpose audit;exact opening debit-net,whole-window debit/credit and closing debit-net minor-unit strings share ONE statement snapshot with each bounded date/journal/line keyset page. Totals are never page sums. Pinned account currency precision,current chart label and historical line labels retained;reversals remain separate dated postings. Each page is a live read,not a frozen export. No bank verification,FX,counterparty detail,master impersonation,posting or payment authority.'},
  {path:'/api/platform/v1/academies/{id}/finance/journals/{journalId}',method:'get',accessPurposeRequired:true,summary:'Verified MFA platform owner reads one immutable school-bound posted journal and ALL2to200lines,with historical account labels and pinned currency units. Monetary minor units are exact decimal strings;no FX,netting or balance inference. Required private purpose audit;no school-master impersonation,posting,payment,credentials or counterparty detail.'},
  {path:'/api/platform/v1/academies/{id}/records/{collection}',method:'get',pathSchemas:{collection:directoryCollection},accessPurposeRequired:true,querySchema:paging,summary:'Verified MFA platform owner inspects exact school directories: hubs,people,courses,classes,students,finance-accounts or finance-journals. Required X-Access-Purpose is privately audited;bounded keyset pages,explicit school predicates and RLS. Account definitions and posted journal headers are not balances or payment proof. Fixed projections exclude identity secrets and care vaults;not complete business browsing. No master impersonation,new membership,permission change or external action.'},
  {path:'/api/platform/v1/operations/health',method:'get',summary:'Verified MFA platform owner only: bounded read-only operational health,with stale observations critical. Twelve fixed required worker process states are checked;legacy samples without worker observations remain warning. Deliberately disabled signing completion is not activated or required. Same-VPS evidence,not independent uptime or delivered external alerts. Queue progress is not verified. No credentials,service control or school business data.'},
@@ -105,9 +108,13 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const holdTarget=/^academies\/([a-f0-9-]{36})\/(retention|legal-holds)(?:\/([a-f0-9-]{36})(\/release)?)?$/.exec(path);
    const directoryTarget=/^academies\/([a-f0-9-]{36})\/records\/([^/]+)$/.exec(path);
    const journalTarget=/^academies\/([a-f0-9-]{36})\/finance\/journals\/([a-f0-9-]{36})$/.exec(path);
+   const accountLedgerTarget=/^academies\/([a-f0-9-]{36})\/finance\/accounts\/([a-f0-9-]{36})\/ledger$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(journalTarget){
+   if(accountLedgerTarget){
+    if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
+    input={...accountLedgerQuery.parse(Object.fromEntries(pairs)),academyId:id.parse(accountLedgerTarget[1]),accountId:id.parse(accountLedgerTarget[2]),purpose:readAccessPurpose(request)};operation='academies.account-ledger';
+   }else if(journalTarget){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');if(url.search)throw new ApiError(400,'INVALID_QUERY');input={academyId:id.parse(journalTarget[1]),journalId:id.parse(journalTarget[2]),purpose:readAccessPurpose(request)};operation='academies.journal';
    }else if(directoryTarget){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
