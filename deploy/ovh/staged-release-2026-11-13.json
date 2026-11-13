@@ -80,5 +80,6 @@
     "scope": "Actual262-row captured multipart report,integrity/downloads and permission revocation with strict denied-response envelopes;five deterministic redaction regressions. Not a sustained load or whole-suite proof."
   },
   "landingPreservation": {"mainPid": 536773, "startedAt": "2026-11-06T01:33:33Z", "httpsStatus": 200, "routesChanged": false, "serviceRestarted": false},
-  "activationHeld": "Hosted verify job131719459355 failed a report-redaction assertion because its random request ID contained2825. The corrected fixture now passes actual isolated PostgreSQL18 checks with all privacy assertions retained. Remaining hosted release gates still need completion before migration or switching. Full backend and production provider/media/restore acceptance remain unfinished;no UI work performed."
+  "hostedReleaseGate": {"runId": 43377284181, "sourceCommit": "d2a04ddfa9e00ea4ae16acd19be99ee8ed4da8e6", "status": "completed", "conclusion": "success", "successfulJobs": 13, "runtimeAndMigrationFilesUnchangedFromStagedRelease": true},
+  "activationHeld": "Hosted release gates passed. Coordinated migration and matching worker handoff are still pending. Full backend and production provider/media/restore acceptance remain unfinished;no UI work performed."
 }
