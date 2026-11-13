@@ -23,8 +23,9 @@ try{await c.connect();await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ 
 }
 let stage = 'configuration', directory, encrypted, plaintext, proofEncrypted,proofPlaintext,target, created = false, cleanupFailed = false;
 try {
- assert.equal(process.platform, 'darwin'); assert.deepEqual(process.argv.slice(2), ['--execute']); process.umask(0o077);
- stage = 'private backup receipt'; const receipt = JSON.parse(remote('sudo -u kavosh-one-backup cat /var/lib/kavosh-one-backups/latest.json').toString());
+ assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(args.length===1||args.length===2);assert.equal(args[0],'--execute');const selected=args[1];if(selected!==undefined)assert.match(selected,/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);process.umask(0o077);
+ stage = 'private backup receipt'; const receipt = JSON.parse(remote('sudo -u kavosh-one-backup cat /var/lib/kavosh-one-backups/'+(selected?'backup-'+selected+'/delivery-status.json':'latest.json')).toString());
+ if(selected)assert.equal(receipt.localBackup?.id,selected);
  const backup = receipt.localBackup; assert.match(backup.id, /^[a-f0-9-]{36}$/); assert.match(backup.ciphertextSha256, /^[a-f0-9]{64}$/); assert.equal(receipt.offsiteCopy.independentCopyVerified, true); assert.equal(receipt.offsiteCopy.ciphertextSha256, backup.ciphertextSha256); assert.equal(backup.serverMajor, 18);
  const companion=backup.verificationArchive;
  assert.equal(receipt.snapshotBaselineOffsiteVerified,true);assert.equal(receipt.verificationOffsiteCopy?.independentCopyVerified,true);assert.equal(companion?.filename,'verification.json.age');assert.match(companion.ciphertextSha256,/^[a-f0-9]{64}$/);assert.equal(receipt.verificationOffsiteCopy.ciphertextSha256,companion.ciphertextSha256);

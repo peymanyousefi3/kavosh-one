@@ -6,9 +6,13 @@ import { randomUUID } from 'node:crypto';
 const directory = '/var/lib/kavosh-one-backups', cli = '/srv/kavosh-one/current/.recovery-tool/scripts/database-recovery.js';
 let receipt;
 function save() {
- const temp = join(directory, 'status-' + randomUUID() + '.json');
- writeFileSync(temp, JSON.stringify(receipt) + '\n', { mode: 0o600, flag: 'wx' });
- renameSync(temp, join(directory, 'latest.json'));
+ // Preserve each backup's delivery evidence before moving the latest pointer.
+ // Another successful nightly run must not erase an older proof's history.
+ for(const destination of [join(directory,'backup-'+receipt.localBackup.id,'delivery-status.json'),join(directory,'latest.json')]){
+  const temp=destination+'.'+randomUUID()+'.next';
+  writeFileSync(temp,JSON.stringify(receipt)+'\n',{mode:0o600,flag:'wx'});
+  renameSync(temp,destination);
+ }
 }
 function command(args, additional = {}) {
  try { return JSON.parse(execFileSync('/usr/bin/node', [cli, ...args], { env: { ...process.env, ...additional }, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: args[0]==='backup-proof'?3145728:131072, timeout: 900000 }).toString()); }
