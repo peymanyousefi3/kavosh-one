@@ -34,7 +34,7 @@ jobs:
         run: node --test tests/ovh-deployment.test.mjs tests/scheduled-backups.test.mjs tests/vps-restore-verifier.test.mjs tests/media-reference-verifier.test.mjs tests/media-batch-verifier.test.mjs tests/config-backup.test.mjs tests/twilio-provisioning.test.mjs tests/sms-acceptance.test.mjs tests/postmark-acceptance.test.mjs tests/auth-delivery-startup.test.mjs tests/auth-delivery-provisioning.test.mjs tests/boldsign-acceptance.test.mjs tests/parser-deployment.test.mjs
       - name: Isolation diagnostics never claim queued work or contact message providers
         # Keep queue-claiming code out of diagnostics,even when queues contain work.
-        run: node --import tsx --test tests/worker-isolation-checks.test.ts tests/migration-preflight.test.ts tests/media-backup-provisioning.test.ts tests/cluster-recovery-unit.test.ts tests/cluster-recovery-operator.test.ts tests/recovery-authentication.test.ts
+        run: node --import tsx --test tests/worker-isolation-checks.test.ts tests/migration-preflight.test.ts tests/media-backup-provisioning.test.ts tests/cluster-recovery-unit.test.ts tests/cluster-recovery-operator.test.ts tests/recovery-authentication.test.ts tests/operational-health.test.ts
       - name: Verify the official pinned encryption tool before execution
         run: |
           install -d -m 700 /tmp/kavosh-backup-tools
@@ -53,6 +53,7 @@ jobs:
           runuser -u postgres -- pg_ctl -D /tmp/kavosh-backup-postgres -l /tmp/kavosh-backup-postgres/server.log -o '-h 127.0.0.1 -p 5432' -w start
       - name: Real encrypted full database restore and adverse-case checks,no live credentials or external delivery
         run: |
+          pnpm operations:health:build
           pnpm db:recovery:build
           node .recovery-tool/scripts/database-recovery.js --help
           RECOVERY_COMPILED_CLI="$PWD/.recovery-tool/scripts/database-recovery.js" PG_DUMP_BIN="$(command -v pg_dump)" PG_RESTORE_BIN="$(command -v pg_restore)" node --import tsx --test --test-concurrency=1 tests/database-backups.test.ts tests/database-verification.test.ts tests/role-recovery.test.ts tests/drive-backups.test.ts tests/media-backups.test.ts tests/media-reference-plan.test.ts tests/media-recovery.test.ts tests/media-collection-recovery.test.ts tests/media-archive-reuse.test.ts tests/media-backup-batch.test.ts

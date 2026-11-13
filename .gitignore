@@ -38,3 +38,4 @@ exports/
 __pycache__/
 *.tsbuildinfo
 .signature-worker/
+.health-monitor/

@@ -1,0 +1,35 @@
+[Unit]
+Description=Kavosh One read-only readiness and backup freshness monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=kavosh-one-monitor
+StateDirectoryMode=0700
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /srv/kavosh-one/operations/health-monitor/deploy/ovh/monitor-health.js
+TimeoutStartSec=30s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+InaccessiblePaths=/etc/kavosh-one /etc/kavosh-one-tls
+MemoryMax=128M
+CPUQuota=10%
+Nice=15
+IOSchedulingClass=idle
+TasksMax=32
+StandardOutput=journal
+StandardError=journal

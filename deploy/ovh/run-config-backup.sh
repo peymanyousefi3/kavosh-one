@@ -19,6 +19,7 @@ env -i PATH=/usr/bin:/bin LANG=C /usr/bin/tar -C / -cf - \
  etc/systemd/system/kavosh-one-backup.service.d \
  etc/systemd/system/kavosh-one-config-backup.service etc/systemd/system/kavosh-one-config-backup.timer \
  etc/systemd/system/kavosh-one-role-export.service \
+ etc/systemd/system/kavosh-one-monitor.service etc/systemd/system/kavosh-one-monitor.timer \
  etc/systemd/system/kavosh-one-scanner.service \
  etc/systemd/system/kavosh-one-auth-delivery.service \
  etc/systemd/system/kavosh-one-file-inspection.service \
