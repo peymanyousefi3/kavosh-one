@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { operationsFixture } from './operations-fixture.ts';
 import { assertSignatureCompletionRole } from '../src/integrations/signature-completion-source.ts';
 
-export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'approve'|'a'|'pg'|'managerRole'|'metrics'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
+export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'approve'|'a'|'pg'|'managerRole'|'staffRole'|'actors'|'metrics'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
  const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check/retries',work=purpose==='worker_services',capability=work?'work-signature-completions.retry':'signature-completions.retry',event=work?'work.signature.completion.retry':'signature.completion.retry';
  assert.equal((await f.request(path)).body.data.length,0);
  const input={expectedVersion:0,checkWindowDays:2,reason:'Explicit operational recheck, not another envelope or legal waiver'};
@@ -16,6 +16,8 @@ export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof op
  assert.equal((await f.request(path,input)).response.status,409,'another request with an old version cannot reset retry history');
  const added:string[]=[];for(const cap of [capability,work?'work-signature-completions.view':'signature-completions.view'])if((await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,\'allow\') ON CONFLICT DO NOTHING RETURNING capability',[f.a,f.managerRole,cap])).rows.length)added.push(cap);
  const proposed=await f.request(path,{...input,expectedVersion:1},'manager');assert.equal(proposed.response.status,202,JSON.stringify({body:proposed.body,errors:f.metrics.queryFailures.slice(-2)}));
+ const managerNote=(await f.pg.query<{id:string}>('SELECT id FROM public.portal_notifications WHERE event_id=$1 AND person_id=$2',[oldIncident.body.data[0].id,f.actors.manager.person])).rows[0];assert.ok(managerNote);
+ const viewed=await f.request('notifications/'+managerNote.id,undefined,'manager');assert.equal(viewed.response.status,200,JSON.stringify(viewed.body));assert.equal(viewed.body.data.source.attentionStillCurrent,false,'an authorized current supervisor can still inspect the original alert after recheck');
  assert.equal((await f.request(path)).body.data.length,1,'a proposal alone does not reset the job');
  assert.equal((await f.approve(proposed.body.approval.id,'manager')).response.status,403);
  const approved=await f.approve(proposed.body.approval.id);assert.equal(approved.response.status,200,JSON.stringify({body:approved.body,errors:f.metrics.queryFailures.slice(-2)}));
@@ -27,11 +29,17 @@ export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof op
  await f.pg.query("UPDATE public.signature_completion_jobs SET available_at=available_at+interval '1 second' WHERE academy_id=$1 AND purpose=$2 AND start_id=(SELECT target_id FROM public.approval_requests WHERE id=$3)",[f.a,purpose,stale.body.approval.id]);
  assert.equal((await f.approve(stale.body.approval.id)).response.status,409,'background/source changes invalidate an already pending recheck approval');
  assert.equal((await f.request(path)).body.data.length,2);
+ if(work){
+  const staffAdded:string[]=[];for(const cap of [capability,'work-signature-completions.view'])if((await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,\'allow\') ON CONFLICT DO NOTHING RETURNING capability',[f.a,f.staffRole,cap])).rows.length)staffAdded.push(cap);
+  const lower=await f.request(path,{...input,expectedVersion:2},'staff');assert.equal(lower.response.status,202,JSON.stringify(lower.body));
+  const upper=await f.approve(lower.body.approval.id,'manager');assert.equal(upper.response.status,200,JSON.stringify({body:upper.body,errors:f.metrics.queryFailures.slice(-2)}));assert.equal((await f.request(path)).body.data.length,3,'a genuine non-master supervisor can approve a lower request');
+  for(const cap of staffAdded)await f.pg.query('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3',[f.a,f.staffRole,cap]);
+ }
  for(const cap of added)await f.pg.query('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3',[f.a,f.managerRole,cap]);
  for(const sql of ['UPDATE public.signature_completion_retries SET changed_by=changed_by','DELETE FROM public.signature_completion_retries'])await assert.rejects(f.pg.exec(sql),/SIGNATURE_COMPLETION_RETRY_IMMUTABLE/);
 }
 
-export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'a'|'b'|'pg'|'managerRole'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
+export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'a'|'b'|'pg'|'managerRole'|'actors'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
  const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check';
  const first=await f.request(path+'?limit=1');assert.equal(first.response.status,200,JSON.stringify(first.body));
  assert.equal(first.body.data.state,'blocked');assert.equal(first.body.data.attemptCount,2);assert.equal(first.body.attempts.length,1);assert.equal(first.body.attempts[0].attemptNo,1);assert.equal(first.body.nextAfterAttempt,1);
@@ -41,11 +49,23 @@ export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof ope
  assert.equal((await f.request(path+'?afterAttempt=99')).response.status,404);
  assert.equal((await f.request(path,undefined,'foreignMaster',{academy:f.b})).response.status,404);
  const incidents=await f.request(path+'/incidents');assert.equal(incidents.response.status,200,JSON.stringify(incidents.body));assert.equal(incidents.body.data.length,1);assert.equal(incidents.body.data[0].reasonCode,'poll_window_elapsed');assert.equal(incidents.body.data[0].attentionStillCurrent,true);assert.equal(incidents.body.caseResolvedByReading,false);
+ const incidentId=incidents.body.data[0].id,notes=(await f.pg.query<{id:string;person_id:string}>('SELECT id,person_id FROM public.portal_notifications WHERE academy_id=$1 AND event_id=$2 AND origin=\'mandatory\'',[f.a,incidentId])).rows;
+ const masterNote=notes.find(n=>n.person_id===f.actors.master.person);assert.ok(masterNote,'actual failure must publish a mandatory master notification');
+ const note=await f.request('notifications/'+masterNote.id);assert.equal(note.response.status,200,JSON.stringify(note.body));assert.equal(note.body.data.source.kind,'signature_check');assert.equal(note.body.data.source.recordPath,'/api/v1/'+path);assert.equal(note.body.data.source.attentionStillCurrent,true);assert.equal(note.body.data.source.caseResolvedByReading,false);
+ assert.equal((await f.request('notifications/'+masterNote.id,undefined,'foreignMaster',{academy:f.b})).response.status,404);
+ assert.equal((await f.request('notifications/'+masterNote.id+'/read',{})).response.status,200);assert.equal((await f.request(path)).body.data.state,'blocked','reading the alert never resolves the native case');
+ assert.notEqual((await f.request('notifications/'+masterNote.id+'?locale=fr')).body.data.title,note.body.data.title);assert.notEqual((await f.request('notifications/'+masterNote.id+'?locale=zh-CN')).body.data.title,note.body.data.title);
+ assert.doesNotMatch(JSON.stringify(note.body),/PRIVATE|origin_transaction|source_fingerprint|lease_token|worker_id/);
+ await f.pg.exec('SET ROLE kavosh_runtime');try{
+  await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
+  await assert.rejects(f.pg.query("INSERT INTO public.portal_notifications(academy_id,id,run_id,rule_id,event_id,person_id,action_index,severity,title,body,locale) VALUES($1,$2,$3,$4,$5,$6,0,'critical','Synthetic','Synthetic','en')",[f.a,randomUUID(),randomUUID(),randomUUID(),incidentId,f.actors.master.person]),/SIGNATURE_CHECK_CUSTOM_DELIVERY_DISABLED/);
+  await assert.rejects(f.pg.query("INSERT INTO public.notification_deliveries(academy_id,id,run_id,rule_id,rule_version,event_id,person_id,action_index,channel,title,body,locale,owner_epoch,contact_epoch,preference_version) VALUES($1,$2,$3,$4,1,$5,$6,0,'email','Synthetic','Synthetic','en',$7,$7,1)",[f.a,randomUUID(),randomUUID(),randomUUID(),incidentId,f.actors.master.person,'a'.repeat(64)]),/SIGNATURE_CHECK_CUSTOM_DELIVERY_DISABLED/);
+ }finally{await f.pg.exec('RESET ROLE');}
  assert.equal((await f.request(path+'/incidents?after='+randomUUID())).response.status,404);
  assert.equal((await f.request(path+'/incidents',undefined,'foreignMaster',{academy:f.b})).response.status,404);
  const capability=purpose==='worker_services'?'work-signature-completions.view':'signature-completions.view';
  const saved=(await f.pg.query<{effect:string}>('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3 RETURNING effect',[f.a,f.managerRole,capability])).rows;
- try{for(const target of [path,path+'/incidents'])assert.equal((await f.request(target,undefined,'manager')).response.status,purpose==='worker_services'?403:404,'removing the current feature permission immediately removes status/history access');}
+ try{for(const target of [path,path+'/incidents'])assert.equal((await f.request(target,undefined,'manager')).response.status,purpose==='worker_services'?403:404,'removing the current feature permission immediately removes status/history access');const managerNote=notes.find(n=>n.person_id===f.actors.manager.person);if(managerNote)assert.equal((await f.request('notifications/'+managerNote.id,undefined,'manager')).response.status,404,'the same removed right hides previously created mandatory alerts');}
  finally{for(const grant of saved)await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,$4)',[f.a,f.managerRole,capability,grant.effect]);}
 }
 
@@ -53,7 +73,7 @@ export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof ope
 // original-bound service receipt. Network responses in that fixture are fake.
 export async function checkCompletionQueue(pg:Pick<Awaited<ReturnType<typeof operationsFixture>>['pg'],'query'|'exec'|'runtime'>,academy:string,foreign:string,start:string,fingerprint:string,purpose:'worker_services'|'unified_enrollment'='worker_services'){
  const worker=randomUUID(),blockedEvent=purpose==='worker_services'?'work.signature.completion.check.blocked.critical':'signature.completion.check.blocked.critical';
- async function isolated<T>(run:()=>Promise<T>){await pg.exec('SET ROLE kavosh_signature_completion_worker');try{return await run();}finally{await pg.exec('RESET ROLE');}}
+ async function isolated<T>(run:()=>Promise<T>){await pg.exec('SET ROLE kavosh_signature_completion_worker');let failed=false;try{return await run();}catch(error){failed=true;throw error;}finally{try{await pg.exec('RESET ROLE');}catch(error){if(!failed)throw error;}}}
  const claim=async(academies=[academy])=>{
   const run=async(c:Pick<typeof pg,'query'>)=>(await c.query<{lease_token:string;start_id:string;source_fingerprint:string;attempt_no:number}>('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[academies,worker])).rows;
   if(!pg.runtime)return isolated(()=>run(pg));
@@ -103,6 +123,14 @@ export async function checkCompletionQueue(pg:Pick<Awaited<ReturnType<typeof ope
   await pg.exec('ROLLBACK TO SAVEPOINT suppressed_incident');
   assert.equal((await pg.query('SELECT state FROM public.signature_completion_jobs WHERE start_id=$1',[start])).rows[0].state,'queued');
   assert.equal((await pg.query('SELECT * FROM public.signature_completion_incidents WHERE start_id=$1',[start])).rows.length,0);
+  await pg.exec('DROP TRIGGER zz_suppress_completion_incident ON public.signature_completion_incidents');
+  for(const [table,condition,expected] of [['automation_event_sources',"NEW.source_kind='signature_check'",'SIGNATURE_CHECK_EVENT_PERSISTENCE_REQUIRED'],['portal_notifications',"NEW.origin='mandatory' AND NEW.title='Agreement check needs attention'",'SIGNATURE_CHECK_ALERT_PERSISTENCE_REQUIRED']]){
+   await pg.exec(`CREATE OR REPLACE FUNCTION public.suppress_signature_alert_part() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF ${condition} THEN RETURN NULL;END IF;RETURN NEW;END $$;CREATE TRIGGER zz_suppress_signature_alert_part BEFORE INSERT ON public.${table} FOR EACH ROW EXECUTE FUNCTION public.suppress_signature_alert_part()`);
+   await pg.exec('SAVEPOINT suppressed_part');await pg.exec('SET LOCAL ROLE kavosh_signature_completion_worker');
+   await assert.rejects(pg.query('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[[academy],worker]),new RegExp(expected));
+   await pg.exec('ROLLBACK TO SAVEPOINT suppressed_part');assert.equal((await pg.query('SELECT state FROM public.signature_completion_jobs WHERE start_id=$1',[start])).rows[0].state,'queued');
+   await pg.exec('DROP TRIGGER zz_suppress_signature_alert_part ON public.'+table);
+  }
  }finally{await pg.exec('ROLLBACK');}
  await pg.exec('BEGIN');try{
   await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second',poll_until=clock_timestamp()-interval '1 second' WHERE start_id=$1",[start]);

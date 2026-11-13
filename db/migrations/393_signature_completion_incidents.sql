@@ -30,6 +30,8 @@ CREATE TABLE public.signature_completion_incidents(
 CREATE INDEX signature_completion_incident_history ON public.signature_completion_incidents(academy_id,purpose,start_id,recorded_at DESC,id DESC);
 ALTER TABLE public.signature_completion_incidents ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.signature_completion_incidents FORCE ROW LEVEL SECURITY;
+CREATE TRIGGER academy_preservation_delete BEFORE DELETE ON public.signature_completion_incidents FOR EACH ROW EXECUTE FUNCTION platform_private.prevent_held_record_deletion();
+CREATE TRIGGER academy_preservation_truncate BEFORE TRUNCATE ON public.signature_completion_incidents FOR EACH STATEMENT EXECUTE FUNCTION platform_private.prevent_preserved_truncate();
 CREATE POLICY signature_completion_incident_tenant ON public.signature_completion_incidents FOR SELECT TO kavosh_runtime USING(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid);
 CREATE POLICY signature_completion_incident_executor ON public.signature_completion_incidents TO kavosh_signature_completion_policy USING(true) WITH CHECK(true);
 GRANT SELECT,INSERT ON public.signature_completion_incidents TO kavosh_signature_completion_policy;

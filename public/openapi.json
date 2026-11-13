@@ -9801,6 +9801,7 @@
             "schema": {
               "type": "string",
               "enum": [
+                "signature_check",
                 "approval",
                 "audit",
                 "session",

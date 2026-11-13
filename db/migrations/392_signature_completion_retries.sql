@@ -7,7 +7,7 @@ ALTER TABLE public.signature_completion_jobs ADD COLUMN retry_version integer NO
 GRANT SELECT(retry_version) ON public.signature_completion_jobs TO kavosh_runtime;
 GRANT SELECT(hub_id) ON public.work_agreement_preparations TO kavosh_signature_completion_policy;
 GRANT SELECT(hub_id,class_id,student_id) ON public.agreement_packages TO kavosh_signature_completion_policy;
-GRANT SELECT(academy_id,id,hub_id) ON public.people TO kavosh_signature_completion_policy;
+GRANT SELECT(academy_id,id,hub_id,supervisor_person_id) ON public.people TO kavosh_signature_completion_policy;
 CREATE POLICY completion_retry_person_read ON public.people FOR SELECT TO kavosh_signature_completion_policy USING(true);
 GRANT SELECT(academy_id,id,action,target_id,target_version,status,requester_id,payload,review_context,scope,privacy_capability,reviewer_id) ON public.approval_requests TO kavosh_signature_completion_policy;
 GRANT SELECT(academy_id,id,request_id,entity_id,actor_id,action,created_at,changes) ON public.audit_events TO kavosh_signature_completion_policy;
@@ -16,7 +16,7 @@ GRANT SELECT(academy_id,id,request_id,entity_id,event_type) ON public.outbox_eve
 CREATE POLICY completion_retry_approval_read ON public.approval_requests FOR SELECT TO kavosh_signature_completion_policy USING(true);
 CREATE POLICY completion_retry_audit_read ON public.audit_events FOR SELECT TO kavosh_signature_completion_policy USING(true);
 CREATE POLICY completion_retry_event_read ON public.outbox_events FOR SELECT TO kavosh_signature_completion_policy USING(true);
-GRANT EXECUTE ON FUNCTION public.report_comment_human_verified(uuid),public.is_supervisor(uuid,uuid) TO kavosh_signature_completion_policy;
+GRANT EXECUTE ON FUNCTION public.report_comment_human_verified(uuid),public.is_supervisor(uuid,uuid),public.supervisor_chain(uuid) TO kavosh_signature_completion_policy;
 GRANT CREATE ON SCHEMA public TO kavosh_signature_completion_policy;
 
 CREATE FUNCTION public.signature_completion_retry_source(p_purpose text,p_start uuid) RETURNS jsonb
@@ -53,6 +53,8 @@ CREATE TABLE public.signature_completion_retries(
 );
 ALTER TABLE public.signature_completion_retries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.signature_completion_retries FORCE ROW LEVEL SECURITY;
+CREATE TRIGGER academy_preservation_delete BEFORE DELETE ON public.signature_completion_retries FOR EACH ROW EXECUTE FUNCTION platform_private.prevent_held_record_deletion();
+CREATE TRIGGER academy_preservation_truncate BEFORE TRUNCATE ON public.signature_completion_retries FOR EACH STATEMENT EXECUTE FUNCTION platform_private.prevent_preserved_truncate();
 CREATE POLICY completion_retry_tenant ON public.signature_completion_retries TO kavosh_runtime USING(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid) WITH CHECK(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid);
 CREATE POLICY completion_retry_executor ON public.signature_completion_retries TO kavosh_signature_completion_policy USING(true) WITH CHECK(true);
 GRANT SELECT,INSERT ON public.signature_completion_retries TO kavosh_signature_completion_policy;

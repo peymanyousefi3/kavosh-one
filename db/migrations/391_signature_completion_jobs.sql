@@ -36,6 +36,8 @@ CREATE TABLE public.signature_completion_job_attempts(
 );
 DO $$ DECLARE t text;BEGIN FOREACH t IN ARRAY ARRAY['signature_completion_jobs','signature_completion_job_attempts'] LOOP
  EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',t);EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY',t);
+ EXECUTE format('CREATE TRIGGER academy_preservation_delete BEFORE DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION platform_private.prevent_held_record_deletion()',t);
+ EXECUTE format('CREATE TRIGGER academy_preservation_truncate BEFORE TRUNCATE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION platform_private.prevent_preserved_truncate()',t);
  EXECUTE format('CREATE POLICY signature_completion_job_executor ON public.%I TO kavosh_signature_completion_policy USING(true) WITH CHECK(true)',t);
 END LOOP;END $$;
 GRANT SELECT,INSERT,UPDATE ON public.signature_completion_jobs TO kavosh_signature_completion_policy;
