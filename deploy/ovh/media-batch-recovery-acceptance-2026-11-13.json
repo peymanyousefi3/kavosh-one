@@ -1,0 +1,25 @@
+{
+  "scope": "independent_recovery_of_the_real_scheduled_ordinary_media_batch_not_a_full_server_restore",
+  "recoverySource": "fff618b",
+  "databaseBackupId": "496bf760-2258-4723-843d-2f330b6f2114",
+  "batchId": "3569b402-fec1-4e20-85bf-4a1edc860571",
+  "batchCatalogCiphertextSha256": "b3f9a8a089896ce1f4d1c0cb7d473e11ff772d87131251f32c164a1196d5097a",
+  "verifier": "scripts/verify-vps-media-batch.mjs --execute 496bf760-2258-4723-843d-2f330b6f2114",
+  "independentDriveDownloads": 2,
+  "authenticatedWholeBatchRecoveryVerified": true,
+  "originalDatabaseBindingVerified": true,
+  "derivedChildPlanBindingVerified": true,
+  "recoveredCollections": 1,
+  "recoveredObjects": 0,
+  "recoveredSourceBytes": 0,
+  "privateRecoveryKeyTransferredToVps": false,
+  "privateTemporaryKeyPlaintextCiphertextAndRecoveryFilesRemoved": true,
+  "sourceOrRemoteObjectsModified": false,
+  "databaseRestorePerformed": false,
+  "applicationActivated": false,
+  "limitations": [
+    "The live academy currently has no ordinary media objects;this proof is not a nonempty production-media restore",
+    "Nonempty two-school/four-object whole-batch recovery is verified separately with actual age and simulated storage transports",
+    "Signing evidence,global-role reconstruction,privacy/outbox reconciliation and full-host recovery remain separate gates"
+  ]
+}
