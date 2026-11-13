@@ -47,7 +47,7 @@ export function roleExportForRestore(text:string,sourceBootstrapRole:string){
 // clusters must NOT use --create:it targets the archive's original database.
 // https://www.postgresql.org/docs/18/app-pgrestore.html
 export function isolatedClusterRecoveryPlan(directory:string,bootstrapRole:string,postgresBin:string){
- if([directory,bootstrapRole,postgresBin].some(v=>/[\x00-\x1f\x7f]/.test(v))||!/^\/var\/lib\/kavosh-one-recovery-[a-f0-9]{32}$/.test(directory)||!/^[A-Za-z_][A-Za-z0-9_$]{0,62}$/.test(bootstrapRole)||!/^\/usr\/(?:lib\/postgresql\/(?:17|18)|local)\/bin$/.test(postgresBin))throw new RecoveryError('ISOLATED_CLUSTER_REQUIRED');
+ if([directory,bootstrapRole,postgresBin].some(v=>/[\x00-\x1f\x7f]/.test(v))||!/^\/var\/lib\/(?:private\/)?kavosh-one-recovery-[a-f0-9]{32}$/.test(directory)||!/^[A-Za-z_][A-Za-z0-9_$]{0,62}$/.test(bootstrapRole)||!/^\/usr\/(?:lib\/postgresql\/(?:17|18)|local)\/bin$/.test(postgresBin))throw new RecoveryError('ISOLATED_CLUSTER_REQUIRED');
  const socket=directory+'/socket',data=directory+'/data';
  return{directory,data,socket,bootstrapRole,port:55493,networkListeningAllowed:false,applicationActivationAllowed:false,
   initdb:[postgresBin+'/initdb','--pgdata',data,'--username',bootstrapRole,'--auth-local=trust','--auth-host=reject','--no-locale','--encoding=UTF8'],
