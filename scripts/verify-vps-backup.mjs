@@ -18,6 +18,7 @@ EXECUTE format('INSERT INTO pg_temp.restore_row_checks SELECT %L,count(*),md5(co
 SELECT jsonb_build_object('revision',public.schema_revision(),
 'rows',(SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY name)::text) FROM pg_temp.restore_row_checks t),
 'tableCount',(SELECT count(*) FROM pg_temp.restore_row_checks),'rowCount',(SELECT sum(n) FROM pg_temp.restore_row_checks),
+'tableChecks',(SELECT jsonb_agg(to_jsonb(t) ORDER BY name) FROM pg_temp.restore_row_checks t),
 'relations',(SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY nspname,relname)::text) FROM (SELECT n.nspname,c.relname,c.relkind,c.relrowsecurity,c.relforcerowsecurity,pg_get_userbyid(c.relowner) owner,c.relacl::text,c.reloptions FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN('public','identity','auth_private','platform_private')) t),
 'functions',(SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY nspname,signature)::text) FROM (SELECT n.nspname,p.oid::regprocedure::text signature,pg_get_userbyid(p.proowner) owner,p.prosecdef,p.proacl::text,p.proconfig,pg_get_functiondef(p.oid) definition FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname IN('public','identity','auth_private','platform_private') AND p.prokind IN('f','p')) t),
 'policies',(SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY schemaname,tablename,policyname)::text) FROM pg_policies t WHERE schemaname IN('public','identity','auth_private','platform_private')));`;
@@ -42,7 +43,15 @@ try {
  sql('postgres', 'CREATE DATABASE "' + target + '" CONNECTION LIMIT 0;'); created = true;
  stage = 'native PostgreSQL restore with original ownership and ACLs'; const input = openSync(plaintext, 'r');
  try { const result = spawnSync('/usr/bin/ssh', [...ssh, 'sudo -u postgres pg_restore --single-transaction --exit-on-error --no-password --no-tablespaces --dbname=' + target], { stdio: [input, 'pipe', 'pipe'], timeout: 60000, maxBuffer: 1048576 }); assert.equal(result.status, 0, 'Isolated pg_restore failed; raw diagnostics suppressed.'); } finally { closeSync(input); }
- stage = 'data, functions, permissions and row-policy comparison'; const restored = JSON.parse(sql(target, snapshotSql).split('\n').at(-1)); assert.deepEqual(restored, source);
+ stage = 'data, functions, permissions and row-policy comparison'; const restored = JSON.parse(sql(target, snapshotSql).split('\n').at(-1));
+ const differentComponents = Object.keys(source).filter(name => JSON.stringify(restored[name]) !== JSON.stringify(source[name]));
+ if (differentComponents.length) {
+  console.error('RESTORE_COMPARISON_MISMATCH: ' + differentComponents.filter(name => name !== 'tableChecks').join(','));
+  const restoredTables = new Map(restored.tableChecks.map(t => [t.name, t]));
+  const changedTables = source.tableChecks.filter(t => JSON.stringify(t) !== JSON.stringify(restoredTables.get(t.name))).map(t => t.name);
+  if (changedTables.length) console.error('RESTORE_TABLE_MISMATCH: ' + changedTables.join(','));
+ }
+ assert.deepEqual(restored, source);
  assert.equal(sql('postgres', "SELECT datconnlimit FROM pg_database WHERE datname='" + target + "';"), '0');
  stage = 'source unchanged after restore'; assert.deepEqual(JSON.parse(sql('kavosh_one', snapshotSql).split('\n').at(-1)), source);
  console.log(JSON.stringify({ backupId: backup.id, ciphertextSha256: backup.ciphertextSha256, encryptedBytes: backup.encryptedBytes, sourceSchemaRevision: source.revision, permanentTablesCompared: source.tableCount, rowsCompared: source.rowCount, originalDataPermissionsFunctionsAndPoliciesMatch: true, independentDriveDownloadVerified: true, actualIsolatedPostgresRestoreVerified: true, sourceDatabaseUnchanged: true, privateRecoveryKeyTransferredToVps: false, recoveredDatabaseOrdinaryConnectionsBlocked: true, globalRoleRecoveryVerified: false, mediaRecoveryVerified: false }));
