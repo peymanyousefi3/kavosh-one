@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('paid-tax zero-net review is an explicit optional string flag shared by JSON CSV and Excel without supplied dates or money',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/payroll/tax-profiles/{id}/year-to-date','/api/v1/reports/payroll/paid-tax-year-to-date','/api/v1/reports/payroll/paid-tax-year-to-date/export','/api/v1/reports/payroll/paid-tax-year-to-date/export.xlsx']){const r=api.paths[path].get,p=r.parameters.find((p:any)=>p.in==='query'&&p.name==='includeUnassignedZeroNetSources');assert.ok(p,path);assert.equal(p.required,false);assert.deepEqual(p.schema.enum,['true','false']);assert.match(p.schema.description,/regardless of planned year/);assert.match(p.schema.description,/Omission preserves legacy scope and output/);assert.equal(r.requestBody,undefined);}
+});
 test('owner homework history accepts only bounded retained-edition cursors and requires a private read purpose',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/platform/v1/academies/{id}/learning/homeworks/{homeworkId}/history'],r=p.get,q=r.parameters.filter((v:any)=>v.in==='query');assert.deepEqual(Object.keys(p),['get']);assert.deepEqual(q.map((v:any)=>v.name).sort(),['afterVersion','limit']);assert.equal(q.find((v:any)=>v.name==='limit').schema.maximum,5);assert.equal(q.find((v:any)=>v.name==='afterVersion').schema.maximum,2147483647);assert.equal(r.parameters.find((v:any)=>v.in==='header'&&v.name==='X-Access-Purpose').required,true);assert.equal(r.requestBody,undefined);assert.match(r.summary,/byte-bounded2MiB complete prefix/);assert.match(r.summary,/not current family eligibility/);
 });

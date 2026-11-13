@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.451.0",
+    "version": "0.452.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -59708,6 +59708,19 @@
               "minLength": 1,
               "maxLength": 100
             }
+          },
+          {
+            "name": "includeUnassignedZeroNetSources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
           }
         ],
         "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
@@ -77795,7 +77808,7 @@
     },
     "/api/v1/reports/payroll/paid-tax-year-to-date": {
       "get": {
-        "summary": "Central private one-worker/employer paid-tax-year report,using the exact existing payment-date YTD service and complete source rights. Includes typed employee/employer totals,daily charts,recognized references and explicit unresolved-payment warnings and separately listed retained nonemployee reporting contexts. Candidate selection includes reviewed paid dates so timezone/year mismatches cannot silently disappear. CAD only;not T4/T4A or statutory certification.",
+        "summary": "Central private one-worker/employer paid-tax-year report,using the exact existing payment-date YTD service and complete source rights. Includes typed employee/employer totals,daily charts,recognized references and explicit unresolved-payment warnings and separately listed retained nonemployee reporting contexts. Candidate selection includes reviewed paid dates so timezone/year mismatches cannot silently disappear. Optional includeUnassignedZeroNetSources adds a separately permission-checked review list across all planned years,never tax totals or inferred settlement dates;combined payment/source ceiling500 and every source retained in queued download authority. Omission preserves legacy output. CAD payment totals only;not T4/T4A or statutory certification.",
         "parameters": [
           {
             "name": "through",
@@ -77815,6 +77828,19 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 100
+            }
+          },
+          {
+            "name": "includeUnassignedZeroNetSources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           },
           {
@@ -77867,6 +77893,19 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 100
+            }
+          },
+          {
+            "name": "includeUnassignedZeroNetSources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           },
           {
@@ -77926,6 +77965,19 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 100
+            }
+          },
+          {
+            "name": "includeUnassignedZeroNetSources",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
             }
           },
           {
