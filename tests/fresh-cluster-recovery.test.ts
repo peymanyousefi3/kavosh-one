@@ -56,11 +56,13 @@ test('fresh native cluster rebuild preserves global roles and original database 
 test('compiled restore worker verifies a populated full academy in a separate native cluster and rejects altered input before SQL',{
  skip:process.env.CI!=='true'||process.env.KAVOSH_FRESH_CLUSTER_TEST!=='true'||!process.env.TEST_DATABASE_URL||process.getuid?.()!==0
 },async()=>{
- const f=await operationsFixture(),run=promisify(execFile),id=randomUUID().replaceAll('-',''),directory='/var/lib/kavosh-one-recovery-'+id,source=new URL(process.env.TEST_DATABASE_URL!);let owned=false,client:pg.Client|undefined;
+ const f=await operationsFixture(),run=promisify(execFile),id=randomUUID().replaceAll('-',''),directory='/var/lib/kavosh-one-recovery-'+id,source=new URL(process.env.TEST_DATABASE_URL!),login='kavosh_restore_guard_'+id;let owned=false,loginCreated=false,client:pg.Client|undefined;
  const bin=process.env.RECOVERY_POSTGRES_BIN!;isolatedClusterRecoveryPlan(directory,'postgres',bin);
  try{
   const databaseName=(await f.pg.query<{name:string}>('SELECT current_database() name')).rows[0].name;source.pathname='/'+databaseName;
   client=new pg.Client({connectionString:source.toString()});await client.connect();const bootstrap=(await client.query('SELECT rolname FROM pg_roles WHERE oid=10')).rows[0].rolname;
+  await client.query('CREATE ROLE '+login+' LOGIN');loginCreated=true;
+  await client.query("INSERT INTO identity.verification(identifier,value,\"expiresAt\") VALUES('synthetic-recovery-only','SYNTHETIC_ONLY',now()+interval '1 hour')");await client.query("INSERT INTO identity.delivery_outbox(kind,payload,expires_at) VALUES('email','SYNTHETIC_ENCRYPTED_PLACEHOLDER',now()+interval '1 hour')");
   const uid=Number((await run('/usr/bin/id',['-u','postgres'])).stdout.trim()),gid=Number((await run('/usr/bin/id',['-g','postgres'])).stdout.trim());
   await mkdir(directory,{mode:0o700});owned=true;await chown(directory,uid,gid);
   const env={PATH:bin+':/usr/bin:/bin',NODE_ENV:'test' as const,PGHOST:source.hostname,PGPORT:source.port||'5432',PGUSER:decodeURIComponent(source.username),PGPASSWORD:decodeURIComponent(source.password),LANG:'C',TZ:'UTC'};
@@ -72,9 +74,10 @@ test('compiled restore worker verifies a populated full academy in a separate na
   const args=['-u','postgres','--',process.execPath,process.cwd()+'/.recovery-tool/scripts/restore-isolated-cluster.js'],local={PATH:bin+':/usr/bin:/bin',NODE_ENV:'production' as const,STATE_DIRECTORY:directory,RECOVERY_POSTGRES_BIN:bin};
   const result=JSON.parse((await run('/usr/sbin/runuser',args,{env:local,timeout:60000,maxBuffer:1048576})).stdout);
   assert.equal(result.originalExportedSnapshotMatched,true);assert.equal(result.rolesAndMembershipsVerified,true);assert.equal(result.databaseAccessAndSettingsVerified,true);assert.equal(result.isolatedPostgresStopped,true);assert.equal(result.applicationActivationAllowed,false);assert.equal(result.osIsolationVerified,false);assert.equal(result.fullServerRebuildVerified,false);assert.ok(result.tablesCompared>100);assert.ok(result.rowsCompared>0);
+  const quarantine=result.authenticationQuarantine;assert.equal(quarantine.sessionsInvalidated,5);assert.equal(quarantine.botKeysRevoked,1);assert.equal(quarantine.verificationRecordsInvalidated,1);assert.equal(quarantine.authenticationDeliveriesExpired,1);assert.ok(quarantine.databaseLoginsDisabled>=1);assert.equal(quarantine.originalBusinessAndAccountRecordsPreserved,true);assert.equal(quarantine.originalCredentialAndInvitationHistoryPreserved,true);assert.equal(quarantine.externalQueuesReplayed,false);assert.equal(quarantine.providerAndPrivacyReconciliationRequired,true);
   await assert.rejects(access(directory+'/data/postmaster.pid'));
   await writeFile(directory+'/input.json',JSON.stringify({...metadata,databaseDumpSha256:'0'.repeat(64)}));
   await assert.rejects(run('/usr/sbin/runuser',args,{env:local,timeout:10000}),error=>{const e=error as Error&{stderr:string;stdout:string};assert.equal(e.stderr.trim(),'BACKUP_DIGEST_MISMATCH');assert.equal(e.stdout,'');return true;});
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');try{assert.deepEqual(await databaseVerificationSnapshot(client),verification.snapshot);assert.deepEqual(await clusterVerificationSnapshot(client),verification.cluster);}finally{await client.query('ROLLBACK');}
- }finally{await client?.end();await f.pg.close();if(owned)await rm(directory,{recursive:true});}
+ }finally{if(loginCreated)await client?.query('DROP ROLE '+login);await client?.end();await f.pg.close();if(owned)await rm(directory,{recursive:true});}
 });
