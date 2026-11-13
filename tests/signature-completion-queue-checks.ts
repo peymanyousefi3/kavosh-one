@@ -3,6 +3,33 @@ import { randomUUID } from 'node:crypto';
 import type { operationsFixture } from './operations-fixture.ts';
 import { assertSignatureCompletionRole } from '../src/integrations/signature-completion-source.ts';
 
+export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'approve'|'a'|'pg'|'managerRole'|'metrics'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
+ const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check/retries',work=purpose==='worker_services',capability=work?'work-signature-completions.retry':'signature-completions.retry',event=work?'work.signature.completion.retry':'signature.completion.retry';
+ assert.equal((await f.request(path)).body.data.length,0);
+ const input={expectedVersion:0,checkWindowDays:2,reason:'Explicit operational recheck, not another envelope or legal waiver'};
+ for(const patch of [{checkWindowDays:31},{expectedVersion:-1},{documentId:randomUUID()},{admissionCleared:true}])assert.equal((await f.request(path,{...input,...patch})).response.status,400);
+ const keys=[randomUUID(),randomUUID()],race=f.pg.runtime?await Promise.all(keys.map(key=>f.request(path,input,'master',{key}))):[await f.request(path,input,'master',{key:keys[0]}),await f.request(path,input,'master',{key:keys[1]})];
+ assert.deepEqual(race.map(r=>r.response.status).sort(),[200,409],JSON.stringify({bodies:race.map(r=>r.body),errors:f.metrics.queryFailures.slice(-2)}));
+ const winner=race.findIndex(r=>r.response.status===200),key=keys[winner],own=race[winner];assert.equal(own.body.data.version,1);assert.equal(own.body.approval.selfApproved,true);assert.equal(own.body.data.agreementResent,false);assert.equal(own.body.data.admissionCleared,false);assert.equal(own.body.data.paymentCleared,false);
+ assert.deepEqual((await f.request(path,input,'master',{key})).body,own.body);
+ assert.equal((await f.request(path,input)).response.status,409,'another request with an old version cannot reset retry history');
+ const added:string[]=[];for(const cap of [capability,work?'work-signature-completions.view':'signature-completions.view'])if((await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,\'allow\') ON CONFLICT DO NOTHING RETURNING capability',[f.a,f.managerRole,cap])).rows.length)added.push(cap);
+ const proposed=await f.request(path,{...input,expectedVersion:1},'manager');assert.equal(proposed.response.status,202,JSON.stringify({body:proposed.body,errors:f.metrics.queryFailures.slice(-2)}));
+ assert.equal((await f.request(path)).body.data.length,1,'a proposal alone does not reset the job');
+ assert.equal((await f.approve(proposed.body.approval.id,'manager')).response.status,403);
+ const approved=await f.approve(proposed.body.approval.id);assert.equal(approved.response.status,200,JSON.stringify({body:approved.body,errors:f.metrics.queryFailures.slice(-2)}));
+ const history=await f.request(path+'?limit=1');assert.equal(history.body.data[0].version,1);assert.equal(history.body.nextVersion,1);const next=await f.request(path+'?limit=1&afterVersion=1');assert.equal(next.body.data[0].version,2);assert.equal(next.body.nextVersion,null);
+ await f.pg.exec(`CREATE FUNCTION public.suppress_retry_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='${event}' THEN RETURN NULL;END IF;RETURN NEW;END $$;CREATE TRIGGER zz_suppress_retry_audit BEFORE INSERT ON public.audit_events FOR EACH ROW EXECUTE FUNCTION public.suppress_retry_audit()`);
+ try{assert.equal((await f.request(path,{...input,expectedVersion:2})).response.status,503);assert.equal((await f.request(path)).body.data.length,2,'missing audit rolls back both the job reset and its retry row');}
+ finally{await f.pg.exec('DROP TRIGGER zz_suppress_retry_audit ON public.audit_events');}
+ const stale=await f.request(path,{...input,expectedVersion:2},'manager');assert.equal(stale.response.status,202);
+ await f.pg.query("UPDATE public.signature_completion_jobs SET available_at=available_at+interval '1 second' WHERE academy_id=$1 AND purpose=$2 AND start_id=(SELECT target_id FROM public.approval_requests WHERE id=$3)",[f.a,purpose,stale.body.approval.id]);
+ assert.equal((await f.approve(stale.body.approval.id)).response.status,409,'background/source changes invalidate an already pending recheck approval');
+ assert.equal((await f.request(path)).body.data.length,2);
+ for(const cap of added)await f.pg.query('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3',[f.a,f.managerRole,cap]);
+ for(const sql of ['UPDATE public.signature_completion_retries SET changed_by=changed_by','DELETE FROM public.signature_completion_retries'])await assert.rejects(f.pg.exec(sql),/SIGNATURE_COMPLETION_RETRY_IMMUTABLE/);
+}
+
 export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'a'|'b'|'pg'|'managerRole'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
  const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check';
  const first=await f.request(path+'?limit=1');assert.equal(first.response.status,200,JSON.stringify(first.body));

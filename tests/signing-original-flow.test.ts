@@ -21,7 +21,7 @@ import { processEnrollmentSigning } from '../src/integrations/signing-orchestrat
 import { mintToken } from '../src/core/tokens.ts';
 import { loadSignatureCompletionSource,matchSignatureCompletionSigner } from '../src/integrations/signature-completion-source.ts';
 import { processEnrollmentCompletion } from '../src/integrations/completion-orchestrator.ts';
-import { checkCompletionQueue,checkCompletionStatus } from './signature-completion-queue-checks.ts';
+import { checkCompletionQueue,checkCompletionStatus,checkCompletionRetries } from './signature-completion-queue-checks.ts';
 import { processSignatureEvidenceInspection,loadSignatureEvidenceInspectionTask,recordSignatureEvidenceInspection } from '../src/integrations/signature-evidence-worker.ts';
 import { createPdfValidationServer } from '../src/files/pdf-service.ts';
 import { clamdPeer,clamdVersionString } from './fixtures/clamd-peer.ts';
@@ -111,6 +111,7 @@ for(const [environment,profileChoices,selfSigner] of [['Test',true,false],['Live
    historicalSource=await completion(result.startId!);assert.ok(historicalSource);assert.equal(historicalSource.documentId,fakeDocument);assert.equal(historicalSource.packageId,thirdPackage.body.data.id);assert.equal(historicalSource.signerId,f.signer);assert.equal(historicalSource.bindingId,binding.id);assert.deepEqual(historicalSource.signatureFields,binding.routing.fields.filter(f=>f.fieldType.toLowerCase()==="signature").map(({id,pageNumber,bounds})=>({id,pageNumber,bounds})));assert.doesNotMatch(JSON.stringify(historicalSource),/PRIVATE|example.test|phoneNumber|contactFingerprint|original_source/);assert.equal(await completion(result.startId!,f.b),null);
    await checkCompletionQueue(f.pg,f.a,f.b,historicalSource.startId,historicalSource.sourceFingerprint,'unified_enrollment');
    await checkCompletionStatus(f,task.requestId,'unified_enrollment');
+   await checkCompletionRetries(f,task.requestId,'unified_enrollment');
    const privateContact={name:'PRIVATE Guardian staff',email:'staff@example.test',phone:'+16475550003'};
    assert.deepEqual(await matchSignatureCompletionSigner(completionDatabase,historicalSource,privateContact),{nameMatches:true,emailMatches:true,phoneMatches:true});
    assert.equal(await matchSignatureCompletionSigner(completionDatabase,{...historicalSource,sourceFingerprint:'0'.repeat(64)},privateContact),null);
