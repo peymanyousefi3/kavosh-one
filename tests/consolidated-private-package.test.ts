@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {test} from 'node:test';
+import {consolidatedT4aFixture} from './t4a-consolidated-fixture.ts';
+import {createPayrollPrivateVault} from '../src/core/payroll-private-data.ts';
+
+async function fixture(){
+ const vault=createPayrollPrivateVault({activeKeyId:'current',keys:{current:randomBytes(32).toString('base64url')},fingerprintKey:randomBytes(32).toString('base64url')}),f=await consolidatedT4aFixture({payrollPrivateVault:()=>vault});try{
+  const role=await f.made('roles',{name:'Synthetic combined private tax reviewers',permissions:['payroll-identity.view','payroll-identity.edit','payroll-identity.reveal'].map(capability=>({capability,effect:'allow'}))});
+  for(const person of [f.actors.staff.person,f.bot])await f.pg.query('INSERT INTO public.role_assignments(academy_id,id,person_id,role_id,all_hubs) VALUES($1,$2,$3,$4,true)',[f.a,randomUUID(),person,role.id]);
+  const identity={givenNames:'COMBINED_PRIVATE_GIVEN',familyName:'COMBINED_PRIVATE_FAMILY',address:{lines:['123 Combined Private Road'],city:'Toronto',region:'ON',postalCode:'A1A 1A1',countryCode:'CA'},sin:'123456782'},identityPath='payroll/private-identities/'+f.actors.staff.person;
+  assert.equal((await f.request(identityPath,{expectedVersion:0,state:'recorded',identity,purpose:'payroll_tax_reporting',reason:'COMBINED_PRIVATE_IDENTITY_REVIEW'})).response.status,200);
+  assert.equal((await f.request(f.recordPath,f.recordInput)).response.status,200);
+  const path='reports/payroll/t4a-consolidated-working-paper/private-package',input={personId:f.actors.staff.person,employerId:f.employer.id,taxYear:2026,timeZone:'America/Toronto',identityVersion:1};
+  return {...f,identityRole:role,identity,identityPath,packagePath:path,packageInput:input};
+ }catch(e){await f.pg.close();throw e;}
+}
+test('consolidated private review includes both real payment sources,unresolved warnings and every retained payer edition without plaintext retention',async()=>{
+ const f=await fixture();try{
+  const before=async()=>{const rows=[];for(const table of ['finance_journals','finance_journal_lines','payrun_payments','expense_payments','request_keys','report_job_results'])rows.push((await f.pg.query('SELECT to_jsonb(t) row FROM public.'+table+' t ORDER BY to_jsonb(t)::text')).rows);return rows;},original=await before();
+  const pending=await f.request(f.packagePath,f.packageInput);assert.equal(pending.response.status,200,JSON.stringify(pending.body));assert.equal(pending.body.data.workingPaper.unresolvedPaymentCount,1);assert.equal(pending.body.data.workingPaper.unresolvedPayments[0].sourceKind,'expense');assert.equal(pending.body.data.workingPaper.totals.gross.amount,'508.50');
+  assert.equal((await f.request('payroll/employer-accounts/'+f.rp.id+'/change',{expectedVersion:1,employer:{id:f.employer.id,version:1},effectiveOn:'2026-01-01',definition:{active:true,address:{lines:['Second retained supplier payer address'],city:'Toronto',region:'ON',postalCode:'A1A 1A1',countryCode:'CA'},review:'COMBINED_PRIVATE_PAYER_REVIEW'},reason:'Synthetic payer correction'})).response.status,200);
+  assert.equal((await f.request(f.supplierPath,{...f.supplierInput,definition:{...f.supplierInput.definition,reportingAccount:{id:f.rp.id,version:2}}})).response.status,200);
+  // Configuration/recognition commands retain their normal private receipts;
+  // only the actual read below must leave the idempotency cache unchanged.
+  const readBaseline=await before(),key=randomUUID(),result=await f.request(f.packagePath,f.packageInput,'staff',{key});assert.equal(result.response.status,200,JSON.stringify(result.body));const d=result.body.data;
+  assert.equal(d.kind,'private_consolidated_t4a_review_package');assert.equal(d.workingPaper.recognizedPaymentCount,2);assert.equal(d.workingPaper.unresolvedPaymentCount,0);assert.equal(d.workingPaper.totals.gross.amount,'558.50');assert.equal(d.workingPaper.totals.reportableIncome.amount,'494.25');assert.deepEqual(d.workingPaper.paymentSources.map((p:any)=>p.sourceKind),['payroll','expense']);assert.equal(d.recipient.sin,f.identity.sin);assert.deepEqual(d.recipient.address,f.identity.address);assert.deepEqual(d.payerReportingEditions.map((p:any)=>p.version),[1,2]);assert.deepEqual(d.payerReportingEditions.map((p:any)=>p.address.lines),[['123 Synthetic Street'],['Second retained supplier payer address']]);assert.ok(d.payerReportingEditions.every((p:any)=>p.accountNumber==='123456789RP0001'));assert.equal(d.readyToIssue,false);assert.equal(d.isOfficialForm,false);assert.equal(d.storedInReportArchive,false);assert.equal(d.responseRetainedInIdempotencyCache,false);assert.equal(d.workingPaper.yearToDateComplete,false);assert.equal(result.response.headers.get('cache-control'),'no-store');assert.doesNotMatch(JSON.stringify(d),/COMBINED_PRIVATE_.*REVIEW|PRIVATE_T4A|PRIVATE_RP|payerReview|fingerprintKey|ciphertext/);assert.deepEqual(await before(),readBaseline);
+  const audit=(await f.pg.query<{changes:{form:string;recognizedPayments:unknown[]}}>("SELECT changes FROM public.audit_events WHERE action='work.year-end-private-package.revealed' ORDER BY created_at DESC,id DESC LIMIT 1")).rows[0].changes;assert.equal(audit.form,'t4a-consolidated');assert.deepEqual(audit.recognizedPayments,[{paymentId:f.payment.id,version:1,sourceKind:'payroll'},{paymentId:f.supplierPayment.id,version:1,sourceKind:'expense'}]);
+  for(const table of ['request_keys','audit_events','outbox_events','report_job_results'])assert.doesNotMatch(JSON.stringify((await f.pg.query('SELECT * FROM public.'+table)).rows),/COMBINED_PRIVATE_GIVEN|COMBINED_PRIVATE_FAMILY|123 Combined Private Road|123456782/);
+  assert.deepEqual((await before()).slice(0,4),original.slice(0,4));await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(f.packagePath,f.packageInput)).response.status,200);
+  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='payroll-identity.reveal'",[f.identityRole.id]);const denied=await f.request(f.packagePath,f.packageInput,'staff',{key});assert.equal(denied.response.status,403);assert.doesNotMatch(JSON.stringify(denied.body),/COMBINED_PRIVATE|123456782|123456789RP/);
+ }finally{await f.pg.close();}
+});
+test('combined private review requires both financial-source boundaries and human identity authority before disclosure',async()=>{
+ const f=await fixture();try{
+  assert.equal((await f.request(f.supplierPath,f.supplierInput)).response.status,200);assert.equal((await f.request(f.packagePath,f.packageInput,'staff')).response.status,200);
+  for(const capability of ['expenses.view','expense-payments.view','journals.view','payroll-employers.view']){
+   const saved=(await f.pg.query<{role_id:string}>("DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id IN($2,$3) AND capability=$4 RETURNING role_id",[f.a,f.staffRole,f.taxRole.id,capability])).rows;
+   const denied=await f.request(f.packagePath,f.packageInput,'staff');assert.ok([403,404].includes(denied.response.status),capability+':'+JSON.stringify(denied.body));assert.doesNotMatch(JSON.stringify(denied.body),/COMBINED_PRIVATE|123456782|reportableIncome|payerReportingEditions/);
+   for(const row of saved)await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow')",[f.a,row.role_id,capability]);
+  }
+  assert.equal((await f.request(f.packagePath,f.packageInput,'foreignMaster',{academy:f.b})).response.status,404);
+  const probe=await f.request('people',undefined,'bot');if(probe.response.status===401)await f.refreshBotCredential();else assert.equal(probe.response.status,200);assert.equal((await f.request(f.packagePath,f.packageInput,'bot')).response.status,403);
+  for(const patch of [{gross:'9999.00'},{supplierPayeeId:f.payee.id},{identity:f.identity},{sourceOverride:true},{identityVersion:0}])assert.equal((await f.request(f.packagePath,{...f.packageInput,...patch})).response.status,400);assert.equal((await f.request(f.packagePath+'?identityVersion=1',f.packageInput)).response.status,400);assert.equal((await f.request(f.packagePath)).response.status,405);
+  for(const reportId of ['payroll.t4a-consolidated-private-package','payroll.t4a-consolidated-working-paper'])assert.equal((await f.request('reports/jobs',{reportId,parameters:{...f.parameters,identityVersion:'1'}})).response.status,400);
+ }finally{await f.pg.close();}
+});
+test('combined private review cannot disclose when its final audit or outbox receipt is missing',async()=>{
+ const f=await fixture();try{
+  for(const [table,field] of [['audit_events','action'],['outbox_events','event_type']]){
+   await f.pg.exec(`CREATE FUNCTION public.synthetic_skip_combined_package() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.${field}='work.year-end-private-package.revealed' THEN RETURN NULL;END IF;RETURN NEW;END $$;CREATE TRIGGER synthetic_skip_combined_package BEFORE INSERT ON public.${table} FOR EACH ROW EXECUTE FUNCTION public.synthetic_skip_combined_package()`);
+   const result=await f.request(f.packagePath,f.packageInput);assert.equal(result.response.status,503);assert.doesNotMatch(JSON.stringify(result.body),/COMBINED_PRIVATE|123456782|123456789RP/);assert.equal((await f.pg.query("SELECT * FROM public.audit_events WHERE action='work.payroll-identity.revealed'")).rows.length,0);
+   await f.pg.exec(`DROP TRIGGER synthetic_skip_combined_package ON public.${table};DROP FUNCTION public.synthetic_skip_combined_package()`);
+  }
+ }finally{await f.pg.close();}
+});
+test('combined private review retains original foreign settlement precision and requires its reference-rate rights',async()=>{
+ const f=await fixture();try{
+  const ref=(a:{id:string})=>({id:a.id,version:1});for(const capability of ['currencies.view','exchange-rates.view'])await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING",[f.a,f.taxRole.id,capability]);
+  assert.equal((await f.request(f.supplierPath,f.supplierInput)).response.status,200);
+  const currency=await f.made('finance/currencies',{code:'BHD',name:'Synthetic original settlement currency',unitScale:3,reason:'Synthetic precision'}),account=(code:string,kind:string,operationalRole:string)=>f.made('finance/accounts',{code,name:code,kind,operationalRole,hubId:f.hub,currencyId:currency.id,currencyVersion:1,reason:'Synthetic foreign mapping'});
+  const cash=await account('PACKAGE-FX-CASH','asset','cash'),payable=await account('PACKAGE-FX-AP','liability','payable'),expense=await account('PACKAGE-FX-COST','expense','expense');
+  const bill=await f.made('finance/expense-bills',{payee:ref(f.payee),currency:ref(currency),payableAccount:ref(payable),documentNumber:'PACKAGE-FX',issuedOn:'2026-11-07',dueOn:'2026-12-07',postedOn:'2026-11-07',period:ref(f.period),lines:[{description:'Synthetic foreign service',hubId:f.hub,classId:null,studentId:null,expenseAccount:ref(expense),taxAccount:null,taxCode:{id:f.planInput.taxCodeId,version:1},taxOn:'2026-11-07',amount:'100',pricing:'tax_exclusive',recoverablePercent:'0',taxReview:'Synthetic reviewed classification'}],missingEvidenceReason:'Synthetic missing invoice',reason:'Synthetic foreign source'});
+  const payment=await f.made('finance/expense-bills/'+bill.id+'/payments',{fundingAccount:ref(cash),payableVersion:1,method:ref(f.method),amount:'50.000',period:ref(f.period),postedOn:'2026-11-08',paidAt:'2026-11-08T12:00:00Z',missingEvidenceReason:'PRIVATE_FX_PACKAGE_EVIDENCE',taxTreatment:'settle_expense_bill',reason:'Synthetic foreign payment'}),quote=await f.made('finance/exchange-rates',{base:ref(currency),quote:ref(f.currency),on:'2026-11-08',rate:'1.35',source:'Synthetic manually reviewed rate,not market data',reference:'SYNTHETIC-PACKAGE-FX',reason:'Synthetic reporting reference'});
+  const definition={...f.supplierInput.definition,allocation:{...f.supplierInput.definition.allocation,income:[{box:'048',amount:'59.74'}],gstHst:'7.76'},fx:{rateId:quote.id,maximumAgeDays:0,gstHstMinor:'5750',pstMinor:'0',review:'PRIVATE_FX_PACKAGE_REVIEW'}};assert.equal((await f.request('finance/expense-payments/'+payment.id+'/tax-recognition',{expectedVersion:0,definition,reason:'PRIVATE_FX_PACKAGE_RECOGNITION'})).response.status,200);
+  const before=(await f.pg.query('SELECT * FROM public.finance_journal_lines ORDER BY journal_id,line_number')).rows,result=await f.request(f.packagePath,f.packageInput,'staff');assert.equal(result.response.status,200,JSON.stringify(result.body));const d=result.body.data,p=d.workingPaper.paymentSources.find((v:any)=>v.paymentId===payment.id);assert.equal(d.workingPaper.totals.gross.minor,'62600');assert.equal(d.workingPaper.totals.reportableIncome.minor,'55399');assert.equal(d.workingPaper.supplierForeignCurrencyRecognitionIncluded,true);assert.equal(p.originalSettlement.currency,'BHD');assert.equal(p.originalSettlement.unitScale,3);assert.equal(p.originalSettlement.amount,'50.000');assert.equal(p.originalSettlement.minor,'50000');assert.equal(p.fx.rateId,quote.id);assert.equal(d.recipient.sin,f.identity.sin);assert.equal(d.workingPaper.referenceRatesIndependentlyVerified,false);assert.equal(d.workingPaper.taxConversionLegallyVerified,false);assert.doesNotMatch(JSON.stringify(d),/PRIVATE_FX_PACKAGE|PRIVATE_T4A|PRIVATE_RP/);assert.deepEqual((await f.pg.query('SELECT * FROM public.finance_journal_lines ORDER BY journal_id,line_number')).rows,before);
+  await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='exchange-rates.view'",[f.taxRole.id]);const denied=await f.request(f.packagePath,f.packageInput,'staff');assert.ok([403,404].includes(denied.response.status));assert.doesNotMatch(JSON.stringify(denied.body),/COMBINED_PRIVATE|123456782|50000|paymentSources/);
+ }finally{await f.pg.close();}
+});
