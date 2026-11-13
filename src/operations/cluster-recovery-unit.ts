@@ -14,6 +14,7 @@ DynamicUser=yes
 StateDirectory=${name}
 StateDirectoryMode=0700
 Environment=NODE_ENV=production
+Environment=KAVOSH_RESTORE_OS_ISOLATION_REQUIRED=1
 Environment=RECOVERY_POSTGRES_BIN=/usr/lib/postgresql/18/bin
 ${['database.dump','roles-export.sql','verification.json','input.json'].map(file=>'ExecStartPre=+/usr/bin/install --mode=0444 '+staging+'/'+file+' /var/lib/'+name+'/'+file).join('\n')}
 ExecStart=/usr/bin/node ${operator}/scripts/restore-isolated-cluster.js

@@ -1,0 +1,18 @@
+{
+  "probeSourceCommit": "2b952df",
+  "unit": "kavosh-one-recovery-e7a456c85fd244e99d16e9315ea62c7d.service",
+  "serviceResult": "success",
+  "serviceExitStatus": 0,
+  "syntheticInputsOnly": true,
+  "privateOwnedDirectoryVerified": true,
+  "rootOwnedReadOnlyInputFilesVerified": 4,
+  "liveDatabaseAndCredentialPathsDenied": true,
+  "externalNetworkInterfacesAbsent": true,
+  "internetSocketCreationDenied": true,
+  "noNewPrivilegesVerified": true,
+  "effectiveCapabilitiesAbsent": true,
+  "productionCredentialsInjected": false,
+  "sqlExecuted": false,
+  "diagnosticCorrection": "The initial os.networkInterfaces diagnostic required AF_NETLINK, which the unchanged AF_UNIX-only profile denies. The successful diagnostic reads the private kernel device list and verifies internet socket creation is denied. No isolation rule was relaxed.",
+  "fullServerRebuildVerified": false
+}
