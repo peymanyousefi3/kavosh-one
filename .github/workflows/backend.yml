@@ -87,7 +87,7 @@ jobs:
       - run: pnpm typecheck
       - run: node --test tests/build-typecheck.test.mjs
       - name: Agreement completion queue adapter rejects stale sources and unsafe claims
-        run: node --import tsx --test --test-concurrency=1 tests/completion-orchestrator.test.ts tests/signature-completion-job-worker.test.ts tests/signature-completion-config.test.ts tests/signature-completion-status.test.ts tests/signature-completion-retries.test.ts tests/signature-completion-incidents.test.ts tests/signature-completion-alerts.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/completion-orchestrator.test.ts tests/signature-completion-job-worker.test.ts tests/signature-completion-config.test.ts tests/signature-completion-provisioning.test.ts tests/signature-completion-status.test.ts tests/signature-completion-retries.test.ts tests/signature-completion-incidents.test.ts tests/signature-completion-alerts.test.ts
       - name: Account-wide signing callbacks retain only their exact school and original connection
         run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^account callback|^actual388to389|^bound-only|^initial provisioning' tests/boldsign-inbox.test.ts tests/signature-dispatch.test.ts
         env:
