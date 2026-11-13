@@ -1,0 +1,34 @@
+{
+  "sourceCommit": "6c5cc06a4fefbf6777f899cdf80a64ea7052bf8a",
+  "workflowRun": 43403045741,
+  "job": 131810435486,
+  "environment": "disposable GitHub PostgreSQL 17 container, synthetic data only",
+  "nativeEncryptedRecovery": {
+    "testsPassed": 35,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "suiteMilliseconds": 36500.721201,
+    "schemaRevision": 396,
+    "encryptedDatabaseBytes": 7274114,
+    "databaseRestoreMilliseconds": 7654,
+    "scope": "full migrated synthetic database, encrypted dump and exact-snapshot fingerprints, isolated same-cluster restore plus ordinary media recovery tests"
+  },
+  "freshClusterRecovery": {
+    "testsPassed": 1,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "suiteMilliseconds": 1337.877635,
+    "scope": "independent socket-only cluster, synthetic one-table database, source global role export and database access/settings",
+    "sourceBootstrapGrantorIdentityPreserved": true,
+    "roleAttributesAndMembershipGrantorsMatched": true,
+    "passwordsExported": false,
+    "databaseOwnerPermissionsAndSettingsMatched": true,
+    "privilegeTamperingDetected": true,
+    "sourceUnchanged": true,
+    "networkListeningEnabled": false
+  },
+  "productionRebuildVerified": false,
+  "fullServerRebuildVerified": false,
+  "productionServicesChanged": false,
+  "landingPageChanged": false
+}
