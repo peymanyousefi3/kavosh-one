@@ -10,6 +10,7 @@ import {privateDirectory,regularFile} from './recovery-files.ts';
 const uuid=z.string().uuid(),sha=z.string().regex(/^[a-f0-9]{64}$/);
 export const recordedMediaReference=z.object({academyId:uuid,stage:z.enum(['quarantine','clean']),storageTargetId:sha,fileId:uuid,bytes:z.coerce.number().int().positive().max(4294967296),sha256:sha}).strict();
 const bindingInput=z.object({databaseBackupId:uuid,archiveSha256:sha,schemaRevision:z.number().int().positive()}).strict();
+export const mediaReferenceCoverage=z.object({binding:bindingInput.extend({plaintextSha256:sha}),recordedReferences:z.number().int().nonnegative().max(10000000),unconfirmedUploads:z.number().int().nonnegative().safe(),signedEvidenceIncluded:z.literal(false)}).strict();
 export const mediaReferencePlanInput=bindingInput.extend({file:z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0')),plaintextSha256:sha,plaintextBytes:z.number().int().positive().max(4294967296)}).strict();
 const headerInput=bindingInput.extend({type:z.literal('header'),format:z.literal('kavosh-media-reference-plan-v1'),scope:z.literal('recorded_ordinary_file_objects'),signedEvidenceIncluded:z.literal(false)}).strict();
 const schoolInput=z.object({type:z.literal('academy'),academyId:uuid,unconfirmedUploads:z.number().int().nonnegative().safe()}).strict();

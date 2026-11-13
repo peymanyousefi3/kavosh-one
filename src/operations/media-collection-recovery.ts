@@ -6,11 +6,12 @@ import {isDeepStrictEqual} from 'node:util';
 import {z} from 'zod';
 import {RecoveryError,decryptRecoveryStream} from './database-backups.ts';
 import {privateDirectory,nativeRecoveryIdentity,stageRecoveryArchive} from './recovery-files.ts';
-import {recordedMediaReference} from './media-reference-plan.ts';
+import {recordedMediaReference,mediaReferenceCoverage} from './media-reference-plan.ts';
 import {recoverMediaObject} from './media-recovery.ts';
+import {authenticatedRecoveryRecords} from './recovery-json-records.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0')),sha=z.string().regex(/^[a-f0-9]{64}$/),uuid=z.string().uuid(),count=z.number().int().nonnegative().safe();
-const input=z.object({age:path,identityFile:path,archive:path,archiveDirectory:path,workDirectory:path,academyId:uuid,collectionId:uuid,expectedSha256:sha,expectedBytes:z.number().int().min(22).max(1074070016),maximumCatalogBytes:z.number().int().min(1024).max(1073741824).default(268435456),maximumObjects:count.max(10000000).default(1000000),maximumSourceBytes:count.max(1099511627776).default(1099511627776),timeoutMs:z.number().int().min(1000).max(86400000).default(3600000)}).strict();
+const input=z.object({age:path,identityFile:path,archive:path,archiveDirectory:path,workDirectory:path,academyId:uuid,collectionId:uuid,expectedSha256:sha,expectedBytes:z.number().int().min(22).max(1074070016),expectedReferenceCoverage:mediaReferenceCoverage.optional(),maximumCatalogBytes:z.number().int().min(1024).max(1073741824).default(268435456),maximumObjects:count.max(10000000).default(1000000),maximumSourceBytes:count.max(1099511627776).default(1099511627776),timeoutMs:z.number().int().min(1000).max(86400000).default(3600000)}).strict();
 const target=z.object({stage:z.enum(['clean','quarantine']),storageTargetId:sha}).strict();
 const header=z.object({type:z.literal('header'),format:z.literal('kavosh-media-catalog-v1'),id:uuid,academyId:uuid,startedAt:z.iso.datetime(),targets:z.array(target).min(1).max(128),referenceBinding:z.unknown().optional()}).strict();
 const object=z.object({type:z.literal('object'),id:uuid,source:recordedMediaReference.extend({etag:z.string().min(3).max(202).regex(/^"[\x21\x23-\x7e]+"$/),modifiedAt:z.iso.datetime()}),archive:z.object({filename:z.literal('media.bin.age'),ciphertextSha256:sha,encryptedBytes:z.number().int().min(22).max(4296146944)}).strict(),offsite:z.unknown()}).strict();
@@ -31,17 +32,13 @@ export async function recoverMediaCollection(raw:unknown,signal?:AbortSignal){
   await stageRecoveryArchive(i.archive,cipher,i.expectedBytes,i.expectedSha256,abort);cipherOwned=true;
   const encrypted=await open(cipher,constants.O_RDONLY|constants.O_NOFOLLOW);let catalogProof:Awaited<ReturnType<typeof decryptRecoveryStream>>;
   try{catalogProof=await decryptRecoveryStream({age:i.age,identityFile:i.identityFile,file:clear,maximumBytes:i.maximumCatalogBytes},encrypted.createReadStream({autoClose:true}),abort);clearOwned=true;}finally{await encrypted.close().catch(()=>{});}
-  await unlink(cipher);cipherOwned=false;catalog=await open(clear,constants.O_RDONLY|constants.O_NOFOLLOW);const file=catalog,original=await file.stat();
-  async function* records(){
-   const buffer=Buffer.alloc(65536),hash=createHash('sha256');let pending=Buffer.alloc(0),position=0;
-   while(true){if(abort.aborted)throw new RecoveryError('RECOVERY_CANCELLED');const {bytesRead}=await file.read(buffer,0,buffer.length,position);if(!bytesRead)break;position+=bytesRead;if(position>i.maximumCatalogBytes)throw new RecoveryError('MEDIA_CATALOG_SIZE_LIMIT');hash.update(buffer.subarray(0,bytesRead));pending=Buffer.concat([pending,buffer.subarray(0,bytesRead)]);let end:number;while((end=pending.indexOf(10))!==-1){if(!end||end>65536)throw new RecoveryError('INVALID_MEDIA_RECOVERY_CATALOG');yield JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(pending.subarray(0,end)));pending=pending.subarray(end+1);}if(pending.length>65536)throw new RecoveryError('INVALID_MEDIA_RECOVERY_CATALOG');}
-   const after=await file.stat();if(pending.length||position!==catalogProof.bytes||hash.digest('hex')!==catalogProof.sha256||after.size!==original.size||after.mtimeMs!==original.mtimeMs||after.ctimeMs!==original.ctimeMs||after.nlink!==1)throw new RecoveryError('MEDIA_RECOVERY_CATALOG_CHANGED');
-  }
+  await unlink(cipher);cipherOwned=false;catalog=await open(clear,constants.O_RDONLY|constants.O_NOFOLLOW);const records=await authenticatedRecoveryRecords(catalog,catalogProof,i.maximumCatalogBytes,abort);
   let phase='header',objects=0,sourceBytes=0,last='',catalogHeader:z.infer<typeof header>|undefined;
   const totals=new Map<string,{stage:'clean'|'quarantine';storageTargetId:string;objects:number;bytes:number;hash:ReturnType<typeof createHash>}>();
   for await(const row of records()){
    if(phase==='header'){
     catalogHeader=header.parse(row);if(catalogHeader.id!==i.collectionId||catalogHeader.academyId!==i.academyId)throw new RecoveryError('MEDIA_RECOVERY_SCOPE_MISMATCH');
+    if(i.expectedReferenceCoverage&&!isDeepStrictEqual(catalogHeader.referenceBinding,i.expectedReferenceCoverage.binding))throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');
     for(const t of catalogHeader.targets){const key=t.stage+':'+t.storageTargetId;if(totals.has(key))throw new RecoveryError('INVALID_MEDIA_RECOVERY_CATALOG');totals.set(key,{...t,objects:0,bytes:0,hash:createHash('sha256')});}phase='objects';continue;
    }
    if(phase==='complete')throw new RecoveryError('INVALID_MEDIA_RECOVERY_CATALOG');
@@ -51,6 +48,7 @@ export async function recoverMediaCollection(raw:unknown,signal?:AbortSignal){
     objects++;sourceBytes+=source.bytes;if(objects>i.maximumObjects||sourceBytes>i.maximumSourceBytes)throw new RecoveryError('MEDIA_RECOVERY_SIZE_LIMIT');total.objects++;total.bytes+=source.bytes;total.hash.update(JSON.stringify({fileId:source.fileId,bytes:source.bytes,etag:source.etag,modifiedAt:source.modifiedAt})+'\n');
    }else{
     const complete=footer.parse(row),expected=Array.from(totals.values(),t=>({storageTargetId:t.storageTargetId,stage:t.stage,objects:t.objects,bytes:t.bytes,sha256:t.hash.digest('hex')}));
+    if(i.expectedReferenceCoverage&&(complete.recordedDatabaseReferencesVerified!==true||!isDeepStrictEqual(mediaReferenceCoverage.parse(complete.referenceCoverage),i.expectedReferenceCoverage)))throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');
     if(complete.objects!==objects||complete.sourceBytes!==sourceBytes||!isDeepStrictEqual(complete.inventories,expected))throw new RecoveryError('MEDIA_RECOVERY_TOTALS_MISMATCH');phase='complete';
    }
   }

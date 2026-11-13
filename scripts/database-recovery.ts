@@ -6,6 +6,7 @@ import {mediaReferencePlanInput} from '../src/operations/media-reference-plan.ts
 import {recoverMediaObject} from '../src/operations/media-recovery.ts';
 import {recoverMediaCollection} from '../src/operations/media-collection-recovery.ts';
 import {backupMediaBatch} from '../src/operations/media-backup-batch.ts';
+import {recoverMediaBatch} from '../src/operations/media-batch-recovery.ts';
 import {constants} from 'node:fs';
 import {open} from 'node:fs/promises';
 import {dirname,isAbsolute} from 'node:path';
@@ -34,6 +35,7 @@ try{
   console.log('copy-media-catalog BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: retry only an encrypted collection catalog at its fixed destination.');
   console.log('recover-media ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: offline isolated extraction using MEDIA_RECOVERY_SOURCE_JSON (academyId,stage,storageTargetId,fileId,bytes,sha256),RESTORE_AGE_IDENTITY_FILE,RECOVERY_WORK_DIRECTORY,AGE_BIN. Use independently retained catalog metadata. Full ciphertext and authenticated plaintext must match;never overwrites source/cloud objects or activates restored data. Keep the recovery key off the VPS.');
   console.log('recover-media-collection ACADEMY_ID COLLECTION_ID CATALOG_ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: authenticate and validate the entire catalog,then recover all objects from MEDIA_RECOVERY_ARCHIVE_DIRECTORY/media-ARCHIVE_UUID/media.bin.age into private isolated folders. Uses AGE_BIN,RESTORE_AGE_IDENTITY_FILE,RECOVERY_WORK_DIRECTORY. Writes a bounded streaming recovery journal;partial recoveries have no complete footer and never activate application access. No cloud writes or overwrite.');
+  console.log('recover-media-batch BATCH_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES DATABASE_BACKUP_ID DATABASE_SHA256 SCHEMA_REVISION: offline whole-batch recovery using the same age/key/work-directory settings plus MEDIA_RECOVERY_ARCHIVE_DIRECTORY. Stage child catalogs at media-collection-UUID/catalog.jsonl.age and objects at media-UUID/media.bin.age. Validates original database binding,school ordering,counts and every child reference binding. Never restores SQL,publishes media or activates the application.');
   console.log('Optional MEDIA_REFERENCE_PLAN_JSON: private local file plus databaseBackupId,archiveSha256,schemaRevision,plaintextSha256,plaintextBytes from the exact snapshot backup. Whole metadata is validated before R2 IO;missing historical targets/files or changed recorded bytes reject collection completion. Ordinary/signed/pending scopes stay explicit.');
   console.log('Drive credentials must be injected from Keychain or a server secret manager,never command arguments or source. Only app-created file access;no Drive sync,delete,pruning or sharing changes. This does not schedule backups or verify a full restore/media recovery.');
   console.log('restore ARCHIVE TRUSTED_SHA256 EXPECTED_REVISION RESTORE:kavosh_recovery_NAME: RESTORE_DATABASE_URL,RESTORE_AGE_IDENTITY_FILE,RECOVERY_WORK_DIRECTORY,AGE_BIN,PG_RESTORE_BIN');
@@ -48,6 +50,9 @@ try{
   else if(action==='backup-media'&&args.length===7){
    let configuration;try{const text=process.env.MEDIA_BACKUP_CONNECTION_JSON;if(!text||Buffer.byteLength(text)>65536)throw new Error();configuration=JSON.parse(text);}catch{throw new RecoveryError('INVALID_MEDIA_BACKUP_CONFIGURATION');}
    console.log(JSON.stringify(await backupMediaObject({configuration,academyId:args[0],stage:args[1],fileId:args[2],storageTargetId:args[3],bytes:Number(args[4]),etag:args[5],modifiedAt:args[6],age:common.age,workDirectory:common.workDirectory,recipient:process.env.BACKUP_AGE_RECIPIENT},controller.signal)));
+  }
+  else if(action==='recover-media-batch'&&args.length===7){
+   console.log(JSON.stringify(await recoverMediaBatch({age:common.age,identityFile:process.env.RESTORE_AGE_IDENTITY_FILE,workDirectory:common.workDirectory,archiveDirectory:process.env.MEDIA_RECOVERY_ARCHIVE_DIRECTORY,batchId:args[0],archive:args[1],expectedSha256:args[2],expectedBytes:Number(args[3]),expectedDatabaseBackupId:args[4],expectedDatabaseSha256:args[5],expectedSchemaRevision:Number(args[6])},controller.signal)));
   }
   else if(action==='recover-media-collection'&&args.length===5){
    console.log(JSON.stringify(await recoverMediaCollection({age:common.age,identityFile:process.env.RESTORE_AGE_IDENTITY_FILE,workDirectory:common.workDirectory,archiveDirectory:process.env.MEDIA_RECOVERY_ARCHIVE_DIRECTORY,academyId:args[0],collectionId:args[1],archive:args[2],expectedSha256:args[3],expectedBytes:Number(args[4])},controller.signal)));
