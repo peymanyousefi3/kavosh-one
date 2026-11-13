@@ -60,6 +60,10 @@ import { assertSignatureCompletionRole } from '../src/integrations/signature-com
 export async function checkAlreadyRecordedCompletion(pg:Pick<Awaited<ReturnType<typeof operationsFixture>>['pg'],'query'|'exec'|'runtime'>,academy:string,start:string,purpose:'worker_services'|'unified_enrollment'){
  const table=purpose==='worker_services'?'work_signature_completion_evidence':'signature_completion_evidence';
  const original=(await pg.query<{evidence_id:string}>(`SELECT e.id evidence_id FROM public.${table} e JOIN public.signature_completion_jobs j ON j.academy_id=e.academy_id AND j.start_id=e.start_id AND j.source_fingerprint=e.source_fingerprint WHERE j.academy_id=$1 AND j.start_id=$2 AND j.purpose=$3 AND j.state='queued' ORDER BY e.recorded_at DESC,e.id DESC LIMIT 1`,[academy,start,purpose])).rows[0];assert.ok(original,'fixture must contain actual original-bound persisted evidence,not a fake UUID');
+ // The earlier stale-approval fault deliberately moved availability forward.
+ // Make this fixture due explicitly;do not depend on how long PDF checks took
+ // or change the production retry delay to satisfy the assertion.
+ await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE academy_id=$1 AND purpose=$2 AND start_id=$3 AND state='queued'",[academy,purpose,start]);
  const before=await pg.query('SELECT * FROM public.signature_completion_job_attempts WHERE academy_id=$1 AND start_id=$2 ORDER BY attempt_no',[academy,start]),budgets=await pg.query('SELECT * FROM public.signature_completion_request_budgets ORDER BY group_id,window_started'),incidents=await pg.query('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1 AND start_id=$2 ORDER BY id',[academy,start]);
  const claim=async()=>{const c=pg.runtime?await pg.runtime.connect():{query:pg.query.bind(pg),release(){}};try{await c.query('SET ROLE kavosh_signature_completion_worker');return(await c.query('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[[academy],randomUUID()])).rows;}finally{if(!pg.runtime)await pg.exec('RESET ROLE');c.release();}};
  for(const result of pg.runtime?await Promise.all([claim(),claim()]):[await claim(),await claim()])assert.deepEqual(result,[],'existing measured evidence must avoid a new provider job');
@@ -171,6 +175,31 @@ export async function checkCompletionQueue(pg:Pick<Awaited<ReturnType<typeof ope
  await pg.query('UPDATE public.signature_completion_request_budgets SET reserved_calls=0 WHERE group_id=$1',[academy]);
  await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE start_id=$1",[start]);
  const second=(await claim())[0];assert.equal(second.attempt_no,2);assert.notEqual(second.lease_token,first.lease_token);assert.equal(await finish(first.lease_token),false);assert.equal(await finish(second.lease_token),true);
+ if(pg.runtime){
+  await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE start_id=$1",[start]);
+  const holder=await pg.runtime.connect();try{
+   await holder.query('BEGIN');await holder.query('SELECT start_id FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3 FOR UPDATE',[academy,purpose,start]);
+   assert.deepEqual(await claim(),[],'a genuinely row-locked due job must be skipped by another native claimant');
+  }finally{await holder.query('ROLLBACK');holder.release();}
+ }
+ // Clock fault injection,not real-time waiting or a load test. Keep the entire
+ // crash sequence disposable;later history checks retain the original2attempts.
+ await pg.exec('BEGIN');try{
+  await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE start_id=$1",[start]);
+  const inside=()=>isolated(async()=> (await pg.query<{lease_token:string;attempt_no:number}>('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[[academy],worker])).rows);
+  let live=(await inside())[0];assert.equal(live.attempt_no,3);
+  for(let failures=1;failures<=5;failures++){
+   await pg.query("UPDATE public.signature_completion_jobs SET started_at=clock_timestamp()-interval '61 seconds',lease_until=clock_timestamp()-interval '1 second' WHERE academy_id=$1 AND purpose=$2 AND start_id=$3",[academy,purpose,start]);
+   const next=await inside();assert.equal(next.length,failures===5?0:1,'only the fifth expired lease becomes terminal');
+   assert.equal((await pg.query('SELECT failures FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows[0].failures,failures);
+   if(failures<5){assert.notEqual(next[0].lease_token,live.lease_token);assert.equal(next[0].attempt_no,live.attempt_no+1);assert.equal(await finish(live.lease_token),false,'expired runners remain fenced after recovery');live=next[0];}
+  }
+  assert.deepEqual((await pg.query('SELECT state,last_outcome,lease_token,attempt_no FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows,[{state:'blocked',last_outcome:'lease_expired',lease_token:null,attempt_no:7}]);
+  const attempts=(await pg.query('SELECT attempt_no,outcome FROM public.signature_completion_job_attempts WHERE academy_id=$1 AND start_id=$2 AND attempt_no>=3 ORDER BY attempt_no',[academy,start])).rows;assert.deepEqual(attempts,Array.from({length:5},(_,i)=>({attempt_no:i+3,outcome:'lease_expired'})));
+  const cases=(await pg.query<{id:string}>('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1 AND purpose=$2 AND start_id=$3 AND reason_code=\'lease_expired\'',[academy,purpose,start])).rows;assert.equal(cases.length,1);
+  assert.ok((await pg.query('SELECT id FROM public.portal_notifications WHERE academy_id=$1 AND event_id=$2 AND origin=\'mandatory\'',[academy,cases[0].id])).rows.length>=1);
+  assert.deepEqual(await inside(),[]);assert.equal((await pg.query('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows.length,1,'terminal recovery must not publish another case on each scan');
+ }finally{await pg.exec('ROLLBACK');}
  // Rolled-back fault injection changes only this disposable test database.
  // Same connection here is intentional: the forced expiry is uncommitted.
  await pg.exec('BEGIN');try{

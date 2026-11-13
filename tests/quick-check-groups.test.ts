@@ -5,6 +5,16 @@ import { execFileSync } from 'node:child_process';
 import { quickCheckGroups,quickCheckGroupCount,verifyQuickCheckFiles } from '../scripts/run-quick-checks.mjs';
 
 const prefix="node --import tsx --test --test-concurrency=1 --test-skip-pattern='large|one thousand' ";
+test('native signing failures run first without omitting or repeating the remaining PDF regressions',async()=>{
+ const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  pdf-parser:')[1]?.split('  scanner-engine:')[0];assert.ok(job);
+ const pattern=new RegExp(job.match(/SIGNING_SOURCE_PATTERN: '([^']+)'/)![1]),commands=job.split('\n').filter(line=>line.includes('node --import tsx --test'));
+ assert.equal(commands.length,2);assert.ok(commands[0].includes('--test-name-pattern="$SIGNING_SOURCE_PATTERN"'));assert.ok(commands[1].includes('--test-skip-pattern="$SIGNING_SOURCE_PATTERN"'));
+ assert.deepEqual(commands[0].match(/tests\/[^ ]+\.test\.ts/g),['tests/signing-original-flow.test.ts','tests/work-signature-original.test.ts']);
+ const remaining=commands[1].match(/tests\/[^ ]+\.test\.ts/g)!;assert.equal(remaining.length,13);assert.equal(new Set(remaining).size,13);assert.ok(remaining.includes('tests/pdf-validation.test.ts'));assert.ok(remaining.includes('tests/signing-original-flow.test.ts'));assert.ok(remaining.includes('tests/work-signature-original.test.ts'));
+ for(const name of ['approved source,real PDF parsing (Test registry)','approved source,real PDF parsing (Live registry)','two-party worker source uses actual parsed PDF'])assert.equal(pattern.test(name),true);
+ for(const name of ['genuine three-party worker agreement','signed archive parsing','PDF runtime missing isolation'])assert.equal(pattern.test(name),false);
+ assert.equal(job.match(/PDF_VALIDATION_TEST_REQUIRED: 'true'/g)?.length,2);assert.equal(job.match(/TEST_DATABASE_URL: postgresql:/g)?.length,2);assert.doesNotMatch(job,/continue-on-error/);
+});
 test('scanner CI keeps the actual mandatory engine with bounded signed-repository downloads',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  scanner-engine:')[1]?.split('  video-parser:')[0];assert.ok(job);assert.ok(job.includes('set -euo pipefail'));assert.ok(job.includes('Acquire::Retries=1'));assert.ok(job.includes('Acquire::http::Timeout=15'));assert.ok(job.includes('Acquire::https::Timeout=15'));assert.ok(job.includes('--no-install-recommends clamav-daemon'));assert.ok(job.includes('tests/clamav-engine.test.ts'));assert.ok(job.includes('TEST_CLAMD_BINARY: /usr/sbin/clamd'));assert.doesNotMatch(job,/continue-on-error|allow-unauthenticated|AllowInsecure|Verify-Peer=false|Verify-Host=false|Check-Valid-Until=false/);
  const expression=job.match(/sudo sed -i '([^']+)' \/etc\/apt\/apt-mirrors\.txt/)![1],before='http://azure.archive.ubuntu.com/ubuntu\nhttps://azure.archive.ubuntu.com/ubuntu\nhttps://security.ubuntu.com/ubuntu\nhttps://other.example.test/ubuntu\n',after=execFileSync('sed',['-e',expression],{input:before,encoding:'utf8'});assert.equal(after,'https://archive.ubuntu.com/ubuntu\nhttps://archive.ubuntu.com/ubuntu\nhttps://security.ubuntu.com/ubuntu\nhttps://other.example.test/ubuntu\n');

@@ -37,6 +37,8 @@ test('actual393to394 preserves old cases without retrospective alerts and retain
   await f.pg.exec(readFileSync(new URL('../db/migrations/394_signature_completion_alerts.sql',import.meta.url),'utf8'));await upgradeToCurrent(f.pg);
   assert.deepEqual((await f.pg.query('SELECT * FROM public.signature_completion_incidents')).rows,old);assert.equal((await f.pg.query("SELECT * FROM public.automation_event_sources WHERE source_kind='signature_check'")).rows.length,0);
   assert.equal((await f.pg.query("SELECT count(*)::integer n FROM platform_private.academy_preservation_coverage WHERE classification='preserved_record' AND NOT(delete_guard_present AND truncate_guard_present)")).rows[0].n,0);
+  const handoff=(await f.pg.query("SELECT p.prosecdef,r.rolname owner,has_function_privilege('kavosh_message_worker',p.oid,'EXECUTE') sender_exec,has_function_privilege('kavosh_message_worker','public.lock_signature_check_source(uuid)','EXECUTE') sender_lock_exec FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner WHERE p.oid='public.guard_signature_check_delivery()'::regprocedure")).rows[0];
+  assert.deepEqual(handoff,{prosecdef:true,owner:'kavosh_message_policy',sender_exec:false,sender_lock_exec:false},'COMMIT-time lock authority stays trigger-only,not a general sender grant');
   for(const [role,purpose] of [['kavosh_runtime','web'],['kavosh_automation_worker','automation_worker'],['kavosh_message_worker','message_worker']] as const){await f.pg.exec('SET ROLE '+role);try{await assertRuntimeRole({query:f.pg.query.bind(f.pg),release(){}},purpose);}finally{await f.pg.exec('RESET ROLE');}}
  }finally{await f.pg.close();}
 });

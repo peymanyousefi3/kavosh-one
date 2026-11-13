@@ -16,7 +16,7 @@ REVOKE CREATE ON SCHEMA public FROM kavosh_signature_completion_policy;
 REVOKE ALL ON FUNCTION public.lock_signature_check_source(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.lock_signature_check_source(uuid) TO kavosh_runtime,kavosh_message_policy;
 
-CREATE FUNCTION public.guard_signature_check_delivery() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+CREATE FUNCTION public.guard_signature_check_delivery() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE incident uuid;BEGIN
  IF TG_TABLE_NAME='automation_runs' THEN
   IF NEW.outcome<>'processed' OR coalesce((NEW.summary->>'portalNotifications')::integer,0)+coalesce((NEW.summary->>'outboundQueued')::integer,0)=0 THEN RETURN NEW;END IF;
@@ -30,6 +30,12 @@ DECLARE incident uuid;BEGIN
  RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION public.guard_signature_check_delivery() FROM PUBLIC;
+-- Deferred handoff triggers execute at COMMIT under the sender's role,not the
+-- begin helper's definer role. Keep lock authority behind this trigger-only
+-- private owner;never give the sender the general privileged source locker.
+GRANT CREATE ON SCHEMA public TO kavosh_message_policy;
+ALTER FUNCTION public.guard_signature_check_delivery() OWNER TO kavosh_message_policy;
+REVOKE CREATE ON SCHEMA public FROM kavosh_message_policy;
 DROP TRIGGER aa_signature_check_custom_delivery_guard ON public.notification_deliveries;
 DROP TRIGGER aa_signature_check_custom_portal_guard ON public.portal_notifications;
 DROP FUNCTION public.guard_signature_check_custom_delivery();
