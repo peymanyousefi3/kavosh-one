@@ -14,6 +14,7 @@ const ssh=['-F','.local-tools/ovh.ssh-config','kavosh-one-production'],quote=(s:
 const remote=(command:string,input?:Buffer)=>execFileSync('/usr/bin/ssh',[...ssh,command],{input,stdio:[input?'pipe':'ignore','pipe','pipe'],timeout:60000,maxBuffer:3145728});
 const get=(service:string)=>{const bytes=execFileSync('/usr/bin/security',['find-generic-password','-a','kavosh-one','-s',service,'-w'],{stdio:['ignore','pipe','pipe']});try{return JSON.parse(bytes.toString());}finally{bytes.fill(0);}};
 let stage='arguments',directory:string|undefined,unit:ReturnType<typeof isolatedClusterUnit>|undefined,staged=false,installed=false;
+let success:Record<string,unknown>|undefined;
 const localFiles:string[]=[],stagedFiles=['database.dump','roles-export.sql','verification.json','input.json','unit.service'];
 const properties=(name:string)=>Object.fromEntries(remote('sudo systemctl show '+name+'.service -p ActiveState -p Result -p ExecMainStatus -p MemoryPeak -p CPUUsageNSec').toString().trim().split('\n').map(line=>{const i=line.indexOf('=');return[line.slice(0,i),line.slice(i+1)];}));
 try{
@@ -48,7 +49,7 @@ try{
  stage='restore evidence';const lines=remote('sudo journalctl -u '+unit.name+'.service --no-pager -o cat -n 20').toString().split('\n'),result=JSON.parse(lines.findLast(line=>line.startsWith('{"backupId":'))??'null');assert.equal(result?.backupId,backup.id);
  for(const field of ['originalExportedSnapshotMatched','rolesAndMembershipsVerified','databaseAccessAndSettingsVerified','isolatedPostgresStopped','osIsolationVerified'])assert.equal(result[field],true);assert.equal(result.applicationActivationAllowed,false);
  assert.equal(remote('sudo systemctl show kavosh-one.service -p MainPID --value').toString().trim(),webBefore);assert.equal(remote('curl -sS -o /dev/null -w "%{http_code}" https://kavosh.ai/').toString(),'200');
- console.log(JSON.stringify({...result,configurationBackupId:config.id,independentDriveDownloadsVerified:3,privateRecoveryKeyTransferredToVps:false,liveWebProcessUnchanged:true,landingHttpStatus:200,sourceDatabaseRestoreCommandsIssued:0,memoryPeak:state.MemoryPeak,cpuUsageNanoseconds:state.CPUUsageNSec}));
+ success={...result,unitName:unit.name,configurationBackupId:config.id,independentDriveDownloadsVerified:3,privateRecoveryKeyTransferredToVps:false,liveWebProcessUnchanged:true,landingHttpStatus:200,sourceDatabaseRestoreCommandsIssued:0,memoryPeak:state.MemoryPeak,cpuUsageNanoseconds:state.CPUUsageNSec};
 }catch{console.error('ISOLATED_CLUSTER_ACCEPTANCE_FAILED: '+stage);process.exitCode=1;}
 finally{
  if(installed&&unit)try{remote('sudo systemctl stop '+unit.name+'.service && sudo systemctl clean --what=state '+unit.name+'.service');remote('sudo rm -- /run/systemd/system/'+unit.name+'.service && sudo systemctl daemon-reload');}catch{console.error('CLUSTER_SERVICE_CLEANUP_REQUIRED');process.exitCode=1;}
@@ -56,3 +57,4 @@ finally{
  for(const file of localFiles)try{unlinkSync(file);}catch{console.error('CLUSTER_LOCAL_CLEANUP_REQUIRED');process.exitCode=1;}
  if(directory)try{rmdirSync(directory);}catch{console.error('CLUSTER_LOCAL_CLEANUP_REQUIRED');process.exitCode=1;}
 }
+if(success&&process.exitCode!==1)console.log(JSON.stringify({...success,temporaryLocalAndServerInputsRemoved:true,temporaryDatabaseAndServiceRemoved:true}));
