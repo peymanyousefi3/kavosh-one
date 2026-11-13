@@ -15,6 +15,8 @@ try{
  if(action==='--help'){
   console.log('backup: BACKUP_DATABASE_URL,BACKUP_AGE_RECIPIENT,RECOVERY_WORK_DIRECTORY,AGE_BIN,PG_DUMP_BIN');
   console.log('backup-proof: same settings;add a private bounded-memory row/ownership/function/RLS fingerprint baseline from the exact exported snapshot and a separate encrypted verification.json.age companion. Ordinary backup remains single-pass. Retain both archive hashes independently. Sequence values/global roles/media are not certified.');
+  console.log('backup-media-plan: database/row proof plus a private bounded recorded-file reference plan from that SAME snapshot,including historical targets and unconfirmed-upload counts. Keeps local metadata and an encrypted media-references.jsonl.age companion;does not copy or certify media bytes. backup-media-plan-drive also copies/readback-verifies all three encrypted archives.');
+  console.log('copy-media-plan BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: guarded retry for the encrypted reference plan at its fixed destination.');
   console.log('backup-drive: same backup settings plus RCLONE_BIN,BACKUP_DRIVE_CONNECTION_JSON;explicit opt-in encrypted database copy with full remote SHA256 verification.');
   console.log('backup-proof-drive: additionally encrypt and copy the exact-snapshot verification companion,with independent full readback of both archives. Ordinary nightly backups remain single-pass.');
   console.log('copy-drive BACKUP_ID ARCHIVE TRUSTED_SHA256 ENCRYPTED_BYTES: retry one existing encrypted archive using RCLONE_BIN,BACKUP_DRIVE_CONNECTION_JSON,RECOVERY_WORK_DIRECTORY.');
@@ -33,7 +35,7 @@ try{
   console.log('Restore requires an offline database superuser,refuses active ordinary clients,and leaves CONNECTION LIMIT 0 in place. It never reopens app or worker access.');
  }else{
   const common={age:process.env.AGE_BIN,workDirectory:process.env.RECOVERY_WORK_DIRECTORY,sslMode:process.env.RECOVERY_DATABASE_SSL_MODE??'verify-full',caFile:process.env.RECOVERY_DATABASE_CA_FILE};
-  if((action==='backup'||action==='backup-proof')&&args.length===0)console.log(JSON.stringify(await backupDatabase({...common,databaseUrl:process.env.BACKUP_DATABASE_URL,pgDump:process.env.PG_DUMP_BIN,recipient:process.env.BACKUP_AGE_RECIPIENT,verificationSnapshot:action==='backup-proof'},controller.signal)));
+  if(['backup','backup-proof','backup-media-plan'].includes(action??'')&&args.length===0)console.log(JSON.stringify(await backupDatabase({...common,databaseUrl:process.env.BACKUP_DATABASE_URL,pgDump:process.env.PG_DUMP_BIN,recipient:process.env.BACKUP_AGE_RECIPIENT,verificationSnapshot:action!=='backup',mediaReferenceSnapshot:action==='backup-media-plan'},controller.signal)));
   else if(action==='backup-media'&&args.length===7){
    let configuration;try{const text=process.env.MEDIA_BACKUP_CONNECTION_JSON;if(!text||Buffer.byteLength(text)>65536)throw new Error();configuration=JSON.parse(text);}catch{throw new RecoveryError('INVALID_MEDIA_BACKUP_CONFIGURATION');}
    console.log(JSON.stringify(await backupMediaObject({configuration,academyId:args[0],stage:args[1],fileId:args[2],storageTargetId:args[3],bytes:Number(args[4]),etag:args[5],modifiedAt:args[6],age:common.age,workDirectory:common.workDirectory,recipient:process.env.BACKUP_AGE_RECIPIENT},controller.signal)));
@@ -43,21 +45,22 @@ try{
    let offsite;if(process.env.BACKUP_DRIVE_CONNECTION_JSON!==undefined){try{const text=process.env.BACKUP_DRIVE_CONNECTION_JSON;if(Buffer.byteLength(text)>65536)throw new Error();offsite={rclone:process.env.RCLONE_BIN,drive:driveBackupCredentials.parse(JSON.parse(text))};}catch{throw new RecoveryError('INVALID_DRIVE_BACKUP_CONFIGURATION');}}
    console.log(JSON.stringify(await backupMediaCollection({academyId:args[0],targets,age:common.age,recipient:process.env.BACKUP_AGE_RECIPIENT,workDirectory:common.workDirectory,...offsite?{offsite}:{}},controller.signal)));
   }
-  else if((['backup-drive','backup-proof-drive'].includes(action??'')&&args.length===0)||(['copy-drive','copy-config','copy-verification','copy-media','copy-media-catalog'].includes(action??'')&&args.length===4)){
+  else if((['backup-drive','backup-proof-drive','backup-media-plan-drive'].includes(action??'')&&args.length===0)||(['copy-drive','copy-config','copy-verification','copy-media','copy-media-catalog','copy-media-plan'].includes(action??'')&&args.length===4)){
    const connection=process.env.BACKUP_DRIVE_CONNECTION_JSON;if(!connection||Buffer.byteLength(connection)>65536)throw new RecoveryError('INVALID_DRIVE_BACKUP_CONFIGURATION');
    let drive:ReturnType<typeof driveBackupCredentials.parse>;try{drive=driveBackupCredentials.parse(JSON.parse(connection));}catch{throw new RecoveryError('INVALID_DRIVE_BACKUP_CONFIGURATION');}
    const transfer={rclone:process.env.RCLONE_BIN,workDirectory:common.workDirectory,drive};
-   if(action==='backup-drive'||action==='backup-proof-drive'){
-    const backup=await backupDatabase({...common,databaseUrl:process.env.BACKUP_DATABASE_URL,pgDump:process.env.PG_DUMP_BIN,recipient:process.env.BACKUP_AGE_RECIPIENT,verificationSnapshot:action==='backup-proof-drive'},controller.signal);
+   if(['backup-drive','backup-proof-drive','backup-media-plan-drive'].includes(action??'')){
+    const backup=await backupDatabase({...common,databaseUrl:process.env.BACKUP_DATABASE_URL,pgDump:process.env.PG_DUMP_BIN,recipient:process.env.BACKUP_AGE_RECIPIENT,verificationSnapshot:action!=='backup-drive',mediaReferenceSnapshot:action==='backup-media-plan-drive'},controller.signal);
     const offsite=await copyEncryptedBackupToDrive({...transfer,archive:backup.archivePath,backupId:backup.id,expectedSha256:backup.ciphertextSha256,expectedBytes:backup.encryptedBytes},controller.signal);
-    let verificationOffsite=null;
-    if(action==='backup-proof-drive'){
+    let verificationOffsite=null,mediaReferenceOffsite=null;
+    if(action!=='backup-drive'){
      const proof=backup.verificationArchive;if(!proof)throw new RecoveryError('VERIFICATION_ARCHIVE_REQUIRED');
      verificationOffsite=await copyEncryptedBackupToDrive({...transfer,kind:'verification',archive:dirname(backup.archivePath)+'/'+proof.filename,backupId:backup.id,expectedSha256:proof.ciphertextSha256,expectedBytes:proof.encryptedBytes},controller.signal);
     }
-    console.log(JSON.stringify({backup,offsite,verificationOffsite,recoveryBaselineOffsiteVerified:offsite.independentCopyVerified===true&&verificationOffsite?.independentCopyVerified===true}));
+    if(action==='backup-media-plan-drive'){const plan=backup.mediaReferenceArchive;if(!plan)throw new RecoveryError('MEDIA_REFERENCE_ARCHIVE_REQUIRED');mediaReferenceOffsite=await copyEncryptedBackupToDrive({...transfer,kind:'media-reference-plan',archive:dirname(backup.archivePath)+'/'+plan.filename,backupId:backup.id,expectedSha256:plan.ciphertextSha256,expectedBytes:plan.encryptedBytes},controller.signal);}
+    console.log(JSON.stringify({backup,offsite,verificationOffsite,mediaReferenceOffsite,recoveryBaselineOffsiteVerified:offsite.independentCopyVerified===true&&verificationOffsite?.independentCopyVerified===true,mediaReferencePlanOffsiteVerified:offsite.independentCopyVerified===true&&mediaReferenceOffsite?.independentCopyVerified===true}));
    }
-   else console.log(JSON.stringify(await copyEncryptedBackupToDrive({...transfer,kind:action==='copy-config'?'configuration':action==='copy-verification'?'verification':action==='copy-media'?'media':action==='copy-media-catalog'?'media-catalog':'database',backupId:args[0],archive:args[1],expectedSha256:args[2],expectedBytes:Number(args[3])},controller.signal)));
+   else console.log(JSON.stringify(await copyEncryptedBackupToDrive({...transfer,kind:action==='copy-config'?'configuration':action==='copy-verification'?'verification':action==='copy-media'?'media':action==='copy-media-catalog'?'media-catalog':action==='copy-media-plan'?'media-reference-plan':'database',backupId:args[0],archive:args[1],expectedSha256:args[2],expectedBytes:Number(args[3])},controller.signal)));
   }
   else if(action==='restore'&&args.length===4){
    const file=process.env.RESTORE_VERIFICATION_FILE;let expectedVerification;

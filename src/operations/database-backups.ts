@@ -1,6 +1,6 @@
 import { spawn,type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash,randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants,createReadStream } from 'node:fs';
 import { lstat,realpath,open,mkdir,unlink,rmdir } from 'node:fs/promises';
 import { isAbsolute,join,resolve,dirname } from 'node:path';
 import { Readable,Transform } from 'node:stream';
@@ -10,6 +10,9 @@ import { z } from 'zod';
 import { expectedSchemaRevision } from '../core/database.ts';
 import { isDeepStrictEqual } from 'node:util';
 import { backupVerification,databaseVerificationSnapshot } from './database-verification.ts';
+import {RecoveryError} from './recovery-error.ts';
+import {captureMediaReferencePlan} from './media-reference-plan.ts';
+export {RecoveryError} from './recovery-error.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'));
 const common=z.object({
@@ -17,14 +20,11 @@ const common=z.object({
  age:path,workDirectory:path,timeoutMs:z.number().int().min(1000).max(3_600_000).default(900_000),
  maximumBytes:z.number().int().min(1_048_576).max(1_099_511_627_776).default(21_474_836_480)
 });
-const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false)}).strict();
+const backupInput=common.extend({pgDump:path,recipient:z.string().regex(/^age1[023456789acdefghjklmnpqrstuvwxyz]{58}$/),verificationSnapshot:z.boolean().default(false),mediaReferenceSnapshot:z.boolean().default(false)}).strict();
 const restoreInput=common.extend({
  pgRestore:path,archive:path,identityFile:path,expectedSha256:z.string().regex(/^[a-f0-9]{64}$/),
  expectedRevision:z.number().int().min(expectedSchemaRevision).max(2147483647),confirmation:z.string().max(100),expectedVerification:backupVerification.optional()
 }).strict();
-export class RecoveryError extends Error {
- constructor(readonly code:string){super(code);this.name='RecoveryError';}
-}
 export async function privateDirectory(p:string){
  const s=await lstat(p);
  if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==process.getuid?.()||(s.mode&0o077)!==0||await realpath(p)!==resolve(p))throw new RecoveryError('PRIVATE_RECOVERY_DIRECTORY_REQUIRED');
@@ -100,7 +100,7 @@ async function encryptedDump(i:z.infer<typeof backupInput>,env:NodeJS.ProcessEnv
 export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
  const parsed=backupInput.safeParse(raw);if(!parsed.success)throw new RecoveryError('INVALID_BACKUP_CONFIGURATION');const i=parsed.data;
  if(externalSignal?.aborted)throw new RecoveryError('RECOVERY_CANCELLED');
- let client:pg.Client|undefined,folder:string|undefined,archive:string|undefined,metadata:string|undefined,passwordPath:string|undefined,proofPath:string|undefined,succeeded=false,folderOwned=false,archiveOwned=false,metadataOwned=false,passwordOwned=false,proofOwned=false;
+ let client:pg.Client|undefined,folder:string|undefined,archive:string|undefined,metadata:string|undefined,passwordPath:string|undefined,proofPath:string|undefined,referencePath:string|undefined,referenceArchivePath:string|undefined,succeeded=false,folderOwned=false,archiveOwned=false,metadataOwned=false,passwordOwned=false,proofOwned=false,referenceOwned=false,referenceArchiveOwned=false;
  try{
   await privateDirectory(i.workDirectory);const c=await connection(i);client=c.client;await client.connect();await assertBackupRole(client);
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -112,10 +112,14 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
   const timeout=AbortSignal.timeout(i.timeoutMs),signal=externalSignal?AbortSignal.any([timeout,externalSignal]):timeout,result=await encryptedDump(i,{...c.env,PGPASSFILE:passwordPath},state.snapshot,archive,signal);
   archiveOwned=true;await unlink(passwordPath);passwordOwned=false;
   const verification=i.verificationSnapshot?{archiveSha256:result.sha256,snapshot:await databaseVerificationSnapshot(client,signal)}:null;
+  let mediaReferencePlan=null;
+  if(i.mediaReferenceSnapshot){referencePath=join(folder,'media-references.jsonl');const plan=await open(referencePath,'wx',0o600);referenceOwned=true;try{mediaReferencePlan={filename:'media-references.jsonl' as const,...await captureMediaReferencePlan(client,plan,{databaseBackupId:id,archiveSha256:result.sha256,schemaRevision:state.revision},signal)};}finally{await plan.close();}}
   await client.query('COMMIT');
   let verificationArchive=null;
   if(verification){proofPath=join(folder,'verification.json.age');verificationArchive={filename:'verification.json.age' as const,...await encryptVerification(i,verification,proofPath,signal)};proofOwned=true;}
-  const manifest={format:'kavosh-database-backup-v1',scope:'database_schema_and_data',id,createdAt,schemaRevision:state.revision,serverMajor:state.server_major,ciphertextSha256:result.sha256,encryptedBytes:result.bytes,completeDatabase:true,databaseConfigurationIncluded:false,rolesIncluded:false,mediaIncluded:false,restoreVerified:false,independentCopyVerified:false,verification,verificationArchive};
+  let mediaReferenceArchive=null;
+  if(mediaReferencePlan&&referencePath){referenceArchivePath=join(folder,'media-references.jsonl.age');mediaReferenceArchive={filename:'media-references.jsonl.age' as const,...await encryptRecoveryStream({age:i.age,recipient:i.recipient,file:referenceArchivePath,maximumBytes:mediaReferencePlan.plaintextBytes+Math.ceil(mediaReferencePlan.plaintextBytes/65536)*16+65536},createReadStream(referencePath),signal)};referenceArchiveOwned=true;}
+  const manifest={format:'kavosh-database-backup-v1',scope:'database_schema_and_data',id,createdAt,schemaRevision:state.revision,serverMajor:state.server_major,ciphertextSha256:result.sha256,encryptedBytes:result.bytes,completeDatabase:true,databaseConfigurationIncluded:false,rolesIncluded:false,mediaIncluded:false,restoreVerified:false,independentCopyVerified:false,verification,verificationArchive,mediaReferencePlan,mediaReferenceArchive};
   const f=await open(metadata,'wx',0o600);metadataOwned=true;try{await f.writeFile(JSON.stringify(manifest)+'\n');await f.sync();}finally{await f.close();}
   await syncDirectory(folder);await syncDirectory(i.workDirectory);
   succeeded=true;return {...manifest,archivePath:archive};
@@ -123,7 +127,7 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
  finally{
   if(client){await client.query('ROLLBACK').catch(()=>{});await client.end().catch(()=>{});}
   if(passwordOwned&&passwordPath)await unlink(passwordPath).catch(()=>{});
-  if(!succeeded){if(archiveOwned&&archive)await unlink(archive).catch(()=>{});if(proofOwned&&proofPath)await unlink(proofPath).catch(()=>{});if(metadataOwned&&metadata)await unlink(metadata).catch(()=>{});if(folderOwned&&folder)await rmdir(folder).catch(()=>{});}
+  if(!succeeded){if(archiveOwned&&archive)await unlink(archive).catch(()=>{});if(proofOwned&&proofPath)await unlink(proofPath).catch(()=>{});if(referenceOwned&&referencePath)await unlink(referencePath).catch(()=>{});if(referenceArchiveOwned&&referenceArchivePath)await unlink(referenceArchivePath).catch(()=>{});if(metadataOwned&&metadata)await unlink(metadata).catch(()=>{});if(folderOwned&&folder)await rmdir(folder).catch(()=>{});}
  }
 }
 // A separate standard age archive keeps the small exact-snapshot proof usable
