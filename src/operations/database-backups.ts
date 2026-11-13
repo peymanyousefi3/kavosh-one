@@ -3,7 +3,7 @@ import { createHash,randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat,realpath,open,mkdir,unlink,rmdir } from 'node:fs/promises';
 import { isAbsolute,join,resolve } from 'node:path';
-import { Transform } from 'node:stream';
+import { Readable,Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
 import { z } from 'zod';
@@ -100,7 +100,7 @@ async function encryptedDump(i:z.infer<typeof backupInput>,env:NodeJS.ProcessEnv
 export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
  const parsed=backupInput.safeParse(raw);if(!parsed.success)throw new RecoveryError('INVALID_BACKUP_CONFIGURATION');const i=parsed.data;
  if(externalSignal?.aborted)throw new RecoveryError('RECOVERY_CANCELLED');
- let client:pg.Client|undefined,folder:string|undefined,archive:string|undefined,metadata:string|undefined,passwordPath:string|undefined,succeeded=false,folderOwned=false,archiveOwned=false,metadataOwned=false,passwordOwned=false;
+ let client:pg.Client|undefined,folder:string|undefined,archive:string|undefined,metadata:string|undefined,passwordPath:string|undefined,proofPath:string|undefined,succeeded=false,folderOwned=false,archiveOwned=false,metadataOwned=false,passwordOwned=false,proofOwned=false;
  try{
   await privateDirectory(i.workDirectory);const c=await connection(i);client=c.client;await client.connect();await assertBackupRole(client);
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -113,7 +113,9 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
   archiveOwned=true;await unlink(passwordPath);passwordOwned=false;
   const verification=i.verificationSnapshot?{archiveSha256:result.sha256,snapshot:await databaseVerificationSnapshot(client,signal)}:null;
   await client.query('COMMIT');
-  const manifest={format:'kavosh-database-backup-v1',scope:'database_schema_and_data',id,createdAt,schemaRevision:state.revision,serverMajor:state.server_major,ciphertextSha256:result.sha256,encryptedBytes:result.bytes,completeDatabase:true,databaseConfigurationIncluded:false,rolesIncluded:false,mediaIncluded:false,restoreVerified:false,independentCopyVerified:false,verification};
+  let verificationArchive=null;
+  if(verification){proofPath=join(folder,'verification.json.age');verificationArchive={filename:'verification.json.age' as const,...await encryptVerification(i,verification,proofPath,signal)};proofOwned=true;}
+  const manifest={format:'kavosh-database-backup-v1',scope:'database_schema_and_data',id,createdAt,schemaRevision:state.revision,serverMajor:state.server_major,ciphertextSha256:result.sha256,encryptedBytes:result.bytes,completeDatabase:true,databaseConfigurationIncluded:false,rolesIncluded:false,mediaIncluded:false,restoreVerified:false,independentCopyVerified:false,verification,verificationArchive};
   const f=await open(metadata,'wx',0o600);metadataOwned=true;try{await f.writeFile(JSON.stringify(manifest)+'\n');await f.sync();}finally{await f.close();}
   await syncDirectory(folder);await syncDirectory(i.workDirectory);
   succeeded=true;return {...manifest,archivePath:archive};
@@ -121,7 +123,22 @@ export async function backupDatabase(raw:unknown,externalSignal?:AbortSignal){
  finally{
   if(client){await client.query('ROLLBACK').catch(()=>{});await client.end().catch(()=>{});}
   if(passwordOwned&&passwordPath)await unlink(passwordPath).catch(()=>{});
-  if(!succeeded){if(archiveOwned&&archive)await unlink(archive).catch(()=>{});if(metadataOwned&&metadata)await unlink(metadata).catch(()=>{});if(folderOwned&&folder)await rmdir(folder).catch(()=>{});}
+  if(!succeeded){if(archiveOwned&&archive)await unlink(archive).catch(()=>{});if(proofOwned&&proofPath)await unlink(proofPath).catch(()=>{});if(metadataOwned&&metadata)await unlink(metadata).catch(()=>{});if(folderOwned&&folder)await rmdir(folder).catch(()=>{});}
+ }
+}
+// A separate standard age archive keeps the small exact-snapshot proof usable
+// after host loss. Its plaintext is never written to disk by the backup job.
+async function encryptVerification(i:z.infer<typeof backupInput>,value:z.infer<typeof backupVerification>,file:string,signal:AbortSignal){
+ const bytes=Buffer.from(JSON.stringify(value));if(bytes.length>2097152)throw new RecoveryError('VERIFICATION_SIZE_LIMIT');
+ const output=await open(file,'wx',0o600),hash=createHash('sha256'),tasks:Promise<unknown>[]=[];let child:ChildProcessWithoutNullStreams|undefined,success=false;
+ try{
+  child=spawn(i.age,['--encrypt','--recipient',i.recipient],{env:{PATH:process.env.PATH,NODE_ENV:process.env.NODE_ENV??'production',LANG:'C'},signal});
+  tasks.push(completed(child),pipeline(Readable.from([bytes]),child.stdin,{signal}),pipeline(child.stdout,counter(4194304,hash),output.createWriteStream({autoClose:true}),{signal}));
+  await Promise.all(tasks);const result={ciphertextSha256:hash.digest('hex'),encryptedBytes:(await syncFile(file)).size};success=true;return result;
+ }finally{
+  if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGTERM');
+  const kill=setTimeout(()=>{if(child&&child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');},1000);kill.unref();
+  await Promise.allSettled(tasks);clearTimeout(kill);bytes.fill(0);await output.close().catch(()=>{});if(!success)await unlink(file).catch(()=>{});
  }
 }
 export async function restoreDatabaseBackup(raw:unknown,externalSignal?:AbortSignal){
