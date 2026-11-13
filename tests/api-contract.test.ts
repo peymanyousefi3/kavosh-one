@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('owner homework records declare exact collections,audited read-only access and separate bounded list and history cursors',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),base='/api/platform/v1/academies/{id}/learning/homeworks/{homeworkId}/records/{collection}';
+ for(const suffix of ['','/{recordId}','/{recordId}/history']){const path=api.paths[base+suffix],r=path.get;assert.deepEqual(Object.keys(path),['get']);assert.equal(r.requestBody,undefined);assert.deepEqual(r.parameters.find((v:any)=>v.in==='path'&&v.name==='collection').schema.enum,['submissions','grades','solutions']);assert.equal(r.parameters.find((v:any)=>v.in==='header'&&v.name==='X-Access-Purpose').required,true);const q=r.parameters.filter((v:any)=>v.in==='query');assert.deepEqual(q.map((v:any)=>v.name).sort(),suffix.endsWith('/history')?['afterVersion','limit']:suffix?[]:['after','limit']);if(q.length)assert.equal(q.find((v:any)=>v.name==='limit').schema.maximum,suffix?5:20);assert.match(r.summary,/publication|publish/);}
+});
 test('zero-net settlement contract requires explicit reviewed dates and bounded history without cash or approval overrides',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/payroll/net-postings/{id}/zero-net-settlement'],s=p.post.requestBody.content['application/json'].schema,d=s.properties.definition.anyOf.find((v:any)=>v.type==='object');
  assert.deepEqual(Object.keys(p).sort(),['get','post']);assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['definition','expectedVersion','reason']);assert.equal(d.additionalProperties,false);assert.deepEqual(Object.keys(d.properties).sort(),['reference','review','settledAt','timeZone']);assert.equal(s.properties.expectedVersion.maximum,2147483646);assert.match(p.post.summary,/not deduction remittance/);assert.equal(p.get.requestBody,undefined);
