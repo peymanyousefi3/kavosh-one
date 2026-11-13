@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync,readdirSync } from 'node:fs';
+import { readFileSync,readdirSync,mkdtempSync,writeFileSync,unlinkSync,rmdirSync } from 'node:fs';
+import {tmpdir} from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {createHash,createPrivateKey,X509Certificate,generateKeyPairSync} from 'node:crypto';
 import {join} from 'node:path';
@@ -37,9 +38,10 @@ test('operational collector profile grants only monitor-metadata read membership
 test('reports runtime pin changes only its own working directory and is required for settings recovery',()=>{
  const profile=read('kavosh-one-reports-runtime.conf');assert.equal(profile,'[Service]\nWorkingDirectory=/srv/kavosh-one/operations/reports-062700ac7abf6e2779606b19504e9c965aba8173\n');assert.ok(read('run-config-backup.sh').split(/\s+/).includes('etc/systemd/system/kavosh-one-background@reports.service.d'));assert.doesNotMatch(profile,/User=|Group=|ExecStart|LoadCredential|Environment|Capability|ReadWritePaths/);
 });
-// Ephemeral synthetic test keys stay in memory/stdin,never files or Git.
+// Synthetic keys never enter Git. OpenSSL needs a private temporary regular
+// file: Linux cannot reopen Node's socket-based child stdin through /dev/stdin.
 const tlsKey=generateKeyPairSync('ec',{namedCurve:'prime256v1'}).privateKey.export({type:'pkcs8',format:'pem'}),wrongTlsKey=generateKeyPairSync('ec',{namedCurve:'prime256v1'}).privateKey.export({type:'pkcs8',format:'pem'});
-const tlsCertificate=execFileSync('/usr/bin/openssl',['req','-new','-x509','-sha256','-key','/dev/stdin','-subj','/CN=synthetic-backup-test.invalid','-days','1'],{input:tlsKey,stdio:['pipe','pipe','pipe']});
+const tlsCertificate=(()=>{const directory=mkdtempSync(join(tmpdir(),'kavosh-config-tls-')),path=join(directory,'synthetic.key');try{writeFileSync(path,tlsKey,{flag:'wx',mode:0o600});return execFileSync('/usr/bin/openssl',['req','-new','-x509','-sha256','-key',path,'-subj','/CN=synthetic-backup-test.invalid','-days','1'],{stdio:['ignore','pipe','pipe']});}finally{try{unlinkSync(path);}catch(e){if(e.code!=='ENOENT')throw e;}rmdirSync(directory);}})();
 function verifyConfig({remove,extra,duplicate=false,password=false,corrupt=false,invalidOperator=false,invalidOperationalProfile=false,invalidReportProfile=false,invalidTlsCertificate=false,invalidTlsKey=false,mismatchedTlsKey=false}={}){
  const units=readdirSync(new URL('../deploy/ovh/',import.meta.url)).filter(name=>/^kavosh-one.*\.(?:service|timer)$/.test(name));
  const entries=['roles.sql','etc/kavosh-one/web.env','etc/kavosh-one/backup.env','etc/kavosh-one/drive.json','etc/kavosh-one/twilio-credentials.json','etc/kavosh-one/r2-upload.json','etc/kavosh-one/r2-scan.json','etc/kavosh-one/r2-promote.json','etc/kavosh-one/r2-download.json','etc/kavosh-one-tls/server.crt','etc/caddy/kavosh-one.caddy','etc/kavosh-one-scanner/clamd.conf','etc/apparmor.d/local/usr.sbin.clamd','etc/apparmor.d/kavosh-one-parser',...units.map(name=>'etc/systemd/system/'+name),...['auth-delivery','file-inspection','file-promotion','file-verification','background-notifications','background-reports','background-messages','background-platform-notices'].map(name=>'etc/kavosh-one/'+name+'.env')].filter(name=>name!==remove);
