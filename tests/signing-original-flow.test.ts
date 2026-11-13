@@ -21,7 +21,7 @@ import { processEnrollmentSigning } from '../src/integrations/signing-orchestrat
 import { mintToken } from '../src/core/tokens.ts';
 import { loadSignatureCompletionSource,matchSignatureCompletionSigner } from '../src/integrations/signature-completion-source.ts';
 import { processEnrollmentCompletion } from '../src/integrations/completion-orchestrator.ts';
-import { checkCompletionQueue,checkCompletionStatus,checkCompletionRetries,checkAlreadyRecordedCompletion } from './signature-completion-queue-checks.ts';
+import { checkCompletionQueue,checkCompletionStatus,checkCompletionRetries,checkAlreadyRecordedCompletion,expireCompletionBeforeEvidence } from './signature-completion-queue-checks.ts';
 import { processSignatureEvidenceInspection,loadSignatureEvidenceInspectionTask,recordSignatureEvidenceInspection } from '../src/integrations/signature-evidence-worker.ts';
 import { createPdfValidationServer } from '../src/files/pdf-service.ts';
 import { clamdPeer,clamdVersionString } from './fixtures/clamd-peer.ts';
@@ -113,6 +113,7 @@ for(const [environment,profileChoices,selfSigner] of [['Test',true,false],['Live
    await checkCompletionQueue(f.pg,f.a,f.b,historicalSource.startId,historicalSource.sourceFingerprint,'unified_enrollment');
    await checkCompletionStatus(f,task.requestId,'unified_enrollment');
    await checkCompletionRetries(f,task.requestId,'unified_enrollment');
+   await expireCompletionBeforeEvidence(f.pg,f.a,historicalSource.startId,'unified_enrollment');
    const privateContact={name:'PRIVATE Guardian staff',email:'staff@example.test',phone:'+16475550003'};
    assert.deepEqual(await matchSignatureCompletionSigner(completionDatabase,historicalSource,privateContact),{nameMatches:true,emailMatches:true,phoneMatches:true});
    assert.equal(await matchSignatureCompletionSigner(completionDatabase,{...historicalSource,sourceFingerprint:'0'.repeat(64)},privateContact),null);
@@ -155,6 +156,7 @@ for(const [environment,profileChoices,selfSigner] of [['Test',true,false],['Live
    const savedEvidence=(await f.pg.query<{id:string;manifest:Record<string,unknown>;source:unknown;review_reasons:string[];profile_consent_observations:unknown}>('SELECT * FROM public.signature_completion_evidence')).rows;assert.equal(savedEvidence.length,1);assert.equal(savedEvidence[0].id,completed.id);assert.deepEqual(savedEvidence[0].source,original);assert.deepEqual(savedEvidence[0].review_reasons,[]);assert.deepEqual(savedEvidence[0].profile_consent_observations,(original.consentFields??[]).map(f=>({purpose:f.purpose,fieldId:f.id,choice:'selected'}))); assert.doesNotMatch(JSON.stringify(savedEvidence),/PRIVATE|example.test|signerName|signerEmail|phoneNumber/);
    const replay=await processEnrollmentCompletion(completionTask,completionServices,{enabled:true});assert.equal(replay.id,completed.id);assert.equal(replay.inserted,false);assert.equal((await f.pg.query("SELECT * FROM public.outbox_events WHERE event_type='signature.completion.evidence.critical'")).rows.length,1);
    await checkAlreadyRecordedCompletion(f.pg,f.a,original.startId,'unified_enrollment');
+   assert.deepEqual((await f.request('agreement-checks?purpose=unified_enrollment')).body.data,[],'late retained evidence clears current operational cases without notification reading or another retry');
    const nativeRecord=async(raw:string,manifest:unknown=savedEvidence[0].manifest,fp=original.sourceFingerprint,academy=f.a)=>{const c=await completionDatabase.connect();try{return await c.query('SELECT * FROM public.record_signature_completion_evidence($1,$2,$3,$4,$5::jsonb)',[academy,original.startId,fp,raw,JSON.stringify(manifest)]);}finally{c.release();}};
    await assert.rejects(nativeRecord(propertiesJson.replace('{','{"status":"Completed",')),(e:unknown)=>(e as {message:string}).message==='SIGNATURE_COMPLETION_PROVIDER_MISMATCH','duplicate provider facts are not silently resolved by choosing the last value');
    const withProperties=async(p:unknown)=>{const json=JSON.stringify(p),manifest=structuredClone(savedEvidence[0].manifest) as {receipt:{properties:{id:string;sha256:string;sizeBytes:number}}};manifest.receipt.properties.sha256=createHash('sha256').update(json).digest('hex');manifest.receipt.properties.sizeBytes=Buffer.byteLength(json);manifest.receipt.properties.id=(await f.pg.query<{id:string}>('SELECT public.signature_evidence_artifact_id($1,$2,$3,$4,$5) id',[f.a,original.startId,original.sourceFingerprint,'properties',manifest.receipt.properties.sha256])).rows[0].id;return {json,manifest};};

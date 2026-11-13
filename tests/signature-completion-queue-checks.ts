@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
 import { processOneNotification } from '../src/automations/notification-worker.ts';
 import { processOneMessage,type MessageTransport } from '../src/automations/message-worker.ts';
@@ -57,12 +58,52 @@ export async function completionWatcherCheck(f:Pick<Awaited<ReturnType<typeof op
 import type { operationsFixture } from './operations-fixture.ts';
 import { assertSignatureCompletionRole } from '../src/integrations/signature-completion-source.ts';
 
+export async function expireCompletionBeforeEvidence(pg:Pick<Awaited<ReturnType<typeof operationsFixture>>['pg'],'query'|'exec'>,academy:string,start:string,purpose:'worker_services'|'unified_enrollment'){
+ // A real poll-window transition, not an invented incident. Only the test
+ // owner's clock metadata is changed; the actual worker creates the case.
+ await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second',poll_until=clock_timestamp()-interval '1 second' WHERE academy_id=$1 AND purpose=$2 AND start_id=$3",[academy,purpose,start]);
+ await pg.exec('SET ROLE kavosh_signature_completion_worker');try{assert.deepEqual((await pg.query('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[[academy],randomUUID()])).rows,[]);}finally{await pg.exec('RESET ROLE');}
+ const before=(await pg.query('SELECT * FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows;assert.equal(before[0].state,'blocked');
+ await pg.query('SELECT public.settle_signature_completion_evidence($1,$2,$3)',[academy,purpose,start]);
+ assert.deepEqual((await pg.query('SELECT * FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows,before,'missing evidence never resolves a blocked case');
+}
+
 export async function checkAlreadyRecordedCompletion(pg:Pick<Awaited<ReturnType<typeof operationsFixture>>['pg'],'query'|'exec'|'runtime'>,academy:string,start:string,purpose:'worker_services'|'unified_enrollment'){
  const table=purpose==='worker_services'?'work_signature_completion_evidence':'signature_completion_evidence';
- const original=(await pg.query<{evidence_id:string}>(`SELECT e.id evidence_id FROM public.${table} e JOIN public.signature_completion_jobs j ON j.academy_id=e.academy_id AND j.start_id=e.start_id AND j.source_fingerprint=e.source_fingerprint WHERE j.academy_id=$1 AND j.start_id=$2 AND j.purpose=$3 AND j.state='queued' ORDER BY e.recorded_at DESC,e.id DESC LIMIT 1`,[academy,start,purpose])).rows[0];assert.ok(original,'fixture must contain actual original-bound persisted evidence,not a fake UUID');
- // The earlier stale-approval fault deliberately moved availability forward.
- // Make this fixture due explicitly;do not depend on how long PDF checks took
- // or change the production retry delay to satisfy the assertion.
+ const original=(await pg.query<{evidence_id:string}>(`SELECT e.id evidence_id FROM public.${table} e JOIN public.signature_completion_jobs j ON j.academy_id=e.academy_id AND j.start_id=e.start_id AND j.source_fingerprint=e.source_fingerprint WHERE j.academy_id=$1 AND j.start_id=$2 AND j.purpose=$3 ORDER BY e.recorded_at DESC,e.id DESC LIMIT 1`,[academy,start,purpose])).rows[0];assert.ok(original,'fixture must contain actual original-bound persisted evidence,not a fake UUID');
+ assert.deepEqual((await pg.query(`SELECT j.state,j.last_outcome,EXISTS(SELECT 1 FROM public.${table} e WHERE e.academy_id=j.academy_id AND e.start_id=j.start_id AND e.source_fingerprint=j.source_fingerprint AND e.id=j.evidence_id) retained FROM public.signature_completion_jobs j WHERE j.academy_id=$1 AND j.purpose=$2 AND j.start_id=$3`,[academy,purpose,start])).rows,[{state:'complete',last_outcome:'recorded',retained:true}],'inserting real evidence settles the queued check immediately;later observations do not replace its valid original evidence');
+ // Owner-only reconstruction of pre-396 control metadata. Actual original
+ // evidence, immutable attempts and failure incidents are never fabricated.
+ for(const state of ['queued','blocked']){
+  await pg.exec('BEGIN');try{
+   await pg.query('UPDATE public.signature_completion_jobs SET state=$4,evidence_id=NULL WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start,state]);
+   for(const role of ['kavosh_runtime','kavosh_signature_completion_worker']){
+    await pg.exec('SAVEPOINT private_settlement');await pg.exec('SET LOCAL ROLE '+role);
+    await assert.rejects(pg.query('SELECT public.settle_signature_completion_evidence($1,$2,$3)',[academy,purpose,start]),/permission denied/i);
+    await pg.exec('ROLLBACK TO SAVEPOINT private_settlement');
+   }
+   if(state==='blocked'){
+    await pg.exec('DROP TRIGGER zz_signature_completion_settlement ON public.signature_completion_evidence;DROP TRIGGER zz_work_signature_completion_settlement ON public.work_signature_completion_evidence;DROP FUNCTION public.settle_signature_completion_on_evidence();DROP FUNCTION public.settle_signature_completion_evidence(uuid,text,uuid);CREATE OR REPLACE FUNCTION public.schema_revision() RETURNS integer LANGUAGE sql IMMUTABLE SET search_path=pg_catalog AS $$ SELECT 395 $$');
+    const incidents=(await pg.query('SELECT * FROM public.signature_completion_incidents ORDER BY academy_id,id')).rows;
+    await pg.exec(await readFile(new URL('../db/migrations/396_signature_completion_evidence_settlement.sql',import.meta.url),'utf8'));
+    assert.equal((await pg.query('SELECT public.schema_revision() revision')).rows[0].revision,396);
+    assert.deepEqual((await pg.query('SELECT * FROM public.signature_completion_incidents ORDER BY academy_id,id')).rows,incidents,'the actual populated upgrade preserves original incidents without backfilling');
+   }else await pg.query('SELECT public.settle_signature_completion_evidence($1,$2,$3)',[academy,purpose,start]);
+   assert.equal((await pg.query('SELECT state FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows[0].state,'complete','upgrade settlement also repairs '+state+' records');
+  }finally{await pg.exec('ROLLBACK');}
+ }
+ // Do not steal an active worker lease or accept a different original source.
+ for(const fault of ['running','source_changed']){
+  await pg.exec('BEGIN');try{
+   if(fault==='running')await pg.query("UPDATE public.signature_completion_jobs SET state='running',evidence_id=NULL,worker_id=$4,lease_token=$5,started_at=clock_timestamp(),lease_until=clock_timestamp()+interval '60 seconds' WHERE academy_id=$1 AND purpose=$2 AND start_id=$3",[academy,purpose,start,randomUUID(),randomUUID()]);
+   else await pg.query("UPDATE public.signature_completion_jobs SET state='blocked',evidence_id=NULL,source_fingerprint=$4 WHERE academy_id=$1 AND purpose=$2 AND start_id=$3",[academy,purpose,start,'0'.repeat(64)]);
+   const before=(await pg.query('SELECT * FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows;
+   await pg.query('SELECT public.settle_signature_completion_evidence($1,$2,$3)',[academy,purpose,start]);
+   assert.deepEqual((await pg.query('SELECT * FROM public.signature_completion_jobs WHERE academy_id=$1 AND purpose=$2 AND start_id=$3',[academy,purpose,start])).rows,before,fault+' must not be silently settled');
+  }finally{await pg.exec('ROLLBACK');}
+ }
+ // Legacy queued rows still reconcile through claim without provider IO.
+ await pg.query("UPDATE public.signature_completion_jobs SET state='queued',evidence_id=NULL WHERE academy_id=$1 AND purpose=$2 AND start_id=$3",[academy,purpose,start]);
  await pg.query("UPDATE public.signature_completion_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE academy_id=$1 AND purpose=$2 AND start_id=$3 AND state='queued'",[academy,purpose,start]);
  const before=await pg.query('SELECT * FROM public.signature_completion_job_attempts WHERE academy_id=$1 AND start_id=$2 ORDER BY attempt_no',[academy,start]),budgets=await pg.query('SELECT * FROM public.signature_completion_request_budgets ORDER BY group_id,window_started'),incidents=await pg.query('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1 AND start_id=$2 ORDER BY id',[academy,start]);
  const claim=async()=>{const c=pg.runtime?await pg.runtime.connect():{query:pg.query.bind(pg),release(){}};try{await c.query('SET ROLE kavosh_signature_completion_worker');return(await c.query('SELECT * FROM public.claim_signature_completion_job($1,$2,60)',[[academy],randomUUID()])).rows;}finally{if(!pg.runtime)await pg.exec('RESET ROLE');c.release();}};
