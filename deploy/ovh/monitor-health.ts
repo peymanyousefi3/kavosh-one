@@ -4,10 +4,11 @@ import {constants} from 'node:fs';
 import {lstat,open,rename,realpath,statfs,unlink} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {privateDirectory,regularFile} from '../../src/operations/recovery-files.ts';
-import {evaluateOperationalHealth,healthObservation,systemdExitTime,operationalWorkerUnits} from '../../src/operations/operational-health.ts';
+import {evaluateOperationalHealth,healthObservation,systemdExitTime,selectedOperationalWorkerUnits} from '../../src/operations/operational-health.ts';
 const run=promisify(execFile);let temporary:string|undefined;
 try{
  if(process.argv.length!==2||process.getuid?.()===0||process.env.STATE_DIRECTORY!=='/var/lib/kavosh-one-health')throw new Error('INVALID_MONITOR_CONTEXT');
+ const operationalWorkerUnits=selectedOperationalWorkerUnits(process.env.SIGNATURE_COMPLETION_MONITOR_ENABLED);
  const directory=await realpath(process.env.STATE_DIRECTORY);if(directory!=='/var/lib/kavosh-one-health')throw new Error('INVALID_MONITOR_CONTEXT');await privateDirectory(directory);
  for(const key of ['DATABASE_URL','AUTH_SECRET','IDENTITY_DATABASE_URL','BACKUP_DATABASE_URL','CREDENTIALS_DIRECTORY'])if(process.env[key]!==undefined)throw new Error('MONITOR_CREDENTIALS_REFUSED');
  const current=directory+'/status.json';let previous:ReturnType<typeof evaluateOperationalHealth>|undefined;

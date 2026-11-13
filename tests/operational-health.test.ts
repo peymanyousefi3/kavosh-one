@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
-import {evaluateOperationalHealth,systemdExitTime,operationalWorkerUnits} from '../src/operations/operational-health.ts';
+import {evaluateOperationalHealth,systemdExitTime,operationalWorkerUnits,selectedOperationalWorkerUnits} from '../src/operations/operational-health.ts';
 const now='2026-11-13T12:00:00.000Z',completed={active:'inactive',result:'success',exitStatus:0,lastSuccessfulExitAt:'2026-11-13T08:00:00.000Z'},workers=Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,{...completed,active:'active'}])),normal={observedAt:now,ready:true,freeBackupDiskBytes:'50000000000',web:{...completed,active:'active'},backup:completed,configuration:completed,backupTimerActive:true,configurationTimerActive:true,workers};
 test('normal observation is healthy but never certifies independent uptime or external alert delivery',()=>{
  const result=evaluateOperationalHealth(normal);assert.equal(result.status,'healthy');assert.deepEqual(result.issues,[]);assert.equal(result.independentUptimeVerified,false);assert.equal(result.observationVantage,'same-vps');assert.equal(result.externalMessagesSent,0);assert.equal(result.applicationChangesMade,false);
@@ -18,6 +18,15 @@ test('failed,missing,disabled,stale and future-clock backups are distinct failur
  const active=evaluateOperationalHealth({...normal,backup:{...completed,active:'activating'}});assert.equal(active.status,'healthy');assert.equal(active.backup.lastSuccessfulExitAt,completed.lastSuccessfulExitAt);
  assert.ok(evaluateOperationalHealth({...normal,backupTimerActive:null}).issues.some(i=>i.code==='BACKUP_TIMER_STATUS_UNAVAILABLE'));const unknown=evaluateOperationalHealth({...normal,web:{...completed,active:'unknown',result:'unknown',exitStatus:null},backup:{...completed,active:'unknown',result:'unknown',exitStatus:null},backupTimerActive:null});assert.ok(unknown.issues.some(i=>i.code==='WEB_STATUS_UNAVAILABLE'));assert.ok(unknown.issues.some(i=>i.code==='BACKUP_STATUS_UNAVAILABLE'));assert.ok(!unknown.issues.some(i=>i.code==='WEB_NOT_RUNNING'||i.code==='BACKUP_TIMER_INACTIVE'));
 });
+test('operator-enabled signing worker states are observed without requiring activation in legacy deployments',()=>{
+ for(const flag of [undefined,'false'])assert.deepEqual(selectedOperationalWorkerUnits(flag),operationalWorkerUnits);
+ assert.deepEqual(selectedOperationalWorkerUnits('true'),{...operationalWorkerUnits,'signature-completion':'kavosh-one-signature-completion.service'});
+ for(const flag of ['yes','1','TRUE','kavosh.service',''])assert.throws(()=>selectedOperationalWorkerUnits(flag),/INVALID_SIGNATURE_MONITOR_FLAG/);
+ const signing={...completed,active:'active'},enabled={...normal,workers:{...workers,'signature-completion':signing}};
+ assert.equal(evaluateOperationalHealth(enabled).status,'healthy');assert.equal(evaluateOperationalHealth(normal).status,'healthy');
+ for(const [patch,code]of [[{active:'inactive'},'WORKER_NOT_RUNNING'],[{active:'failed'},'WORKER_NOT_RUNNING'],[{active:'unknown'},'WORKER_STATUS_UNAVAILABLE'],[{exitStatus:1},'WORKER_PROCESS_FAILURE']] as const){const r=evaluateOperationalHealth({...enabled,workers:{...enabled.workers,'signature-completion':{...signing,...patch}}});assert.equal(r.status,'critical');assert.deepEqual(r.issues,[{component:'worker:signature-completion',code,severity:'critical'}]);}
+ assert.throws(()=>evaluateOperationalHealth({...enabled,workers:{...enabled.workers,'signature-completion':{...signing,secret:'PRIVATE'}}}));
+});
 test('readiness failure,process failure and disk thresholds remain bounded without duplicate web alerts',()=>{
  assert.equal(evaluateOperationalHealth({...normal,ready:false}).issues[0].code,'READINESS_UNAVAILABLE');const stopped=evaluateOperationalHealth({...normal,ready:false,web:{...completed,active:'inactive'}});assert.equal(stopped.issues.length,1);assert.equal(stopped.issues[0].code,'WEB_NOT_RUNNING');
  for(const [bytes,status]of [['0','critical'],['2147483647','critical'],['2147483648','warning'],['4294967295','warning'],['4294967296','healthy'],['999999999999999999999999','healthy']])assert.equal(evaluateOperationalHealth({...normal,freeBackupDiskBytes:bytes}).status,status);
@@ -31,6 +40,7 @@ test('monitor service has no credentials,root identity,database role or landing-
  const unit=readFileSync(new URL('../deploy/ovh/kavosh-one-monitor.service',import.meta.url),'utf8'),timer=readFileSync(new URL('../deploy/ovh/kavosh-one-monitor.timer',import.meta.url),'utf8');
  for(const text of ['User=kavosh-one-monitor','Group=kavosh-one-monitor','StateDirectory=kavosh-one-health','StateDirectoryMode=0700','ProtectSystem=strict','NoNewPrivileges=yes','CapabilityBoundingSet=','MemoryMax=128M','CPUQuota=10%','InaccessiblePaths=/etc/kavosh-one /etc/kavosh-one-tls'])assert.ok(unit.includes(text));assert.ok(!unit.includes('User=nobody'));assert.ok(!unit.includes('DynamicUser'));
  assert.doesNotMatch(unit,/EnvironmentFile|LoadCredential|User=root|kavosh\.ai|\/srv\/kavosh\//);assert.match(timer,/OnCalendar=\*-\*-\* \*:\*:00 UTC/);assert.match(timer,/RandomizedDelaySec=5s/);
+ assert.match(unit,/^Environment=SIGNATURE_COMPLETION_MONITOR_ENABLED=false$/m);
  for(const text of ['RuntimeDirectory=kavosh-one-health','RuntimeDirectoryMode=0750','RuntimeDirectoryPreserve=yes'])assert.ok(unit.includes(text));
  const web=readFileSync(new URL('../deploy/ovh/kavosh-one.service',import.meta.url),'utf8');assert.match(web,/^SupplementaryGroups=kavosh-one-monitor$/m);
 });

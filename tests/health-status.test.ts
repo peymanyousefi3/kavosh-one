@@ -27,6 +27,11 @@ test('shared health file is bounded,strict,read-only metadata;unsafe permissions
   await writeFile(file,JSON.stringify({...normal,credential:'PRIVATE'}));await assert.rejects(readOperationalHealthStatus(directory,now));
  }finally{await rm(directory,{recursive:true,force:true});}
 });
+test('signing-worker observations survive strict status decoding and cannot hide behind a stored healthy label',()=>{
+ const signing={...completed,active:'active'},observed={...normal,workers:{...normal.workers!,'signature-completion':signing}};
+ assert.equal(operationalHealthStatus(observed,now).status,'healthy');
+ const stopped=operationalHealthStatus({...observed,status:'healthy',issues:[],workers:{...observed.workers,'signature-completion':{...signing,active:'failed'}}},now);assert.equal(stopped.status,'critical');assert.equal(stopped.issues[0].component,'worker:signature-completion');assert.equal(stopped.issues[0].code,'WORKER_NOT_RUNNING');
+});
 test('platform health authorizes and rate-limits before reading;bots,nonowners and unavailable state cannot leak metadata',async()=>{
  let reads=0,allowed=true,deny=false,queries=0,revision=expectedSchemaRevision;
  const database:Database={async connect(){return {async query<Row>(sql:string){queries++;if(sql.startsWith('SELECT platform_private.consume_request_budget(')){if(deny)throw Error('PLATFORM_OWNER_REQUIRED');return {rows:[{allowed}] as Row[]};}if(sql.startsWith('SELECT platform_private.request('))return {rows:[{result:{status:200,body:{operationalHealthAccessGranted:true}}}] as Row[]};return {rows:[{safe:true,revision}] as Row[]};},release(){}};}};

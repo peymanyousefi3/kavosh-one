@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.455.0",
+    "version": "0.456.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -5685,7 +5685,7 @@
     },
     "/api/platform/v1/operations/health": {
       "get": {
-        "summary": "Verified MFA platform owner only: bounded read-only operational health,with stale observations critical. Twelve fixed required worker process states are checked;legacy samples without worker observations remain warning. Deliberately disabled signing completion is not activated or required. Same-VPS evidence,not independent uptime or delivered external alerts. Queue progress is not verified. No credentials,service control or school business data.",
+        "summary": "Verified MFA platform owner only: bounded read-only operational health,with stale observations critical. Twelve fixed required worker process states are checked;legacy samples without worker observations remain warning. The copy-only signing worker is additionally observed only with its separate operator monitoring flag;monitoring never activates it or requires it in unconfigured deployments. Same-VPS evidence,not independent uptime or delivered external alerts. Queue progress is not verified. No credentials,service control or school business data.",
         "security": [
           {
             "humanSession": []

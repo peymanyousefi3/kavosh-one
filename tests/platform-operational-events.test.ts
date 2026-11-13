@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID,randomBytes} from 'node:crypto';
 import {test} from 'node:test';
+import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import {operationsFixture} from './operations-fixture.ts';
 import {upgradeToCurrent} from './migration-upgrade.ts';
@@ -59,4 +60,22 @@ test('operational collector checks role and its exclusive claim before reading m
  const read=async()=>{reads++;throw Error('Must not read');};await assert.rejects(recordOperationalHealth(database,read),/UNSAFE_PLATFORM_NOTICE_WORKER/);assert.equal(reads,0);assert.ok(!queries.includes('BEGIN'));
  revision=expectedSchemaRevision-1;await assert.rejects(recordOperationalHealth(database,read),/SCHEMA_NOT_CURRENT/);assert.equal(reads,0);assert.ok(!queries.includes('BEGIN'));revision=expectedSchemaRevision;
  safe=true;claimed=false;assert.deepEqual(await recordOperationalHealth(database,read),{claimed:false,changed:0,sourceAccepted:false});assert.equal(reads,0);assert.equal(releases,3);assert.equal(queries.at(-1),'ROLLBACK');assert.ok(!queries.some(q=>q.startsWith('SELECT platform_private.record_operational_health')));
+});
+test('actual409to410 preserves populated operational history and broker authority while allowing only signing-worker generic incidents',async()=>{
+ const f=await operationsFixture({throughSchema:409});try{
+  const stamp=async()=>(await f.pg.query<{at:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') at`)).rows[0].at;
+  const record=async(input:unknown)=>{await f.pg.exec('SET ROLE kavosh_platform_notice_worker');try{return(await f.pg.query<{result:any}>('SELECT platform_private.record_operational_health($1::jsonb) result',[JSON.stringify(input)])).rows[0].result;}finally{await f.pg.exec('RESET ROLE');}};
+  const signing={component:'worker:signature-completion',code:'WORKER_NOT_RUNNING',severity:'critical'};
+  await assert.rejects(record({observedAt:await stamp(),issues:[signing]}),/INVALID_OPERATIONAL_OBSERVATION/);
+  assert.equal((await record({observedAt:await stamp(),issues:[{component:'web',code:'READINESS_UNAVAILABLE',severity:'critical'}]})).changed,1);
+  const tables=['platform_private.operational_health_state','platform_private.operational_events','platform_private.operational_event_reads','platform_private.notification_ids','public.people','public.role_assignments'],snapshot=async()=>{const out=[];for(const t of tables)out.push((await f.pg.query('SELECT to_jsonb(r) data FROM '+t+' r ORDER BY to_jsonb(r)::text')).rows);return out;},before=await snapshot();
+  const sql="SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid='platform_private.record_operational_health(jsonb)'::regprocedure",authority=(await f.pg.query<any>(sql)).rows[0];
+  await f.pg.exec(await readFile(new URL('../db/migrations/410_signature_worker_operational_health.sql',import.meta.url),'utf8'));
+  assert.deepEqual(await snapshot(),before);const after=(await f.pg.query<any>(sql)).rows[0];for(const k of ['oid','proowner','proacl'])assert.deepEqual(after[k],authority[k]);assert.equal(after.definition,authority.definition.replace("'worker:scanner')","'worker:scanner','worker:signature-completion')"));assert.equal((await f.pg.query<{r:number}>('SELECT public.schema_revision() r')).rows[0].r,410);
+  const failed={observedAt:await stamp(),issues:[signing]};assert.equal((await record(failed)).changed,2);assert.equal((await record(failed)).changed,0);
+  assert.equal((await record({observedAt:await stamp(),issues:[]})).changed,1);assert.deepEqual((await f.pg.query("SELECT transition,code,severity FROM platform_private.operational_events WHERE component='worker:signature-completion' ORDER BY event_seq")).rows,[{transition:'opened',code:'WORKER_NOT_RUNNING',severity:'critical'},{transition:'recovered',code:'WORKER_NOT_RUNNING',severity:'critical'}]);
+  for(const bad of [{...signing,component:'worker:arbitrary'},{...signing,code:'PRIVATE_DIAGNOSTIC'},{...signing,severity:'warning'},{...signing,credential:'PRIVATE'}])await assert.rejects(record({observedAt:await stamp(),issues:[bad]}),/INVALID_OPERATIONAL_OBSERVATION/);
+  for(const code of ['WORKER_STATUS_UNAVAILABLE','WORKER_PROCESS_FAILURE'])assert.equal((await record({observedAt:failed.observedAt,issues:[{...signing,code}]})).sourceAccepted,false);
+  await f.pg.exec('SET ROLE kavosh_platform_notice_worker');try{await assert.rejects(f.pg.query('SELECT * FROM public.people'),/permission denied/);await assert.rejects(f.pg.query('SELECT * FROM platform_private.operational_events'),/permission denied/);}finally{await f.pg.exec('RESET ROLE');}
+ }finally{await f.pg.exec('RESET ROLE');await f.pg.close();}
 });

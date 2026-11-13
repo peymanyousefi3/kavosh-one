@@ -1,8 +1,8 @@
 import {z} from 'zod';
 const time=z.iso.datetime(),service=z.object({active:z.enum(['active','activating','deactivating','inactive','failed','unknown']),result:z.string().regex(/^[a-z-]{1,40}$/),exitStatus:z.number().int().min(0).max(255).nullable(),lastSuccessfulExitAt:time.nullable()}).strict();
 // Fixed deployed long-running services only. Do not enumerate build/probe jobs,
-// inspect credentials,or demand activation of the deliberately disabled signing
-// completion service. A process being active is not proof its queue is healthy.
+// inspect credentials,or demand activation of an unconfigured signing service.
+// A process being active is not proof its queue is healthy.
 export const operationalWorkerUnits={
  'auth-delivery':'kavosh-one-auth-delivery.service',
  messages:'kavosh-one-background@messages.service',
@@ -17,7 +17,12 @@ export const operationalWorkerUnits={
  'video-parser':'kavosh-one-parser@video.service',
  scanner:'kavosh-one-scanner.service'
 } as const;
-const workers=z.object(Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,service])) as Record<keyof typeof operationalWorkerUnits,typeof service>).strict();
+export const optionalOperationalWorkerUnits={'signature-completion':'kavosh-one-signature-completion.service'} as const;
+export function selectedOperationalWorkerUnits(signingFlag?:string){
+ if(signingFlag!==undefined&&signingFlag!=='true'&&signingFlag!=='false')throw Error('INVALID_SIGNATURE_MONITOR_FLAG');
+ return signingFlag==='true'?{...operationalWorkerUnits,...optionalOperationalWorkerUnits}:operationalWorkerUnits;
+}
+const workers=z.object(Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,service])) as Record<keyof typeof operationalWorkerUnits,typeof service>).extend({'signature-completion':service.optional()}).strict();
 export const healthObservation=z.object({observedAt:time,ready:z.boolean(),freeBackupDiskBytes:z.string().regex(/^(0|[1-9][0-9]{0,30})$/),web:service,backup:service,configuration:service,backupTimerActive:z.boolean().nullable(),configurationTimerActive:z.boolean().nullable(),workers:workers.optional()}).strict();
 export function evaluateOperationalHealth(raw:unknown){
  const observation=healthObservation.parse(raw),now=Date.parse(observation.observedAt),issues:{component:string;code:string;severity:'warning'|'critical'}[]=[];
@@ -34,6 +39,7 @@ export function evaluateOperationalHealth(raw:unknown){
  }
  if(!observation.workers)add('workers','WORKER_STATUS_NOT_OBSERVED','warning');
  else for(const [worker,value]of Object.entries(observation.workers)){
+  if(value===undefined)continue;
   const component='worker:'+worker;
   if(value.active==='unknown'||value.result==='unknown'||value.exitStatus===null)add(component,'WORKER_STATUS_UNAVAILABLE');
   else if(value.active!=='active')add(component,'WORKER_NOT_RUNNING');
