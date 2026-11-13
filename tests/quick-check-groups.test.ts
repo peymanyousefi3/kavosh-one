@@ -5,6 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { quickCheckGroups,quickCheckGroupCount,verifyQuickCheckFiles } from '../scripts/run-quick-checks.mjs';
 
 const prefix="node --import tsx --test --test-concurrency=1 --test-skip-pattern='large|one thousand' ";
+test('the packaged platform-notice CLI is exercised separately from the notification image default command',async()=>{
+ const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),step=workflow.split('      - name: Verify the platform-notice entrypoint has its own complete minimal runtime')[1]?.split('      - name:')[0];assert.ok(step);for(const fragment of ['--read-only','--network none','--cap-drop ALL','--security-opt no-new-privileges:true','--entrypoint node kavosh-notifications:ci scripts/process-platform-notices.js','test "$task_platform_status" -eq 1',"grep -Fx 'Platform notice worker stopped; check isolated configuration without logging credentials.'"])assert.ok(step.includes(fragment));assert.doesNotMatch(step,/continue-on-error|DATABASE_URL|AUTH_SECRET/);
+});
 test('durable operational inbox runs in the early native owner gate without omitting existing owner fixtures',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  business-logic:')[1]?.split('  learning:')[0];assert.ok(job);const command=job.split('\n').find(line=>line.includes('tests/platform-health.test.ts'))!;assert.ok(command);assert.deepEqual(command.match(/tests\/[^ ]+\.test\.ts/g),['tests/platform-health.test.ts','tests/platform-directories.test.ts','tests/platform-finance.test.ts','tests/platform-operational-events.test.ts']);assert.equal(job.match(/tests\/platform-operational-events\.test\.ts/g)?.length,1);
 });

@@ -180,6 +180,14 @@ jobs:
           printf '%s\n' "$task_worker_output"
           test "$task_worker_status" -eq 1
           printf '%s\n' "$task_worker_output" | grep -F 'Notification worker stopped; check isolated configuration without logging credentials.'
+      - name: Verify the platform-notice entrypoint has its own complete minimal runtime
+        run: |
+          set +e
+          task_platform_output=$(docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-notifications:ci scripts/process-platform-notices.js 2>&1)
+          task_platform_status=$?
+          set -e
+          test "$task_platform_status" -eq 1
+          printf '%s\n' "$task_platform_output" | grep -Fx 'Platform notice worker stopped; check isolated configuration without logging credentials.'
       - name: Verify actual worker UID, minimal dependencies and read-only application directory
         run: |
           docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-notifications:ci --input-type=module -e '

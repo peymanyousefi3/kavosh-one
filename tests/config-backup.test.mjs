@@ -32,7 +32,7 @@ test('every checked-in Kavosh One service and timer is covered by the encrypted 
  assert.doesNotMatch(script,/\betc\/systemd\/system\/(?:kavosh\.service|\*)/);
 });
 test('operational collector profile grants only monitor-metadata read membership and is included in settings recovery',()=>{
- const profile=read('kavosh-one-platform-notices-health.conf');assert.equal(profile,'[Service]\nSupplementaryGroups=kavosh-one-monitor\nEnvironment=PLATFORM_OPERATIONAL_HEALTH_ENABLED=true\n');assert.ok(read('run-config-backup.sh').split(/\s+/).includes('etc/systemd/system/kavosh-one-background@platform-notices.service.d'));assert.doesNotMatch(profile,/User=|Group=root|ExecStart|LoadCredential|EnvironmentFile|Capability|ReadWritePaths/);
+ const profile=read('kavosh-one-platform-notices-health.conf');assert.equal(profile,'[Service]\nWorkingDirectory=/srv/kavosh-one/operations/platform-notices-910769467d110f74bb67a82ea214ce2fc97083fc\nSupplementaryGroups=kavosh-one-monitor\nEnvironment=PLATFORM_OPERATIONAL_HEALTH_ENABLED=true\n');assert.ok(read('run-config-backup.sh').split(/\s+/).includes('etc/systemd/system/kavosh-one-background@platform-notices.service.d'));assert.doesNotMatch(profile,/User=|Group=root|ExecStart|LoadCredential|EnvironmentFile|Capability|ReadWritePaths/);assert.equal(read('kavosh-one-background@.service').match(/^ExecStart=(.*)$/m)?.[1],'/usr/bin/node scripts/process-%i.js');
 });
 function verifyConfig({remove,extra,duplicate=false,password=false,corrupt=false,invalidOperator=false,invalidOperationalProfile=false}={}){
  const units=readdirSync(new URL('../deploy/ovh/',import.meta.url)).filter(name=>/^kavosh-one.*\.(?:service|timer)$/.test(name));
