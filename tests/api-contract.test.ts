@@ -3,6 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('zero-net settlement contract requires explicit reviewed dates and bounded history without cash or approval overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),p=api.paths['/api/v1/payroll/net-postings/{id}/zero-net-settlement'],s=p.post.requestBody.content['application/json'].schema,d=s.properties.definition.anyOf.find((v:any)=>v.type==='object');
+ assert.deepEqual(Object.keys(p).sort(),['get','post']);assert.equal(s.additionalProperties,false);assert.deepEqual(Object.keys(s.properties).sort(),['definition','expectedVersion','reason']);assert.equal(d.additionalProperties,false);assert.deepEqual(Object.keys(d.properties).sort(),['reference','review','settledAt','timeZone']);assert.equal(s.properties.expectedVersion.maximum,2147483646);assert.match(p.post.summary,/not deduction remittance/);assert.equal(p.get.requestBody,undefined);
+ const history=api.paths['/api/v1/payroll/net-postings/{id}/zero-net-settlement/history'].get,q=history.parameters.filter((v:any)=>v.in==='query');assert.deepEqual(q.map((v:any)=>v.name).sort(),['afterVersion','limit']);assert.equal(q.find((v:any)=>v.name==='limit').schema.maximum,10);
+});
 test('paid-tax zero-net review is an explicit optional string flag shared by JSON CSV and Excel without supplied dates or money',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const path of ['/api/v1/payroll/tax-profiles/{id}/year-to-date','/api/v1/reports/payroll/paid-tax-year-to-date','/api/v1/reports/payroll/paid-tax-year-to-date/export','/api/v1/reports/payroll/paid-tax-year-to-date/export.xlsx']){const r=api.paths[path].get,p=r.parameters.find((p:any)=>p.in==='query'&&p.name==='includeUnassignedZeroNetSources');assert.ok(p,path);assert.equal(p.required,false);assert.deepEqual(p.schema.enum,['true','false']);assert.match(p.schema.description,/regardless of planned year/);assert.match(p.schema.description,/Omission preserves legacy scope and output/);assert.equal(r.requestBody,undefined);}
 });

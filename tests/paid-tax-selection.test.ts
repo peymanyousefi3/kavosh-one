@@ -1,26 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { t4aRecordFixture } from './t4a-record-fixture.ts';
+import { t4aRecordFixture,zeroNetSource } from './t4a-record-fixture.ts';
 import { runFixtureReportWorker,fixtureReportDatabase } from './report-worker-fixture.ts';
 import { t4WorkingPaperCsv } from '../src/modules/t4-working-paper.ts';
 import { parse } from 'csv-parse/sync';
 import { processOneReport } from '../src/reports/export-worker.ts';
 import { ApiError } from '../src/core/policy.ts';
 import type { Database } from '../src/core/database.ts';
-import {randomUUID} from 'node:crypto';
 import {spreadsheetRows} from './spreadsheet-reader.ts';
 
 async function fixture(options:Parameters<typeof t4aRecordFixture>[0]={classification:'employee',reportingForm:'T4'}){
  const f=await t4aRecordFixture(options);try{const profile=async(year=2026)=>{const declaration={status:'needs_review',claimAmount:null,sourceReference:null};return f.made('payroll/tax-profiles',{personId:f.actors.staff.person,employer:{id:f.employer.id,version:1},taxYear:year,effectiveOn:year+'-01-01',definition:{active:true,countryCode:'CA',provinceOfEmployment:'ON',federalTd1:declaration,provincialDeclaration:declaration,additionalIncomeTaxPerPay:'0.00',incomeTaxExemption:'needs_review',incomeTaxExemptionReference:null,pension:{plan:'CPP',status:'needs_review',pensionableMonths:null,sourceReference:null},ei:{status:'needs_review',employerPlan:'needs_review',multiplier:null,sourceReference:null},review:'PRIVATE synthetic employee reporting settings,not classification clearance'},reason:'Synthetic annual reporting source'});},tax=await profile(),query=(id=tax.id,through='2026-12-31',timeZone='America/Toronto')=>'profileId='+id+'&through='+through+'&timeZone='+encodeURIComponent(timeZone),ytd=(q=query(),suffix='')=>'reports/payroll/paid-tax-year-to-date'+suffix+'?'+q;
  const deduction={code:'WITHHOLDING',kind:'income_tax',amount:'8.50'},definition={timeZone:'America/Toronto',taxableEarnings:'508.50',pensionableEarnings:'508.50',insurableEarnings:'508.50',employeeDeductions:[deduction],employerContributions:[],reportingAccount:{id:f.rp.id,version:1},t4Allocations:[{provinceOfEmployment:'ON',taxableEarnings:'508.50',pensionableEarnings:'508.50',insurableEarnings:'508.50',employeeDeductions:[deduction]}],review:'PRIVATE explicit employee partial-payment allocation'},recognize=()=>f.request('payroll/tax-profiles/'+tax.id+'/payments/'+f.payment.id,{expectedVersion:0,definition,reason:'Synthetic reviewed employee recognition'});
  return {...f,tax,profile,query,ytd,employeeDefinition:definition,recognize};}catch(e){await f.pg.close();throw e;}
-}
-async function zeroNetSource(f:Awaited<ReturnType<typeof fixture>>,options:{plannedPayOn?:string;classification?:'employee'|'contractor';reportingForm?:'T4'|'T4A';deductionAccount?:{id:string}}={}){
- const ref=(a:{id:string})=>({id:a.id,version:1}),code='ZERO-'+randomUUID().slice(0,8).toUpperCase(),component={...f.components.find(c=>c.kind==='project')!,amount:'100.00'},period=ref(f.period);
- const engagement=await f.made('payroll/engagements',{...f.input,code,definition:{...f.definition,classification:options.classification??'employee',reportingForm:options.reportingForm??'T4'},components:[component]}),earned=await f.made('payroll/project-accruals',{engagement:ref(engagement),termsVersion:1,componentCode:component.code,deliveryRef:code,units:1,deliveredOn:'2026-01-31',completionReview:'Synthetic accepted separate delivery',period,expenseAccount:ref(f.payrollExpense),liabilityAccount:ref(f.payrollPayable),postedOn:'2026-01-31',dueOn:'2026-02-15',taxReview:'PRIVATE no settlement date or tax recognition inferred',reason:'Synthetic zero-net source'});
- const run=await f.made('payroll/payruns',{personId:f.actors.staff.person,currencyId:f.currency.id,reference:code,serviceFrom:'2026-01-01',serviceThrough:'2026-01-31',plannedPayOn:options.plannedPayOn??'2026-02-15',earnings:[{kind:'project',sourceId:earned.id,allocationId:engagement.id}],earningReview:'Synthetic separate earning',taxReview:'PRIVATE no payment-date certification',reason:'Synthetic zero-net grouping'});
- const net=await f.request('payroll/payruns/'+run.id+'/net',{expectedVersion:0,state:'prepared',definition:{employeeDeductions:[{code:'WITHHOLDING',label:'Synthetic fully offset net',amount:'100.00',authorityKind:'written_authorization',authorityReference:'PRIVATE synthetic source;not actual remittance'}],employerContributions:[],taxReview:'PRIVATE exact zero net only,not statutory certification'},reason:'Synthetic zero-net terms'});assert.equal(net.response.status,200,JSON.stringify(net.body));
- const posted=await f.made('payroll/payruns/'+run.id+'/net-postings',{netVersion:1,allocationPolicy:'gross_weighted_largest_remainder',deductions:[{code:'WITHHOLDING',account:ref(options.deductionAccount??f.payrollWithholding)}],employers:[],period,postedOn:'2026-01-31',reason:'Synthetic already-recorded deduction liability'});return {run,posted};
 }
 test('paid-tax opt-in zero-net source review exposes unassigned years without inventing payments or adding gross to tax totals',async()=>{
  const f=await fixture();try{
