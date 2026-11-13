@@ -62,6 +62,8 @@ test('compiled restore worker verifies a populated full academy in a separate na
   const databaseName=(await f.pg.query<{name:string}>('SELECT current_database() name')).rows[0].name;source.pathname='/'+databaseName;
   client=new pg.Client({connectionString:source.toString()});await client.connect();const bootstrap=(await client.query('SELECT rolname FROM pg_roles WHERE oid=10')).rows[0].rolname;
   await client.query('CREATE ROLE '+login+' LOGIN');loginCreated=true;
+  const observation=await client.query("SELECT platform_private.record_operational_health($1::jsonb) result",[JSON.stringify({observedAt:new Date().toISOString(),issues:[{component:'web',code:'READINESS_UNAVAILABLE',severity:'critical'}]})]);assert.equal(observation.rows[0].result.changed,1);
+  await client.query("SELECT setval('platform_private.operational_events_event_seq_seq',500,true)");
   await client.query("INSERT INTO identity.verification(identifier,value,\"expiresAt\") VALUES('synthetic-recovery-only','SYNTHETIC_ONLY',now()+interval '1 hour')");await client.query("INSERT INTO identity.delivery_outbox(kind,payload,expires_at) VALUES('email','SYNTHETIC_ENCRYPTED_PLACEHOLDER',now()+interval '1 hour')");
   const uid=Number((await run('/usr/bin/id',['-u','postgres'])).stdout.trim()),gid=Number((await run('/usr/bin/id',['-g','postgres'])).stdout.trim());
   await mkdir(directory,{mode:0o700});owned=true;await chown(directory,uid,gid);
@@ -74,6 +76,7 @@ test('compiled restore worker verifies a populated full academy in a separate na
   const args=['-u','postgres','--',process.execPath,process.cwd()+'/.recovery-tool/scripts/restore-isolated-cluster.js'],local={PATH:bin+':/usr/bin:/bin',NODE_ENV:'production' as const,STATE_DIRECTORY:directory,RECOVERY_POSTGRES_BIN:bin};
   const result=JSON.parse((await run('/usr/sbin/runuser',args,{env:local,timeout:60000,maxBuffer:1048576})).stdout);
   assert.equal(result.originalExportedSnapshotMatched,true);assert.equal(result.rolesAndMembershipsVerified,true);assert.equal(result.databaseAccessAndSettingsVerified,true);assert.equal(result.isolatedPostgresStopped,true);assert.equal(result.applicationActivationAllowed,false);assert.equal(result.osIsolationVerified,false);assert.equal(result.fullServerRebuildVerified,false);assert.ok(result.tablesCompared>100);assert.ok(result.rowsCompared>0);
+  assert.deepEqual(result.sequenceSafety,{ownedSequencesChecked:1,unusedSequencesChecked:0,nextGeneratedValuesOutsideRetainedData:true,originalLiveSequenceValuesCompared:false,sequenceValuesChanged:false});assert.equal(result.sequenceValuesVerified,false);
   const quarantine=result.authenticationQuarantine;assert.equal(quarantine.sessionsInvalidated,5);assert.equal(quarantine.botKeysRevoked,1);assert.equal(quarantine.verificationRecordsInvalidated,1);assert.equal(quarantine.authenticationDeliveriesExpired,1);assert.ok(quarantine.databaseLoginsDisabled>=1);assert.equal(quarantine.originalBusinessAndAccountRecordsPreserved,true);assert.equal(quarantine.originalCredentialAndInvitationHistoryPreserved,true);assert.equal(quarantine.externalQueuesReplayed,false);assert.equal(quarantine.providerAndPrivacyReconciliationRequired,true);
   await assert.rejects(access(directory+'/data/postmaster.pid'));
   await writeFile(directory+'/input.json',JSON.stringify({...metadata,databaseDumpSha256:'0'.repeat(64)}));
