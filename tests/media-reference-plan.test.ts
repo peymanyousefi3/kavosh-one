@@ -1,17 +1,35 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
-import {mkdtemp,realpath,open,readFile,unlink,rmdir} from 'node:fs/promises';
+import {mkdtemp,realpath,open,readFile,unlink,rmdir,writeFile,chmod,symlink,link} from 'node:fs/promises';
 import type {FileHandle} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import type pg from 'pg';
-import {captureMediaReferencePlan} from '../src/operations/media-reference-plan.ts';
+import {captureMediaReferencePlan,openMediaReferencePlan} from '../src/operations/media-reference-plan.ts';
 import {expectedSchemaRevision,type Database} from '../src/core/database.ts';
 import {fixture,hash,target} from './file-copy-fixture.ts';
 import {processOneCopy} from '../src/files/copy-worker.ts';
 
 const binding={databaseBackupId:randomUUID(),archiveSha256:'a'.repeat(64),schemaRevision:expectedSchemaRevision};
+test('reference readers reject unsafe files, malformed catalogs and changes between bounded passes',async()=>{
+ const folder=await realpath(await mkdtemp(join(tmpdir(),'kavosh-reference-reader-'))),file=join(folder,'plan.jsonl'),alias=join(folder,'alias.jsonl'),academyId='aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+ const header={type:'header',format:'kavosh-media-reference-plan-v1',...binding,scope:'recorded_ordinary_file_objects',signedEvidenceIncluded:false},school={type:'academy',academyId,unconfirmedUploads:0},footer={type:'complete',academies:1,references:0,unconfirmedUploads:0};
+ const encode=(rows:unknown[])=>rows.map(row=>JSON.stringify(row)+'\n').join(''),valid=encode([header,school,footer]);
+ const input=(text:string,path=file)=>({...binding,file:path,plaintextBytes:Buffer.byteLength(text),plaintextSha256:createHash('sha256').update(text).digest('hex')});
+ try{
+  await writeFile(file,valid,{mode:0o600,flag:'wx'});
+  await chmod(file,0o644);await assert.rejects(openMediaReferencePlan(input(valid),academyId,new Set()),{code:'UNSAFE_RECOVERY_FILE'});await chmod(file,0o600);
+  await symlink(file,alias);await assert.rejects(openMediaReferencePlan(input(valid,alias),academyId,new Set()),{code:'UNSAFE_RECOVERY_FILE'});await unlink(alias);
+  await link(file,alias);await assert.rejects(openMediaReferencePlan(input(valid),academyId,new Set()),{code:'UNSAFE_RECOVERY_FILE'});await unlink(alias);
+  for(const bad of [encode([header,school]),encode([header,school,{...footer,references:1}]),encode([header,school,footer,footer]),encode([header,school,school,footer]),'x'.repeat(65537)+'\n']){
+   await writeFile(file,bad);await assert.rejects(openMediaReferencePlan(input(bad),academyId,new Set()));
+  }
+  await writeFile(file,valid);const reader=await openMediaReferencePlan(input(valid),academyId,new Set());
+  try{await writeFile(file,valid.replace('"unconfirmedUploads":0','"unconfirmedUploads":1'));await assert.rejects(reader.referencesForSchool.next(),{code:'MEDIA_REFERENCE_PLAN_CHANGED'});}finally{await reader.close();}
+  await assert.rejects(openMediaReferencePlan(input(valid),academyId,new Set(),AbortSignal.abort()),{code:'RECOVERY_CANCELLED'});
+ }finally{await unlink(alias).catch(()=>{});await unlink(file);await rmdir(folder);}
+});
 test('reference plans require a matching unfiltered repeatable read-only snapshot and never expose database errors',async()=>{
  for(const patch of [{isolation:'read committed'},{readOnly:'off'},{unfiltered:false},{revision:expectedSchemaRevision-1}]){
   let writes=0;const c={async query(){return{rows:[{isolation:'repeatable read',readOnly:'on',unfiltered:true,revision:expectedSchemaRevision,...patch}]};}} as unknown as pg.Client;
@@ -49,6 +67,9 @@ test('actual SQL plan retains historical observed source/destination bytes and d
    assert.equal(result.references,2);assert.equal(result.unconfirmedUploads,1);assert.equal(result.plaintextSha256,createHash('sha256').update(text).digest('hex'));assert.equal(lines[0].archiveSha256,binding.archiveSha256);assert.equal(lines.at(-1).type,'complete');
    assert.equal(refs.length,2);assert.deepEqual(refs.map(row=>row.stage).sort(),['clean','quarantine']);assert.ok(refs.every(row=>row.academyId===f.a&&row.fileId===item.id&&row.bytes===f.bytes.length&&row.sha256===hash(f.bytes)));assert.equal(refs.find(row=>row.stage==='quarantine').storageTargetId,target);assert.equal(refs.find(row=>row.stage==='clean').storageTargetId,'b'.repeat(64));
    assert.ok(lines.some(line=>line.type==='academy'&&line.academyId===f.b));assert.doesNotMatch(text,/Synthetic source|Pending upload|example[.]test|secretAccessKey/);
+   const planInput={...binding,file,plaintextSha256:result.plaintextSha256,plaintextBytes:result.plaintextBytes},targets=new Set(['clean:'+'b'.repeat(64),'quarantine:'+target]),reader=await openMediaReferencePlan(planInput,f.a,targets);
+   try{const observed=[];for await(const ref of reader.referencesForSchool)observed.push(ref);assert.equal(reader.references,2);assert.equal(reader.unconfirmedUploads,1);assert.deepEqual(observed,refs);assert.equal(reader.binding.archiveSha256,binding.archiveSha256);}finally{await reader.close();}
+   await assert.rejects(openMediaReferencePlan(planInput,f.a,new Set()),{code:'MEDIA_REFERENCE_TARGET_MISSING'});await assert.rejects(openMediaReferencePlan({...planInput,archiveSha256:'f'.repeat(64)},f.a,targets),{code:'MEDIA_REFERENCE_BINDING_MISMATCH'});
   }finally{await c.query('ROLLBACK');}
  }finally{client?.release();await unlink(file).catch(()=>{});await rmdir(folder);await f.pg.close();}
 });

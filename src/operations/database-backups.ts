@@ -1,8 +1,8 @@
 import { spawn,type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash,randomUUID } from 'node:crypto';
 import { constants,createReadStream } from 'node:fs';
-import { lstat,realpath,open,mkdir,unlink,rmdir } from 'node:fs/promises';
-import { isAbsolute,join,resolve,dirname } from 'node:path';
+import { open,mkdir,unlink,rmdir } from 'node:fs/promises';
+import { isAbsolute,join,dirname } from 'node:path';
 import { Readable,Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import pg from 'pg';
@@ -12,6 +12,8 @@ import { isDeepStrictEqual } from 'node:util';
 import { backupVerification,databaseVerificationSnapshot } from './database-verification.ts';
 import {RecoveryError} from './recovery-error.ts';
 import {captureMediaReferencePlan} from './media-reference-plan.ts';
+import {privateDirectory,regularFile} from './recovery-files.ts';
+export {privateDirectory,regularFile} from './recovery-files.ts';
 export {RecoveryError} from './recovery-error.ts';
 
 const path=z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0'));
@@ -25,15 +27,6 @@ const restoreInput=common.extend({
  pgRestore:path,archive:path,identityFile:path,expectedSha256:z.string().regex(/^[a-f0-9]{64}$/),
  expectedRevision:z.number().int().min(expectedSchemaRevision).max(2147483647),confirmation:z.string().max(100),expectedVerification:backupVerification.optional()
 }).strict();
-export async function privateDirectory(p:string){
- const s=await lstat(p);
- if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==process.getuid?.()||(s.mode&0o077)!==0||await realpath(p)!==resolve(p))throw new RecoveryError('PRIVATE_RECOVERY_DIRECTORY_REQUIRED');
-}
-export async function regularFile(p:string,privateKey=false){
- const s=await lstat(p);
- if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||privateKey&&(s.uid!==process.getuid?.()||(s.mode&0o077)!==0))throw new RecoveryError('UNSAFE_RECOVERY_FILE');
- return s;
-}
 async function connection(i:z.infer<typeof common>){
  const u=new URL(i.databaseUrl),database=decodeURIComponent(u.pathname.slice(1)),user=decodeURIComponent(u.username),password=decodeURIComponent(u.password);
  if(!['postgres:','postgresql:'].includes(u.protocol)||u.search||u.hash||!u.hostname||!database||!user||[database,user,password].some(v=>/[\0\r\n]/.test(v))||!/^[-A-Za-z0-9_$]{1,63}$/.test(database))throw new RecoveryError('INVALID_RECOVERY_DATABASE');

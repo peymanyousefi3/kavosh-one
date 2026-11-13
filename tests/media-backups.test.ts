@@ -32,16 +32,22 @@ test('encrypted collection catalogs stream paginated targets,verify copied objec
  skip:!process.env.AGE_BIN||!process.env.AGE_KEYGEN_BIN
 },async()=>{
  const root=await realpath(await mkdtemp(join(tmpdir(),'kavosh-collection-test-'))),identity=join(root,'identity.txt'),drive=await driveBackupFixture(),secondId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',extraId='dddddddd-dddd-4ddd-8ddd-dddddddddddd',bytes=Buffer.from('PRIVATE_COLLECTION_MEDIA');
- const workspaces:string[]=[],failedDrive=await driveBackupFixture('catalog-error');
+ const workspaces:string[]=[],plans:string[]=[],failedDrive=await driveBackupFixture('catalog-error');
  async function cleanWork(path:string){for(const name of await readdir(path)){assert.match(name,/^media-(?:collection-)?[a-f0-9-]{36}$/);const folder=join(path,name);for(const file of await readdir(folder)){assert.ok(['manifest.json','media.bin.age','catalog.jsonl.age'].includes(file));await unlink(join(folder,file));}await rmdir(folder);}await rmdir(path);}
  try{
   await run(process.env.AGE_KEYGEN_BIN!,['--output',identity]);const recipient=(await run(process.env.AGE_KEYGEN_BIN!,['-y',identity])).stdout.trim();
   const targets=[{stage:'clean' as const,configuration},{stage:'quarantine' as const,configuration:{...configuration,bucket:'synthetic-private-intake'}}];
-  for(const scenario of ['normal','empty','added','removed','changed','duplicate-page','catalog-limit','catalog-offsite-error']){
+  for(const scenario of ['normal','empty','added','removed','changed','duplicate-page','catalog-limit','catalog-offsite-error','reference-valid','reference-missing','reference-size','reference-hash','reference-target','reference-tampered']){
    const work=join(root,scenario);await mkdir(work,{mode:0o700});workspaces.push(work);
+   let referencePlan;
+   if(scenario.startsWith('reference-')){
+    const binding={databaseBackupId:extraId,archiveSha256:'e'.repeat(64),schemaRevision:396},file=join(root,scenario+'.jsonl');plans.push(file);
+    const clear=[{type:'header',format:'kavosh-media-reference-plan-v1',...binding,scope:'recorded_ordinary_file_objects',signedEvidenceIncluded:false},{type:'academy',academyId,unconfirmedUploads:1},{type:'reference',academyId,stage:'clean',storageTargetId:scenario==='reference-target'?'0'.repeat(64):r2TargetId(configuration),fileId:scenario==='reference-missing'?extraId:fileId,bytes:bytes.length+(scenario==='reference-size'?1:0),sha256:scenario==='reference-hash'?'0'.repeat(64):createHash('sha256').update(bytes).digest('hex')},{type:'complete',academies:1,references:1,unconfirmedUploads:1}].map(v=>JSON.stringify(v)+'\n').join('');
+    await writeFile(file,clear,{mode:0o600,flag:'wx'});referencePlan={...binding,file,plaintextBytes:Buffer.byteLength(clear),plaintextSha256:scenario==='reference-tampered'?'0'.repeat(64):createHash('sha256').update(clear).digest('hex')};
+   }
    const scans=new Map<string,number>();let clients=0,closed=0;
    const selectedDrive=scenario==='catalog-offsite-error'?failedDrive:drive;
-   const pending=backupMediaCollection({academyId,age:process.env.AGE_BIN,recipient,workDirectory:work,targets:scenario==='normal'?targets:targets.slice(0,1),...['normal','catalog-offsite-error'].includes(scenario)?{offsite:{rclone:selectedDrive.input.rclone,drive:selectedDrive.input.drive}}:{},...(scenario==='catalog-limit'?{maximumCatalogBytes:1024}:{})},undefined,targetId=>{
+   const pending=backupMediaCollection({academyId,age:process.env.AGE_BIN,recipient,workDirectory:work,targets:scenario==='normal'?targets:targets.slice(0,1),...(referencePlan?{referencePlan}:{}),...['normal','catalog-offsite-error'].includes(scenario)?{offsite:{rclone:selectedDrive.input.rclone,drive:selectedDrive.input.drive}}:{},...(scenario==='catalog-limit'?{maximumCatalogBytes:1024}:{})},undefined,targetId=>{
     clients++;const target=targets.find(t=>r2TargetId(t.configuration)===targetId)!;
     return{async handle(request:{method:string;path:string;query?:Record<string,unknown>;headers:Record<string,string>}){
      assert.equal(request.method,'GET');const prefix=`academies/${academyId}/${target.stage}/`;
@@ -55,7 +61,12 @@ test('encrypted collection catalogs stream paginated targets,verify copied objec
      assert.equal(request.headers['if-match'],'"original"');assert.ok(request.path.endsWith(fileId)||request.path.endsWith(secondId));return{response:{statusCode:200,headers:{'content-length':String(bytes.length),'content-type':'application/octet-stream',etag:'"original"'},body:Readable.from([bytes])}};
     },destroy(){closed++;}};
    });
-   if(scenario==='normal'||scenario==='empty'){
+   if(scenario==='reference-valid'){
+    const result=await pending;assert.equal(result.objects,2);assert.equal(result.recordedDatabaseReferencesVerified,true);assert.equal(result.databaseReferencesVerified,false);assert.equal(result.completeMediaBackup,false);assert.equal(result.referenceCoverage?.recordedReferences,1);assert.equal(result.referenceCoverage?.unconfirmedUploads,1);
+    const lines=(await run(process.env.AGE_BIN!,['--decrypt','--identity',identity,result.archivePath])).stdout.trim().split('\n').map(line=>JSON.parse(line));assert.equal(lines[0].referenceBinding.archiveSha256,referencePlan!.archiveSha256);assert.equal(lines.at(-1).recordedDatabaseReferencesVerified,true);assert.equal(lines.at(-1).referenceCoverage.signedEvidenceIncluded,false);
+   }else if(scenario.startsWith('reference-')){
+    const code=scenario==='reference-missing'?'MEDIA_REFERENCE_OBJECT_MISSING':scenario==='reference-target'?'MEDIA_REFERENCE_TARGET_MISSING':scenario==='reference-tampered'?'MEDIA_REFERENCE_PLAN_CHANGED':'MEDIA_REFERENCE_CONTENT_CHANGED';await assert.rejects(pending,{code});assert.ok((await readdir(work)).every(name=>!name.startsWith('media-collection-')));if(['reference-target','reference-tampered'].includes(scenario))assert.equal(clients,0);
+   }else if(scenario==='normal'||scenario==='empty'){
     const count=scenario==='empty'?0:4,result=await pending;assert.equal(result.objects,count);assert.equal(result.sourceBytes,bytes.length*count);assert.equal(result.allArchivesIndependentlyCopied,scenario==='normal');assert.equal(result.completeMediaBackup,false);assert.equal(result.databaseReferencesVerified,false);assert.equal(result.atomicStorageSnapshot,false);
     const remote=scenario==='empty'?result.archivePath:drive.remoteFile('kavosh_backup:backup-'+result.id+'/catalog.jsonl.age'),clear=(await run(process.env.AGE_BIN!,['--decrypt','--identity',identity,remote])).stdout,lines=clear.trim().split('\n').map(line=>JSON.parse(line));
     assert.equal(lines[0].type,'header');assert.equal(lines.at(-1).type,'complete');assert.equal(lines.at(-1).matchingFinalInventory,true);assert.equal(lines.filter(line=>line.type==='object').length,count);assert.doesNotMatch(clear,/synthetic-secret|synthetic-read-only|PRIVATE_COLLECTION_MEDIA/);
@@ -68,7 +79,7 @@ test('encrypted collection catalogs stream paginated targets,verify copied objec
    }
    assert.equal(closed,clients);
   }
- }finally{for(const work of workspaces)await cleanWork(work);await unlink(identity).catch(()=>{});await rmdir(root);await drive.close();await failedDrive.close();}
+ }finally{for(const work of workspaces)await cleanWork(work);for(const file of plans)await unlink(file);await unlink(identity).catch(()=>{});await rmdir(root);await drive.close();await failedDrive.close();}
 });
 test('actual age streaming media archives decrypt to the exact conditional source and reject changed or incomplete objects',{
  skip:!process.env.AGE_BIN||!process.env.AGE_KEYGEN_BIN

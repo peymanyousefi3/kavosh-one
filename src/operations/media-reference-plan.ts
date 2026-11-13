@@ -1,12 +1,53 @@
 import {createHash} from 'node:crypto';
-import type {FileHandle} from 'node:fs/promises';
+import {open,type FileHandle} from 'node:fs/promises';
+import {constants} from 'node:fs';
+import {dirname,isAbsolute} from 'node:path';
 import type pg from 'pg';
 import {z} from 'zod';
 import {RecoveryError} from './recovery-error.ts';
+import {privateDirectory,regularFile} from './recovery-files.ts';
 
 const uuid=z.string().uuid(),sha=z.string().regex(/^[a-f0-9]{64}$/);
 export const recordedMediaReference=z.object({academyId:uuid,stage:z.enum(['quarantine','clean']),storageTargetId:sha,fileId:uuid,bytes:z.coerce.number().int().positive().max(4294967296),sha256:sha}).strict();
 const bindingInput=z.object({databaseBackupId:uuid,archiveSha256:sha,schemaRevision:z.number().int().positive()}).strict();
+export const mediaReferencePlanInput=bindingInput.extend({file:z.string().min(1).max(4096).refine(v=>isAbsolute(v)&&!v.includes('\0')),plaintextSha256:sha,plaintextBytes:z.number().int().positive().max(4294967296)}).strict();
+const headerInput=bindingInput.extend({type:z.literal('header'),format:z.literal('kavosh-media-reference-plan-v1'),scope:z.literal('recorded_ordinary_file_objects'),signedEvidenceIncluded:z.literal(false)}).strict();
+const schoolInput=z.object({type:z.literal('academy'),academyId:uuid,unconfirmedUploads:z.number().int().nonnegative().safe()}).strict();
+const referenceInput=recordedMediaReference.extend({type:z.literal('reference')}).strict();
+const footerInput=z.object({type:z.literal('complete'),academies:z.number().int().nonnegative().max(1000000),references:z.number().int().nonnegative().max(10000000),unconfirmedUploads:z.number().int().nonnegative().safe()}).strict();
+export const mediaReferenceKey=(reference:Pick<z.infer<typeof recordedMediaReference>,'stage'|'storageTargetId'|'fileId'>)=>[reference.stage,reference.storageTargetId,reference.fileId].join(':');
+
+// Two bounded passes: authenticate the complete metadata before cloud IO,
+// then merge ordered references without buffering a school's files in memory.
+export async function openMediaReferencePlan(raw:unknown,academyId:string,targets:ReadonlySet<string>,signal?:AbortSignal){
+ const parsed=mediaReferencePlanInput.safeParse(raw),school=uuid.safeParse(academyId);if(!parsed.success||!school.success)throw new RecoveryError('INVALID_MEDIA_REFERENCE_BINDING');const i=parsed.data;
+ let handle:FileHandle|undefined;
+ try{
+  await privateDirectory(dirname(i.file));const before=await regularFile(i.file,true);if(before.size!==i.plaintextBytes)throw new RecoveryError('MEDIA_REFERENCE_PLAN_CHANGED');
+  handle=await open(i.file,constants.O_RDONLY|constants.O_NOFOLLOW);const original=await handle.stat();
+  if(original.ino!==before.ino||original.dev!==before.dev||original.size!==before.size||original.uid!==process.getuid?.()||original.nlink!==1||(original.mode&0o077)!==0)throw new RecoveryError('UNSAFE_RECOVERY_FILE');
+  const file=handle;
+  async function* lines(){
+   const hash=createHash('sha256'),buffer=Buffer.alloc(65536);let position=0,pending=Buffer.alloc(0);
+   while(true){
+    if(signal?.aborted)throw new RecoveryError('RECOVERY_CANCELLED');const {bytesRead}=await file.read(buffer,0,buffer.length,position);if(!bytesRead)break;position+=bytesRead;if(position>i.plaintextBytes)throw new RecoveryError('MEDIA_REFERENCE_PLAN_CHANGED');hash.update(buffer.subarray(0,bytesRead));pending=Buffer.concat([pending,buffer.subarray(0,bytesRead)]);
+    let end:number;while((end=pending.indexOf(10))!==-1){if(end===0||end>65536)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');const line=pending.subarray(0,end);pending=pending.subarray(end+1);yield JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(line));}if(pending.length>65536)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');
+   }
+   const after=await file.stat();if(pending.length||position!==i.plaintextBytes||hash.digest('hex')!==i.plaintextSha256||after.ino!==original.ino||after.dev!==original.dev||after.size!==original.size||after.mtimeMs!==original.mtimeMs||after.ctimeMs!==original.ctimeMs||after.uid!==original.uid||after.mode!==original.mode||after.nlink!==1)throw new RecoveryError('MEDIA_REFERENCE_PLAN_CHANGED');
+  }
+  let phase='header',academies=0,references=0,unconfirmed=0,lastSchool='',lastReference='',selectedCount=0,selectedPending:number|undefined;
+  for await(const value of lines()){
+   if(phase==='header'){const h=headerInput.parse(value);if(h.databaseBackupId!==i.databaseBackupId||h.archiveSha256!==i.archiveSha256||h.schemaRevision!==i.schemaRevision)throw new RecoveryError('MEDIA_REFERENCE_BINDING_MISMATCH');phase='academies';continue;}
+   if(phase==='complete')throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');
+   if(value.type==='academy'){const a=schoolInput.parse(value);if(phase!=='academies'||a.academyId<=lastSchool)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');lastSchool=a.academyId;academies++;unconfirmed+=a.unconfirmedUploads;if(!Number.isSafeInteger(unconfirmed)||academies>1000000)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');if(a.academyId===academyId)selectedPending=a.unconfirmedUploads;}
+   else if(value.type==='reference'){phase='references';const r=referenceInput.parse(value),key=r.academyId+':'+mediaReferenceKey(r);if(key<=lastReference||++references>10000000)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');lastReference=key;if(r.academyId===academyId){if(!targets.has(r.stage+':'+r.storageTargetId))throw new RecoveryError('MEDIA_REFERENCE_TARGET_MISSING');selectedCount++;}}
+   else{const f=footerInput.parse(value);if(f.academies!==academies||f.references!==references||f.unconfirmedUploads!==unconfirmed)throw new RecoveryError('INVALID_MEDIA_REFERENCE_FORMAT');phase='complete';}
+  }
+  if(phase!=='complete'||selectedPending===undefined)throw new RecoveryError('MEDIA_REFERENCE_ACADEMY_NOT_FOUND');
+  const referencesForSchool=(async function*(){try{for await(const value of lines())if(value.type==='reference'){const r=referenceInput.parse(value);if(r.academyId===academyId)yield r;}}catch(error){if(error instanceof RecoveryError)throw error;throw new RecoveryError('MEDIA_REFERENCE_PLAN_FAILED');}})();
+  return{binding:{databaseBackupId:i.databaseBackupId,archiveSha256:i.archiveSha256,schemaRevision:i.schemaRevision,plaintextSha256:i.plaintextSha256},references:selectedCount,unconfirmedUploads:selectedPending,signedEvidenceIncluded:false,referencesForSchool,async close(){await referencesForSchool.return(undefined);await file.close();}};
+ }catch(error){await handle?.close().catch(()=>{});if(error instanceof RecoveryError)throw error;throw new RecoveryError('MEDIA_REFERENCE_PLAN_FAILED');}
+}
 // Historical physical observations only. Pending grants are not fabricated
 // uploads;archived files and superseded routes still require their old bytes.
 const references=`SELECT * FROM(SELECT DISTINCT "academyId",stage,"storageTargetId","fileId",bytes,sha256 FROM(
