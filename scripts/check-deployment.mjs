@@ -1,5 +1,7 @@
 // Bounded, read-only production acceptance. No signup, delivery or financial writes.
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
 if (process.argv.length !== 3 || process.argv[2] !== '--execute') throw new Error('EXPLICIT_EXECUTE_REQUIRED');
 const base = 'https://one.kavosh.ai';
 async function check(path, status, options = {}) {
@@ -13,7 +15,14 @@ async function check(path, status, options = {}) {
 }
 assert.equal((await (await check('/api/health', 200)).json()).service, 'kavosh-one');
 assert.deepEqual(await (await check('/api/ready', 200)).json(), { ready: true });
-for (const path of ['/api/v1/people', '/api/v1/finance/accounts', '/api/v1/audit-events']) await check(path, 401);
+const protectedPaths=['/api/v1/people','/api/v1/finance/accounts','/api/v1/audit-events','/api/v1/agreement-checks','/api/v1/agreement-checks/summary','/api/v1/overview?timeZone=UTC'];
+for (const path of protectedPaths) await check(path, 401);
+// Match the served contract to this checkout,not merely any healthy old build.
+const contractResponse=await fetch(base+'/openapi.json',{redirect:'error',signal:AbortSignal.timeout(15000)});
+assert.equal(contractResponse.status,200);
+const contract=Buffer.from(await contractResponse.arrayBuffer()),expected=readFileSync(new URL('../public/openapi.json',import.meta.url));
+assert.equal(createHash('sha256').update(contract).digest('hex'),createHash('sha256').update(expected).digest('hex'),'Deployed API contract differs from this checkout');
+const apiVersion=JSON.parse(contract.toString()).info.version;
 const spoofed = await check('/api/auth/get-session', 200, { headers: { 'x-kavosh-client-ip': 'attacker-not-an-ip', 'x-kavosh-edge-key': 'attacker-controlled' } });
 assert.equal(await spoofed.json(), null);
 // The actual Cloudflare edge independently rejects a forged reserved CF header.
@@ -29,4 +38,4 @@ const quick = await Promise.all(Array.from({ length: 5 }, () => check('/api/read
 for (const response of quick) assert.deepEqual(await response.json(), { ready: true });
 const landing = await fetch('https://kavosh.ai/', { redirect: 'error', signal: AbortSignal.timeout(15000) });
 assert.equal(landing.status, 200);
-console.log(JSON.stringify({ publicHttpsVerified: true, readiness: true, protectedAnonymousRequests: 3, spoofedProxyHeadersIgnored: true, reservedCloudflareHeaderRejectedAtEdge: true, crossOriginRejected: true, malformedInputRejected: true, oversizedBodyRejected: true, concurrentReadinessRequests: 5, landingHttpsStatus: 200, financialWrites: 0, accountsCreated: 0, providerMessagesSent: 0, fullUserJourneyVerified: false }));
+console.log(JSON.stringify({ publicHttpsVerified: true, readiness: true, protectedAnonymousRequests: protectedPaths.length, deployedContractMatchesCheckout:true,apiVersion, spoofedProxyHeadersIgnored: true, reservedCloudflareHeaderRejectedAtEdge: true, crossOriginRejected: true, malformedInputRejected: true, oversizedBodyRejected: true, concurrentReadinessRequests: 5, landingHttpsStatus: 200, financialWrites: 0, accountsCreated: 0, providerMessagesSent: 0, fullUserJourneyVerified: false }));
