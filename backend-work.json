@@ -1,4 +1,10 @@
 {
+  "historicalPrivacy394ReferenceCorrection": {
+    "nativeFailure": "eca665e business-logic6 job131692265172 failed three historical profile-consent upgrade comparisons (342to343,326to327,325to326). The exact native diff adds signature_completion_incident_id:null to otherwise retained event-source rows after upgrading to current schema. No changed private withdrawal value was shown by that diff.",
+    "fix": "The existing snapshots already account for the later nullable privacy_reminder_id column. They now also exclude the new nullable signing reference from old-shape comparisons while separately asserting that BOTH reference columns remain NULL for all retained historical sources. Every original field,withdrawal,notice,credential and existing function-authority assertion stays intact;no migration,privacy rule,record or API behavior changed.",
+    "verification": {"exactPreviouslyFailingCases":{"passed":3,"failed":0,"durationMs":9275.668542},"typecheck":"passed","diffWhitespace":"passed","boundary":"Local embedded SQL verification;native current-head rerun still required. Not a complete privacy or full-backend acceptance claim."},
+    "production": "No deployment or data changes;kavosh.ai untouched. Native handoff authority and recovery fix21d41c5 already pushed separately;its current-head verification remains pending."
+  },
   "signatureNative395Corrections": {
     "status": "Native failures diagnosed;minimal fix and deterministic recovery checks locally verified;native rerun pending;not deployed",
     "nativeFailureEvidence": "7e89d47 PDF job131696452132 failed. Its actual PostgreSQL COMMIT-time handoff trigger ran as the restricted sender,not the begin helper's private owner,and could not execute lock_signature_check_source. Three fast Live enrollment variants also reached the evidence-reuse assertion before an earlier deliberately shifted available_at clock was due;the row correctly remained queued,so that was a test precondition error,not permission to bypass retry delays. Earlier Test variant passed. Do not treat old local passes as native proof.",
