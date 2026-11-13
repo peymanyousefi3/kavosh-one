@@ -1,14 +1,15 @@
 import {z} from 'zod';
-const time=z.iso.datetime(),service=z.object({active:z.enum(['active','activating','deactivating','inactive','failed','unknown']),result:z.string().regex(/^[a-z-]{1,40}$/),exitStatus:z.number().int().min(0).max(255),lastSuccessfulExitAt:time.nullable()}).strict();
-export const healthObservation=z.object({observedAt:time,ready:z.boolean(),freeBackupDiskBytes:z.string().regex(/^(0|[1-9][0-9]{0,30})$/),web:service,backup:service,configuration:service,backupTimerActive:z.boolean(),configurationTimerActive:z.boolean()}).strict();
+const time=z.iso.datetime(),service=z.object({active:z.enum(['active','activating','deactivating','inactive','failed','unknown']),result:z.string().regex(/^[a-z-]{1,40}$/),exitStatus:z.number().int().min(0).max(255).nullable(),lastSuccessfulExitAt:time.nullable()}).strict();
+export const healthObservation=z.object({observedAt:time,ready:z.boolean(),freeBackupDiskBytes:z.string().regex(/^(0|[1-9][0-9]{0,30})$/),web:service,backup:service,configuration:service,backupTimerActive:z.boolean().nullable(),configurationTimerActive:z.boolean().nullable()}).strict();
 export function evaluateOperationalHealth(raw:unknown){
  const observation=healthObservation.parse(raw),now=Date.parse(observation.observedAt),issues:{component:string;code:string;severity:'warning'|'critical'}[]=[];
  const add=(component:string,code:string,severity:'warning'|'critical'='critical')=>issues.push({component,code,severity});
- if(observation.web.active!=='active')add('web','WEB_NOT_RUNNING');else if(!observation.ready)add('web','READINESS_UNAVAILABLE');
+ if(observation.web.active==='unknown')add('web','WEB_STATUS_UNAVAILABLE');else if(observation.web.active!=='active')add('web','WEB_NOT_RUNNING');else if(!observation.ready)add('web','READINESS_UNAVAILABLE');
  for(const [component,value]of [['database-backup',observation.backup],['settings-backup',observation.configuration]] as const){
   const timer=component==='database-backup'?observation.backupTimerActive:observation.configurationTimerActive;
-  if(!timer)add(component,'BACKUP_TIMER_INACTIVE');
-  else if(value.active==='unknown'||value.result==='unknown')add(component,'BACKUP_STATUS_UNAVAILABLE');
+  if(value.active==='unknown'||value.result==='unknown'||value.exitStatus===null)add(component,'BACKUP_STATUS_UNAVAILABLE');
+  else if(timer===null)add(component,'BACKUP_TIMER_STATUS_UNAVAILABLE');
+  else if(!timer)add(component,'BACKUP_TIMER_INACTIVE');
   else if(value.active==='failed'||value.result!=='success'||value.exitStatus!==0)add(component,'BACKUP_LAST_RUN_FAILED');
   else if(value.lastSuccessfulExitAt===null)add(component,'BACKUP_SUCCESS_NOT_VERIFIED');
   else{const age=now-Date.parse(value.lastSuccessfulExitAt);if(age< -300000)add(component,'BACKUP_CLOCK_INCONSISTENT');else if(age>36*3600000)add(component,'BACKUP_OVERDUE');}

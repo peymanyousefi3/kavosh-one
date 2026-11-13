@@ -5,8 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-DynamicUser=yes
-StateDirectory=kavosh-one-monitor
+User=kavosh-one-monitor
+Group=kavosh-one-monitor
+StateDirectory=kavosh-one-health
 StateDirectoryMode=0700
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node /srv/kavosh-one/operations/health-monitor/deploy/ovh/monitor-health.js
