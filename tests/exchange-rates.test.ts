@@ -3,6 +3,45 @@ import {randomUUID} from 'node:crypto';
 import {test} from 'node:test';
 import {exchangeRatio,convertReferenceMinor} from '../src/core/exchange.ts';
 import {invoiceFixture} from './invoice-fixture.ts';
+import {fetchBankOfCanadaReference} from '../src/integrations/bank-of-canada.ts';
+import {spawnSync} from 'node:child_process';
+
+function officialShape(observations:unknown[]=[{d:'2026-01-30',FXUSDCAD:{v:'1.3500'}}]){return {terms:{url:'https://www.bankofcanada.ca/terms/'},seriesDetail:{FXUSDCAD:{label:'USD/CAD',dateFormat:'daily',dimension:{key:'d',name:'Date'},metadata:{frequency:'Business daily',unit:'Canadian dollars per US dollar'}}},observations};}
+const referenceRequest={code:'USD',on:'2026-01-31',maximumAgeDays:1};
+const response=(body:unknown)=>new Response(JSON.stringify(body),{headers:{'content-type':'application/json'}});
+test('Bank of Canada reference fetch fixes destination and direction, retains exact strings and never applies a price',async()=>{
+ let calls=0;const result=await fetchBankOfCanadaReference(referenceRequest,async(url,options)=>{
+  calls++;assert.equal(String(url),'https://www.bankofcanada.ca/valet/observations/FXUSDCAD/json?start_date=2026-01-30&end_date=2026-01-31');
+  assert.equal(options?.method,'GET');assert.equal(options?.redirect,'error');assert.equal(options?.credentials,'omit');assert.equal(options?.cache,'no-store');assert.deepEqual(options?.headers,{accept:'application/json'});return response(officialShape());
+ });
+ assert.equal(calls,1);assert.deepEqual(result.selected,{on:'2026-01-30',rate:'1.3500',ageDays:1});assert.equal(result.humanReviewRequired,true);assert.equal(result.ledgerAdjusted,false);assert.match(result.responseSha256,/^[a-f0-9]{64}$/);
+ const empty=await fetchBankOfCanadaReference(referenceRequest,async()=>response(officialShape([])));assert.equal(empty.selected,null);assert.equal(empty.issue,'REFERENCE_RATE_MISSING');
+});
+test('Bank of Canada reference validation rejects unknown direction, stale/duplicate dates and malformed or numeric rates',async()=>{
+ const bad=[officialShape([{d:'2026-01-29',FXUSDCAD:{v:'1.35'}}]),officialShape([{d:'2026-02-01',FXUSDCAD:{v:'1.35'}}]),officialShape([{d:'2026-01-30',FXUSDCAD:{v:'1.35'}},{d:'2026-01-30',FXUSDCAD:{v:'1.4'}}]),officialShape([{d:'2026-01-30',FXUSDCAD:{v:1.35}}]),officialShape([{d:'2026-01-30',FXUSDCAD:{v:'0'}}]),officialShape([{d:'2026-01-30',FXUSDCAD:{v:'1e2'}}]),officialShape([{d:'2026-01-30',FXUSDCAD:{v:'1.35'},FXCADUSD:{v:'2'}}]),{...officialShape(),seriesDetail:{FXUSDCAD:{...officialShape().seriesDetail.FXUSDCAD,label:'CAD/USD'}}}];
+ for(const body of bad)await assert.rejects(fetchBankOfCanadaReference(referenceRequest,async()=>response(body)),/^Error: BANK_OF_CANADA_REFERENCE_UNAVAILABLE$/);
+ const invertedUnit=officialShape();invertedUnit.seriesDetail.FXUSDCAD.metadata.unit='US dollars per Canadian dollar';await assert.rejects(fetchBankOfCanadaReference(referenceRequest,async()=>response(invertedUnit)),/^Error: BANK_OF_CANADA_REFERENCE_UNAVAILABLE$/);
+ let calls=0;for(const input of [{...referenceRequest,code:'CAD'},{...referenceRequest,code:'USD/../../evil'},{...referenceRequest,on:'2026-02-30'},{...referenceRequest,maximumAgeDays:31},{...referenceRequest,url:'https://untrusted.example'}])await assert.rejects(fetchBankOfCanadaReference(input,async()=>{calls++;return response(officialShape());}));assert.equal(calls,0);
+});
+test('Bank of Canada transport rejects oversized and unsuccessful responses without retry or diagnostics leakage',async()=>{
+ for(const reply of [new Response('PRIVATE_UPSTREAM_ERROR',{status:429}),new Response('{}',{headers:{'content-type':'text/html'}}),new Response('{}',{headers:{'content-type':'application/json','content-length':'65537'}}),new Response('x'.repeat(65537),{headers:{'content-type':'application/json'}}),new Response(Uint8Array.from([255]),{headers:{'content-type':'application/json'}})]){
+  let calls=0;await assert.rejects(fetchBankOfCanadaReference(referenceRequest,async()=>{calls++;return reply;}),/^Error: BANK_OF_CANADA_REFERENCE_UNAVAILABLE$/);assert.equal(calls,1);
+ }
+});
+test('Bank of Canada fetch cancellation terminates ignored transport and stalled bodies without waiting for cancellation',async()=>{
+ for(const phase of ['headers','body']){
+  const controller=new AbortController();let cancelled=false;
+  const body=new ReadableStream<Uint8Array>({cancel(){cancelled=true;return new Promise(()=>{});}}),send:typeof fetch=async()=>phase==='headers'?await new Promise<Response>(()=>{}):new Response(body,{headers:{'content-type':'application/json'}});
+  const timer=setTimeout(()=>controller.abort(),10);try{await assert.rejects(fetchBankOfCanadaReference(referenceRequest,send,controller.signal),/^Error: BANK_OF_CANADA_REFERENCE_UNAVAILABLE$/);if(phase==='body')assert.equal(cancelled,true);}finally{clearTimeout(timer);}
+ }
+ const controller=new AbortController();controller.abort();let calls=0;await assert.rejects(fetchBankOfCanadaReference(referenceRequest,async()=>{calls++;return response(officialShape());},controller.signal));assert.equal(calls,0);
+});
+test('Bank of Canada draft command rejects absent execution authority and private/invalid input without network or diagnostics',()=>{
+ for(const args of [[],['--execute']]){
+  const result=spawnSync(process.execPath,['--import','tsx','scripts/fetch-reference-rate.ts',...args],{input:JSON.stringify({code:'USD',on:'2026-01-31',unexpectedPrivateValue:'do_not_echo_this_input'}),encoding:'utf8',timeout:10000});
+  assert.equal(result.status,1);assert.equal(result.stdout,'');assert.equal(result.stderr.trim(),'REFERENCE_RATE_DRAFT_FAILED');
+ }
+});
 
 test('reference conversion retains exact decimal ratios, major-unit conventions, signed half-even ties and aggregate precision',()=>{
  assert.deepEqual(exchangeRatio('1.3500'),{numerator:135n,denominator:100n});
@@ -27,6 +66,16 @@ async function fixture(){const f=await invoiceFixture();try{
  }catch(e){await f.pg.close();throw e;}}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+
+check('Bank of Canada selected dates enter existing upper-human approval, not implicit weekend repricing or ledger posting',async f=>{
+ await f.access('staff');await f.access('manager');
+ const result=await fetchBankOfCanadaReference(referenceRequest,async()=>response(officialShape()));assert.ok(result.selected);
+ const p=await f.save({on:result.selected.on,rate:result.selected.rate,source:result.provider,reference:result.sourceUrl},'staff');assert.equal(p.response.status,202,JSON.stringify(p.body));
+ assert.equal((await f.convert('&maximumAgeDays=1')).body.data.complete,false);
+ assert.equal((await f.approve(p.body.approval.id,'staff')).response.status,403);assert.equal((await f.approve(p.body.approval.id,'manager')).response.status,200);
+ assert.equal((await f.convert()).body.data.converted,null);const reviewed=await f.convert('&maximumAgeDays=1');assert.equal(reviewed.body.data.converted.amount,'135.00');assert.equal(reviewed.body.data.rate.on,'2026-01-30');
+ assert.equal((await f.pg.query('SELECT * FROM public.finance_journals')).rows.length,0);assert.equal((await f.pg.query('SELECT * FROM public.finance_exchange_rates')).rows.length,1);
+});
 
 check('approved exact reference quotes persist, convert without ledger writes and retry without duplicate effects',async f=>{
  const key=randomUUID(),r=await f.save({},'master',key);assert.equal(r.response.status,201,JSON.stringify({body:r.body,failures:f.metrics.queryFailures}));

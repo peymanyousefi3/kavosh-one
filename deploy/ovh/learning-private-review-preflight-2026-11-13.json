@@ -1,0 +1,61 @@
+{
+  "status": "pre_update_recovery_verified_configuration_gate_pending",
+  "runtimeSourceCommit": "062700ac7abf6e2779606b19504e9c965aba8173",
+  "configurationSourceCommit": "7a58a4884dcbca63030459d9c740c640ccb98f29",
+  "runtimeHostedVerification": {"runId": 43459967837, "conclusion": "success", "successfulJobs": 13, "totalJobs": 13},
+  "configurationHostedVerification": {"runId": 43462415137, "statusAtObservation": "in_progress", "successfulJobs": 5, "failedJobs": 0, "totalJobs": 13, "wholeSourceAccepted": false},
+  "configurationSecretVerification": {"runId": 43462416906, "conclusion": "success"},
+  "preUpdateDatabaseRecovery": {
+    "backupId": "3dd80d75-c532-4577-a09f-5df6d96fd746",
+    "producerInvocationId": "387c8d0e488e40bd87193c242eb0493c",
+    "ciphertextSha256": "acd92ec0e59f2cc9a46fa9c2c59abdf8e47d2e8a59c209fb0a2d4ad3c1ce8a69",
+    "encryptedBytes": 7316509,
+    "sourceSchemaRevision": 403,
+    "permanentTablesCompared": 436,
+    "rowsCompared": 741,
+    "originalDataPermissionsFunctionsAndPoliciesMatch": true,
+    "originalExportedSnapshotMatched": true,
+    "independentDriveDownloadVerified": true,
+    "independentEncryptedCompanionDownloadVerified": true,
+    "actualIsolatedPostgresRestoreVerified": true,
+    "sourceDatabaseRestoreCommandsIssued": 0,
+    "privateRecoveryKeyTransferredToVps": false,
+    "recoveredDatabaseOrdinaryConnectionsBlocked": true,
+    "temporaryRecoveryDatabaseRemoved": true,
+    "globalRoleRecoveryVerified": false,
+    "sequenceValuesRecoveryVerified": false,
+    "mediaRecoveryVerified": false
+  },
+  "preUpdateSettingsRecovery": {
+    "backupId": "bc7b558b-082a-442f-879e-6b56585f856b",
+    "producerInvocationId": "aad6c7b61650451aabbf70db24017d1f",
+    "ciphertextSha256": "1218520c923210156795e2c0d729f9c880b37e3ac95e1ac71eeb819103a224e2",
+    "encryptedBytes": 153832,
+    "independentDriveDownloadVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "requiredFilesChecked": 42,
+    "archiveEntriesChecked": 76,
+    "passwordFreeRolesVerified": true,
+    "pinnedVerifier": ".local-tools/pre-report-runtime-062700a/scripts/verify-vps-config-backup.mjs",
+    "verifierSha256": "0b8cc000225c2be35c803b5e5ad73178bc9e8eddcb15d4a39018056f2ed28419",
+    "reportRuntimeProfileSha256": "5a742c5c82a296bc267a09ced909234954c365d613fed4be0bfe749a0a2dccae",
+    "landingPageExcluded": true,
+    "configurationApplied": false,
+    "fullServerRebuildVerified": false
+  },
+  "operatorTimingCorrection": {
+    "finding": "Settings backup was requested while the independent database acceptance temporarily owned a separate recovery database. Its password-free role-export guard correctly refused the unexpected database, so the settings producer never ran on that attempt.",
+    "failedRoleExportInvocation": "b5e2a0260ab0435081ea9c05315a13b5",
+    "resolution": "Observed the restore verifier terminal success and its cleanup, then independently confirmed zero recovery databases before starting the existing settings backup once more. The sequential settings invocation and independent authentication succeeded. No session was terminated and no export guard, permission, timeout or producer implementation was weakened.",
+    "futureSequence": "Finish isolated database restore and cleanup before requesting the password-free role export/settings backup. An observation timeout is not permission to restart either producer."
+  },
+  "productionChanged": false,
+  "landingChanged": false,
+  "providerMessagesSent": 0,
+  "financialWritesPerformed": 0,
+  "remaining": [
+    "Finish the existing exact configuration workflow without restarting it; runtime checks alone do not accept configuration.",
+    "Then perform the coordinated checksum-verified 403-to-405 additive migration, report-only profile installation, new-profile encrypted settings authentication and own-login TLS/schema/isolation check before report/web activation.",
+    "After activation verify the exact public contract and guards, landing preservation, and independently authenticated post-update recovery. The full approved backend remains unfinished; this release is not project completion."
+  ]
+}
