@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.440.0",
+    "version": "0.441.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -79172,7 +79172,7 @@
     },
     "/api/v1/reports/payroll/t4a-consolidated-working-paper": {
       "get": {
-        "summary": "One-person/payer/year reviewed payroll plus immutably linked person supplier-payment working paper. Current whole-source authorization for both domains;exact CAD annual/RP/monthly totals and namespaced payment references,unresolved warnings. Payroll,supplier money/recognition and person link share one database statement snapshot;concurrently changed configuration links require retry. Not a year-end certificate;economic duplicates,aliases,external,FX and zero-net/noncash require further review. No official form or CRA filing. Combined500payment/4MiB bound refuses truncation.",
+        "summary": "One-person/payer/year reviewed payroll plus immutably linked person supplier-payment working paper. Current whole-source authorization for both domains;exact CAD annual/RP/monthly totals and namespaced payment references,unresolved warnings. Payroll,supplier money/recognition and person link share one database statement snapshot;concurrently changed configuration links require retry. Reviewed supplier CAD conversion retains original money and quote;no independent rate or tax-conversion certification. Not a year-end certificate;economic duplicates,aliases,external,foreign payroll and zero-net/noncash require further review. No official form or CRA filing. Combined500payment/4MiB bound refuses truncation.",
         "parameters": [
           {
             "name": "personId",
@@ -79234,7 +79234,7 @@
     },
     "/api/v1/reports/payroll/t4a-consolidated-working-paper/export": {
       "get": {
-        "summary": "Same-source private consolidated payroll/supplier annual CSV,exact decimals,RP editions,monthly charts and unresolved warning references;no private notes,legal recipient identity,RP account numbers or official form.",
+        "summary": "Same-source private consolidated payroll/supplier annual CSV,exact decimals,RP editions,monthly charts and unresolved warning references. Retains original supplier currency/precision/settlement and explicit reviewed FX reference alongside CAD allocation;does not independently verify reference rates,tax conversion or include foreign payroll recognition. No private notes,legal recipient identity,RP account numbers or official form.",
         "parameters": [
           {
             "name": "personId",
@@ -79303,7 +79303,7 @@
     },
     "/api/v1/reports/payroll/t4a-consolidated-working-paper/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Same-source private consolidated payroll/supplier annual CSV,exact decimals,RP editions,monthly charts and unresolved warning references;no private notes,legal recipient identity,RP account numbers or official form.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Same-source private consolidated payroll/supplier annual CSV,exact decimals,RP editions,monthly charts and unresolved warning references. Retains original supplier currency/precision/settlement and explicit reviewed FX reference alongside CAD allocation;does not independently verify reference rates,tax conversion or include foreign payroll recognition. No private notes,legal recipient identity,RP account numbers or official form.",
         "parameters": [
           {
             "name": "personId",
