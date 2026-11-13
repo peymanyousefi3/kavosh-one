@@ -746,6 +746,10 @@ test('collector capacity documents date and direction without accepting client b
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path='/api/v1/finance/collectors/{id}/remittance-capacity',q=api.paths[path].get.parameters;
  for(const name of ['holdingAccountId','on','direction'])assert.ok(q.some((p:any)=>p.name===name&&p.required));for(const name of ['amount','available','approved','sourceStamp','activity'])assert.ok(!q.some((p:any)=>p.name===name));assert.deepEqual(q.find((p:any)=>p.name==='direction').schema.enum,['to_academy','to_collector']);assert.match(api.paths['/api/v1/finance/collectors/{id}/remittances'].post.summary,/full dated-timeline capacity/);
 });
+test('source contribution review includes retained actual settlements without new caller authority or guessed recognition',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),route=api.paths['/api/v1/payroll/payruns/{id}/net/source-contributions-preview'].post;
+ assert.match(route.summary,/current retained actual settlements in the selected timezone\/window even when planned in another year/);assert.match(route.summary,/corrections and withdrawals are not tax recognition/);assert.match(route.summary,/Historical schemas omit unavailable settlement tables/);
+});
 test('operational health documents owner-only read access and same-VPS evidence without control or delivery claims',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),path=api.paths['/api/platform/v1/operations/health'];assert.ok(path.get);assert.equal(path.post,undefined);assert.match(path.get.summary,/Verified MFA platform owner only/);assert.match(path.get.summary,/stale observations critical/);assert.match(path.get.summary,/not independent uptime/);assert.match(path.get.summary,/No credentials,service control/);assert.match(path.get.summary,/Twelve fixed required worker process states/);assert.match(path.get.summary,/legacy samples without worker observations remain warning/);assert.match(path.get.summary,/Queue progress is not verified/);
 });
