@@ -82,6 +82,10 @@ export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof op
  assert.deepEqual(race.map(r=>r.response.status).sort(),[200,409],JSON.stringify({bodies:race.map(r=>r.body),errors:f.metrics.queryFailures.slice(-2)}));
  const winner=race.findIndex(r=>r.response.status===200),key=keys[winner],own=race[winner];assert.equal(own.body.data.version,1);assert.equal(own.body.approval.selfApproved,true);assert.equal(own.body.data.agreementResent,false);assert.equal(own.body.data.admissionCleared,false);assert.equal(own.body.data.paymentCleared,false);
  const oldIncident=await f.request(path.replace(/retries$/,'incidents'));assert.equal(oldIncident.body.data.length,1);assert.equal(oldIncident.body.data[0].attentionStillCurrent,false,'approved retry preserves the old observation without claiming it is still blocked');
+ const queue='agreement-checks?purpose='+purpose;
+ assert.deepEqual((await f.request(queue)).body.data,[],'a superseded case leaves the active management queue');
+ const historical=await f.request(queue+'&attention=historical');assert.equal(historical.response.status,200,JSON.stringify(historical.body));assert.equal(historical.body.data.length,1);assert.equal(historical.body.data[0].id,oldIncident.body.data[0].id);assert.equal(historical.body.data[0].attentionStillCurrent,false);
+ assert.deepEqual((await f.request('agreement-checks/summary?purpose='+purpose+'&attention=historical')).body.data,[{purpose,reasonCode:'poll_window_elapsed',attentionStillCurrent:false,count:'1'}]);
  assert.deepEqual((await f.request(path,input,'master',{key})).body,own.body);
  assert.equal((await f.request(path,input)).response.status,409,'another request with an old version cannot reset retry history');
  const added:string[]=[];for(const cap of [capability,work?'work-signature-completions.view':'signature-completions.view'])if((await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,\'allow\') ON CONFLICT DO NOTHING RETURNING capability',[f.a,f.managerRole,cap])).rows.length)added.push(cap);
@@ -109,7 +113,7 @@ export async function checkCompletionRetries(f:Pick<Awaited<ReturnType<typeof op
  for(const sql of ['UPDATE public.signature_completion_retries SET changed_by=changed_by','DELETE FROM public.signature_completion_retries'])await assert.rejects(f.pg.exec(sql),/SIGNATURE_COMPLETION_RETRY_IMMUTABLE/);
 }
 
-export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'a'|'b'|'pg'|'managerRole'|'actors'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
+export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'a'|'b'|'pg'|'managerRole'|'actors'|'credential'>,requestId:string,purpose:'worker_services'|'unified_enrollment'){
  const path=(purpose==='worker_services'?'payroll/work-signature-send-requests/':'signature-send-requests/')+requestId+'/completion-check';
  const first=await f.request(path+'?limit=1');assert.equal(first.response.status,200,JSON.stringify(first.body));
  assert.equal(first.body.data.state,'blocked');assert.equal(first.body.data.attemptCount,2);assert.equal(first.body.attempts.length,1);assert.equal(first.body.attempts[0].attemptNo,1);assert.equal(first.body.nextAfterAttempt,1);
@@ -125,6 +129,12 @@ export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof ope
  assert.equal((await f.request('notifications/'+masterNote.id,undefined,'foreignMaster',{academy:f.b})).response.status,404);
  assert.equal((await f.request('notifications/'+masterNote.id+'/read',{})).response.status,200);assert.equal((await f.request(path)).body.data.state,'blocked','reading the alert never resolves the native case');
  assert.notEqual((await f.request('notifications/'+masterNote.id+'?locale=fr')).body.data.title,note.body.data.title);assert.notEqual((await f.request('notifications/'+masterNote.id+'?locale=zh-CN')).body.data.title,note.body.data.title);
+ const queue='agreement-checks?purpose='+purpose,listed=await f.request(queue+'&limit=1');assert.equal(listed.response.status,200,JSON.stringify(listed.body));assert.equal(listed.body.data.length,1);assert.equal(listed.body.data[0].id,incidentId);assert.equal(listed.body.data[0].requestId,requestId);assert.equal(listed.body.data[0].recordPath,'/api/v1/'+path);assert.equal(listed.body.data[0].attentionStillCurrent,true,'reading the mandatory notice must not remove an unresolved case');
+ assert.doesNotMatch(JSON.stringify(listed.body),/PRIVATE|source_fingerprint|origin_transaction|document_id|lease_token|worker_id|example[.]test/);
+ const cursor=new URLSearchParams({afterRecordedAt:listed.body.data[0].recordedAt,afterId:incidentId});assert.deepEqual((await f.request(queue+'&'+cursor)).body.data,[],'stable tuple cursor must not repeat its last row');
+ assert.deepEqual((await f.request('agreement-checks/summary?purpose='+purpose)).body.data,[{purpose,reasonCode:'poll_window_elapsed',attentionStillCurrent:true,count:'1'}]);
+ assert.deepEqual((await f.request(queue,undefined,'foreignMaster',{academy:f.b})).body.data,[]);
+ const overview=await f.request('overview?timeZone=America/Toronto&include=agreement_checks&limit=1');assert.equal(overview.response.status,200,JSON.stringify(overview.body));assert.equal(overview.body.data.sections[0].rows[0].recordPath,'/api/v1/'+path);
  assert.doesNotMatch(JSON.stringify(note.body),/PRIVATE|origin_transaction|source_fingerprint|lease_token|worker_id/);
  await f.pg.exec('SET ROLE kavosh_runtime');try{
   await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
@@ -134,6 +144,16 @@ export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof ope
  assert.equal((await f.request(path+'/incidents?after='+randomUUID())).response.status,404);
  assert.equal((await f.request(path+'/incidents',undefined,'foreignMaster',{academy:f.b})).response.status,404);
  const capability=purpose==='worker_services'?'work-signature-completions.view':'signature-completions.view';
+ const granted=(await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,$3,'allow') ON CONFLICT DO NOTHING RETURNING capability",[f.a,f.managerRole,capability])).rows;
+ try{
+  for(const actor of ['manager','bot']){const allowed=await f.request(queue,undefined,actor);assert.equal(allowed.response.status,200,JSON.stringify(allowed.body));assert.equal(allowed.body.data.length,1,'scoped supervisors and their independently scoped bots can see their original case');}
+  const templateGrant=(await f.pg.query<{effect:string}>("SELECT effect FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability='agreements.view'",[f.a,f.managerRole])).rows;
+  await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'agreements.view','deny') ON CONFLICT(academy_id,role_id,capability) DO UPDATE SET effect='deny'",[f.a,f.managerRole]);
+  try{for(const actor of ['manager','bot']){const hidden=await f.request(queue+'&limit=1',undefined,actor);assert.equal(hidden.response.status,200,JSON.stringify(hidden.body));assert.deepEqual(hidden.body.data,[]);assert.equal(hidden.body.nextCursor,null);assert.deepEqual((await f.request('agreement-checks/summary?purpose='+purpose,undefined,actor)).body.data,[],'original template denial filters both pages and totals');}}finally{await f.pg.query("DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability='agreements.view'",[f.a,f.managerRole]);for(const row of templateGrant)await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'agreements.view',$3)",[f.a,f.managerRole,row.effect]);}
+  const token=(await f.pg.query<{capabilities:string[]}>('SELECT capabilities FROM auth_private.credentials WHERE id=$1',[f.credential])).rows[0];
+  await f.pg.query("UPDATE auth_private.credentials SET capabilities=array_remove(array_remove(capabilities,'signature-completions.view'),'work-signature-completions.view') WHERE id=$1",[f.credential]);
+  try{assert.equal((await f.request(queue,undefined,'bot')).response.status,403,'the bot cannot borrow master or role rights beyond its real token ceiling');assert.equal((await f.request('agreement-checks/summary',undefined,'bot')).response.status,403);}finally{await f.pg.query('UPDATE auth_private.credentials SET capabilities=$2 WHERE id=$1',[f.credential,token.capabilities]);}
+ }finally{if(granted.length)await f.pg.query('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3',[f.a,f.managerRole,capability]);}
  const saved=(await f.pg.query<{effect:string}>('DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability=$3 RETURNING effect',[f.a,f.managerRole,capability])).rows;
  try{for(const target of [path,path+'/incidents'])assert.equal((await f.request(target,undefined,'manager')).response.status,purpose==='worker_services'?403:404,'removing the current feature permission immediately removes status/history access');const managerNote=notes.find(n=>n.person_id===f.actors.manager.person);if(managerNote)assert.equal((await f.request('notifications/'+managerNote.id,undefined,'manager')).response.status,404,'the same removed right hides previously created mandatory alerts');}
  finally{for(const grant of saved)await f.pg.query('INSERT INTO public.role_permissions VALUES($1,$2,$3,$4)',[f.a,f.managerRole,capability,grant.effect]);}
