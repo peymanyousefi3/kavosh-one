@@ -1,6 +1,6 @@
 -- Read-only provider reconciliation follows committed original-bound receipts,
 -- not callback delivery. No job can send/resend an agreement or clear admission.
--- Default quota leaves headroom below the documented 2,000 live requests/hour.
+-- Quotas leave headroom below 2,000 live / 50 sandbox requests per hour.
 -- https://developers.boldsign.com/api-overview/rate-limit
 -- An operator can group connectors sharing ONE provider account. Default is one
 -- group per academy; shared cross-academy accounts must share the group UUID.
@@ -12,7 +12,7 @@ ALTER TABLE public.signature_completion_request_budgets ENABLE ROW LEVEL SECURIT
 ALTER TABLE public.signature_completion_request_budgets FORCE ROW LEVEL SECURITY;
 CREATE POLICY completion_request_budget_executor ON public.signature_completion_request_budgets TO kavosh_signature_completion_policy USING(true) WITH CHECK(true);
 GRANT SELECT,INSERT,UPDATE ON public.signature_completion_request_budgets TO kavosh_signature_completion_policy;
-GRANT SELECT(academy_id,id,enabled,completion_budget_group) ON public.signature_connections TO kavosh_signature_completion_policy;
+GRANT SELECT(academy_id,id,enabled,environment,completion_budget_group) ON public.signature_connections TO kavosh_signature_completion_policy;
 CREATE POLICY signature_completion_job_connection_read ON public.signature_connections FOR SELECT TO kavosh_signature_completion_policy USING(true);
 CREATE TABLE public.signature_completion_jobs(
  academy_id uuid NOT NULL,purpose text NOT NULL CHECK(purpose IN('unified_enrollment','worker_services')),start_id uuid NOT NULL,
@@ -93,7 +93,7 @@ CREATE TRIGGER signature_callback_completion_wakeup AFTER INSERT ON public.signa
 CREATE FUNCTION public.claim_signature_completion_job(p_academies uuid[],p_worker uuid,p_lease_seconds integer)
 RETURNS TABLE(academy_id uuid,purpose text,start_id uuid,lease_token uuid,source_fingerprint text,attempt_no integer)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
-DECLARE q public.signature_completion_jobs;s jsonb;e uuid;kind text;budget_group uuid;used integer;window_start timestamptz:=date_trunc('hour',clock_timestamp());reset_at timestamptz;BEGIN
+DECLARE q public.signature_completion_jobs;s jsonb;e uuid;kind text;budget_group uuid;budget_limit integer;used integer;window_start timestamptz:=date_trunc('hour',clock_timestamp());reset_at timestamptz;BEGIN
  IF p_academies IS NULL OR cardinality(p_academies) NOT BETWEEN 1 AND 1000 OR array_position(p_academies,NULL) IS NOT NULL OR p_worker IS NULL OR p_lease_seconds IS NULL OR p_lease_seconds NOT BETWEEN 60 AND 600 THEN RAISE EXCEPTION 'INVALID_SIGNATURE_COMPLETION_JOB_CLAIM';END IF;
  -- Bounded cleanup prevents one obsolete head item from starving later work.
  FOR q IN SELECT j.* FROM public.signature_completion_jobs j JOIN public.academies a ON a.id=j.academy_id WHERE j.academy_id=ANY(p_academies) AND a.status IN('active','read_only') AND((j.state='queued' AND j.available_at<=clock_timestamp()) OR(j.state='running' AND j.lease_until<=clock_timestamp())) ORDER BY j.priority DESC,j.available_at,j.academy_id,j.purpose,j.start_id LIMIT 8 FOR UPDATE OF j SKIP LOCKED LOOP
@@ -101,18 +101,21 @@ DECLARE q public.signature_completion_jobs;s jsonb;e uuid;kind text;budget_group
   IF q.state='running' THEN
    INSERT INTO public.signature_completion_job_attempts(academy_id,purpose,start_id,attempt_no,worker_id,lease_token,started_at,outcome) VALUES(q.academy_id,q.purpose,q.start_id,q.attempt_no,q.worker_id,q.lease_token,q.started_at,'lease_expired');q.failures=q.failures+1;
   END IF;
-  SELECT coalesce(c.completion_budget_group,c.academy_id) INTO budget_group FROM public.signature_connections c WHERE c.academy_id=q.academy_id AND c.id=q.connection_id AND c.enabled;
+  SELECT coalesce(c.completion_budget_group,c.academy_id),CASE WHEN c.environment='Test' THEN 40 ELSE 1600 END INTO budget_group,budget_limit FROM public.signature_connections c WHERE c.academy_id=q.academy_id AND c.id=q.connection_id AND c.enabled;
   kind=CASE WHEN s IS NULL OR s->>'sourceFingerprint' IS DISTINCT FROM q.source_fingerprint OR budget_group IS NULL THEN 'source_changed' WHEN e IS NOT NULL THEN 'recorded' WHEN q.failures>=5 THEN 'lease_expired' WHEN q.poll_until<=clock_timestamp() THEN 'poll_window_elapsed' END;
   IF kind IS NOT NULL THEN
    UPDATE public.signature_completion_jobs j SET state=CASE WHEN kind='recorded' THEN 'complete' ELSE 'blocked' END,evidence_id=CASE WHEN kind='recorded' THEN e END,last_outcome=kind,failures=least(q.failures,5),worker_id=NULL,lease_token=NULL,started_at=NULL,lease_until=NULL WHERE j.academy_id=q.academy_id AND j.purpose=q.purpose AND j.start_id=q.start_id;
-   IF kind<>'recorded' THEN INSERT INTO public.outbox_events(academy_id,id,event_type,entity_id,request_id) VALUES(q.academy_id,gen_random_uuid(),'signature.completion.check.blocked.critical',q.start_id,q.start_id);END IF;CONTINUE;
+   IF kind<>'recorded' THEN
+    INSERT INTO public.outbox_events(academy_id,id,event_type,entity_id,request_id) VALUES(q.academy_id,gen_random_uuid(),'signature.completion.check.blocked.critical',q.start_id,q.start_id);
+    IF NOT FOUND THEN RAISE EXCEPTION 'SIGNATURE_COMPLETION_JOB_ALERT_REQUIRED';END IF;
+   END IF;CONTINUE;
   END IF;
   -- ponytail: reserve the maximum four GETs before IO. Pending checks may use
   -- only one; per-request metering is warranted if this conservative allowance
   -- limits measured throughput. No provider POST is permitted by the runner.
   INSERT INTO public.signature_completion_request_budgets AS b(group_id,window_started,reserved_calls) VALUES(budget_group,window_start,4)
   ON CONFLICT(group_id) DO UPDATE SET window_started=greatest(b.window_started,EXCLUDED.window_started),reserved_calls=CASE WHEN b.window_started<EXCLUDED.window_started THEN 4 ELSE b.reserved_calls+4 END
-  WHERE b.window_started<EXCLUDED.window_started OR b.reserved_calls<=1596 RETURNING reserved_calls INTO used;
+  WHERE b.window_started<EXCLUDED.window_started OR b.reserved_calls<=budget_limit-4 RETURNING reserved_calls INTO used;
   IF used IS NULL THEN
    SELECT b.window_started+interval '1 hour' INTO reset_at FROM public.signature_completion_request_budgets b WHERE b.group_id=budget_group;
    UPDATE public.signature_completion_jobs j SET state='queued',failures=q.failures,available_at=greatest(clock_timestamp()+interval '60 seconds',reset_at),worker_id=NULL,lease_token=NULL,started_at=NULL,lease_until=NULL WHERE j.academy_id=q.academy_id AND j.purpose=q.purpose AND j.start_id=q.start_id;CONTINUE;
@@ -142,7 +145,10 @@ DECLARE q public.signature_completion_jobs;s jsonb;kind text;next_state text;fai
  next_state=CASE WHEN kind='recorded' THEN 'complete' WHEN kind IN('source_changed','poll_window_elapsed') OR fails>=5 THEN 'blocked' ELSE 'queued' END;
  INSERT INTO public.signature_completion_job_attempts(academy_id,purpose,start_id,attempt_no,worker_id,lease_token,started_at,outcome,evidence_id) VALUES(q.academy_id,q.purpose,q.start_id,q.attempt_no,q.worker_id,q.lease_token,q.started_at,kind,CASE WHEN kind='recorded' THEN e END);
  UPDATE public.signature_completion_jobs j SET state=next_state,evidence_id=CASE WHEN kind='recorded' THEN e END,failures=fails,priority=0,last_outcome=kind,last_finished_at=clock_timestamp(),available_at=clock_timestamp()+p_retry_seconds*interval '1 second',worker_id=NULL,lease_token=NULL,started_at=NULL,lease_until=NULL WHERE j.academy_id=q.academy_id AND j.purpose=q.purpose AND j.start_id=q.start_id;
- IF next_state='blocked' THEN INSERT INTO public.outbox_events(academy_id,id,event_type,entity_id,request_id) VALUES(q.academy_id,gen_random_uuid(),'signature.completion.check.blocked.critical',q.start_id,q.start_id);END IF;
+ IF next_state='blocked' THEN
+  INSERT INTO public.outbox_events(academy_id,id,event_type,entity_id,request_id) VALUES(q.academy_id,gen_random_uuid(),'signature.completion.check.blocked.critical',q.start_id,q.start_id);
+  IF NOT FOUND THEN RAISE EXCEPTION 'SIGNATURE_COMPLETION_JOB_ALERT_REQUIRED';END IF;
+ END IF;
  RETURN true;
 END $$;
 REVOKE ALL ON FUNCTION public.finish_signature_completion_job(uuid,text,uuid,uuid,text,uuid,integer) FROM PUBLIC;
