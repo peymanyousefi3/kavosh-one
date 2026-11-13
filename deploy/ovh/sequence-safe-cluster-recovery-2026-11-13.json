@@ -4,6 +4,7 @@
   "macOperatorSourceCommit": "348d0f577e064b604031167650acfcce8f925231",
   "stagedPackageReceipt": "deploy/ovh/staged-recovery-sequence-safety-2026-11-13.json",
   "nativeGate": {"run": 43490045623, "job": 132108466409, "jobConclusion": "success", "actualSequenceChecksPassed": true, "actualFreshClusterChecksPassed": 2, "freshClusterChecksSkipped": 0, "wholeRunAtObservation": "in_progress"},
+  "subsequentWholeRunAcceptance": {"run": 43490045623, "conclusion": "success", "successfulJobs": 13, "ciCompilationOptimizationRun": 43489014808, "ciCompilationOptimizationConclusion": "success"},
   "backupId": "95708bae-50d0-4b07-bae7-c70a977aeca7",
   "archiveSha256": "76326dc6e019add5df0b9ca130db2715c6231253a21b03b54284b4e7b0273c69",
   "configurationBackupId": "84ca959c-79bc-4b10-8519-403f71ba0413",
