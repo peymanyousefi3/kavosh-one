@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {mkdtemp,realpath,readdir,lstat,unlink,rmdir} from 'node:fs/promises';
+import {join} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {setTimeout as delay} from 'node:timers/promises';
 import {S3Client,HeadObjectCommand,PutObjectCommand,DeleteObjectCommand} from '@aws-sdk/client-s3';
 import {r2Connection} from '../../src/integrations/r2-config.ts';
 import {privateR2} from '../../src/integrations/r2.ts';
 import {promoteQuarantinedFile} from '../../src/integrations/r2-promotion.ts';
+import {backupMediaCollection} from '../../src/operations/media-backups.ts';
 
 // Explicit VPS-only check of the four production storage credentials. Uses
 // tiny synthetic objects in a newly generated namespace,never academy records.
 let phase='configuration',checks=0,uploadExpiry=0,cleanupFailed=false;
+let mediaWork:string|undefined,mediaProof:{id:string;ciphertextSha256:string;encryptedBytes:number;objects:number;allArchivesIndependentlyCopied:boolean}|null=null;
 const clients:S3Client[]=[],adapters:ReturnType<typeof privateR2>[]=[],owned:Array<{client:S3Client;bucket:string;key:string}>=[];
 try{
- assert.deepEqual(process.argv.slice(2),['--execute']);assert.equal(process.getuid?.(),0);assert.notEqual(process.env.NODE_TLS_REJECT_UNAUTHORIZED,'0');
+ const args=process.argv.slice(2),withMedia=args.length===2&&args[1]==='--media-backup';assert.deepEqual(args,withMedia?['--execute','--media-backup']:['--execute']);assert.equal(process.getuid?.(),0);assert.notEqual(process.env.NODE_TLS_REJECT_UNAUTHORIZED,'0');
  const load=(role:string)=>r2Connection.parse(JSON.parse(readFileSync('/etc/kavosh-one/r2-'+role+'.json','utf8')));
  const upload=load('upload'),scan=load('scan'),writer=load('promote'),download=load('download');
  assert.equal(new Set([upload,scan,writer,download].map(x=>x.accessKeyId)).size,4);
@@ -43,11 +47,18 @@ try{
  phase='private download';const link=await clean.cleanDownload(file,15,{ifMatch:promoted.destination.etag}),response=await request(link.url,{headers:link.headers});assert.equal(response.status,200);assert.equal(response.headers.get('content-disposition'),'attachment');assert.equal(response.headers.get('cache-control'),'private, no-store');assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);checks++;
  phase='anonymous denial';const anonymous=new URL(link.url);anonymous.search='';const unsigned=await request(anonymous.toString());assert.equal(unsigned.status,400);assert.match(await unsigned.text(),/<Code>InvalidArgument<\/Code>/);checks++;
  phase='expired link denial';const short=await clean.cleanDownload(file,1);await delay(Math.max(0,Date.parse(short.expiresAt)-Date.now()+1100));const expired=await request(short.url);assert.equal(expired.status,403);await expired.body?.cancel();checks++;
- console.log(JSON.stringify({executedOnVps:true,liveProviderChecks:checks,passed:true,syntheticBytes:bytes.length,separateCredentials:4,scannerReadOnlyVerified:true,downloadReadOnlyVerified:true,bucketIsolationVerified:true,privateConditionalUploadAndPromotionVerified:true,quarantineAndCleanReadOnlyInventoryVerified:true,mediaBackupVerified:false,realPersonalDataUsed:false,antivirusEngineVerified:false,browserCorsVerified:false,applicationMediaWorkflowActivated:false}));
+ if(withMedia){
+  phase='synthetic encrypted media collection and Drive readbacks';assert.ok(process.env.CREDENTIALS_DIRECTORY);const connection=readFileSync(join(process.env.CREDENTIALS_DIRECTORY,'drive.json'),'utf8');assert.ok(Buffer.byteLength(connection)<=65536);mediaWork=await realpath(await mkdtemp('/tmp/kavosh-media-storage-probe-'));
+  const collection=await backupMediaCollection({academyId:academy,targets:[{stage:'quarantine',configuration:scan},{stage:'clean',configuration:download}],age:process.env.AGE_BIN,recipient:process.env.BACKUP_AGE_RECIPIENT,workDirectory:mediaWork,timeoutMs:120000,offsite:{rclone:process.env.RCLONE_BIN,drive:JSON.parse(connection)}});
+  assert.equal(collection.objects,2);assert.equal(collection.sourceBytes,bytes.length*2);assert.equal(collection.matchingFinalInventory,true);assert.equal(collection.allArchivesIndependentlyCopied,true);assert.equal(collection.databaseReferencesVerified,false);assert.equal(collection.completeMediaBackup,false);
+  mediaProof={id:collection.id,ciphertextSha256:collection.catalog.ciphertextSha256,encryptedBytes:collection.catalog.encryptedBytes,objects:collection.objects,allArchivesIndependentlyCopied:collection.allArchivesIndependentlyCopied};checks++;
+ }
+ console.log(JSON.stringify({executedOnVps:true,liveProviderChecks:checks,passed:true,syntheticBytes:bytes.length,separateCredentials:4,scannerReadOnlyVerified:true,downloadReadOnlyVerified:true,bucketIsolationVerified:true,privateConditionalUploadAndPromotionVerified:true,quarantineAndCleanReadOnlyInventoryVerified:true,syntheticMediaCollection:mediaProof,mediaBackupVerified:false,realPersonalDataUsed:false,antivirusEngineVerified:false,browserCorsVerified:false,applicationMediaWorkflowActivated:false}));
 }catch{console.error('PRODUCTION_STORAGE_CHECK_FAILED: '+phase);process.exitCode=1;}
 finally{
  if(owned.length)await delay(Math.max(0,uploadExpiry-Date.now()+1100));
  for(const x of owned)try{await x.client.send(new DeleteObjectCommand({Bucket:x.bucket,Key:x.key}),{abortSignal:AbortSignal.timeout(10000)});}catch{cleanupFailed=true;}
  for(const a of adapters)a.close();for(const c of clients)c.destroy();
+ if(mediaWork)try{for(const name of await readdir(mediaWork)){assert.match(name,/^media-(?:collection-)?[a-f0-9-]{36}$/);const folder=join(mediaWork,name),stat=await lstat(folder);assert.ok(stat.isDirectory()&&!stat.isSymbolicLink()&&stat.uid===process.getuid?.());for(const file of await readdir(folder)){assert.ok(['manifest.json','media.bin.age','catalog.jsonl.age'].includes(file));const path=join(folder,file),s=await lstat(path);assert.ok(s.isFile()&&!s.isSymbolicLink()&&s.nlink===1&&s.uid===process.getuid?.());await unlink(path);}await rmdir(folder);}await rmdir(mediaWork);}catch{cleanupFailed=true;}
  if(cleanupFailed){console.error('SYNTHETIC_STORAGE_CLEANUP_REQUIRED');process.exitCode=1;}else if(owned.length)console.log('Exact generated synthetic objects removed;no existing file or bucket deleted.');
 }

@@ -19,6 +19,7 @@ if(!safe)process.exit(9);
 fs.appendFileSync(log,JSON.stringify({command:a[0],args:a,pid:process.pid,credentialsInArgs:a.some(v=>v.includes('synthetic-client-secret')||v.includes('synthetic-access')||v.includes('synthetic-refresh'))})+'\\n');
 if(mode==='hang'){process.on('SIGTERM',()=>{});setInterval(()=>{},1000);}
 else if(mode==='error'){process.stderr.write('PRIVATE_PROVIDER_DIAGNOSTIC synthetic-refresh');process.exitCode=1;}
+else if(mode==='catalog-error'&&a[0]==='copyto'&&a[2].endsWith('/catalog.jsonl.age')){process.stderr.write('PRIVATE_CATALOG_COPY_FAILURE');process.exitCode=1;}
 else if(mode==='warning'){process.stderr.write('PRIVATE_PROVIDER_WARNING synthetic-refresh');}
 else if(a[0]==='copyto'){
  const bytes=fs.readFileSync(a[1]);if(!a.includes('--immutable')||!a.includes('--checksum')||!a.includes('--no-update-modtime'))process.exit(8);
