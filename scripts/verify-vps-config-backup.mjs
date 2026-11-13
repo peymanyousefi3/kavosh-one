@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, openSync, closeSync,readdirSync,writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
+import { mkdtempSync, openSync, closeSync,readdirSync,readFileSync,writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
 let stage = 'arguments', directory, encrypted, plaintext;
 const get = service => {
@@ -30,23 +30,25 @@ try {
  const entries = execFileSync('/usr/bin/tar', ['-tf', plaintext], { stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim().split('\n');
  const units=readdirSync(new URL('../deploy/ovh/',import.meta.url)).filter(name=>/^kavosh-one.*\.(?:service|timer)$/.test(name));
  const required = [...new Set(['roles.sql', 'etc/kavosh-one/web.env', 'etc/kavosh-one/backup.env', 'etc/kavosh-one/drive.json', 'etc/kavosh-one/twilio-credentials.json', 'etc/kavosh-one/r2-upload.json', 'etc/kavosh-one/r2-scan.json', 'etc/kavosh-one/r2-promote.json', 'etc/kavosh-one/r2-download.json', 'etc/kavosh-one-tls/server.crt', 'etc/caddy/kavosh-one.caddy', 'etc/kavosh-one-scanner/clamd.conf', 'etc/apparmor.d/local/usr.sbin.clamd','etc/apparmor.d/kavosh-one-parser',...units.map(name=>'etc/systemd/system/'+name),...['auth-delivery','file-inspection','file-promotion','file-verification','background-notifications','background-reports','background-messages','background-platform-notices'].map(name=>'etc/kavosh-one/'+name+'.env')])];
- required.push('etc/kavosh-one/media-readers.json','etc/kavosh-one/media-backup.env','etc/systemd/system/kavosh-one-backup.service.d/media.conf');
+ const operationalHealthProfile='etc/systemd/system/kavosh-one-background@platform-notices.service.d/operational-health.conf';
+ required.push('etc/kavosh-one/media-readers.json','etc/kavosh-one/media-backup.env','etc/systemd/system/kavosh-one-backup.service.d/media.conf',operationalHealthProfile);
  for (const file of required) assert.ok(entries.includes(file));
  assert.equal(new Set(entries).size,entries.length);
- for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name)||/^etc\/systemd\/system\/kavosh-one-backup\.service\.d(?:\/?|\/media\.conf)$/.test(name));}
+ for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name)||/^etc\/systemd\/system\/kavosh-one-backup\.service\.d(?:\/?|\/media\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@platform-notices\.service\.d(?:\/?|\/operational-health\.conf)$/.test(name));}
  const content = name => execFileSync('/usr/bin/tar', ['-xOf', plaintext, name], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1048576 });
- let mediaBackupOperator;const serviceUnitSha256={};
+ let mediaBackupOperator,operationalHealthProfileSha256;const serviceUnitSha256={};
  for (const name of required) {
   const bytes = content(name);
   try {
    assert.ok(bytes.length > 0);
    if(/^etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$/.test(name))serviceUnitSha256[name.slice('etc/systemd/system/'.length)]=createHash('sha256').update(bytes).digest('hex');
+   if(name===operationalHealthProfile){assert.ok(bytes.equals(readFileSync(new URL('../deploy/ovh/kavosh-one-platform-notices-health.conf',import.meta.url))));operationalHealthProfileSha256=createHash('sha256').update(bytes).digest('hex');}
    if (name.endsWith('.json')) assert.equal(typeof JSON.parse(bytes.toString()), 'object');
    if (name === 'roles.sql') { assert.ok(bytes.includes(Buffer.from('CREATE ROLE'))); assert.ok(!/\bPASSWORD\s+'/i.test(bytes.toString())); }
    if(name==='etc/kavosh-one/media-backup.env'){const text=bytes.toString();assert.match(text,/^KAVOSH_BACKUP_OPERATOR_CLI=\/srv\/kavosh-one\/operations\/recovery-[a-f0-9]{7,40}\/scripts\/database-recovery\.js\n$/);assert.equal(text.split('\n').length,2);mediaBackupOperator=text.slice('KAVOSH_BACKUP_OPERATOR_CLI='.length).trim();}
   } finally { bytes.fill(0); }
  }
- console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,mediaBackupOperator,serviceUnitSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
+ console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
 } catch { console.error('CONFIG_BACKUP_ACCEPTANCE_FAILED: ' + stage); process.exitCode = 1; }
 finally {
  for (const file of [plaintext, encrypted]) if (file) try { unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') { console.error('CONFIG_PROOF_CLEANUP_REQUIRED'); process.exitCode = 1; } }
