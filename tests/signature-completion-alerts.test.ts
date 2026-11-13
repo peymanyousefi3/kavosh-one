@@ -8,23 +8,23 @@ import { requireCurrentSessionEvent,type BoundEvent } from '../src/modules/autom
 import { assertRuntimeRole } from '../src/core/database.ts';
 import { subscriptionEventDispatchable } from '../src/automations/subscription-worker.ts';
 
-test('disabled signing custom delivery is ignored by broad watchers without blocking ordinary events',()=>{
- for(const current of [false,true])assert.equal(subscriptionEventDispatchable({source_kind:'signature_check',source_current:current}),false);
- for(const kind of ['session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'] as const){
+test('superseded signing cases are ignored by broad watchers without blocking current events',()=>{
+ for(const kind of ['signature_check','session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'] as const){
   assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:false}),false);
   assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:true}),true);
  }
  for(const kind of ['approval','audit','work_signature','account_security','report_job','pay_statement','checkout'] as const)assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:true}),true);
 });
 
-test('event catalogue advertises every accepted read filter without advertising custom delivery',async()=>{
+test('event catalogue advertises every accepted read filter and requires current signing cases for dispatch',async()=>{
  const f=await operationsFixture();try{
   const result=await f.request('automations/events');assert.equal(result.response.status,200,JSON.stringify(result.body));
   const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));
   const filters=api.paths['/api/v1/automations/events'].get.parameters.find((p:{name:string})=>p.name==='sourceKind').schema.enum;
   assert.deepEqual(result.body.supportedSources,filters);
   for(const kind of ['signature_check','privacy_due'])assert.ok(result.body.supportedSources.includes(kind));
-  assert.throws(()=>requireCurrentSessionEvent({source_kind:'signature_check',source_current:true} as BoundEvent),{code:'AUTOMATION_SIGNATURE_CHECK_CUSTOM_DELIVERY_NOT_ENABLED'});
+  assert.doesNotThrow(()=>requireCurrentSessionEvent({source_kind:'signature_check',source_current:true} as BoundEvent));
+  assert.throws(()=>requireCurrentSessionEvent({source_kind:'signature_check',source_current:false} as BoundEvent),{code:'AUTOMATION_SIGNATURE_CHECK_SOURCE_CHANGED'});
  }finally{await f.pg.close();}
 });
 
@@ -40,8 +40,8 @@ test('actual393to394 preserves old cases without retrospective alerts and retain
   for(const [role,purpose] of [['kavosh_runtime','web'],['kavosh_automation_worker','automation_worker'],['kavosh_message_worker','message_worker']] as const){await f.pg.exec('SET ROLE '+role);try{await assertRuntimeRole({query:f.pg.query.bind(f.pg),release(){}},purpose);}finally{await f.pg.exec('RESET ROLE');}}
  }finally{await f.pg.close();}
 });
-test('signature failure sources cannot enter custom dispatch while its final delivery checks are disabled',()=>{
- const event={source_kind:'signature_check',source_current:true} as BoundEvent;
- assert.throws(()=>requireCurrentSessionEvent(event),{code:'AUTOMATION_SIGNATURE_CHECK_CUSTOM_DELIVERY_NOT_ENABLED'});
+test('signature failure sources refuse custom dispatch after an approved recheck supersedes the case',()=>{
+ const event={source_kind:'signature_check',source_current:false} as BoundEvent;
+ assert.throws(()=>requireCurrentSessionEvent(event),{code:'AUTOMATION_SIGNATURE_CHECK_SOURCE_CHANGED'});
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));assert.ok(api.paths['/api/v1/automations/events'].get.parameters.find((p:{name:string})=>p.name==='sourceKind').schema.enum.includes('signature_check'));
 });

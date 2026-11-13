@@ -2,28 +2,56 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { processOneSubscription } from '../src/automations/subscription-worker.ts';
 import { processOneNotification } from '../src/automations/notification-worker.ts';
+import { processOneMessage,type MessageTransport } from '../src/automations/message-worker.ts';
 import type { Database } from '../src/core/database.ts';
 
-export async function completionWatcherCheck(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'pg'|'a'|'hub'|'actors'>){
+export async function completionWatcherCheck(f:Pick<Awaited<ReturnType<typeof operationsFixture>>,'request'|'pg'|'a'|'hub'|'actors'|'managerRole'>){
  // The original signing test deliberately expired its starter's login. Use a
  // separate synthetic verified login,never resurrect the expired credential.
  const session=randomUUID();await f.pg.query(`INSERT INTO identity.session(id,token,"userId","expiresAt","updatedAt","mfaVerified") VALUES($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp(),true)`,[session,'synthetic-watch-login-'+randomUUID(),f.actors.master.user]);
  const request:typeof f.request=async(...args)=>{const prior=f.actors.master.session;f.actors.master.session=session;try{return await f.request(...args);}finally{f.actors.master.session=prior;}};
  const definition={name:'Disposable broad watcher',enabled:true,trigger:{kind:'domain_event',eventTypes:['*']},condition:{op:'exists',field:'entityId'},actions:[{kind:'notify',channels:['portal'],audience:{kind:'school_master'},title:{en:'Review event'},body:{en:'Review linked case'}}],execution:{mode:'automatic',maxRecipientsPerEvent:10,maxDailyDeliveries:100,maxDailySms:0,cooldownSeconds:0,maxChainDepth:1}};
- const create=async(code:string)=>{const r=await request('automations/rules',{hubId:f.hub,code,definition,reason:'Synthetic queue regression'});assert.equal(r.response.status,201,JSON.stringify(r.body));return r.body.data;};
+ const create=async(code:string,d:unknown=definition)=>{const r=await request('automations/rules',{hubId:f.hub,code,definition:d,reason:'Synthetic queue regression'});assert.equal(r.response.status,201,JSON.stringify(r.body));return r.body.data;};
  const rule=await create('SIGNING_QUEUE_WATCH'),watch=await request('automations/rules/'+rule.id+'/subscriptions',{expectedVersion:1,reason:'Synthetic broad watcher'});assert.equal(watch.response.status,201,JSON.stringify(watch.body));
  const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_automation_worker');return c;}};
  const step=async()=>{try{return await processOneSubscription(database,[f.a]);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}};
  return async()=>{
   const incident=(await f.pg.query<{id:string}>('SELECT id FROM public.signature_completion_incidents WHERE academy_id=$1',[f.a])).rows[0];assert.ok(incident);
-  assert.equal((await step()).outcome,'ignored','disabled signing delivery must be consumed,not retried');
-  assert.equal((await f.pg.query('SELECT outcome FROM public.automation_subscription_events WHERE subscription_id=$1 AND event_id=$2',[watch.body.data.id,incident.id])).rows[0]?.outcome,'ignored');
+  if(f.pg.runtime){
+   const reader=await f.pg.runtime.connect();try{
+    await reader.query('BEGIN');await reader.query('SET LOCAL ROLE kavosh_runtime');await reader.query("SELECT set_config('app.academy_id',$1,true)",[f.a]);assert.equal((await reader.query<{ok:boolean}>('SELECT public.lock_signature_check_source($1) ok',[incident.id])).rows[0].ok,true);
+    await f.pg.exec('BEGIN');try{await f.pg.exec("SET LOCAL lock_timeout='150ms'");await assert.rejects(f.pg.query('UPDATE public.signature_completion_jobs SET available_at=available_at WHERE academy_id=$1',[f.a]),(error:unknown)=>(error as {code?:string}).code==='55P03','a separate native writer must wait behind the exact source lock');}finally{await f.pg.exec('ROLLBACK');}
+   }finally{await reader.query('ROLLBACK');reader.release();}
+  }
+  assert.equal((await step()).outcome,'queued','current signing case must enter the existing reviewed queue');
+  assert.equal((await f.pg.query('SELECT outcome FROM public.automation_subscription_events WHERE subscription_id=$1 AND event_id=$2',[watch.body.data.id,incident.id])).rows[0]?.outcome,'queued');
   assert.equal((await f.pg.query('SELECT status,failure_count FROM public.automation_subscriptions WHERE id=$1',[watch.body.data.id])).rows[0]?.failure_count,0);
-  assert.equal((await f.pg.query('SELECT id FROM public.notification_jobs WHERE rule_id=$1',[rule.id])).rows.length,0);
+  try{assert.equal((await processOneNotification(database,[f.a])).outcome,'succeeded');}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+  assert.equal((await f.pg.query('SELECT id FROM public.portal_notifications WHERE rule_id=$1 AND event_id=$2',[rule.id,incident.id])).rows.length,1);
   await create('SIGNING_QUEUE_NEXT');assert.equal((await step()).outcome,'queued','the same watcher must continue with an ordinary later event');
-  assert.equal((await f.pg.query('SELECT id FROM public.notification_jobs WHERE rule_id=$1',[rule.id])).rows.length,1);
+  assert.equal((await f.pg.query('SELECT id FROM public.notification_jobs WHERE rule_id=$1',[rule.id])).rows.length,2);
   try{assert.equal((await processOneNotification(database,[f.a])).outcome,'succeeded','consume this synthetic portal-only job before later queue assertions');}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
   const stopped=await request('automations/subscriptions/'+watch.body.data.id+'/stop',{});assert.equal(stopped.response.status,200,JSON.stringify(stopped.body));
+  const preferences=await request('me/notification-preferences'),opted=await request('me/notification-preferences',{expectedVersion:preferences.body.data.version,emailEnabled:true,smsEnabled:true,locale:'en',acknowledgedNoticeVersion:1});assert.ok([200,201].includes(opted.response.status),JSON.stringify(opted.body));
+  const policy=await request('automations/delivery-policy'),enabled=await request('automations/delivery-policy',{expectedVersion:policy.body.data.version,definition:{...policy.body.data.definition,enabled:true,maxDailyEmailRequests:1000,maxDailySmsRequests:1000,maxHourlyRequestsPerRecipient:100},reason:'Synthetic isolated outbound acceptance'});assert.equal(enabled.response.status,200,JSON.stringify(enabled.body));
+  const outbound={...definition,trigger:{kind:'domain_event',eventTypes:['work.signature.completion.check.blocked.critical']},actions:[{...definition.actions[0],channels:['email','sms']}],execution:{...definition.execution,maxDailySms:100}};
+  const queueOutbound=async(code:string,d:unknown=outbound)=>{const r=await create(code,d),result=await request('automations/rules/'+r.id+'/dispatch',{eventId:incident.id,expectedVersion:1});assert.equal(result.response.status,201,JSON.stringify(result.body));assert.equal(result.body.data.summary.outboundQueued,2,JSON.stringify(result.body));return r;};
+  let calls=0;const receipt={providerMessageId:'synthetic-receipt',providerStatus:'accepted',providerAccepted:true as const,deliveryConfirmed:false as const};
+  const transport:MessageTransport={channels:['email','sms'],async email(){calls++;return {...receipt,provider:'smtp'};},async sms(){calls++;return {...receipt,provider:'twilio'};}};
+  const sender:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_message_worker');return c;}};
+  const send=async()=>{try{return await processOneMessage(sender,[f.a],()=>transport);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}};
+  await queueOutbound('SIGNING_EXTERNAL_CURRENT');for(let n=0;n<2;n++)assert.equal((await send()).outcome,'accepted');assert.equal(calls,2);
+  const added=(await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'work-signature-completions.view','allow') ON CONFLICT DO NOTHING RETURNING capability",[f.a,f.managerRole])).rows;
+  const managerPrefs=await request('me/notification-preferences',undefined,'manager'),managerOpt=await request('me/notification-preferences',{expectedVersion:managerPrefs.body.data.version,emailEnabled:true,smsEnabled:true,locale:'en',acknowledgedNoticeVersion:1},'manager');assert.ok([200,201].includes(managerOpt.response.status),JSON.stringify(managerOpt.body));
+  await queueOutbound('SIGNING_EXTERNAL_REVOKED',{...outbound,actions:[{...outbound.actions[0],audience:{kind:'people',personIds:[f.actors.manager.person]}}]});
+  const removed=(await f.pg.query<{effect:string}>("DELETE FROM public.role_permissions WHERE academy_id=$1 AND role_id=$2 AND capability='work-signature-completions.view' RETURNING effect",[f.a,f.managerRole])).rows;
+  try{for(let n=0;n<2;n++)assert.equal((await send()).outcome,'cancelled','removing recipient completion-view rights must stop both queued channels');assert.equal(calls,2);}finally{if(!added.length)for(const row of removed)await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'work-signature-completions.view',$3)",[f.a,f.managerRole,row.effect]);}
+  const stale=await queueOutbound('SIGNING_EXTERNAL_STALE');
+  return async()=>{
+   const rejected=await request('automations/rules/'+stale.id+'/dispatch',{eventId:incident.id,expectedVersion:1});assert.equal(rejected.response.status,409,'an old dispatch receipt must not bypass the changed source');
+   for(let n=0;n<2;n++)assert.equal((await send()).outcome,'cancelled','queued email/SMS must stop after an approved case recheck');assert.equal(calls,2,'stale cases make no further simulated provider calls');
+   assert.deepEqual((await f.pg.query('SELECT DISTINCT last_error FROM public.notification_deliveries WHERE rule_id=$1',[stale.id])).rows,[{last_error:'SOURCE_OR_AUTHORITY_CHANGED'}]);
+  };
  };
 }
 import type { operationsFixture } from './operations-fixture.ts';
@@ -84,8 +112,8 @@ export async function checkCompletionStatus(f:Pick<Awaited<ReturnType<typeof ope
  assert.doesNotMatch(JSON.stringify(note.body),/PRIVATE|origin_transaction|source_fingerprint|lease_token|worker_id/);
  await f.pg.exec('SET ROLE kavosh_runtime');try{
   await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);
-  await assert.rejects(f.pg.query("INSERT INTO public.portal_notifications(academy_id,id,run_id,rule_id,event_id,person_id,action_index,severity,title,body,locale) VALUES($1,$2,$3,$4,$5,$6,0,'critical','Synthetic','Synthetic','en')",[f.a,randomUUID(),randomUUID(),randomUUID(),incidentId,f.actors.master.person]),/SIGNATURE_CHECK_CUSTOM_DELIVERY_DISABLED/);
-  await assert.rejects(f.pg.query("INSERT INTO public.notification_deliveries(academy_id,id,run_id,rule_id,rule_version,event_id,person_id,action_index,channel,title,body,locale,owner_epoch,contact_epoch,preference_version) VALUES($1,$2,$3,$4,1,$5,$6,0,'email','Synthetic','Synthetic','en',$7,$7,1)",[f.a,randomUUID(),randomUUID(),randomUUID(),incidentId,f.actors.master.person,'a'.repeat(64)]),/SIGNATURE_CHECK_CUSTOM_DELIVERY_DISABLED/);
+  await assert.rejects(f.pg.query("INSERT INTO public.portal_notifications(academy_id,id,run_id,rule_id,event_id,person_id,action_index,severity,title,body,locale) VALUES($1,$2,$3,$4,$5,$6,0,'critical','Synthetic','Synthetic','en')",[f.a,randomUUID(),randomUUID(),randomUUID(),incidentId,f.actors.master.person]));
+  await assert.rejects(f.pg.query("INSERT INTO public.notification_deliveries(academy_id,id,run_id,rule_id,rule_version,event_id,person_id,action_index,channel,title,body,locale,owner_epoch,contact_epoch,preference_version) VALUES($1,$2,$3,$4,1,$5,$6,0,'email','Synthetic','Synthetic','en',$7,$7,1)",[f.a,randomUUID(),randomUUID(),randomUUID(),incidentId,f.actors.master.person,'a'.repeat(64)]));
  }finally{await f.pg.exec('RESET ROLE');}
  assert.equal((await f.request(path+'/incidents?after='+randomUUID())).response.status,404);
  assert.equal((await f.request(path+'/incidents',undefined,'foreignMaster',{academy:f.b})).response.status,404);
