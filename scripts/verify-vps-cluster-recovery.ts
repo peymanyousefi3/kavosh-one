@@ -57,7 +57,9 @@ finally{
  if(installed&&unit){
   let observed:Record<string,string>|undefined;try{observed=properties(unit.name);}catch{/* Preserve the same job and private inputs when observation is unavailable. */}
   if(!isolatedRecoveryStopped(observed)){serverCleanupDeferred=true;console.error('ISOLATED_CLUSTER_OBSERVATION_PENDING: '+unit.name);process.exitCode=1;}
-  else try{remote('sudo systemctl stop '+unit.name+'.service && sudo systemctl clean --what=state '+unit.name+'.service');remote('sudo rm -- /run/systemd/system/'+unit.name+'.service && sudo systemctl daemon-reload');}catch{serverCleanupDeferred=true;console.error('CLUSTER_SERVICE_CLEANUP_REQUIRED: '+unit.name);process.exitCode=1;}
+  // clean itself refuses a running unit;never enqueue a stop even after a
+  // terminal observation,which could race a separate administrator's start.
+  else try{remote('sudo systemctl clean --what=state '+unit.name+'.service');remote('sudo rm -- /run/systemd/system/'+unit.name+'.service && sudo systemctl daemon-reload');}catch{serverCleanupDeferred=true;console.error('CLUSTER_SERVICE_CLEANUP_REQUIRED: '+unit.name);process.exitCode=1;}
  }
  if(staged&&unit&&!serverCleanupDeferred)try{remote('sudo rm -f -- '+stagedFiles.map(file=>unit!.staging+'/'+file).join(' ')+' && sudo rmdir '+unit.staging);}catch{console.error('CLUSTER_INPUT_CLEANUP_REQUIRED');process.exitCode=1;}
  for(const file of localFiles)try{unlinkSync(file);}catch{console.error('CLUSTER_LOCAL_CLEANUP_REQUIRED');process.exitCode=1;}

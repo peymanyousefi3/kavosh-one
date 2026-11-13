@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {readFileSync} from 'node:fs';
+
+test('restore observer has no stop or restart command,even after a terminal observation',()=>{
+ const source=readFileSync(new URL('../scripts/verify-vps-cluster-recovery.ts',import.meta.url),'utf8');
+ assert.doesNotMatch(source,/systemctl\s+(?:stop|restart|kill)\s/);assert.ok(source.includes('if(!isolatedRecoveryStopped(observed))'));assert.ok(source.includes('&& !serverCleanupDeferred')||source.includes('&&!serverCleanupDeferred'));assert.ok(source.includes('systemctl clean --what=state'));
+});
 
 test('real-cluster operator refuses malformed selection or untrusted operator paths before connections or private output',async()=>{
  const run=promisify(execFile),id='171a9ad4-c40b-4d98-9890-6a87ce15a976';
