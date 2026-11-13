@@ -24,7 +24,7 @@ export async function requireConsolidatedT4aResultAccess(ctx:ApiContext,raw:unkn
 type Payroll=Awaited<ReturnType<typeof t4aWorkingPaperData>>;
 type Supplier=Awaited<ReturnType<typeof supplierTaxWorkingPaperData>>;
 type Allocation=Payroll['totals'];
-const amountKeys=['gross','net','reportableIncome','excludedGstHst','excludedPst','otherExcluded'] as const;
+const amountKeys=['gross','net','nonTaxDeductions','reportableIncome','excludedGstHst','excludedPst','otherExcluded'] as const;
 function sum(rows:Allocation[]):Allocation {
  return {paymentCount:rows.reduce((n,r)=>n+r.paymentCount,0),...Object.fromEntries(amountKeys.map(k=>[k,exactReportMoney(rows.reduce((n,r)=>n+readMinorUnits(r[k].minor),0n),2)])) as Pick<Allocation,typeof amountKeys[number]>,fields:(['020','048','022'] as const).map(box=>{const amount=exactReportMoney(rows.reduce((n,r)=>n+readMinorUnits(r.fields.find(f=>f.box===box)!.amount.minor),0n),2);return {box,amount,printBlank:amount.minor==='0'};})};
 }

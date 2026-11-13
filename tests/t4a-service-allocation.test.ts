@@ -12,6 +12,11 @@ test('T4A service allocation excludes actual sales taxes without changing record
 test('T4A service and independent commissions are disjoint with exact source withholding',()=>{
  const r=projectT4aServicePayment({...definition(),income:[{box:'048',amount:'750.00'},{box:'020',amount:'250.00'}],gstHst:'50.00',pst:'80.00',incomeTaxDeducted:'100.00'},{...source(),netMinor:'103000',incomeTaxDeductedMinor:'10000'});assert.equal(field(r,'048').amount.minor,'75000');assert.equal(field(r,'020').amount.minor,'25000');assert.equal(field(r,'022').amount.minor,'10000');assert.equal(r.reportableIncome.minor,'100000');assert.equal(r.excludedPst.minor,'8000');
 });
+test('retained non-tax deductions reconcile settlement but do not become income tax or excluded gross service amounts',()=>{
+ const d={...definition(),incomeTaxDeducted:'30.00'},s={...source(),netMinor:'100000',incomeTaxDeductedMinor:'3000',nonTaxDeductedMinor:'10000'},r=projectT4aServicePayment(d,s);
+ assert.equal(r.gross.amount,'1130.00');assert.equal(r.net.amount,'1000.00');assert.equal(r.nonTaxDeductions.amount,'100.00');assert.equal(field(r,'022').amount.amount,'30.00');assert.equal(field(r,'048').amount.amount,'1000.00');assert.equal(r.otherExcluded.amount,'0.00');
+ assert.throws(()=>projectT4aServicePayment(d,{...s,nonTaxDeductedMinor:'9999'}),/SOURCE_UNRECONCILED/);assert.throws(()=>projectT4aServicePayment(d,{...s,nonTaxDeductedMinor:'-1'}),/SOURCE_INVALID/);assert.equal(projectT4aServicePayment(definition(),source()).nonTaxDeductions.amount,'0.00');
+});
 test('T4A partial recognition is explicit rather than proportional from an invoice total',()=>{
  const r=projectT4aServicePayment({...definition(),income:[{box:'048',amount:'333.33'}],gstHst:'43.33'},{...source(),grossMinor:'37666',netMinor:'37666'});assert.equal(field(r,'048').amount.amount,'333.33');assert.throws(()=>projectT4aServicePayment(definition(),{...source(),grossMinor:'37666',netMinor:'37666'}),/T4A_SERVICE_ALLOCATION_UNRECONCILED/);
 });

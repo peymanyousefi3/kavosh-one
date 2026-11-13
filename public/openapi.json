@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.445.0",
+    "version": "0.446.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -53383,7 +53383,7 @@
     },
     "/api/v1/payroll/payments/{id}/t4a-recognition": {
       "post": {
-        "summary": "Upper-human-reviewed explicit CAD T4A service/commission recognition of one already recorded contractor payment. Pins effective RP edition and actual payment timezone/year,exact source-coded income-tax allocation and GST/HST/PST exclusions;native cumulative deduction/gross capacities,immutable corrections and withdrawals. Requires global-worker tax,whole original payrun/funding/source and private employer rights. No automatic residency/worker-status determination,additional journal,payment,official slip or CRA filing.",
+        "summary": "Upper-human-reviewed explicit CAD T4A service/commission recognition of one already recorded contractor payment. Pins effective RP edition and actual payment timezone/year,exact source-coded income-tax allocation and GST/HST/PST exclusions;optional separately reviewed nonTaxDeductionSources reconcile gross without entering box022 or excluding gross service income. Both kinds share native per-code cumulative capacity and complete-final-payment checks,immutable corrections and withdrawals. Requires global-worker tax,whole original payrun/funding/source and private employer rights. No automatic residency/worker-status determination,additional journal,payment,official slip or CRA filing.",
         "parameters": [
           {
             "name": "id",
@@ -53583,6 +53583,35 @@
                               "required": [
                                 "code",
                                 "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "nonTaxDeductionSources": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "sourceReference": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "amount",
+                                "sourceReference"
                               ],
                               "additionalProperties": false
                             }

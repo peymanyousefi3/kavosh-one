@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('contractor recognition supports optional reviewed non-tax source deductions without caller-computed gross or tax authority',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),op=api.paths['/api/v1/payroll/payments/{id}/t4a-recognition'].post,s=op.requestBody.content['application/json'].schema,definition=s.properties.definition.anyOf.find((v:any)=>v.type==='object'),deductions=definition.properties.nonTaxDeductionSources;
+ assert.ok(deductions);assert.equal(deductions.maxItems,100);assert.equal(definition.required.includes('nonTaxDeductionSources'),false);assert.equal(deductions.items.additionalProperties,false);assert.deepEqual(deductions.items.required,['code','amount','sourceReference']);for(const k of ['grossMinor','netMinor','nonTaxDeductedMinor','approved'])assert.equal(s.properties[k],undefined);assert.match(op.summary,/without entering box022 or excluding gross service income/);assert.match(op.summary,/per-code cumulative capacity/);
+});
 test('owner account ledger exposes typed dates and paired keyset cursor without balance overrides or mutation',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),r=api.paths['/api/platform/v1/academies/{id}/finance/accounts/{accountId}/ledger'].get,q=r.parameters.filter((p:any)=>p.in==='query');
  assert.deepEqual(q.map((p:any)=>p.name).sort(),['from','through','limit','afterPostedOn','afterJournalId','afterLineNumber'].sort());assert.equal(q.find((p:any)=>p.name==='limit').schema.maximum,100);assert.equal(q.find((p:any)=>p.name==='afterLineNumber').schema.maximum,200);assert.equal(q.find((p:any)=>p.name==='from').required,true);assert.equal(r.parameters.find((p:any)=>p.in==='header'&&p.name==='X-Access-Purpose').required,true);assert.equal(r.requestBody,undefined);assert.match(r.summary,/Totals are never page sums/);assert.match(r.summary,/No bank verification/);
