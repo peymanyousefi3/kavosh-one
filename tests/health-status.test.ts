@@ -3,14 +3,18 @@ import {test} from 'node:test';
 import {mkdtemp,realpath,chmod,writeFile,symlink,link,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {evaluateOperationalHealth} from '../src/operations/operational-health.ts';
+import {evaluateOperationalHealth,operationalWorkerUnits} from '../src/operations/operational-health.ts';
 import {operationalHealthStatus,readOperationalHealthStatus} from '../src/operations/health-status.ts';
 import {createPlatformApi} from '../src/platform/api.ts';
 import type {Database} from '../src/core/database.ts';
-const now=Date.now(),completed={active:'inactive',result:'success',exitStatus:0,lastSuccessfulExitAt:new Date(now-3600000).toISOString()},normal=evaluateOperationalHealth({observedAt:new Date(now).toISOString(),ready:true,freeBackupDiskBytes:'50000000000',web:{...completed,active:'active'},backup:completed,configuration:completed,backupTimerActive:true,configurationTimerActive:true});
+const now=Date.now(),completed={active:'inactive',result:'success',exitStatus:0,lastSuccessfulExitAt:new Date(now-3600000).toISOString()},normal=evaluateOperationalHealth({observedAt:new Date(now).toISOString(),ready:true,freeBackupDiskBytes:'50000000000',web:{...completed,active:'active'},backup:completed,configuration:completed,backupTimerActive:true,configurationTimerActive:true,workers:Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,{...completed,active:'active'}]))});
 test('owner status recomputes findings and marks stale/future samples critical instead of retaining a green label',()=>{
  assert.equal(operationalHealthStatus(normal,now).status,'healthy');assert.equal(operationalHealthStatus(normal,now+180000).status,'healthy');assert.equal(operationalHealthStatus(normal,now+180001).issues.at(-1)?.code,'MONITOR_OBSERVATION_STALE');assert.equal(operationalHealthStatus(normal,now-30001).issues.at(-1)?.code,'MONITOR_CLOCK_INCONSISTENT');
  assert.equal(operationalHealthStatus({...normal,ready:false},now).status,'critical');assert.throws(()=>operationalHealthStatus({...normal,secret:'DO_NOT_EXPOSE'},now));assert.throws(()=>operationalHealthStatus(normal,NaN));
+ assert.equal(operationalHealthStatus({...normal,workers:{...normal.workers!,reports:{...normal.workers!.reports,active:'failed'}},status:'healthy',issues:[]},now).status,'critical');
+ const {workers,workerCoverage,queueProgressVerified,...legacy}=normal,old=operationalHealthStatus(legacy,now);assert.equal(old.status,'warning');assert.equal(old.workerCoverage,'not_observed');assert.equal(old.queueProgressVerified,false);
+ assert.equal(operationalHealthStatus({...legacy,workerCoverage:'required_process_states_observed'},now).workerCoverage,'not_observed');
+ const worst=operationalHealthStatus({...normal,ready:false,freeBackupDiskBytes:'0',web:{...completed,active:'failed'},backup:{...completed,active:'failed'},configuration:{...completed,active:'failed'},workers:Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,{...completed,active:'failed'}]))},now);assert.equal(worst.issues.length,16);assert.ok(Buffer.byteLength(JSON.stringify(worst))<16384);assert.equal(operationalHealthStatus(worst,now+180001).issues.length,17);
 });
 test('shared health file is bounded,strict,read-only metadata;unsafe permissions,links and injected fields fail closed',async()=>{
  const directory=await realpath(await mkdtemp(join(tmpdir(),'kavosh-health-'))),file=join(directory,'status.json');try{

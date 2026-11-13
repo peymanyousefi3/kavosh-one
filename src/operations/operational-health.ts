@@ -1,6 +1,24 @@
 import {z} from 'zod';
 const time=z.iso.datetime(),service=z.object({active:z.enum(['active','activating','deactivating','inactive','failed','unknown']),result:z.string().regex(/^[a-z-]{1,40}$/),exitStatus:z.number().int().min(0).max(255).nullable(),lastSuccessfulExitAt:time.nullable()}).strict();
-export const healthObservation=z.object({observedAt:time,ready:z.boolean(),freeBackupDiskBytes:z.string().regex(/^(0|[1-9][0-9]{0,30})$/),web:service,backup:service,configuration:service,backupTimerActive:z.boolean().nullable(),configurationTimerActive:z.boolean().nullable()}).strict();
+// Fixed deployed long-running services only. Do not enumerate build/probe jobs,
+// inspect credentials,or demand activation of the deliberately disabled signing
+// completion service. A process being active is not proof its queue is healthy.
+export const operationalWorkerUnits={
+ 'auth-delivery':'kavosh-one-auth-delivery.service',
+ messages:'kavosh-one-background@messages.service',
+ notifications:'kavosh-one-background@notifications.service',
+ 'platform-notices':'kavosh-one-background@platform-notices.service',
+ reports:'kavosh-one-background@reports.service',
+ 'file-promotion':'kavosh-one-file-copy@promotion.service',
+ 'file-verification':'kavosh-one-file-copy@verification.service',
+ 'file-inspection':'kavosh-one-file-inspection.service',
+ 'image-parser':'kavosh-one-parser@image.service',
+ 'pdf-parser':'kavosh-one-parser@pdf.service',
+ 'video-parser':'kavosh-one-parser@video.service',
+ scanner:'kavosh-one-scanner.service'
+} as const;
+const workers=z.object(Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,service])) as Record<keyof typeof operationalWorkerUnits,typeof service>).strict();
+export const healthObservation=z.object({observedAt:time,ready:z.boolean(),freeBackupDiskBytes:z.string().regex(/^(0|[1-9][0-9]{0,30})$/),web:service,backup:service,configuration:service,backupTimerActive:z.boolean().nullable(),configurationTimerActive:z.boolean().nullable(),workers:workers.optional()}).strict();
 export function evaluateOperationalHealth(raw:unknown){
  const observation=healthObservation.parse(raw),now=Date.parse(observation.observedAt),issues:{component:string;code:string;severity:'warning'|'critical'}[]=[];
  const add=(component:string,code:string,severity:'warning'|'critical'='critical')=>issues.push({component,code,severity});
@@ -14,8 +32,15 @@ export function evaluateOperationalHealth(raw:unknown){
   else if(value.lastSuccessfulExitAt===null)add(component,'BACKUP_SUCCESS_NOT_VERIFIED');
   else{const age=now-Date.parse(value.lastSuccessfulExitAt);if(age< -300000)add(component,'BACKUP_CLOCK_INCONSISTENT');else if(age>36*3600000)add(component,'BACKUP_OVERDUE');}
  }
+ if(!observation.workers)add('workers','WORKER_STATUS_NOT_OBSERVED','warning');
+ else for(const [worker,value]of Object.entries(observation.workers)){
+  const component='worker:'+worker;
+  if(value.active==='unknown'||value.result==='unknown'||value.exitStatus===null)add(component,'WORKER_STATUS_UNAVAILABLE');
+  else if(value.active!=='active')add(component,'WORKER_NOT_RUNNING');
+  else if(value.result!=='success'||value.exitStatus!==0)add(component,'WORKER_PROCESS_FAILURE');
+ }
  const free=BigInt(observation.freeBackupDiskBytes);if(free<2147483648n)add('storage','BACKUP_DISK_SPACE_CRITICAL');else if(free<4294967296n)add('storage','BACKUP_DISK_SPACE_LOW','warning');
- return{format:'kavosh-operational-health-v1' as const,...observation,issues,status:issues.some(i=>i.severity==='critical')?'critical' as const:issues.length?'warning' as const:'healthy' as const,observationVantage:'same-vps' as const,independentUptimeVerified:false,externalMessagesSent:0,applicationChangesMade:false};
+ return{format:'kavosh-operational-health-v1' as const,...observation,issues,status:issues.some(i=>i.severity==='critical')?'critical' as const:issues.length?'warning' as const:'healthy' as const,workerCoverage:observation.workers?'required_process_states_observed' as const:'not_observed' as const,queueProgressVerified:false,observationVantage:'same-vps' as const,independentUptimeVerified:false,externalMessagesSent:0,applicationChangesMade:false};
 }
 
 // systemctl is forced to UTC/C locale. Unknown formats fail closed instead of

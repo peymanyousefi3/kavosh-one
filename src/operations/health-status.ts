@@ -4,9 +4,9 @@ import {resolve} from 'node:path';
 import {z} from 'zod';
 import {evaluateOperationalHealth,healthObservation} from './operational-health.ts';
 
-const snapshot=healthObservation.extend({format:z.literal('kavosh-operational-health-v1'),issues:z.array(z.object({component:z.string(),code:z.string(),severity:z.enum(['warning','critical'])}).strict()).max(20),status:z.enum(['healthy','warning','critical']),observationVantage:z.literal('same-vps'),independentUptimeVerified:z.literal(false),externalMessagesSent:z.literal(0),applicationChangesMade:z.literal(false)}).strict();
+const snapshot=healthObservation.extend({format:z.literal('kavosh-operational-health-v1'),issues:z.array(z.object({component:z.string(),code:z.string(),severity:z.enum(['warning','critical'])}).strict()).max(20),status:z.enum(['healthy','warning','critical']),workerCoverage:z.enum(['required_process_states_observed','not_observed']).optional(),queueProgressVerified:z.literal(false).optional(),observationVantage:z.literal('same-vps'),independentUptimeVerified:z.literal(false),externalMessagesSent:z.literal(0),applicationChangesMade:z.literal(false)}).strict();
 export function operationalHealthStatus(raw:unknown,now=Date.now()){
- const stored=snapshot.parse(raw),{format,issues,status,observationVantage,independentUptimeVerified,externalMessagesSent,applicationChangesMade,...observation}=stored;
+ const stored=snapshot.parse(raw),{format,issues,status,workerCoverage,queueProgressVerified,observationVantage,independentUptimeVerified,externalMessagesSent,applicationChangesMade,...observation}=stored;
  const result=evaluateOperationalHealth(observation),age=now-Date.parse(result.observedAt);
  // Recompute findings: never trust a stored healthy label or keep showing a
  // green sample after the monitoring timer has stopped.
