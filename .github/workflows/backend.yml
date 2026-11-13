@@ -34,7 +34,7 @@ jobs:
         run: node --test tests/ovh-deployment.test.mjs tests/scheduled-backups.test.mjs tests/vps-restore-verifier.test.mjs tests/media-reference-verifier.test.mjs tests/config-backup.test.mjs tests/twilio-provisioning.test.mjs tests/sms-acceptance.test.mjs tests/postmark-acceptance.test.mjs tests/auth-delivery-startup.test.mjs tests/auth-delivery-provisioning.test.mjs tests/boldsign-acceptance.test.mjs tests/parser-deployment.test.mjs
       - name: Isolation diagnostics never claim queued work or contact message providers
         # Keep queue-claiming code out of diagnostics,even when queues contain work.
-        run: node --import tsx --test tests/worker-isolation-checks.test.ts tests/migration-preflight.test.ts
+        run: node --import tsx --test tests/worker-isolation-checks.test.ts tests/migration-preflight.test.ts tests/media-backup-provisioning.test.ts
       - name: Verify the official pinned encryption tool before execution
         run: |
           install -d -m 700 /tmp/kavosh-backup-tools

@@ -16,6 +16,7 @@ env -i PATH=/usr/bin:/bin LANG=C /usr/bin/tar -C / -cf - \
  etc/apparmor.d/local/usr.sbin.clamd etc/apparmor.d/kavosh-one-parser \
  etc/caddy/kavosh-one.caddy etc/systemd/system/kavosh-one.service \
  etc/systemd/system/kavosh-one-backup.service etc/systemd/system/kavosh-one-backup.timer \
+ etc/systemd/system/kavosh-one-backup.service.d \
  etc/systemd/system/kavosh-one-config-backup.service etc/systemd/system/kavosh-one-config-backup.timer \
  etc/systemd/system/kavosh-one-role-export.service \
  etc/systemd/system/kavosh-one-scanner.service \

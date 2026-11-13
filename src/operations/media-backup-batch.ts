@@ -1,6 +1,6 @@
-import {randomUUID} from 'node:crypto';
+import {randomUUID,createHash} from 'node:crypto';
 import {mkdir,open,unlink,rename} from 'node:fs/promises';
-import {createReadStream} from 'node:fs';
+import {createReadStream,constants} from 'node:fs';
 import {join,isAbsolute} from 'node:path';
 import {z} from 'zod';
 import type {S3ClientConfig} from '@aws-sdk/client-s3';
@@ -27,13 +27,30 @@ export async function backupMediaBatch(raw:unknown,signal?:AbortSignal,handler?:
   if(plan.academies>i.maximumAcademies)throw new RecoveryError('MEDIA_BATCH_SIZE_LIMIT');await mkdir(folder,{mode:0o700});output=await open(spool,'wx',0o600);
   const record=async(value:unknown)=>{const line=JSON.stringify(value)+'\n';journalBytes+=Buffer.byteLength(line);if(journalBytes>8388608)throw new RecoveryError('MEDIA_BATCH_SIZE_LIMIT');await output!.writeFile(line);await output!.sync();};
   await record({type:'header',format:'kavosh-media-batch-v1',id,referenceBinding:plan.binding,expectedAcademies:plan.academies});
-  // ponytail: revalidate the common plan per school; use per-school spools if
-  // measured multi-school metadata IO becomes significant. Memory stays bounded.
+  // Split in linear passes before storage IO: only bounded school metadata is
+  // retained,not all file references or a repeated global scan for each school.
+  const plans=join(folder,'reference-plans');await mkdir(plans,{mode:0o700});
+  const schools=new Map<string,{file:string;hash:ReturnType<typeof createHash>;bytes:number;references:number;unconfirmedUploads:number;plaintextSha256?:string}>();
   for await(const school of plan.academiesForBackup){
-   const collection=await backupMediaCollection({academyId:school.academyId,age:i.age,recipient:i.recipient,workDirectory:i.workDirectory,targets:i.targets,offsite:i.offsite,referencePlan:i.referencePlan,reuseExistingArchives:true,maximumObjects:Math.max(1,i.maximumObjects-objects),maximumSourceBytes:Math.max(1,i.maximumSourceBytes-sourceBytes),timeoutMs:i.timeoutMs},abort,handler);
+   const file=join(plans,school.academyId+'.jsonl'),text=JSON.stringify({type:'header',format:'kavosh-media-reference-plan-v1',databaseBackupId:plan.binding.databaseBackupId,archiveSha256:plan.binding.archiveSha256,schemaRevision:plan.binding.schemaRevision,scope:'recorded_ordinary_file_objects',signedEvidenceIncluded:false})+'\n'+JSON.stringify(school)+'\n',f=await open(file,'wx',0o600);try{await f.writeFile(text);}finally{await f.close();}
+   schools.set(school.academyId,{file,hash:createHash('sha256').update(text),bytes:Buffer.byteLength(text),references:0,unconfirmedUploads:school.unconfirmedUploads});
+  }
+  let writer:Awaited<ReturnType<typeof open>>|undefined,current='',pending='';
+  const flush=async()=>{if(pending){await writer!.writeFile(pending);pending='';}};
+  try{for await(const reference of plan.referencesForSchool){
+   const school=schools.get(reference.academyId);if(!school)throw new RecoveryError('MEDIA_BATCH_INCOMPLETE');
+   if(current!==reference.academyId){await flush();await writer?.close();writer=await open(school.file,constants.O_WRONLY|constants.O_APPEND|constants.O_NOFOLLOW);current=reference.academyId;}
+   const line=JSON.stringify(reference)+'\n';school.hash.update(line);school.bytes+=Buffer.byteLength(line);school.references++;pending+=line;if(Buffer.byteLength(pending)>=65536)await flush();
+  }await flush();}finally{await writer?.close();}
+  for(const school of schools.values()){
+   const footer=JSON.stringify({type:'complete',academies:1,references:school.references,unconfirmedUploads:school.unconfirmedUploads})+'\n',f=await open(school.file,constants.O_WRONLY|constants.O_APPEND|constants.O_NOFOLLOW);try{await f.writeFile(footer);await f.sync();}finally{await f.close();}school.hash.update(footer);school.bytes+=Buffer.byteLength(footer);school.plaintextSha256=school.hash.digest('hex');
+  }
+  for(const [academyId,school]of schools){
+   const referencePlan={file:school.file,databaseBackupId:plan.binding.databaseBackupId,archiveSha256:plan.binding.archiveSha256,schemaRevision:plan.binding.schemaRevision,plaintextBytes:school.bytes,plaintextSha256:school.plaintextSha256};
+   const collection=await backupMediaCollection({academyId,age:i.age,recipient:i.recipient,workDirectory:i.workDirectory,targets:i.targets,offsite:i.offsite,referencePlan,reuseExistingArchives:true,maximumObjects:Math.max(1,i.maximumObjects-objects),maximumSourceBytes:Math.max(1,i.maximumSourceBytes-sourceBytes),timeoutMs:i.timeoutMs},abort,handler);
    academies++;objects+=collection.objects;sourceBytes+=collection.sourceBytes;reusedObjects+=collection.reusedObjects;references+=collection.referenceCoverage!.recordedReferences;unconfirmed+=collection.referenceCoverage!.unconfirmedUploads;
    if(objects>i.maximumObjects||sourceBytes>i.maximumSourceBytes||!collection.recordedDatabaseReferencesVerified||!collection.allArchivesIndependentlyCopied)throw new RecoveryError('MEDIA_BATCH_INCOMPLETE');
-   await record({type:'collection',academyId:school.academyId,id:collection.id,catalog:collection.catalog,offsite:collection.offsite,objects:collection.objects,sourceBytes:collection.sourceBytes,reusedObjects:collection.reusedObjects,referenceCoverage:collection.referenceCoverage});
+   await record({type:'collection',academyId,id:collection.id,catalog:collection.catalog,offsite:collection.offsite,objects:collection.objects,sourceBytes:collection.sourceBytes,reusedObjects:collection.reusedObjects,referenceCoverage:collection.referenceCoverage});
   }
   if(academies!==plan.academies||references!==plan.references||unconfirmed!==plan.unconfirmedUploads)throw new RecoveryError('MEDIA_BATCH_INCOMPLETE');
   const result={format:'kavosh-media-batch-backup-v1',id,referenceBinding:plan.binding,academies,objects,sourceBytes,reusedObjects,recordedReferences:references,unconfirmedUploads:unconfirmed,ordinaryRecordedMediaBackedUp:true,signedEvidenceIncluded:false,atomicStorageSnapshot:false,completeMediaBackup:false,restoreVerified:false};

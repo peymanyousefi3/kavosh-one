@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {mkdtemp,realpath,mkdir,writeFile,readFile,readdir,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {execFile} from 'node:child_process';
@@ -33,6 +33,8 @@ test('whole-snapshot media batch covers every school,keeps tenant archives separ
   const first=await backupMediaBatch(options,undefined,handler);assert.equal(first.academies,2);assert.equal(first.objects,4);assert.equal(first.recordedReferences,4);assert.equal(first.unconfirmedUploads,1);assert.equal(first.reusedObjects,0);assert.equal(first.offsite?.independentCopyVerified,true);assert.equal(first.completeMediaBackup,false);assert.equal(downloads,4);
   const second=await backupMediaBatch(options,undefined,handler);assert.equal(second.reusedObjects,4);assert.equal(downloads,4);
   const remote=drive.remoteFile('kavosh_backup:backup-'+second.id+'/collections.jsonl.age'),decoded=(await run(process.env.AGE_BIN!,['--decrypt','--identity',identity,remote])).stdout,records=decoded.trim().split('\n').map(line=>JSON.parse(line));assert.equal(records[0].referenceBinding.archiveSha256,binding.archiveSha256);assert.equal(records.at(-1).type,'complete');assert.deepEqual(records.filter(row=>row.type==='collection').map(row=>row.academyId),[a,b]);assert.doesNotMatch(decoded,/PRIVATE_BATCH_MEDIA|synthetic-secret|AGE-SECRET/);
+  const plans=join(dirname(second.archivePath),'reference-plans');assert.deepEqual((await readdir(plans)).sort(),[a+'.jsonl',b+'.jsonl']);
+  for(const academyId of [a,b]){const bytes=await readFile(join(plans,academyId+'.jsonl')),rows=bytes.toString().trim().split('\n').map(line=>JSON.parse(line)),entry=records.find(row=>row.type==='collection'&&row.academyId===academyId);assert.equal(rows[0].databaseBackupId,binding.databaseBackupId);assert.equal(rows.at(-1).references,2);assert.ok(rows.filter(row=>row.type==='reference').every(row=>row.academyId===academyId));assert.equal(entry.referenceCoverage.binding.plaintextSha256,createHash('sha256').update(bytes).digest('hex'));assert.notEqual(entry.referenceCoverage.binding.plaintextSha256,options.referencePlan.plaintextSha256);}
   let before=new Set(await readdir(work));await assert.rejects(backupMediaBatch({...options,offsite:{rclone:badDrive.input.rclone,drive:badDrive.input.drive}},undefined,handler),{code:'DRIVE_BACKUP_COPY_UNVERIFIED'});const failed=(await readdir(work)).find(name=>name.startsWith('media-batch-')&&!before.has(name))!;assert.ok(failed);const retained=JSON.parse(await readFile(join(work,failed,'manifest.json'),'utf8'));assert.equal(retained.offsite,null);assert.equal(retained.ordinaryRecordedMediaBackedUp,true);assert.ok((await readdir(join(work,failed))).includes('collections.jsonl.age'));
   missing=true;before=new Set(await readdir(work));await assert.rejects(backupMediaBatch(options,undefined,handler),{code:'MEDIA_REFERENCE_OBJECT_MISSING'});const partial=(await readdir(work)).find(name=>name.startsWith('media-batch-')&&!before.has(name))!;assert.ok(partial);const journal=await readFile(join(work,partial,'collections.partial.jsonl'),'utf8');assert.equal(journal.trim().split('\n').length,2);assert.ok(!journal.includes('"type":"complete"'));
  }finally{await drive.close();await badDrive.close();await rm(root,{recursive:true,force:true});}
