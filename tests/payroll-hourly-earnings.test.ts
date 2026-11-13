@@ -35,6 +35,16 @@ test('currency conflict union matches a small independent time oracle and never 
   assert.deepEqual([...payrollHourlyCurrencyConflicts(rows,range)].sort(),[...expected].sort());assert.deepEqual([...payrollHourlyCurrencyConflicts([...rows].reverse(),range)].sort(),[...expected].sort());
  }
 });
+test('bounded background currency checks retain rounded coverage across 2000 sources without relaxing posted payroll limits',()=>{
+ const rows=Array.from({length:2000},(_,i)=>({...source(String(i),i*hour,i*hour+120000,1n,'nearest_5'),personId:'worker',currencyId:'CAD'}));
+ rows[1999]={...rows[1999],currencyId:'USD',start:1998*hour+60000,end:1998*hour+210000};
+ const started=performance.now(),expected=['1998','1999'];assert.throws(()=>payrollHourlyCurrencyConflicts(rows),/INVALID_HOURLY_INTERVALS/);
+ assert.deepEqual([...payrollHourlyCurrencyConflicts(rows,undefined,2000)].sort(),expected);assert.deepEqual([...payrollHourlyCurrencyConflicts([...rows].reverse(),undefined,2000)].sort(),expected);
+ assert.equal(payrollHourlyCurrencyConflicts(rows,{start:0,end:1998*hour},2000).size,0);
+ assert.throws(()=>payrollHourlyCurrencyConflicts([...rows,{...rows[0],key:'overflow'}],undefined,2000),/INVALID_HOURLY_INTERVALS/);
+ assert.throws(()=>payrollHourlyEarnings(rows,{start:0,end:2001*hour},[],2),/INVALID_HOURLY_INTERVALS/);
+ console.log(JSON.stringify({case:'bounded-2000-currency-conflict-sources',elapsedMs:Math.ceil(performance.now()-started),productionCapacityTest:false}));
+});
 test('half-open payroll boundaries clip crossing entries and keep adjacent periods from claiming the same time',()=>{
  const inputs=[source('crossing',hour/2,2*hour)],first=calculate(inputs,[],{start:0,end:hour}),second=calculate(inputs,first.actual.timeClaims,{start:hour,end:3*hour});
  assert.equal(first.actual.gross.amount,'15.00');assert.equal(second.actual.gross.amount,'30.00');assert.deepEqual(first.actual.timeClaims,[{start:hour/2,end:hour}]);assert.deepEqual(second.actual.timeClaims,[{start:hour,end:2*hour}]);

@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.444.0",
+    "version": "0.445.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -77687,7 +77687,7 @@
     },
     "/api/v1/reports/payroll/recorded-time/export": {
       "get": {
-        "summary": "Complete current-source-scoped recorded teaching time CSV:all visible entries,outside-schedule and changed-session flags,actual/configured currency and worker costs,pinned nonduplicated hourly segments,source assessments and unpriced cases. Reconciles exact time/rate/monetary totals;keeps review requirements and original coverage limitations. Not payroll approval,legal entitlement,attendance clearance or payment. Original200time-entry/1000terms source bounds plus10000output rows/4MiB fail without partial files. Saved preset provenance and resolved dates retained;larger sources may use requester-bound jobs within their separately advertised ceilings.",
+        "summary": "Complete current-source-scoped recorded teaching time CSV:all visible entries,outside-schedule and changed-session flags,actual/configured currency and worker costs,pinned nonduplicated hourly segments,source assessments and unpriced cases. Reconciles exact time/rate/monetary totals;keeps review requirements and original coverage limitations. Not payroll approval,legal entitlement,attendance clearance or payment. Original200time-entry/1000terms source bounds plus10000output rows/4MiB fail without partial files. Saved preset provenance and resolved dates retained;requester-bound jobs allow at most2000time entries and2000priced intervals,including a single worker,within10000terms and the same output ceilings. Complete actual/rounded cross-currency coverage is checked before currency filtering.",
         "parameters": [
           {
             "name": "from",
@@ -77786,7 +77786,7 @@
     },
     "/api/v1/reports/payroll/recorded-time/export.xlsx": {
       "get": {
-        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Complete current-source-scoped recorded teaching time CSV:all visible entries,outside-schedule and changed-session flags,actual/configured currency and worker costs,pinned nonduplicated hourly segments,source assessments and unpriced cases. Reconciles exact time/rate/monetary totals;keeps review requirements and original coverage limitations. Not payroll approval,legal entitlement,attendance clearance or payment. Original200time-entry/1000terms source bounds plus10000output rows/4MiB fail without partial files. Saved preset provenance and resolved dates retained;larger sources may use requester-bound jobs within their separately advertised ceilings.",
+        "summary": "On-download text-only Excel conversion of the same complete protected CSV; original retained hashes describe CSV, not generated ZIP bytes. Exact money and identifiers remain text; current permissions, source limits and 4MiB/40001source-rows/256columns/200000source-cells/32767UTF16units-per-cell conversion ceilings apply. Ordered sheets repeat the original header and contain at most20000data-rows/100000cells each. Multipart CSV byte segments are never converted individually. Complete current-source-scoped recorded teaching time CSV:all visible entries,outside-schedule and changed-session flags,actual/configured currency and worker costs,pinned nonduplicated hourly segments,source assessments and unpriced cases. Reconciles exact time/rate/monetary totals;keeps review requirements and original coverage limitations. Not payroll approval,legal entitlement,attendance clearance or payment. Original200time-entry/1000terms source bounds plus10000output rows/4MiB fail without partial files. Saved preset provenance and resolved dates retained;requester-bound jobs allow at most2000time entries and2000priced intervals,including a single worker,within10000terms and the same output ceilings. Complete actual/rounded cross-currency coverage is checked before currency filtering.",
         "parameters": [
           {
             "name": "from",

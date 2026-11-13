@@ -7,9 +7,11 @@ export type PayrollHourlySource=HourlyInterval&{rounding:'none'|'nearest_5'};
 // Configured claims reserve actual coverage as well as the rounded interval.
 // Compare their union, not only actual/actual and rounded/rounded pairs: a
 // rounded-up tail may overlap another currency's rounded-down actual work.
-export function payrollHourlyCurrencyConflicts(sources:(PayrollHourlySource&{personId:string;currencyId:string})[],window?:HourlyWindow){
+export function payrollHourlyCurrencyConflicts(sources:(PayrollHourlySource&{personId:string;currencyId:string})[],window?:HourlyWindow,maximumIntervals:200|2000=200){
  if(!Array.isArray(sources)||sources.some(s=>!s||s.end<=s.start||!['none','nearest_5'].includes(s.rounding)||typeof s.personId!=='string'||!s.personId||typeof s.currencyId!=='string'||!s.currencyId))throw new ApiError(400,'INVALID_PAYROLL_HOURLY_SOURCES');
- highestHourlySegments(sources,{window});
+ // The queued report may opt into its larger bounded source set. Actual
+ // payroll preparations keep the original default and all coverage checks.
+ highestHourlySegments(sources,{window,maximumIntervals});
  const conflicts=new Set<string>(),ends=sources.map(s=>Math.max(s.end,s.rounding==='none'?s.end:s.start+Number(roundRatio(BigInt(s.end-s.start),300000n,'half_away')*300000n)));
  for(let i=0;i<sources.length;i++)for(let j=i+1;j<sources.length;j++){
   const a=sources[i],b=sources[j];if(a.personId!==b.personId||a.currencyId===b.currencyId)continue;
