@@ -28,7 +28,16 @@ END LOOP;END $$;
 GRANT SELECT,INSERT,UPDATE ON public.profile_image_jobs TO kavosh_signature_evidence_policy;
 GRANT SELECT,INSERT ON public.profile_image_job_attempts TO kavosh_signature_evidence_policy;
 GRANT SELECT ON public.profile_image_releases,public.achievement_asset_revisions TO kavosh_signature_evidence_policy;
-GRANT SELECT(academy_id,id,version,archived,domain,anchor_kind,person_id,hub_id,claimed_mime_type) ON public.file_records,public.file_catalogue TO kavosh_signature_evidence_policy;
+GRANT SELECT(academy_id,id,version,archived,domain,anchor_kind,person_id,hub_id,claimed_mime_type) ON public.file_records TO kavosh_signature_evidence_policy;
+-- This proof only uses original row attributes,not the catalogue's computed
+-- current-hub column. A security-invoker SELECT f.* view demands unrelated
+-- private-name columns on native PostgreSQL. Read exactly the same base fields
+-- instead of broadening the policy's privileges or changing authority checks.
+DO $$ DECLARE body text;needle text:=$q$SELECT id,version,archived,domain,person_id,claimed_mime_type INTO f FROM public.file_catalogue WHERE$q$;BEGIN
+ body=pg_get_functiondef('public.achievement_asset_source(uuid,integer,jsonb)'::regprocedure);
+ IF(length(body)-length(replace(body,needle,'')))/length(needle)<>1 THEN RAISE EXCEPTION 'PROFILE_IMAGE_ASSET_SOURCE_CHANGED';END IF;
+ EXECUTE replace(body,needle,$r$SELECT id,version,archived,domain,person_id,claimed_mime_type INTO f FROM public.file_records WHERE$r$);
+END $$;
 GRANT EXECUTE ON FUNCTION public.profile_image_source(uuid,text,jsonb),public.profile_image_selection_valid(jsonb),public.profile_publication_basis(uuid),public.profile_publication_basis(uuid,text),public.achievement_asset_release_binding(uuid),public.achievement_asset_source(uuid,integer,jsonb),public.achievement_assets_valid(jsonb),public.file_download_source(uuid,integer,uuid) TO kavosh_signature_evidence_policy;
 GRANT EXECUTE ON FUNCTION public.community_profile_owner(text,uuid,boolean),public.profile_moderation_state(uuid) TO kavosh_signature_evidence_policy;
 
