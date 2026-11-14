@@ -1,4 +1,11 @@
 {
+  "tenantDispositionDurableManifest": {
+    "status":"Exact bounded native snapshot now retained in the existing immutable private audit record;not an approved disposal plan or executor.",
+    "source":["src/platform/disposition-native-inspector.ts","tests/tenant-disposition-retained-rows.test.ts"],
+    "implemented":"Reuse the existing audit store instead of a second snapshot table. The successful owner-only native read atomically saves the exact returned schema/catalog/source hashes,per-relation counts and candidate-key fingerprints under its auditId. No record bodies or raw primary keys are retained by this manifest;no authority or deletion flags change. Audit insertion failure still rolls the operation back.",
+    "localEvidence":"Five focused owner/isolation/hold/failure checks passed,0failed0skipped9241.254125ms. Exact saved manifest equals returned result;attempted UPDATE and DELETE both fail with PLATFORM_HISTORY_IMMUTABLE and original manifest remains unchanged. Private identity fields/raw-key labels are absent. Strict types passed. Native hosted evidence for this newer change remains pending;prior07348-case success is not reused as proof.",
+    "remaining":"Persist actual owner review/retention decisions referencing this immutable artifact,then source-fresh approved execution,copy cleanup and restore-deletion enforcement. No whole-backend completion claim. No production/provider/UI changes."
+  },
   "tenantDispositionManagedInstallation": {
     "status":"Atomic migration428 and current-catalog inspector installation implemented;local and dedicated native PostgreSQL18 verification passed. Broader hosted regression run pending. Not deployed or an erasure executor.",
     "source":["db/migrations/428_disposition_inspection_role.sql","src/platform/disposition-installation.ts","scripts/migrate.ts","tests/tenant-disposition-retained-rows.test.ts","tests/database-fixtures.test.ts","tests/migration-preflight.test.ts"],

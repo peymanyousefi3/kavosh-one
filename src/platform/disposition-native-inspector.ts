@@ -60,7 +60,11 @@ export function compileDispositionInspector(raw:unknown,expectedCatalogFingerpri
   result=jsonb_build_object('schemaRevision',${catalog.schemaRevision},'structuralFingerprint',${literal(structure.structuralFingerprint)},'catalogFingerprint',current_hash,'snapshot',data,
    'sourceFingerprint',encode(sha256(convert_to(jsonb_build_object('academyId',p_academy,'catalogFingerprint',current_hash,'snapshot',data)::text,'UTF8')),'hex'),
    'retentionEvaluated',false,'executionAuthorized',false,'dataDeleted',false,'auditId',audit_id);
-  INSERT INTO platform_private.audit_events(id,actor_user_id,session_id,action,academy_id,after_data,reason) VALUES(audit_id,p_user,p_session,'platform.disposition.snapshot.read',p_academy,jsonb_build_object('academyId',p_academy,'sourceFingerprint',result->'sourceFingerprint','retainedRows',data->'retained_count','candidateRows',data->'source_manifest'->'candidateRows','executionAuthorized',false),btrim(p_purpose));
+  -- Reuse the immutable private audit record for the exact bounded manifest.
+  -- It contains counts and hashes,never record bodies or raw primary keys.
+  -- A future review can reference this durable evidence without inventing a
+  -- second snapshot store or treating a fingerprint alone as approval.
+  INSERT INTO platform_private.audit_events(id,actor_user_id,session_id,action,academy_id,after_data,reason) VALUES(audit_id,p_user,p_session,'platform.disposition.snapshot.read',p_academy,jsonb_build_object('academyId',p_academy,'sourceFingerprint',result->'sourceFingerprint','retainedRows',data->'retained_count','candidateRows',data->'source_manifest'->'candidateRows','executionAuthorized',false,'manifest',result),btrim(p_purpose));
   RETURN result;
  END`;
  return{catalog,body,requiredBrokerGrants:`GRANT USAGE ON SCHEMA public,identity,platform_private TO ${dispositionInspectorRole};GRANT CREATE ON SCHEMA platform_private TO ${dispositionInspectorRole};
