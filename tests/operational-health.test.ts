@@ -47,6 +47,7 @@ test('monitor service has no credentials,root identity,database role or landing-
  for(const text of ['User=kavosh-one-monitor','Group=kavosh-one-monitor','StateDirectory=kavosh-one-health','StateDirectoryMode=0700','ProtectSystem=strict','NoNewPrivileges=yes','CapabilityBoundingSet=','MemoryMax=128M','CPUQuota=10%','InaccessiblePaths=/etc/kavosh-one /etc/kavosh-one-tls'])assert.ok(unit.includes(text));assert.ok(!unit.includes('User=nobody'));assert.ok(!unit.includes('DynamicUser'));
  assert.doesNotMatch(unit,/EnvironmentFile|LoadCredential|User=root|kavosh\.ai|\/srv\/kavosh\//);assert.match(timer,/OnCalendar=\*-\*-\* \*:\*:00 UTC/);assert.match(timer,/RandomizedDelaySec=5s/);
  assert.match(unit,/^Environment=SIGNATURE_COMPLETION_MONITOR_ENABLED=false$/m);
+ assert.match(unit,/^Environment=PROFILE_IMAGE_MONITOR_ENABLED=false$/m);
  for(const text of ['RuntimeDirectory=kavosh-one-health','RuntimeDirectoryMode=0750','RuntimeDirectoryPreserve=yes'])assert.ok(unit.includes(text));
  const web=readFileSync(new URL('../deploy/ovh/kavosh-one.service',import.meta.url),'utf8');assert.match(web,/^SupplementaryGroups=kavosh-one-monitor$/m);
 });

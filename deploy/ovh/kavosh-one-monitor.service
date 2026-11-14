@@ -14,6 +14,7 @@ RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 Environment=NODE_ENV=production
 Environment=SIGNATURE_COMPLETION_MONITOR_ENABLED=false
+Environment=PROFILE_IMAGE_MONITOR_ENABLED=false
 ExecStart=/usr/bin/node /srv/kavosh-one/operations/health-monitor/deploy/ovh/monitor-health.js
 TimeoutStartSec=30s
 KillMode=control-group
