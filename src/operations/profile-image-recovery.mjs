@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+
+// Authenticate bindings in an already decrypted private archive,not a claim of
+// live credentials,provider access or a restored host. Never return secrets.
+export function verifyProfileImageRecovery(files,expectedUnit){
+ const names=['configuration','academy','reader','writer','roles','hba','beforeHba','unit'];assert.deepEqual(Object.keys(files).sort(),names.sort());for(const name of names){assert.equal(typeof files[name],'string');assert.ok(Buffer.byteLength(files[name])>0&&Buffer.byteLength(files[name])<=1048576);}
+ const env={};for(const line of files.configuration.trim().split('\n')){const n=line.indexOf('=');assert.ok(n>0);const key=line.slice(0,n);assert.equal(Object.hasOwn(env,key),false);env[key]=JSON.parse(line.slice(n+1));}
+ assert.deepEqual(Object.keys(env).sort(),['NODE_ENV','DATABASE_SSL_MODE','NODE_EXTRA_CA_CERTS','PROFILE_IMAGE_WORKER_ENABLED','PROFILE_IMAGE_DATABASE_URL','PROFILE_IMAGE_CONNECTIONS','FILE_IMAGE_VALIDATION_ENABLED','FILE_IMAGE_VALIDATION_SOCKET_PATH'].sort());
+ assert.equal(env.NODE_ENV,'production');assert.equal(env.DATABASE_SSL_MODE,'require');assert.equal(env.NODE_EXTRA_CA_CERTS,'/etc/kavosh-one-tls/server.crt');assert.ok(['true','false'].includes(env.PROFILE_IMAGE_WORKER_ENABLED));assert.equal(env.FILE_IMAGE_VALIDATION_ENABLED,'true');assert.equal(env.FILE_IMAGE_VALIDATION_SOCKET_PATH,'/run/kavosh-one-parser-image/validator.sock');
+ const url=new URL(env.PROFILE_IMAGE_DATABASE_URL);assert.equal(url.protocol,'postgresql:');assert.equal(url.username,'kavosh_one_profile_images');assert.match(url.password,/^[A-Za-z0-9_-]{64}$/);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'5432');assert.equal(url.pathname,'/kavosh_one');assert.equal(url.search,'');assert.equal(url.hash,'');
+ const academy=JSON.parse(files.academy),reader=JSON.parse(files.reader),writer=JSON.parse(files.writer);assert.match(academy.academyId,/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+ for(const c of [reader,writer]){assert.deepEqual(Object.keys(c).sort(),['accountId','jurisdiction','bucket','accessKeyId','secretAccessKey','maximumUploadBytes'].sort());assert.equal(c.accountId,'e7bedfa4c49de9507c44d118e5b20dc9');assert.equal(c.bucket,'kavosh-one-production-clean');assert.ok(['default','eu'].includes(c.jurisdiction));assert.match(c.accessKeyId,/^[\x21-\x7e]{1,200}$/);assert.match(c.secretAccessKey,/^[\x21-\x7e]{16,4096}$/);assert.ok(Number.isSafeInteger(c.maximumUploadBytes)&&c.maximumUploadBytes>=4194304&&c.maximumUploadBytes<=4294967296);}
+ assert.equal(reader.jurisdiction,writer.jurisdiction);assert.notEqual(reader.accessKeyId,writer.accessKeyId);assert.notEqual(reader.secretAccessKey,writer.secretAccessKey);
+ const connections=JSON.parse(env.PROFILE_IMAGE_CONNECTIONS),targetId=createHash('sha256').update(JSON.stringify([reader.accountId,reader.jurisdiction,reader.bucket])).digest('hex');assert.deepEqual(connections,[{academyId:academy.academyId,readers:[{targetId,configuration:reader}],destination:writer}]);
+ assert.match(files.roles,/\bCREATE ROLE "?kavosh_one_profile_images"?;/);assert.match(files.roles,/\bGRANT "?kavosh_profile_image_worker"? TO "?kavosh_one_profile_images"?(?:\s|;)/);
+ const grants=[...files.roles.matchAll(/\bGRANT ([^;\n]+?) TO "?kavosh_one_profile_images"?(?:\s|;)/g)];assert.equal(grants.length,1);assert.ok(['kavosh_profile_image_worker','"kavosh_profile_image_worker"'].includes(grants[0][1]));
+ const rule='hostssl kavosh_one kavosh_one_profile_images 127.0.0.1/32 scram-sha-256';assert.equal(files.hba.split('\n').filter(line=>line.trim()===rule).length,1);assert.equal(files.beforeHba.split('\n').filter(line=>line.trim()===rule).length,0);assert.equal(files.unit,expectedUnit);
+ return{profileImageCredentialBindingVerified:true,profileImageWorkerEnabled:env.PROFILE_IMAGE_WORKER_ENABLED==='true',profileImageServiceSha256:createHash('sha256').update(files.unit).digest('hex')};
+}

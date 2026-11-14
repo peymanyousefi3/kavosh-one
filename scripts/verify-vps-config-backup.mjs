@@ -5,13 +5,14 @@ import { execFileSync } from 'node:child_process';
 import { createHash,createPrivateKey,X509Certificate } from 'node:crypto';
 import { mkdtempSync, openSync, closeSync,readdirSync,readFileSync,writeFileSync, unlinkSync, rmdirSync } from 'node:fs';
 import { join } from 'node:path';
+import {verifyProfileImageRecovery} from '../src/operations/profile-image-recovery.mjs';
 let stage = 'arguments', directory, encrypted, plaintext;
 const get = service => {
  const bytes = execFileSync('/usr/bin/security', ['find-generic-password', '-a', 'kavosh-one', '-s', service, '-w'], { stdio: ['ignore', 'pipe', 'pipe'] });
  try { return JSON.parse(bytes.toString()); } finally { bytes.fill(0); }
 };
 try {
- assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(['["--execute"]','["--execute","--require-private-data"]','["--execute","--require-private-data","--require-platform-connection"]','["--execute","--require-private-data","--require-platform-connection","--require-public-profile"]'].includes(JSON.stringify(args)));const requirePrivateData=args.length>=2,requirePlatformConnection=args.length>=3,requirePublicProfile=args.length===4;process.umask(0o077);
+ assert.equal(process.platform, 'darwin');const args=process.argv.slice(2),order=['--execute','--require-private-data','--require-platform-connection','--require-public-profile','--require-profile-images'];assert.ok(args.length>=1&&args.length<=order.length);assert.deepEqual(args,order.slice(0,args.length));const requirePrivateData=args.length>=2,requirePlatformConnection=args.length>=3,requirePublicProfile=args.length>=4,requireProfileImages=args.length===5;process.umask(0o077);
  stage = 'trusted server receipt';
  const receipt = JSON.parse(execFileSync('/usr/bin/ssh', ['-F', '.local-tools/ovh.ssh-config', 'kavosh-one-production', 'sudo cat /var/lib/kavosh-one-config-backups/latest.json'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 }));
  assert.match(receipt.id, /^[a-f0-9-]{36}$/); assert.match(receipt.ciphertextSha256, /^[a-f0-9]{64}$/);
@@ -100,7 +101,13 @@ try {
    if(signedEvidenceBackupConfigured){const targetsBytes=content('etc/kavosh-one/media-readers.json');signingBytes.push(targetsBytes);const targets=JSON.parse(targetsBytes.toString());assert.equal(targets.length,3);assert.equal(targets.map(t=>t.stage).sort().join(','),'clean,quarantine,signature-evidence');assert.deepEqual(targets.find(t=>t.stage==='signature-evidence').configuration,reader);assert.equal(new Set(targets.map(t=>t.configuration.accessKeyId)).size,3);}
   }
  }finally{for(const bytes of signingBytes)bytes.fill(0);}
- console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,privateDataKeysIncluded,platformConnectionIncluded,platformGatewayEnabled,publicProfileConnectionIncluded,publicProfilesEnabled,databaseTlsKeyPairVerified:true,agreementWorkerVaultBindingVerified:true,agreementBackupReaderIncluded,agreementCompletionWorkerEnabled,agreementWorkerMonitorEnabled,signedEvidenceBackupConfigured,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
+ let profileImages={profileImageCredentialBindingVerified:false,profileImageWorkerEnabled:false};
+ if(requireProfileImages||entries.includes('etc/kavosh-one/profile-images.env')){
+  stage='archived image-worker restricted credential and private storage binding';
+  const paths={configuration:'etc/kavosh-one/profile-images.env',academy:'etc/kavosh-one/initial-academy.json',reader:'etc/kavosh-one/r2-download.json',writer:'etc/kavosh-one/r2-promote.json',roles:'roles.sql',hba:'etc/postgresql/18/main/pg_hba.conf',beforeHba:'etc/kavosh-one/profile-images-hba.before',unit:'etc/systemd/system/kavosh-one-profile-images.service'},buffers=[];
+  try{const files={};for(const [key,name]of Object.entries(paths)){assert.ok(entries.includes(name));if(!required.includes(name))required.push(name);const bytes=content(name);buffers.push(bytes);files[key]=bytes.toString();}profileImages=verifyProfileImageRecovery(files,readFileSync(new URL('../deploy/ovh/kavosh-one-profile-images.service',import.meta.url)).toString());}finally{for(const bytes of buffers)bytes.fill(0);}
+ }
+ console.log(JSON.stringify({ backupId: receipt.id,...profileImages, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,privateDataKeysIncluded,platformConnectionIncluded,platformGatewayEnabled,publicProfileConnectionIncluded,publicProfilesEnabled,databaseTlsKeyPairVerified:true,agreementWorkerVaultBindingVerified:true,agreementBackupReaderIncluded,agreementCompletionWorkerEnabled,agreementWorkerMonitorEnabled,signedEvidenceBackupConfigured,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
 } catch { console.error('CONFIG_BACKUP_ACCEPTANCE_FAILED: ' + stage); process.exitCode = 1; }
 finally {
  for (const file of [plaintext, encrypted]) if (file) try { unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') { console.error('CONFIG_PROOF_CLEANUP_REQUIRED'); process.exitCode = 1; } }
