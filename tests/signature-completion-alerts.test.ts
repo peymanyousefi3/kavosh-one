@@ -9,7 +9,7 @@ import { assertRuntimeRole } from '../src/core/database.ts';
 import { subscriptionEventDispatchable } from '../src/automations/subscription-worker.ts';
 
 test('superseded signing cases are ignored by broad watchers without blocking current events',()=>{
- for(const kind of ['signature_check','session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'] as const){
+ for(const kind of ['image_processing','signature_check','session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due','pay_statement','checkout','work_signature'] as const){
   assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:false}),false);
   assert.equal(subscriptionEventDispatchable({source_kind:kind,source_current:true}),true);
  }

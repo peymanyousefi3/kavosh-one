@@ -20,10 +20,11 @@ import { nextPayrollReminder,watchesPayrollReminders } from './payroll-reminders
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),academies=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
 type Lease={id:string;academy_id:string;lease_token:string};
-// Consume superseded timed cases as ignored,not retry failures. Their mandatory
-// history is independent;one stale event must not exhaust a broad watcher.
+// Use the database's current-source predicate for every event kind. Keeping a
+// second kind list missed withdrawn pay statements,reconciled checkouts and
+// superseded work-signature evidence,exhausting otherwise healthy watchers.
 export function subscriptionEventDispatchable(event:Pick<BoundEvent,'source_kind'|'source_current'>){
- return (!['image_processing','signature_check','session','report_schedule','calendar_event','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due'].includes(event.source_kind)||event.source_current);
+ return event.source_current===true;
 }
 // One short DB-only step. No provider credentials,external IO,synthetic master
 // or assumed worker authority. Existing queue/notification worker owns delivery.
