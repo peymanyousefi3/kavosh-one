@@ -67,7 +67,11 @@ const ordinaryReferences=`
 const signatureReferences=`SELECT e.academy_id "academyId",'signature-evidence'::text stage,e.manifest->>'storageTargetId' "storageTargetId",(a.value->>'id')::uuid "fileId",(a.value->>'sizeBytes')::bigint bytes,a.value->>'sha256' sha256
  FROM(SELECT academy_id,manifest FROM public.signature_completion_evidence UNION ALL SELECT academy_id,manifest FROM public.work_signature_completion_evidence) e
  CROSS JOIN LATERAL jsonb_each(e.manifest->'receipt') a WHERE a.key IN('document','audit','properties')`;
-const referenceQuery=(signing:boolean)=>`SELECT * FROM(SELECT DISTINCT "academyId",stage,"storageTargetId","fileId",bytes,sha256 FROM(${ordinaryReferences}${signing?' UNION ALL '+signatureReferences:''}) observed) refs ORDER BY "academyId",stage COLLATE "C","storageTargetId" COLLATE "C","fileId",bytes,sha256 COLLATE "C"`;
+// Retained image observations remain required after profile/source withdrawal.
+// Use the captured schema version to avoid resolving a nonexistent relation
+// when recovering an older archive. No current sharing filter or new stage.
+const profileImageReferences=`SELECT a.academy_id "academyId",'clean'::text stage,a.receipt->>'storageTargetId' "storageTargetId",(a.receipt->>'objectId')::uuid "fileId",(a.receipt->>'bytes')::bigint bytes,a.receipt->>'sha256' sha256 FROM public.profile_image_job_attempts a WHERE a.outcome='retained'`;
+const referenceQuery=(signing:boolean,images:boolean)=>`SELECT * FROM(SELECT DISTINCT "academyId",stage,"storageTargetId","fileId",bytes,sha256 FROM(${ordinaryReferences}${signing?' UNION ALL '+signatureReferences:''}${images?' UNION ALL '+profileImageReferences:''}) observed) refs ORDER BY "academyId",stage COLLATE "C","storageTargetId" COLLATE "C","fileId",bytes,sha256 COLLATE "C"`;
 const academies=`SELECT a.id "academyId",coalesce(g.pending,0) "unconfirmedUploads" FROM public.academies a LEFT JOIN(
  SELECT g.academy_id,count(DISTINCT(g.file_id,g.storage_target_id)) pending FROM public.file_upload_grants g
  WHERE NOT EXISTS(SELECT 1 FROM public.file_inspection_requests q JOIN public.file_inspection_attempts e ON e.academy_id=q.academy_id AND e.inspection_id=q.id WHERE q.academy_id=g.academy_id AND q.file_id=g.file_id AND q.storage_target_id=g.storage_target_id AND e.outcome IN('no_detection','detected')) GROUP BY g.academy_id
@@ -86,7 +90,7 @@ export async function captureMediaReferencePlan(client:pg.Client,output:FileHand
   if(state?.isolation!=='repeatable read'||state.readOnly!=='on'||state.unfiltered!==true||state.revision!==binding.schemaRevision)throw new RecoveryError('MEDIA_REFERENCE_SNAPSHOT_REQUIRED');
   await client.query("SET LOCAL work_mem='4MB'");await client.query("SET LOCAL statement_timeout='60s'");
   await write([{type:'header',format:'kavosh-media-reference-plan-v1',...binding,scope,signedEvidenceIncluded:includeSignedEvidence}]);
-  for(const [name,sql]of [['media_backup_academies',academies],['media_backup_references',referenceQuery(includeSignedEvidence)]] as const){
+  for(const [name,sql]of [['media_backup_academies',academies],['media_backup_references',referenceQuery(includeSignedEvidence,state.revision>=415)]] as const){
    await client.query('DECLARE '+name+' NO SCROLL CURSOR FOR '+sql);cursor=name;
    while(true){
     if(signal?.aborted)throw new RecoveryError('RECOVERY_CANCELLED');

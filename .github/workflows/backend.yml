@@ -42,7 +42,7 @@ jobs:
           echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/kavosh-backup-tools/age.tar.gz' | sha256sum --check --strict
           tar -xzf /tmp/kavosh-backup-tools/age.tar.gz -C /tmp/kavosh-backup-tools age/age age/age-keygen
       - name: Initial school and file-worker setup stays isolated; cleanup touches only confirmed synthetic probes
-        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs tests/file-copy-daemon.test.mjs tests/background-provisioning.test.mjs tests/signature-ingest-provisioning.test.mjs tests/signature-webhook-secret.test.mjs
+        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs tests/file-copy-daemon.test.mjs tests/profile-image-daemon.test.mjs tests/background-provisioning.test.mjs tests/signature-ingest-provisioning.test.mjs tests/signature-webhook-secret.test.mjs
       - name: Start only a disposable loopback PostgreSQL instance
         run: |
           install -d -o postgres -g postgres -m 700 /tmp/kavosh-backup-postgres
@@ -129,7 +129,7 @@ jobs:
       - name: Conditional separate-target storage promotion and original-byte verification
         run: node --import tsx --test --test-concurrency=1 tests/r2.test.ts tests/r2-inspection.test.ts tests/r2-promotion.test.ts
       - name: Image preparation preserves original bytes and cannot substitute for persisted scan evidence
-        run: node --import tsx --test --test-concurrency=1 tests/image-validation.test.ts tests/image-service.test.ts tests/file-image-evidence.test.ts tests/profile-image-preparation.test.ts tests/profile-image-retention.test.ts tests/profile-image-releases.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/image-validation.test.ts tests/image-service.test.ts tests/file-image-evidence.test.ts tests/profile-image-preparation.test.ts tests/profile-image-retention.test.ts tests/profile-image-releases.test.ts tests/profile-image-jobs.test.ts
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Focused agreement-content persistence and private source approvals

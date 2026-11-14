@@ -10,8 +10,12 @@ import {captureMediaReferencePlan,openMediaReferencePlan} from '../src/operation
 import {expectedSchemaRevision,type Database} from '../src/core/database.ts';
 import {fixture,hash,target} from './file-copy-fixture.ts';
 import {processOneCopy} from '../src/files/copy-worker.ts';
+import {operationsFixture} from './operations-fixture.ts';
 
 const binding={databaseBackupId:randomUUID(),archiveSha256:'a'.repeat(64),schemaRevision:expectedSchemaRevision};
+test('actual414snapshot with no derivative tables remains recoverable without resolving later image-job relations',async()=>{
+ const f=await operationsFixture({throughSchema:414}),chunks:string[]=[];try{await f.pg.exec('RESET ROLE;BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');try{const output={async writeFile(text:string){chunks.push(text);},async sync(){}} as FileHandle,r=await captureMediaReferencePlan({query:f.pg.query.bind(f.pg)} as unknown as pg.Client,output,{...binding,schemaRevision:414});assert.equal(r.references,0);assert.equal(r.schemaRevision,414);assert.equal(JSON.parse(chunks.at(-1)!).type,'complete');}finally{await f.pg.exec('ROLLBACK');}}finally{await f.pg.close();}
+});
 test('reference readers reject unsafe files, malformed catalogs and changes between bounded passes',async()=>{
  const folder=await realpath(await mkdtemp(join(tmpdir(),'kavosh-reference-reader-'))),file=join(folder,'plan.jsonl'),alias=join(folder,'alias.jsonl'),academyId='aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
  const header={type:'header',format:'kavosh-media-reference-plan-v1',...binding,scope:'recorded_ordinary_file_objects',signedEvidenceIncluded:false},school={type:'academy',academyId,unconfirmedUploads:0},footer={type:'complete',academies:1,references:0,unconfirmedUploads:0};

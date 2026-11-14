@@ -34,7 +34,7 @@ CREATE FUNCTION public.profile_image_source(p_profile uuid,p_state text,p_select
 DECLARE tenant uuid:=nullif(current_setting('app.academy_id',true),'')::uuid;p record;b jsonb;public_id uuid;audience text;eligible boolean;x jsonb;f record;d jsonb;entry jsonb;asset record;academic record;academic_version integer;binding jsonb;cache jsonb:='{}'::jsonb;selected_asset jsonb;items jsonb:='[]'::jsonb;BEGIN
  IF tenant IS NULL OR p_state IS NULL OR p_state NOT IN('published','withdrawn') OR NOT public.profile_image_selection_valid(p_selection) OR(p_state='withdrawn' AND p_selection<>'[]'::jsonb) OR(p_state='published' AND p_selection='[]'::jsonb) THEN RETURN NULL;END IF;
  PERFORM pg_advisory_xact_lock_shared(hashtextextended(tenant::text,8));PERFORM pg_advisory_xact_lock_shared(hashtextextended(tenant::text,9));
- SELECT c.* INTO p FROM public.community_profiles c WHERE c.academy_id=tenant AND c.id=p_profile;IF p.id IS NULL THEN RETURN NULL;END IF;
+ SELECT c.id,c.anchor_kind,c.person_id,c.hub_id,c.definition INTO p FROM public.community_profiles c WHERE c.academy_id=tenant AND c.id=p_profile;IF p.id IS NULL THEN RETURN NULL;END IF;
  b=public.profile_publication_basis(p_profile);IF b->'owner' IS NULL OR b->'owner'='null'::jsonb THEN RETURN NULL;END IF;
  SELECT h.public_id INTO public_id FROM public.profile_publication_heads h WHERE h.academy_id=tenant AND h.profile_id=p_profile;
  audience=CASE WHEN p.anchor_kind='person' THEN 'members' ELSE 'public' END;
@@ -49,7 +49,7 @@ DECLARE tenant uuid:=nullif(current_setting('app.academy_id',true),'')::uuid;p r
  FOR x IN SELECT * FROM jsonb_array_elements(p_selection) LOOP
   IF x->>'kind'='avatar' THEN
    entry=p.definition->'avatar';IF entry IS NULL OR entry='null'::jsonb THEN RETURN NULL;END IF;
-   SELECT * INTO f FROM public.file_catalogue WHERE academy_id=tenant AND id=(entry->>'fileId')::uuid AND version=(entry->>'fileVersion')::integer AND NOT archived;
+   SELECT id,version,domain,anchor_kind,person_id,hub_id INTO f FROM public.file_records WHERE academy_id=tenant AND id=(entry->>'fileId')::uuid AND version=(entry->>'fileVersion')::integer AND NOT archived;
    IF f.id IS NULL OR f.domain<>'general' OR f.anchor_kind<>p.anchor_kind OR(f.anchor_kind='person' AND f.person_id IS DISTINCT FROM p.person_id) OR(f.anchor_kind='hub' AND f.hub_id IS DISTINCT FROM p.hub_id) THEN RETURN NULL;END IF;
    d=public.file_download_source(f.id,f.version,(entry->>'copyId')::uuid);
   ELSE

@@ -4,7 +4,7 @@ export interface Connection {
   release(destroy?: boolean): void;
 }
 export interface Database { connect(): Promise<Connection> }
-export const expectedSchemaRevision=414;
+export const expectedSchemaRevision=415;
 export async function assertSchemaReady(db:Connection) {
   const result=await db.query<{revision:number}>('SELECT public.schema_revision() AS revision');
   if(!Number.isInteger(result.rows[0]?.revision)||result.rows[0].revision<expectedSchemaRevision)throw new Error('SCHEMA_NOT_CURRENT');
@@ -16,6 +16,7 @@ export async function assertRuntimeRole(db: Connection,purpose:'web'|'automation
       AND ($2::boolean<>pg_has_role(current_user,'kavosh_runtime','member'))
       AND NOT pg_has_role(current_user,'kavosh_file_worker','member')
       AND NOT pg_has_role(current_user,'kavosh_file_policy','member')
+      AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname='kavosh_profile_image_worker' AND pg_has_role(current_user,b.oid,'member'))
       AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname IN ('kavosh_checkout_result_worker','kavosh_checkout_result_policy') AND pg_has_role(current_user,b.oid,'member'))
       AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname IN ('kavosh_payment_ingest','kavosh_payment_policy') AND pg_has_role(current_user,b.oid,'member'))
       AND NOT EXISTS(SELECT 1 FROM pg_roles b WHERE b.rolname IN ('kavosh_public_profile_policy','kavosh_public_profile_service','kavosh_report_capture_policy','kavosh_message_policy','kavosh_signature_ingest','kavosh_signature_policy','kavosh_signature_result_worker','kavosh_signature_result_policy','kavosh_signature_completion_worker','kavosh_signature_completion_policy','kavosh_signature_evidence_worker','kavosh_signature_evidence_policy','kavosh_event_policy','kavosh_automation_policy','kavosh_bot_policy') AND pg_has_role(current_user,b.oid,'member'))

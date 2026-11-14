@@ -34,7 +34,7 @@ export async function prepareProfileImage(raw:unknown,connections:R2DownloadConn
   if(abort.signal.aborted)throw new ApiError(503,'PROFILE_IMAGE_PREPARATION_CANCELLED');
   const result=await deriveProfileImageViaService(owned,source.mime,source.purpose,{socketPath:options.socketPath,signal:abort.signal});
   if(result.outcome!=='decoded')throw new ApiError(409,'PROFILE_IMAGE_REJECTED');
-  return{source,image:result.profileImage,sourceBytesIndependentlyVerified:true as const,originalModified:false as const,stored:false as const,published:false as const};
+  return{source,validation:result,image:result.profileImage,sourceBytesIndependentlyVerified:true as const,originalModified:false as const,stored:false as const,published:false as const};
  }catch(e){
   if(abort.signal.aborted)throw new ApiError(503,'PROFILE_IMAGE_PREPARATION_CANCELLED');
   if(e instanceof ApiError&&['PROFILE_IMAGE_READER_NOT_CONFIGURED','PROFILE_IMAGE_REJECTED'].includes(e.code))throw e;
