@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
 import { propose,master,lockApprovalWrites,readableApproval,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
 import { ApiError,type Scope,type Capability } from '../core/policy.ts';
-import { studentCareEnvelope,type PayrollPrivateVault } from '../core/payroll-private-data.ts';
+import { studentCareEnvelope,type PayrollPrivateVault,type PayrollPrivateBinding } from '../core/payroll-private-data.ts';
 import { permittedPerson } from './students.ts';
 import { lockAcademyTopology } from './academy.ts';
 
@@ -21,7 +21,8 @@ type Row={student_id:string;version:number;latest_version:number;state:Payload['
 function vault(ctx:ApiContext):PayrollPrivateVault{try{if(!ctx.studentCareVault)throw new Error('UNCONFIGURED');return ctx.studentCareVault();}catch{throw new ApiError(503,'STUDENT_CARE_DATA_UNAVAILABLE');}}
 function binding(ctx:ApiContext,id:string,v:number){return {academyId:ctx.credential.academy_id,personId:id,version:v};}
 async function authority(ctx:ApiContext,id:string,edit=false,reveal=false){if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_CARE_ACCESS_REQUIRED');for(const cap of ['care-records.view',...edit?['care-records.edit']:[],...reveal?['care-records.reveal']:[]] as Capability[])await permittedPerson(ctx,id,cap);const b=(await ctx.db.query<{b:Basis|null}>('SELECT public.student_care_basis($1) b',[id])).rows[0]?.b;if(!b)throw new ApiError(404,'NOT_FOUND');return b;}
-function opened(ctx:ApiContext,id:string,i:Payload){try{const v=vault(ctx),b=binding(ctx,id,i.expectedVersion+1),data=change.parse(JSON.parse(v.open(b,i.envelope)));if(data.expectedVersion!==i.expectedVersion||data.state!==i.state||v.fingerprint(b,JSON.stringify(data))!==i.commitment)throw new Error('BINDING_CHANGED');return data;}catch{throw new ApiError(503,'STUDENT_CARE_DATA_UNAVAILABLE');}}
+export function openStudentCareData(v:PayrollPrivateVault,b:PayrollPrivateBinding,i:Payload){try{const data=change.parse(JSON.parse(v.open(b,i.envelope)));if(b.version!==i.expectedVersion+1||data.expectedVersion!==i.expectedVersion||data.state!==i.state||v.fingerprint(b,JSON.stringify(data))!==i.commitment)throw new Error('BINDING_CHANGED');return data;}catch{throw new ApiError(503,'STUDENT_CARE_DATA_UNAVAILABLE');}}
+function opened(ctx:ApiContext,id:string,i:Payload){return openStudentCareData(vault(ctx),binding(ctx,id,i.expectedVersion+1),i);}
 async function basis(ctx:ApiContext,id:string,raw:unknown){const i=payload.parse(raw),b=await authority(ctx,id,true);opened(ctx,id,i);if(b.version!==i.expectedVersion)throw new ApiError(409,'STUDENT_CARE_VERSION_CHANGED');if(i.state==='withdrawn'&&b.state!=='recorded')throw new ApiError(409,'STUDENT_CARE_WITHDRAWAL_UNAVAILABLE');return b;}
 async function saved(ctx:ApiContext,id:string,v?:number){const r=(await ctx.db.query<Row>('SELECT r.*,h.version latest_version,r.created_at::text FROM public.student_care_revisions r JOIN public.student_care_heads h ON h.academy_id=r.academy_id AND h.student_id=r.student_id WHERE r.student_id=$1 AND r.version=coalesce($2,h.version)',[id,v??null])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');return r;}
 function output(r:Row){return {studentId:r.student_id,version:r.version,latestVersion:r.latest_version,state:r.state,approvalId:r.approval_id,recordedAt:r.created_at,encryptedAtApplicationLayer:true,privateFieldsIncluded:false,medicalAdvice:false,admissionGranted:false};}

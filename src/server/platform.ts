@@ -5,6 +5,7 @@ import { postgresOptions } from '../core/postgres-config.ts';
 import { createPlatformApi } from '../platform/api.ts';
 import { resolvePlatformHuman } from './identity.ts';
 import {readOperationalHealthStatus} from '../operations/health-status.ts';
+import {getStudentCareVault} from './student-care-private.ts';
 
 let pool:pg.Pool|undefined;
 const database:Database={async connect(){
@@ -15,4 +16,4 @@ const database:Database={async connect(){
  }
  return pool.connect();
 }};
-export function platformApi(request:Request,path:string){return createPlatformApi(database,resolvePlatformHuman,process.env.PLATFORM_ENABLED==='true',{invitationSecret:process.env.AUTH_SECRET,readOperationalHealth:readOperationalHealthStatus})(request,path);}
+export function platformApi(request:Request,path:string){return createPlatformApi(database,resolvePlatformHuman,process.env.PLATFORM_ENABLED==='true',{invitationSecret:process.env.AUTH_SECRET,readOperationalHealth:readOperationalHealthStatus,studentCareVault:getStudentCareVault})(request,path);}

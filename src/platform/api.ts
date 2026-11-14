@@ -5,6 +5,8 @@ import { assertSchemaReady,type Connection,type Database } from '../core/databas
 import { ApiError } from '../core/policy.ts';
 import {operationalHealthStatus} from '../operations/health-status.ts';
 import {accountingDate} from '../modules/finance-periods.ts';
+import {openStudentCareData,studentCarePayload} from '../modules/student-care.ts';
+import type {PayrollPrivateVault} from '../core/payroll-private-data.ts';
 
 const id=z.string().uuid().transform(v=>v.toLowerCase()),name=z.string().trim().min(1).max(200),reason=z.string().trim().min(1).max(2000);
 const provision=z.object({name,masterName:name,masterEmail:z.string().email().max(254).transform(v=>v.toLowerCase()),reason}).strict();
@@ -16,6 +18,7 @@ const directoryPaging=paging.extend({classId:id.optional()});
 const learningHistoryQuery=z.object({record:z.enum(['report','attendance']),limit:z.coerce.number().int().min(1).max(5).default(5),afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0)}).strict();
 const homeworkPaging=paging.extend({limit:z.coerce.number().int().min(1).max(20).default(10)}).strict();
 const homeworkHistoryQuery=learningHistoryQuery.omit({record:true});
+const careReveal=z.object({version:z.number().int().positive().max(2147483647)}).strict();
 const homeworkRecordCollection=z.enum(['submissions','grades','solutions']);
 const accessPurpose=z.string().refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)).trim().min(1).max(500);
 function readAccessPurpose(request:Request){
@@ -46,6 +49,9 @@ const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/students/{studentId}/care',method:'get',accessPurposeRequired:true,summary:'Verified MFA platform owner reads one exact school/student current care edition metadata with privately audited purpose. Unrecorded is version0/state null. No care text,envelope,commitment,student impersonation or business changes.'},
+ {path:'/api/platform/v1/academies/{id}/students/{studentId}/care/history',method:'get',accessPurposeRequired:true,querySchema:homeworkHistoryQuery,summary:'Verified MFA owner reads only immutable care edition metadata under exact school/student binding and private purpose audit. Ascending version cursor,at most5records;no allergies,considerations,encrypted envelope,commitment or modification.'},
+ {path:'/api/platform/v1/academies/{id}/students/{studentId}/care/reveal',method:'post',readOnly:true,accessPurposeRequired:true,schema:careReveal,summary:'Verified MFA owner explicitly reveals one exact original encrypted care edition under school/student/version binding and private purpose. Uses the existing authenticated care vault and commitment validation without school-user impersonation. Critical private-content-redacted access audit commits atomically before any plaintext response. No idempotency cache,publication,medical verification,source mutation or external delivery;missing keys or corrupt evidence fail closed. Historical information is not silently restored as current.'},
  {path:'/api/platform/v1/academies/{id}/learning/homeworks/{homeworkId}/records/{collection}',method:'get',pathSchemas:{collection:homeworkRecordCollection},accessPurposeRequired:true,querySchema:homeworkPaging,summary:'Verified MFA platform owner reads exact school/homework-bound submission,grade or solution headers,including private drafts and withdrawn editions. Required privately audited purpose;UUID keyset pages at most20rows. No answer,feedback,solution text,school-user impersonation,business changes,publication or binary access.'},
  {path:'/api/platform/v1/academies/{id}/learning/homeworks/{homeworkId}/records/{collection}/{recordId}',method:'get',pathSchemas:{collection:homeworkRecordCollection},accessPurposeRequired:true,summary:'Verified MFA platform owner reads one exact current immutable internal submission,grade or solution edition. Required school,homework,collection and record binding plus private access purpose. Original content,source context and publication state are retained,not reinterpreted as current family eligibility. Bounded2MiB;no mutation,publication or binary-download authority. Audit excludes private content.'},
  {path:'/api/platform/v1/academies/{id}/learning/homeworks/{homeworkId}/records/{collection}/{recordId}/history',method:'get',pathSchemas:{collection:homeworkRecordCollection},accessPurposeRequired:true,querySchema:homeworkHistoryQuery,summary:'Verified MFA platform owner reads original immutable answer,grade or solution revisions under exact school/homework/collection/record binding. Private purpose audit;ascending version cursor,at most5records and byte-bounded2MiB complete prefix. Continue nextVersion even on shorter pages. No source mutation,student impersonation,family publication or binary-download grant.'},
@@ -104,7 +110,7 @@ export async function assertPlatformRole(db:Connection){
  if(result.rows[0]?.safe!==true)throw new Error('UNSAFE_PLATFORM_DATABASE_ROLE');
 }
 
-export function createPlatformApi(database:Database,resolve:(request:Request)=>Promise<PlatformSession|null>,enabled=false,options:{invitationSecret?:string;readOperationalHealth?:()=>Promise<unknown>}={}){
+export function createPlatformApi(database:Database,resolve:(request:Request)=>Promise<PlatformSession|null>,enabled=false,options:{invitationSecret?:string;readOperationalHealth?:()=>Promise<unknown>;studentCareVault?:()=>PayrollPrivateVault}={}){
  return async(request:Request,path:string)=>{
   const headers={'Cache-Control':'no-store','Pragma':'no-cache','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'};
   let db:Connection|undefined,transaction=false,destroy=false;
@@ -125,9 +131,14 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const learningSessionTarget=/^academies\/([a-f0-9-]{36})\/learning\/sessions\/([a-f0-9-]{36})(\/history)?$/.exec(path);
    const homeworkListTarget=/^academies\/([a-f0-9-]{36})\/learning\/sessions\/([a-f0-9-]{36})\/homeworks$/.exec(path),homeworkTarget=/^academies\/([a-f0-9-]{36})\/learning\/homeworks\/([a-f0-9-]{36})(\/history)?$/.exec(path);
    const homeworkRecordTarget=/^academies\/([a-f0-9-]{36})\/learning\/homeworks\/([a-f0-9-]{36})\/records\/([^/]+)(?:\/([a-f0-9-]{36})(\/history)?)?$/.exec(path);
+   const careTarget=/^academies\/([a-f0-9-]{36})\/students\/([a-f0-9-]{36})\/care(?:\/(history|reveal))?$/.exec(path);
    let operation:string,input:unknown,key:string|null=null,privateInvitation:string|undefined,inviteInput:{academyId:string;expectedVersion:number;reason:string;tokenHash:string}|undefined,revokeInput:{academyId:string;expectedVersion:number;invitationRequestKey:string;reason:string;tokenHash:string}|undefined;
    const url=new URL(request.url);
-   if(homeworkRecordTarget){
+   if(careTarget){
+    const mode=careTarget[3]??'current',pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
+    if(request.method!==(mode==='reveal'?'POST':'GET'))throw new ApiError(405,'METHOD_NOT_ALLOWED');if(mode!=='history'&&url.search)throw new ApiError(400,'INVALID_QUERY');
+    input={...(mode==='history'?homeworkHistoryQuery.parse(Object.fromEntries(pairs)):mode==='reveal'?careReveal.parse(await jsonBody(request,4096)):{}),academyId:id.parse(careTarget[1]),studentId:id.parse(careTarget[2]),mode,purpose:readAccessPurpose(request)};operation='academies.student-care';
+   }else if(homeworkRecordTarget){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');
     const mode=homeworkRecordTarget[5]?'history':homeworkRecordTarget[4]?'detail':'list';if(mode==='detail'&&url.search)throw new ApiError(400,'INVALID_QUERY');
     input={...(mode==='list'?homeworkPaging.parse(Object.fromEntries(pairs)):mode==='history'?homeworkHistoryQuery.parse(Object.fromEntries(pairs)):{}),academyId:id.parse(homeworkRecordTarget[1]),homeworkId:id.parse(homeworkRecordTarget[2]),collection:homeworkRecordCollection.parse(homeworkRecordTarget[3]),mode,...homeworkRecordTarget[4]?{recordId:id.parse(homeworkRecordTarget[4])}:{},purpose:readAccessPurpose(request)};operation='academies.homework-records';
@@ -221,6 +232,13 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const parsed=z.object({status:z.union([z.literal(200),z.literal(201)]),body:z.unknown()}).strict().safeParse(result);
    if(!parsed.success)throw new Error('INVALID_PLATFORM_RESULT');const value=parsed.data;
    let responseBody=value.body;
+   if(operation==='academies.student-care'&&careTarget?.[3]==='reveal'){
+    const result=z.object({academyId:id,studentId:id,data:z.object({studentId:id,version:z.number().int().positive(),state:z.enum(['recorded','withdrawn']),changedBy:id,approvalId:id,recordedAt:z.string(),sealed:studentCarePayload}).strict(),nextVersion:z.null(),scope:z.literal('platform_owner_read_only'),privateFieldsIncluded:z.literal(true)}).strict().parse(value.body);
+    if(result.academyId!==careTarget[1]||result.studentId!==careTarget[2]||result.data.studentId!==result.studentId||result.data.version!==(input as z.infer<typeof careReveal>).version)throw new Error('INVALID_PLATFORM_RESULT');
+    if(!options.studentCareVault)throw new ApiError(503,'STUDENT_CARE_DATA_UNAVAILABLE');const {sealed,...metadata}=result.data;
+    const opened=openStudentCareData(options.studentCareVault(),{academyId:result.academyId,personId:result.studentId,version:metadata.version},sealed);
+    responseBody={...result,data:{...metadata,details:opened.details,reason:opened.reason,readAuditRecorded:true,responseRetainedInIdempotencyCache:false}};
+   }
    if(privateInvitation){
     const body=z.object({data:z.object({academyId:id,masterPersonId:id,email:z.string().email(),expiresAt:z.string(),externalDeliveryPerformed:z.literal(false),activationPerformed:z.literal(false),invitationRequestKey:id.optional(),issuedAcademyVersion:z.number().int().positive().optional()}).strict()}).strict().safeParse(value.body);
     if(!body.success||body.data.data.academyId!==inviteInput!.academyId||(body.data.data.invitationRequestKey!==undefined&&body.data.data.invitationRequestKey!==key))throw new Error('INVALID_PLATFORM_RESULT');
