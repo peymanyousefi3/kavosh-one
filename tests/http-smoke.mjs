@@ -28,6 +28,27 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  const imageId='00000000-0000-4000-8000-000000000001';
+  for(const [path,method]of [
+    [`community/profiles/${imageId}/image-release`,'GET'],
+    [`community/profiles/${imageId}/image-release`,'POST'],
+    [`community/profiles/${imageId}/image-release/history`,'GET'],
+    [`community/profiles/${imageId}/image-release/processing`,'GET'],
+    [`community/published-profiles/${imageId}/images`,'GET'],
+    [`community/published-profiles/${imageId}/images/1/1`,'GET']
+  ]){
+    const r=await fetch(base+'/api/v1/'+path,{method});
+    assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');
+    assert.equal(r.headers.get('content-disposition'),null);
+    assert.doesNotMatch(await r.text(),/targetId|objectKey|inputSha256|source_snapshot|X-Amz|stack/);
+  }
+  // Neither private image metadata nor bytes become public merely by adding
+  // their routes. Both public exposure flags remain off in this real package.
+  for(const suffix of ['/images','/images/1/1']){
+    const r=await fetch(base+'/api/public/v1/profiles/'+imageId+suffix);
+    assert.equal(r.status,404);assert.equal(r.headers.get('cache-control'),'no-store');
+    assert.doesNotMatch(await r.text(),/targetId|objectKey|inputSha256|X-Amz|stack/);
+  }
   for(const [suffix,methods]of [['',['GET','POST']],['/history',['GET']]])for(const method of methods){const r=await fetch(base+'/api/v1/payroll/net-postings/00000000-0000-4000-8000-000000000001/zero-net-settlement'+suffix,{method});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/settledAt|settledOn|definition|review|stack/);}
   for(const suffix of ['/export','/export.xlsx']){const r=await fetch(base+'/api/v1/reports/payroll/recorded-time'+suffix+'?from=2026-01-01&through=2026-01-31&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/entryId|actualCost|engagementId|stack/);}
   for(const suffix of ['/export','/export.xlsx']){const r=await fetch(base+'/api/v1/reports/payroll/scheduled-costs'+suffix+'?from=2027-01-01&through=2027-01-31&timeZone=UTC');assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-disposition'),null);assert.doesNotMatch(await r.text(),/salary|estimatedCost|engagementId|stack/);}
