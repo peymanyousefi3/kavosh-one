@@ -5,7 +5,7 @@ import {receiptFixture} from './receipt-fixture.ts';
 import {invoiceFixture} from './invoice-fixture.ts';
 import {createPlatformApi,assertPlatformRole} from '../src/platform/api.ts';
 import {upgradeToCurrent} from './migration-upgrade.ts';
-import type {Database} from '../src/core/database.ts';
+import {platformDirectoryFixture as oversight} from './platform-directory-fixture.ts';
 import {t4aRecordFixture,zeroNetSource} from './t4a-record-fixture.ts';
 
 test('owner payroll directories upgrade populated422 sources with exact retained amounts,reversals and zero-net records but no identity or review text',async()=>{
@@ -31,16 +31,6 @@ test('owner payroll directory access requires MFA,purpose and the audited gatewa
  }finally{await f.pg.close();}
 });
 
-async function oversight(f:Pick<Awaited<ReturnType<typeof invoiceFixture>>,'pg'|'actors'|'a'>){
- const owner=f.actors.master;await f.pg.query('SELECT platform_private.register_owner($1,$2)',[owner.user,'Synthetic tuition oversight']);
- const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_platform_service');return c;}};
- const api=createPlatformApi(database,async r=>{const a=f.actors[r.headers.get('x-test-actor')??''];return a?{userId:a.user,sessionId:a.session}:null;},true);
- const request=async(collection:string,options:{academy?:string;actor?:string;query?:string;purpose?:string|null;method?:string;bearer?:boolean}={})=>{
-  const path='academies/'+(options.academy??f.a)+'/records/'+collection,headers:Record<string,string>={'x-test-actor':options.actor??'master'};if(options.purpose!==null)headers['x-access-purpose']=options.purpose??'PRIVATE_TUITION_OVERSIGHT';if(options.bearer)headers.authorization='Bearer synthetic';
-  try{const response=await api(new Request('https://example.test/api/platform/v1/'+path+(options.query??''),{method:options.method??'GET',headers}),path);return {response,body:await response.json()};}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
- };
- return {owner,database,request};
-}
 const sources=['people','student_profiles','tuition_plans','tuition_plan_revisions','tuition_installments','billing_documents','tuition_invoices','tuition_receipts','tuition_receipt_reversals','receipt_allocation_plans','receipt_allocation_revisions','receipt_allocation_lines','finance_journals','finance_journal_lines','approval_requests','audit_events','outbox_events'];
 async function snapshot(f:Awaited<ReturnType<typeof invoiceFixture>>){const result=[];for(const table of sources)result.push((await f.pg.query('SELECT to_jsonb(r) row FROM public.'+table+' r ORDER BY to_jsonb(r)::text')).rows);return result;}
 test('owner tuition inspection upgrades populated421 records without changing money,authority or retained invoice and allocation editions',async()=>{
