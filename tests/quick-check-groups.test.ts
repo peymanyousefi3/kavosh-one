@@ -59,7 +59,7 @@ test('measured native timings reduce estimated critical-batch work without dropp
 });
 test('disposition enforcement has a bounded native PostgreSQL18 job alongside the ordinary PostgreSQL17 logic groups',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),job=workflow.split('  disposition-postgres18:')[1]?.split('  database-recovery:')[0];assert.ok(job);assert.ok(job.includes('image: postgres:18'));assert.ok(job.includes('timeout-minutes: 6'));assert.ok(job.includes('node --import tsx --test --test-concurrency=1 tests/tenant-disposition-schema.test.ts'));assert.ok(job.includes('postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres'));assert.doesNotMatch(job,/continue-on-error|--test-skip-pattern|full_suite|kavosh[.]ai|148[.]113[.]194[.]110/);
- const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8')),all=pkg.scripts['test:quick'].match(/tests\/tenant-disposition-schema[.]test[.]ts/g);assert.equal(all?.length,1);
+ const pkg=JSON.parse(await readFile(new URL('../package.json',import.meta.url),'utf8'));for(const file of ['tests/tenant-disposition-schema.test.ts','tests/tenant-disposition-retained-rows.test.ts']){assert.equal(pkg.scripts['test:quick'].split(' ').filter((s:string)=>s===file).length,1);assert.ok(job.includes(file));}
 });
 test('quick runner refuses a named missing file instead of trusting a declared path or a permissive test runner',()=>{
  const groups=[['tests/real.test.ts'],['tests/missing.test.ts']];assert.throws(()=>verifyQuickCheckFiles(groups,new Set(['tests/real.test.ts'])),/QUICK_TEST_FILE_MISSING/);assert.doesNotThrow(()=>verifyQuickCheckFiles(groups,new Set(groups.flat())));

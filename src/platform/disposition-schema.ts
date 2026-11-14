@@ -17,7 +17,7 @@ const constraintKey=(f:ForeignKey)=>child(f)+'.'+f.name;
 // approval or executable deletion request. No business values or identities are
 // read. The eventual executor still needs exact retained-row closure,source
 // freshness,owner authority,holds,provider-copy and restore-tombstone checks.
-export async function readDispositionSchema(db:Pick<Connection,'query'>){
+export async function readDispositionCatalog(db:Pick<Connection,'query'>){
  const result=await db.query<{snapshot:unknown}>(`
  WITH tenant_relations AS MATERIALIZED (
   SELECT c.oid,c.relname,c.relkind,c.relispartition,s.attname scope_column,s.attnotnull scope_not_null,
@@ -57,16 +57,23 @@ export async function readDispositionSchema(db:Pick<Connection,'query'>){
   'relations',(SELECT jsonb_agg(data ORDER BY relname) FROM relation_data),
   'foreignKeys',coalesce((SELECT jsonb_agg(data ORDER BY nspname,relname,conname) FROM foreign_data),'[]'::jsonb)) snapshot`);
  if(result.rows.length!==1)throw new ApiError(503,'DISPOSITION_SCHEMA_INVALID');
- return dispositionSchemaOrder(result.rows[0].snapshot);
+ return validatedDispositionCatalog(result.rows[0].snapshot);
 }
 
-export function dispositionSchemaOrder(raw:unknown){
+export async function readDispositionSchema(db:Pick<Connection,'query'>){return dispositionSchemaOrder(await readDispositionCatalog(db));}
+
+export function validatedDispositionCatalog(raw:unknown){
  const parsed=snapshot.safeParse(raw);if(!parsed.success)throw new ApiError(503,'DISPOSITION_SCHEMA_INVALID');
  const s=parsed.data,relations=[...s.relations].sort((a,b)=>compare(a.name,b.name)),foreignKeys=[...s.foreignKeys].sort((a,b)=>compare(constraintKey(a),constraintKey(b)));
  const names=new Set<string>(),constraints=new Set<string>();
  for(const r of relations){const name=key(r.schema,r.name);if(names.has(name)||new Set(r.primaryKey).size!==r.primaryKey.length)throw new ApiError(503,'DISPOSITION_SCHEMA_INVALID');names.add(name);}
  if(!names.has('public.academies'))throw new ApiError(503,'DISPOSITION_SCHEMA_INVALID');
  for(const f of foreignKeys){const name=constraintKey(f);if(constraints.has(name)||!names.has(child(f))&&!names.has(parent(f))||new Set(f.childColumns).size!==f.childColumns.length||new Set(f.parentColumns).size!==f.parentColumns.length)throw new ApiError(503,'DISPOSITION_SCHEMA_INVALID');constraints.add(name);}
+ return{...s,relations,foreignKeys};
+}
+
+export function dispositionSchemaOrder(raw:unknown){
+ const s=validatedDispositionCatalog(raw),{relations,foreignKeys}=s;
  const protectedRoots=relations.filter(r=>r.name==='academies').map(r=>key(r.schema,r.name));
  // Retain the school identity as a tombstone/foreign-key anchor. This helper
  // never authorizes retaining its name,contacts or other personal attributes.
