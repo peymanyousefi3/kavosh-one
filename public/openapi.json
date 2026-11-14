@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.470.0",
+    "version": "0.471.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -4731,7 +4731,7 @@
     },
     "/api/platform/v1/academies/{id}/records/{collection}": {
       "get": {
-        "summary": "Verified MFA platform owner inspects exact school directories: hubs,people,courses,classes,students,finance-accounts,finance-journals,sessions,class-staff,enrollments,roles,role-assignments,tuition-invoices or tuition-receipts. Roles include complete configured allow/deny definitions;assignments retain academy-wide or all six original configured selector types,not a computed effective authorization decision. Tuition keeps pinned invoice amounts,precision,billing name,complete original installments and current retained receipt allocation editions;minor amounts are exact strings,reversed receipts remain explicit and no balance or bank verification is inferred. File evidence is references only,never binary or provider access. Optional classId only for sessions,class-staff,enrollments,tuition-invoices,tuition-receipts;all periods,statuses and pinned versions retained,not an attendance or signing-eligibility decision. Required X-Access-Purpose is privately audited and disclosure fails if its audit is missing;bounded keyset pages,explicit school predicates and RLS. At most20000nested permission/scope/installment/allocation entries and2MiB per page;oversized pages return422 for a smaller page,never partial records. Account definitions and journal headers are not balances/payment proof. Fixed projections exclude identity secrets and care vaults;not complete business browsing. No master impersonation,new membership,permission change or external action.",
+        "summary": "Verified MFA platform owner inspects exact school directories: hubs,people,courses,classes,students,finance-accounts,finance-journals,sessions,class-staff,enrollments,roles,role-assignments,tuition-invoices,tuition-receipts,payroll-runs,payroll-postings or payroll-payments. Payroll retains original run gross and currency precision,posting net version/amounts,cancellation/reversal references and attested payment dates/funding/method/evidence references;zero net never implies a fabricated cash payment. No private tax/review/identity content,computed settlement balance,bank verification or execution authority. Roles include complete configured allow/deny definitions;assignments retain academy-wide or all six original configured selector types,not a computed effective authorization decision. Tuition keeps pinned invoice amounts,precision,billing name,complete original installments and current retained receipt allocation editions;minor amounts are exact strings,reversed receipts remain explicit and no balance or bank verification is inferred. File evidence is references only,never binary or provider access. Optional classId only for sessions,class-staff,enrollments,tuition-invoices,tuition-receipts;all periods,statuses and pinned versions retained,not an attendance or signing-eligibility decision. Required X-Access-Purpose is privately audited and disclosure fails if its audit is missing;bounded keyset pages,explicit school predicates and RLS. At most20000nested permission/scope/installment/allocation entries and2MiB per page;oversized pages return422 for a smaller page,never partial records. Account definitions and journal headers are not balances/payment proof. Fixed projections exclude identity secrets and care vaults;not complete business browsing. No master impersonation,new membership,permission change or external action.",
         "security": [
           {
             "humanSession": []
@@ -4768,7 +4768,10 @@
                 "roles",
                 "role-assignments",
                 "tuition-invoices",
-                "tuition-receipts"
+                "tuition-receipts",
+                "payroll-runs",
+                "payroll-postings",
+                "payroll-payments"
               ]
             }
           },
