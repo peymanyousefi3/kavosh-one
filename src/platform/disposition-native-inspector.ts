@@ -17,7 +17,7 @@ export function compileDispositionInspector(raw:unknown,expectedCatalogFingerpri
  const catalog=validatedDispositionCatalog(raw),{sql,structure}=buildDispositionSnapshotQuery(catalog,catalog.relations.map(r=>'public.'+r.name),true,true);
  const catalogRead=`SELECT meta.snapshot FROM (${dispositionCatalogQuery}) meta`;
  const readerGuard=`  SELECT current_user='${dispositionInspectorRole}' AND NOT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreaterole AND NOT r.rolcreatedb AND NOT r.rolreplication AND NOT r.rolinherit
-   AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid)
+   AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid OR m.roleid=r.oid)
    AND NOT has_schema_privilege(r.oid,'public','CREATE') AND NOT has_schema_privilege(r.oid,'platform_private','CREATE') AND NOT has_database_privilege(r.oid,current_database(),'CREATE') INTO safe FROM pg_catalog.pg_roles r WHERE r.rolname=current_user;
   IF safe IS DISTINCT FROM true THEN RAISE EXCEPTION 'UNSAFE_DISPOSITION_READER' USING ERRCODE='42501';END IF;
   EXECUTE ${literal(catalogRead)} INTO catalog_state;

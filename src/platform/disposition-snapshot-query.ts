@@ -54,16 +54,18 @@ export function buildDispositionSnapshotQuery(raw:unknown,seedRelations:string[]
    classified_source AS(SELECT s.*,b.relation IS NULL candidate FROM bounded_source s LEFT JOIN bounded b ON b.relation=s.relation AND b.record_key=s.record_key),
    manifest_counts AS(SELECT relation,count(*)::integer "totalRows",count(*)FILTER(WHERE candidate)::integer "candidateRows",count(*)FILTER(WHERE NOT candidate)::integer "retainedRows",
     encode(sha256(convert_to(string_agg(record_key::text||':'||row_hash,E'\\n' ORDER BY record_key::text COLLATE "C"),'UTF8')),'hex') "sourceFingerprint",
-    encode(sha256(convert_to(coalesce(string_agg(record_key::text,E'\\n' ORDER BY record_key::text COLLATE "C")FILTER(WHERE candidate),''),'UTF8')),'hex') "candidateKeyFingerprint" FROM classified_source GROUP BY relation)`;
+    encode(sha256(convert_to(coalesce(string_agg(record_key::text,E'\\n' ORDER BY record_key::text COLLATE "C")FILTER(WHERE candidate),''),'UTF8')),'hex') "candidateKeyFingerprint",
+    encode(sha256(convert_to(coalesce(string_agg(record_key::text||':'||row_hash,E'\\n' ORDER BY record_key::text COLLATE "C")FILTER(WHERE NOT candidate),''),'UTF8')),'hex') "retainedSourceFingerprint" FROM classified_source GROUP BY relation)`;
   const manifestSelect=!withManifest?'NULL::jsonb':`jsonb_build_object('version',1,'totalRows',(SELECT count(*)::integer FROM bounded_source),'candidateRows',(SELECT count(*)::integer FROM classified_source WHERE candidate),'retainedRows',(SELECT count(*)::integer FROM classified_source WHERE NOT candidate),'relations',coalesce((SELECT jsonb_agg(to_jsonb(manifest_counts) ORDER BY relation COLLATE "C") FROM manifest_counts),'[]'::jsonb))`;
-  const sql=`WITH RECURSIVE requested AS(SELECT s->>'relation' relation,s->'key' record_key FROM jsonb_array_elements($2::jsonb) s),
+  const crossTenantReference=`EXISTS(${anomalies.map(q=>'('+q+')').join(' UNION ALL ')||'SELECT 1 WHERE false'})`;
+  const ctes=`WITH RECURSIVE requested AS(SELECT s->>'relation' relation,s->'key' record_key FROM jsonb_array_elements($2::jsonb) s),
    accepted AS MATERIALIZED(${seedMatches.join(' UNION ALL ')||empty}),
    retained(relation,record_key) AS((${initial.join(' UNION ')}) UNION SELECT next.relation,next.record_key FROM retained r CROSS JOIN LATERAL(${parents.join(' UNION ALL ')||empty}) next),
    bounded AS MATERIALIZED(SELECT * FROM retained LIMIT $3::integer+1),
-   counts AS(SELECT relation,count(*)::integer count,encode(sha256(convert_to(string_agg(record_key::text,E'\\n' ORDER BY record_key::text COLLATE "C"),'UTF8')),'hex') fingerprint FROM bounded GROUP BY relation)${manifestCtes}
-   SELECT (SELECT count(*)::integer FROM accepted) accepted_count,(SELECT count(*)::integer FROM bounded) retained_count,
+   counts AS(SELECT relation,count(*)::integer count,encode(sha256(convert_to(string_agg(record_key::text,E'\\n' ORDER BY record_key::text COLLATE "C"),'UTF8')),'hex') fingerprint FROM bounded GROUP BY relation)${manifestCtes}`;
+  const sql=`${ctes} SELECT (SELECT count(*)::integer FROM accepted) accepted_count,(SELECT count(*)::integer FROM bounded) retained_count,
     (SELECT count(*)::integer FROM public.academies WHERE id=$1::uuid) academy_count,
-    EXISTS(${anomalies.map(q=>'('+q+')').join(' UNION ALL ')||'SELECT 1 WHERE false'}) cross_tenant_reference,
+    ${crossTenantReference} cross_tenant_reference,
     coalesce((SELECT jsonb_agg(to_jsonb(counts) ORDER BY relation COLLATE "C") FROM counts),'[]'::jsonb) relations,${manifestSelect} source_manifest`;
- return{sql,structure};
+ return{sql,structure,ctes,crossTenantReference};
 }

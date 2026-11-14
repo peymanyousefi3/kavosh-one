@@ -11,6 +11,9 @@ import {operationsFixture} from './operations-fixture.ts';
 import {dispositionInspectorRole,dispositionInspectorSignature} from '../src/platform/disposition-native-inspector.ts';
 import {installDispositionInspectorInTransaction,inspectDispositionInstallation} from '../src/platform/disposition-installation.ts';
 import {upgradeToCurrent} from './migration-upgrade.ts';
+import {readDispositionCatalog} from '../src/platform/disposition-schema.ts';
+import {buildDispositionSnapshotQuery} from '../src/platform/disposition-snapshot-query.ts';
+import {buildDispositionDeleteQuery} from '../src/platform/disposition-delete-query.ts';
 
 async function fixture(){
  const pg=await testDatabase(),a=randomUUID(),b=randomUUID();let released=0,connections=0;
@@ -35,6 +38,36 @@ async function fixture(){
 }
 const noDeletion=(r:Awaited<ReturnType<typeof inspectRetainedDispositionRows>>)=>{assert.equal(r.executionAuthorized,false);assert.equal(r.dataDeleted,false);assert.equal(r.retentionEvaluated,false);assert.equal(r.closureComplete,true);};
 const byRelation=(r:Awaited<ReturnType<typeof inspectRetainedDispositionRows>>)=>Object.fromEntries(r.relations.map(s=>[s.relation,s.count]));
+
+test('bounded native deletion removes only candidates through real cyclic references and preserves retained content and other schools',async()=>{
+ const f=await fixture();try{
+  const catalog=await readDispositionCatalog(f.pg),compiled=buildDispositionDeleteQuery(catalog),snapshot=buildDispositionSnapshotQuery(catalog,[],true,true),args=[f.a,'[]',100000,100000,'[]'],before=(await f.pg.query<any>(snapshot.sql,args)).rows[0],foreign=(await f.pg.query('SELECT to_jsonb(p) row FROM public.people p WHERE academy_id=$1',[f.b])).rows;
+  await f.pg.exec('BEGIN');try{
+   await f.pg.exec(compiled.lockSql);const result=(await f.pg.query<any>(compiled.sql,args)).rows[0];assert.equal(result.allowed,true);assert.equal(result.exact,true);assert.equal(result.deleted_count,before.source_manifest.candidateRows);assert.ok(result.deleted_count>0);assert.doesNotMatch(JSON.stringify(result),/record_key|private A|private B/);
+   const after=(await f.pg.query<any>(snapshot.sql,args)).rows[0],remaining=new Map<string,any>(after.source_manifest.relations.map((r:any)=>[r.relation,r]));assert.equal(after.source_manifest.totalRows,before.retained_count);assert.equal(after.source_manifest.candidateRows,0);
+   for(const r of before.source_manifest.relations){assert.equal(remaining.get(r.relation)?.totalRows??0,r.retainedRows);if(r.retainedRows)assert.equal(remaining.get(r.relation).sourceFingerprint,r.retainedSourceFingerprint);}
+   assert.deepEqual((await f.pg.query('SELECT to_jsonb(p) row FROM public.people p WHERE academy_id=$1',[f.b])).rows,foreign);assert.equal((await f.pg.query('SELECT count(*)::integer n FROM auth_private.evidence')).rows[0].n,1);assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.academies')).rows[0].n,2);
+  }finally{await f.pg.exec('ROLLBACK');}
+  assert.deepEqual((await f.pg.query<any>(snapshot.sql,args)).rows[0],before);
+ }finally{await f.pg.close();}
+});
+test('one bounded native deletion statement preserves all five FK action semantics without disabling constraints',async()=>{
+ const f=await fixture();try{
+  for(const action of ['NO ACTION','RESTRICT','CASCADE','SET NULL','SET DEFAULT']){
+   await f.pg.exec(`CREATE TABLE public.action_children(academy_id uuid NOT NULL DEFAULT '${f.a}'::uuid,id integer NOT NULL,parent integer DEFAULT 2,PRIMARY KEY(academy_id,id),FOREIGN KEY(academy_id,parent) REFERENCES public.people(academy_id,id) ON DELETE ${action})`);await f.pg.query('INSERT INTO public.action_children VALUES($1,99,1),($2,99,1)',[f.a,f.b]);
+   const catalog=await readDispositionCatalog(f.pg),compiled=buildDispositionDeleteQuery(catalog),snapshot=buildDispositionSnapshotQuery(catalog,[],true,true),args=[f.a,'[]',100000,100000,'[]'],before=(await f.pg.query<any>(snapshot.sql,args)).rows[0];
+   await f.pg.exec('BEGIN');try{await f.pg.exec(compiled.lockSql);const result=(await f.pg.query<any>(compiled.sql,args)).rows[0];assert.equal(result.allowed,true,action);assert.equal(result.exact,true,action);assert.equal(result.deleted_count,before.source_manifest.candidateRows,action);assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.action_children WHERE academy_id=$1',[f.a])).rows[0].n,0);assert.equal((await f.pg.query('SELECT parent FROM public.action_children WHERE academy_id=$1',[f.b])).rows[0].parent,1);assert.equal((await f.pg.query("SELECT current_setting('session_replication_role') mode")).rows[0].mode,'origin');}finally{await f.pg.exec('ROLLBACK');}
+   await f.pg.exec('DROP TABLE public.action_children');
+  }
+ }finally{await f.pg.close();}
+});
+test('deletion source and retained bounds or cross-school anomalies cause zero deletions,not a partial batch',async()=>{
+ const f=await fixture();try{
+  const catalog=await readDispositionCatalog(f.pg),compiled=buildDispositionDeleteQuery(catalog),before=(await f.pg.query('SELECT to_jsonb(p) row FROM public.people p ORDER BY academy_id,id')).rows;
+  for(const [maxRows,maxSource]of [[1,100000],[100000,1],[0,100000],[100000,0]]){const result=(await f.pg.query<any>(compiled.sql,[f.a,'[]',maxRows,maxSource,'[]'])).rows[0];assert.equal(result.allowed,false);assert.equal(result.deleted_count,0);}
+  await f.pg.query('INSERT INTO public.legacy_links VALUES($1,90,$2,1)',[f.b,f.a]);const result=(await f.pg.query<any>(compiled.sql,[f.a,'[]',100000,100000,'[]'])).rows[0];assert.equal(result.allowed,false);assert.equal(result.deleted_count,0);assert.deepEqual((await f.pg.query('SELECT to_jsonb(p) row FROM public.people p ORDER BY academy_id,id')).rows,before);
+ }finally{await f.pg.close();}
+});
 
 test('failed rollback destroys the connection and preserves the original failure',async()=>{
  const original=new Error('synthetic catalog connection lost');let destroy:boolean|undefined;
@@ -251,6 +284,7 @@ test('sealed owner snapshot has native authority,audit and SELECT-only isolation
   await t.test('missing,restrictive or writable reader permissions and catalog drift fail closed',async()=>{
    await f.pg.exec(`BEGIN;SET LOCAL ROLE ${role};SET LOCAL row_security=off`);try{assert.equal((await f.pg.query("SELECT has_table_privilege(current_user,'public.people','SELECT') allowed")).rows[0].allowed,true);await assert.rejects(f.pg.query('SELECT academy_id,id FROM public.people'),(e:any)=>e.code==='42501');}finally{await f.pg.exec('ROLLBACK');}
    await f.pg.exec(`ALTER ROLE ${role} LOGIN`);try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec(`ALTER ROLE ${role} NOLOGIN`);}
+   await f.pg.exec(`GRANT ${role} TO ${client}`);try{assert.equal((await inspectDispositionInstallation(f.pg)).boundarySafe,false);await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');await assert.rejects(installDispositionInspectorInTransaction(f.pg),/UNSAFE_DISPOSITION_READER/);}finally{await f.pg.exec(`REVOKE ${role} FROM ${client}`);}
    await f.pg.exec('DROP POLICY disposition_reader_select ON public.people');try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec(`CREATE POLICY disposition_reader_select ON public.people FOR SELECT TO ${role} USING(true)`);}
    await f.pg.exec(`CREATE POLICY synthetic_restrict ON public.people AS RESTRICTIVE FOR SELECT TO ${role} USING(false)`);try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec('DROP POLICY synthetic_restrict ON public.people');}
    await f.pg.exec(`GRANT UPDATE(name) ON public.people TO ${role}`);try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec(`REVOKE UPDATE(name) ON public.people FROM ${role}`);}
@@ -327,7 +361,7 @@ test('real427 upgrade installs the native broker without changing existing schoo
   const permissions="SELECT p.oid::integer function_id,coalesce(r.rolname,'PUBLIC') grantee,a.privilege_type,a.is_grantable FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a LEFT JOIN pg_roles r ON r.oid=a.grantee WHERE p.oid IN('platform_private.request(uuid,uuid,text,uuid,jsonb)'::regprocedure,'platform_private.authorize_owner(uuid,uuid,boolean)'::regprocedure,'platform_private.immutable_record()'::regprocedure) ORDER BY p.oid,grantee,a.privilege_type",originalPermissions=(await f.pg.query(permissions)).rows;
   assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,427);assert.equal((await f.pg.query('SELECT to_regprocedure($1) fn',[dispositionInspectorSignature])).rows[0].fn,null);
   await upgradeToCurrent(f.pg);assert.equal((await inspectDispositionInstallation(f.pg)).current,true);assert.deepEqual(await snapshot(),before);
-  const marker=' PERFORM platform_private.authorize_owner(p_user,p_session);',branch="\n IF p_operation IN('disposition.prepare','disposition.get') THEN RETURN platform_private.disposition_review_request(p_user,p_session,p_operation,p_key,p_input);END IF;";
+  const marker=' PERFORM platform_private.authorize_owner(p_user,p_session);',branch="\n IF p_operation='disposition.confirm' THEN RETURN platform_private.confirm_disposition(p_user,p_session,p_key,p_input);END IF;\n IF p_operation IN('disposition.prepare','disposition.get') THEN RETURN platform_private.disposition_review_request(p_user,p_session,p_operation,p_key,p_input);END IF;";
   assert.deepEqual((await f.pg.query(functions)).rows,original.map(row=>({...row,prosrc:String(row.prosrc).replace(marker,marker+branch)})));
   const updatedPermissions=(await f.pg.query(permissions)).rows;assert.deepEqual(updatedPermissions.filter(row=>row.grantee!==dispositionInspectorRole),originalPermissions);assert.deepEqual(updatedPermissions.filter(row=>row.grantee===dispositionInspectorRole),[{function_id:(await f.pg.query("SELECT 'platform_private.authorize_owner(uuid,uuid,boolean)'::regprocedure::oid::integer id")).rows[0].id,grantee:dispositionInspectorRole,privilege_type:'EXECUTE',is_grantable:false}]);
   assert.equal((await f.request('people')).response.status,200);console.log(JSON.stringify({case:'427-managed-inspector-upgrade',preservedTables:tables.length,existingFunctionIdentityPreserved:true,legalHoldsPreserved:true,schema:expectedSchemaRevision,productionChanged:false}));

@@ -7,7 +7,7 @@ import {buildDispositionSnapshotQuery} from './disposition-snapshot-query.ts';
 
 const request=z.object({academyId:z.string().uuid(),seeds:z.array(z.object({relation:z.string().regex(/^public\.[A-Za-z_][A-Za-z0-9_$]{0,62}$/),key:z.array(z.string().max(2048)).min(1).max(32)}).strict()).max(10000),maxRows:z.number().int().min(1).max(1000000).default(100000)}).strict();
 const manifestRequest=request.extend({maxSourceRows:z.number().int().min(1).max(1000000).default(100000)});
-type SourceManifest={version:1;totalRows:number;candidateRows:number;retainedRows:number;relations:{relation:string;totalRows:number;candidateRows:number;retainedRows:number;sourceFingerprint:string;candidateKeyFingerprint:string}[]};
+type SourceManifest={version:1;totalRows:number;candidateRows:number;retainedRows:number;relations:{relation:string;totalRows:number;candidateRows:number;retainedRows:number;sourceFingerprint:string;candidateKeyFingerprint:string;retainedSourceFingerprint:string}[]};
 
 // Internal,unmounted prerequisite only. Caller-supplied seeds are NOT a lawful
 // retention policy or permission to delete anything. Own read-only transaction;
