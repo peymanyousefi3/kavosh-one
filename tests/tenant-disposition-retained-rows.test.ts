@@ -5,6 +5,8 @@ import type {Database} from '../src/core/database.ts';
 import {inspectRetainedDispositionRows,inspectDispositionManifest} from '../src/platform/disposition-retained-rows.ts';
 import {testDatabase} from './database.ts';
 import {operationsFixture} from './operations-fixture.ts';
+import {dispositionCatalogQuery} from '../src/platform/disposition-schema.ts';
+import {compileDispositionInspector,dispositionInspectorRole,dispositionInspectorSignature} from '../src/platform/disposition-native-inspector.ts';
 
 async function fixture(){
  const pg=await testDatabase(),a=randomUUID(),b=randomUUID();let released=0,connections=0;
@@ -186,4 +188,72 @@ test('actual full academy schema produces a content-bound manifest under the sam
   assert.equal((await f.pg.query('SELECT count(*)::integer count FROM public.academies')).rows[0].count,2);
   console.log(JSON.stringify({case:'actual-schema-disposition-manifest',durationMs:Math.round(performance.now()-started),sourceRows:r.sourceManifest.totalRows,candidateRows:r.sourceManifest.candidateRows,retainedRows:r.retainedCount,sourceRelations:r.sourceManifest.relations.length,dataDeleted:r.dataDeleted}));
  }finally{await f.pg.close();}
+});
+
+test('sealed owner snapshot has native authority,audit and SELECT-only isolation without accepting caller SQL',async t=>{
+ const f=await operationsFixture(),client='synthetic_disposition_client_'+randomUUID().replaceAll('-',''),role=dispositionInspectorRole;let installed=false;
+ const quote=(name:string)=>'"'+name.replaceAll('"','""')+'"';
+ try{
+  const operatorSession=(await f.pg.query<{name:string}>('SELECT session_user name')).rows[0].name;
+  const owner=f.actors.master;await f.pg.query('SELECT platform_private.register_owner($1,$2)',[owner.user,'Synthetic owner snapshot authority']);
+  const metadata=(await f.pg.query<{snapshot:unknown;fingerprint:string}>('SELECT meta.snapshot,encode(sha256(convert_to(meta.snapshot::text,\'UTF8\')),\'hex\') fingerprint FROM ('+dispositionCatalogQuery+') meta')).rows[0];
+  const compiled=compileDispositionInspector(metadata.snapshot,metadata.fingerprint);
+  await f.pg.exec('BEGIN');try{
+   await f.pg.exec(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN CREATE ROLE ${role} NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION;END IF;END $$;
+    CREATE ROLE ${client} NOLOGIN;GRANT USAGE ON SCHEMA platform_private TO ${client};`);
+   await f.pg.exec(compiled.requiredBrokerGrants);
+   for(const relation of compiled.catalog.relations)await f.pg.exec(`GRANT SELECT ON public.${quote(relation.name)} TO ${role};CREATE POLICY disposition_reader_select ON public.${quote(relation.name)} FOR SELECT TO ${role} USING(true)`);
+   for(const grant of compiled.requiredExternalReads)await f.pg.exec(grant);
+   await f.pg.exec(compiled.definition+`GRANT EXECUTE ON FUNCTION ${dispositionInspectorSignature} TO ${client}`);await f.pg.exec('COMMIT');installed=true;
+  }catch(error){await f.pg.exec('ROLLBACK');throw error;}
+  const seeds=[{relation:'public.people',key:[f.a,owner.person]}];
+  async function asClient<Row=Record<string,unknown>>(sql:string,args:unknown[]=[]){
+   // SET ROLE alone preserves a superuser session_user and can still SET ROLE
+   // to arbitrary roles. Model the actual restricted connection identity too.
+   await f.pg.exec(`SET SESSION AUTHORIZATION ${client}`);let begun=false;try{
+    await f.pg.exec("BEGIN;SET LOCAL statement_timeout='15s'");begun=true;
+    const result=await f.pg.query<Row>(sql,args);await f.pg.exec('COMMIT');begun=false;return result;
+   }finally{try{if(begun)await f.pg.exec('ROLLBACK');}finally{
+    // Observed embedded18.6 leaves session_user unchanged on RESET SESSION
+    // AUTHORIZATION even while clearing its GUC. Restore the observed identity
+    // explicitly,and verify actual privileges rather than trusting RESET text.
+    await f.pg.exec('SET SESSION AUTHORIZATION '+quote(operatorSession)+';RESET ROLE');
+    assert.deepEqual((await f.pg.query('SELECT current_user name,session_user session')).rows[0],{name:operatorSession,session:operatorSession});
+   }}
+  }
+  const inspect=async(patch:{user?:string;session?:string;academy?:string;seeds?:unknown;limit?:number;maxSource?:number;purpose?:string}={})=>(await asClient<{result:any}>('SELECT platform_private.inspect_disposition_manifest($1,$2,$3,$4::jsonb,$5,$6,$7) result',[patch.user??owner.user,patch.session??owner.session,patch.academy??f.a,JSON.stringify(patch.seeds??seeds),patch.limit??100000,patch.maxSource??100000,patch.purpose??'Synthetic exact-source owner review'])).rows[0].result;
+  await t.test('native result matches the shared planner,records audit and leaves protected source records unchanged',async()=>{
+   const database:Database={async connect(){return{query:f.pg.query.bind(f.pg),release(){}};}},oracle=await inspectDispositionManifest(database,{academyId:f.a,seeds}),before=(await f.pg.query('SELECT to_jsonb(p) data FROM public.people p ORDER BY academy_id,id')).rows,started=performance.now();
+   const result=await inspect();assert.equal(result.snapshot.retained_count,oracle.retainedCount);assert.deepEqual(result.snapshot.relations,oracle.relations);const{fingerprint:_,...source}=oracle.sourceManifest;assert.deepEqual(result.snapshot.source_manifest,source);assert.equal(result.executionAuthorized,false);assert.equal(result.dataDeleted,false);assert.equal(result.retentionEvaluated,false);assert.match(result.sourceFingerprint,/^[a-f0-9]{64}$/);
+   const audit=(await f.pg.query<any>('SELECT actor_user_id,session_id,academy_id,after_data FROM platform_private.audit_events WHERE id=$1',[result.auditId])).rows[0];assert.equal(audit.actor_user_id,owner.user);assert.equal(audit.session_id,owner.session);assert.equal(audit.academy_id,f.a);assert.equal(audit.after_data.sourceFingerprint,result.sourceFingerprint);assert.deepEqual((await f.pg.query('SELECT to_jsonb(p) data FROM public.people p ORDER BY academy_id,id')).rows,before);
+   console.log(JSON.stringify({case:'sealed-native-owner-snapshot',durationMs:Math.round(performance.now()-started),retainedRows:result.snapshot.retained_count,sourceRows:source.totalRows,auditRecorded:true,dataDeleted:false}));
+   await assert.rejects(asClient('SELECT * FROM public.people'),(e:any)=>e.code==='42501');await assert.rejects(asClient('SET ROLE '+role),(e:any)=>e.code==='42501');
+   assert.equal((await f.pg.query("SELECT has_function_privilege('kavosh_runtime',$1,'EXECUTE') allowed",[dispositionInspectorSignature])).rows[0].allowed,false);
+  });
+  await t.test('unverified or non-owner actors,invalid inputs and source limits never create a successful snapshot audit',async()=>{
+   const count=async()=>(await f.pg.query("SELECT count(*)::integer n FROM platform_private.audit_events WHERE action='platform.disposition.snapshot.read'")).rows[0].n,before=await count();
+   await assert.rejects(inspect({user:f.actors.foreignMaster.user,session:f.actors.foreignMaster.session}),(e:any)=>e.code==='42501');await assert.rejects(inspect({session:randomUUID()}),(e:any)=>e.code==='42501');
+   await f.pg.query('UPDATE identity.session SET "mfaVerified"=false WHERE id=$1',[owner.session]);try{await assert.rejects(inspect(),(e:any)=>e.code==='42501');}finally{await f.pg.query('UPDATE identity.session SET "mfaVerified"=true WHERE id=$1',[owner.session]);}
+   for(const patch of [{purpose:''},{seeds:[...seeds,...seeds]},{seeds:[{relation:'public.people;DELETE',key:[f.a,owner.person]}]},{seeds:[{relation:'public.people',key:[f.a,owner.person],approved:true}]},{limit:0},{maxSource:0}])await assert.rejects(inspect(patch),(e:any)=>e.code==='22023');
+   await assert.rejects(inspect({limit:1}),(e:any)=>e.message==='DISPOSITION_RETENTION_LIMIT_EXCEEDED');await assert.rejects(inspect({maxSource:1}),(e:any)=>e.message==='DISPOSITION_MANIFEST_LIMIT_EXCEEDED');await assert.rejects(inspect({seeds:[{relation:'public.people',key:[f.b,f.actors.foreignMaster.person]}]}),(e:any)=>e.message==='DISPOSITION_RETENTION_SOURCE_MISSING');assert.equal(await count(),before);
+  });
+  await t.test('missing,restrictive or writable reader permissions and catalog drift fail closed',async()=>{
+   await f.pg.exec(`BEGIN;SET LOCAL ROLE ${role};SET LOCAL row_security=off`);try{assert.equal((await f.pg.query("SELECT has_table_privilege(current_user,'public.people','SELECT') allowed")).rows[0].allowed,true);await assert.rejects(f.pg.query('SELECT academy_id,id FROM public.people'),(e:any)=>e.code==='42501');}finally{await f.pg.exec('ROLLBACK');}
+   await f.pg.exec(`ALTER ROLE ${role} LOGIN`);try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec(`ALTER ROLE ${role} NOLOGIN`);}
+   await f.pg.exec('DROP POLICY disposition_reader_select ON public.people');try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec(`CREATE POLICY disposition_reader_select ON public.people FOR SELECT TO ${role} USING(true)`);}
+   await f.pg.exec(`CREATE POLICY synthetic_restrict ON public.people AS RESTRICTIVE FOR SELECT TO ${role} USING(false)`);try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec('DROP POLICY synthetic_restrict ON public.people');}
+   await f.pg.exec(`GRANT UPDATE(name) ON public.people TO ${role}`);try{await assert.rejects(inspect(),(e:any)=>e.message==='UNSAFE_DISPOSITION_READER');}finally{await f.pg.exec(`REVOKE UPDATE(name) ON public.people FROM ${role}`);}
+   await f.pg.exec('CREATE TABLE public.synthetic_disposition_drift(academy_id uuid NOT NULL,id uuid PRIMARY KEY)');try{await assert.rejects(inspect(),(e:any)=>e.message==='DISPOSITION_SCHEMA_CHANGED');}finally{await f.pg.exec('DROP TABLE public.synthetic_disposition_drift');}
+   assert.equal((await inspect()).dataDeleted,false);
+  });
+  await t.test('real legal holds block preparation and an audit write failure rolls back the entire read receipt',async()=>{
+   const hold=(await f.pg.query<{r:any}>("SELECT platform_private.request($1,$2,'holds.create',$3,$4::jsonb) r",[owner.user,owner.session,randomUUID(),JSON.stringify({academyId:f.a,caseReference:'SEALED-SNAPSHOT-HOLD',reason:'Synthetic hold protects all school records'})])).rows[0].r.body.data;
+   await assert.rejects(inspect(),(e:any)=>e.message==='ACADEMY_LEGAL_HOLD_ACTIVE');await f.pg.query("SELECT platform_private.request($1,$2,'holds.release',$3,$4::jsonb)",[owner.user,owner.session,randomUUID(),JSON.stringify({academyId:f.a,holdId:hold.id,confirmAcademyId:f.a,expectedVersion:1,reason:'Synthetic hold review completed'})]);
+   const before=(await f.pg.query("SELECT count(*)::integer n FROM platform_private.audit_events WHERE action='platform.disposition.snapshot.read'")).rows[0].n;
+   await f.pg.exec("CREATE FUNCTION platform_private.synthetic_snapshot_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='platform.disposition.snapshot.read' THEN RAISE EXCEPTION 'synthetic snapshot audit failure';END IF;RETURN NEW;END $$;CREATE TRIGGER synthetic_snapshot_audit_failure BEFORE INSERT ON platform_private.audit_events FOR EACH ROW EXECUTE FUNCTION platform_private.synthetic_snapshot_audit_failure()");
+   try{await assert.rejects(inspect(),/synthetic snapshot audit failure/);}finally{await f.pg.exec('DROP TRIGGER synthetic_snapshot_audit_failure ON platform_private.audit_events');}assert.equal((await f.pg.query("SELECT count(*)::integer n FROM platform_private.audit_events WHERE action='platform.disposition.snapshot.read'")).rows[0].n,before);assert.equal((await inspect()).dataDeleted,false);
+  });
+ }finally{
+  try{await f.pg.exec('RESET ROLE');if(installed){await f.pg.exec('DROP OWNED BY '+client+';DROP ROLE '+client);}}finally{await f.pg.close();}
+ }
 });

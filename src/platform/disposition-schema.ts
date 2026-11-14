@@ -17,8 +17,7 @@ const constraintKey=(f:ForeignKey)=>child(f)+'.'+f.name;
 // approval or executable deletion request. No business values or identities are
 // read. The eventual executor still needs exact retained-row closure,source
 // freshness,owner authority,holds,provider-copy and restore-tombstone checks.
-export async function readDispositionCatalog(db:Pick<Connection,'query'>){
- const result=await db.query<{snapshot:unknown}>(`
+export const dispositionCatalogQuery=`
  WITH tenant_relations AS MATERIALIZED (
   SELECT c.oid,c.relname,c.relkind,c.relispartition,s.attname scope_column,s.attnotnull scope_not_null,
    pg_catalog.format_type(s.atttypid,s.atttypmod) scope_type
@@ -55,7 +54,10 @@ export async function readDispositionCatalog(db:Pick<Connection,'query'>){
  )
  SELECT jsonb_build_object('schemaRevision',public.schema_revision(),'replicationRole',current_setting('session_replication_role'),
   'relations',(SELECT jsonb_agg(data ORDER BY relname) FROM relation_data),
-  'foreignKeys',coalesce((SELECT jsonb_agg(data ORDER BY nspname,relname,conname) FROM foreign_data),'[]'::jsonb)) snapshot`);
+  'foreignKeys',coalesce((SELECT jsonb_agg(data ORDER BY nspname,relname,conname) FROM foreign_data),'[]'::jsonb)) snapshot`;
+
+export async function readDispositionCatalog(db:Pick<Connection,'query'>){
+ const result=await db.query<{snapshot:unknown}>(dispositionCatalogQuery);
  if(result.rows.length!==1)throw new ApiError(503,'DISPOSITION_SCHEMA_INVALID');
  return validatedDispositionCatalog(result.rows[0].snapshot);
 }
