@@ -270,7 +270,7 @@ jobs:
       - run: pnpm background:build
       - name: Native owner access, school isolation and immutable audit
         if: matrix.group == 1
-        run: node --import tsx --test --test-concurrency=1 tests/database-template.test.ts tests/platform-health.test.ts tests/platform-directories.test.ts tests/platform-class-operations.test.ts tests/platform-learning-session.test.ts tests/platform-learning-history.test.ts tests/platform-homework.test.ts tests/platform-student-care.test.ts tests/platform-finance.test.ts tests/platform-operational-events.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/database-template.test.ts tests/platform-health.test.ts tests/platform-directories.test.ts tests/platform-class-operations.test.ts tests/platform-learning-session.test.ts tests/platform-learning-history.test.ts tests/platform-homework.test.ts tests/platform-student-care.test.ts tests/platform-finance.test.ts tests/platform-operational-events.test.ts tests/platform-access-directories.test.ts
       - name: Native reviewed contractor settlement deductions
         if: matrix.group == 3
         run: node --import tsx --test --test-concurrency=1 tests/t4a-non-tax-deductions.test.ts tests/consolidated-private-package.test.ts tests/zero-net-settlements.test.ts tests/zero-net-tax-records.test.ts tests/zero-net-t4a-records.test.ts

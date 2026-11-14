@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
 import {upgradeToCurrent} from './migration-upgrade.ts';
+import {readFile} from 'node:fs/promises';
 import {t4aRecordFixture,zeroNetSource} from './t4a-record-fixture.ts';
 import {parse} from 'csv-parse/sync';
 import {runFixtureReportWorker} from './report-worker-fixture.ts';
@@ -44,7 +45,7 @@ test('actual419to420 preserves settled and paid accounting sources and original 
  const f=await fixture({throughSchema:419});try{
   const tables=['zero_net_settlements','zero_net_settlement_revisions','t4a_payment_records','t4a_payment_revisions','finance_journals','finance_journal_lines','payrun_payments','approval_requests','audit_events','outbox_events'],snapshot=async()=>{const rows=[];for(const t of tables)rows.push((await f.pg.query('SELECT to_jsonb(r) row FROM public.'+t+' r ORDER BY to_jsonb(r)::text')).rows);return rows;};
   const before=await snapshot(),sql="SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid IN('public.zero_net_settlement_plan(uuid,integer,jsonb)'::regprocedure,'public.zero_net_tax_privacy()'::regprocedure,'public.zero_net_settlement_header_guard()'::regprocedure) ORDER BY oid",authority=(await f.pg.query(sql)).rows;
-  await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(sql)).rows,authority);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,420);
+  await f.pg.exec(await readFile(new URL('../db/migrations/420_zero_net_contractor_tax_records.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(sql)).rows,authority);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,420);await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(sql)).rows,authority);
   const coverage=(await f.pg.query<{delete_guard_present:boolean;truncate_guard_present:boolean}>("SELECT * FROM platform_private.academy_preservation_coverage WHERE relation_name IN('zero_net_t4a_records','zero_net_t4a_revisions')")).rows;assert.equal(coverage.length,2);assert.ok(coverage.every(r=>r.delete_guard_present&&r.truncate_guard_present));assert.equal((await f.request(f.zeroPath,f.zeroInput)).response.status,200);
  }finally{await f.pg.close();}
 });
