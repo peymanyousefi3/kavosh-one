@@ -21,7 +21,10 @@ export async function inspectRetainedDispositionRows(database:Database,input:unk
  const db=await database.connect();let begun=false,destroy=false;
  try{
   await db.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');begun=true;
-  await db.query("SELECT set_config('row_security','off',true),set_config('statement_timeout','15000',true),set_config('work_mem','16MB',true)");
+  // This bounded catalog-wide plan has many short,mostly inactive branches.
+  // Do not pay LLVM compilation cost for every branch of a maintenance read.
+  // Transaction-local only;ordinary application query settings are unchanged.
+  await db.query("SELECT set_config('row_security','off',true),set_config('statement_timeout','15000',true),set_config('work_mem','16MB',true),set_config('jit','off',true)");
   const catalog=await readDispositionCatalog(db),structure=dispositionSchemaOrder(catalog);
   if(structure.blockers.some(b=>b.code!=='ACTION_DEPENDENCY_CYCLE'))throw new ApiError(409,'DISPOSITION_SCHEMA_REVIEW_REQUIRED');
   const relations=new Map(catalog.relations.map(r=>['public.'+r.name,r]));

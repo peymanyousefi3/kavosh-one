@@ -83,13 +83,15 @@ test('input identifiers,key arity,duplicate seeds and attempts to inject policy 
 });
 test('the native transaction is repeatable-read,read-only and refuses writes without changing source data',async()=>{
  const f=await fixture();let checked=false;try{
+  const originalJit=(await f.pg.query("SELECT current_setting('jit') value")).rows[0].value;
   const database:Database={async connect(){return{async query<Row>(sql:string,params?:unknown[]){
    if(sql.startsWith('WITH RECURSIVE requested')){
-    const settings=(await f.pg.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only,current_setting('row_security') row_security")).rows[0];assert.deepEqual(settings,{isolation:'repeatable read',read_only:'on',row_security:'off'});
+    const settings=(await f.pg.query("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only,current_setting('row_security') row_security,current_setting('jit') jit")).rows[0];assert.deepEqual(settings,{isolation:'repeatable read',read_only:'on',row_security:'off',jit:'off'});
     await f.pg.exec('SAVEPOINT forbidden_write');await assert.rejects(f.pg.query('UPDATE public.people SET private_note=$1',['changed']),(e:any)=>e.code==='25006');await f.pg.exec('ROLLBACK TO SAVEPOINT forbidden_write');checked=true;
    }return f.pg.query<Row>(sql,params);
   },release(){}};}};
   const r=await inspectRetainedDispositionRows(database,{academyId:f.a,seeds:[]});assert.equal(checked,true);noDeletion(r);assert.equal((await f.pg.query('SELECT count(*)::integer count FROM public.people WHERE private_note=$1',['changed'])).rows[0].count,0);
+  assert.equal((await f.pg.query("SELECT current_setting('jit') value")).rows[0].value,originalJit);
  }finally{await f.pg.close();}
 });
 test('an RLS-filtered runtime cannot silently certify incomplete retained records',async()=>{
@@ -102,9 +104,10 @@ test('an RLS-filtered runtime cannot silently certify incomplete retained record
 test('actual current academy schema produces a bounded record closure without sending private records to JavaScript',async()=>{
  const f=await operationsFixture();try{
   const database:Database={async connect(){return{query:f.pg.query.bind(f.pg),release(){}};}};
+  const engine=(await f.pg.query("SELECT current_setting('server_version_num') version,pg_jit_available() jit_available,current_setting('jit') jit_default")).rows[0];
   const started=performance.now(),r=await inspectRetainedDispositionRows(database,{academyId:f.a,seeds:[{relation:'public.people',key:[f.a,f.actors.master.person]}]});
   assert.equal(r.crossTenantReference,false);assert.ok(r.retainedCount>=2);assert.ok(r.relations.some(s=>s.relation==='public.people'));noDeletion(r);
   assert.equal((await f.pg.query('SELECT count(*)::integer count FROM public.academies')).rows[0].count,2);
-  console.log(JSON.stringify({case:'actual-schema-retained-closure',durationMs:Math.round(performance.now()-started),retainedCount:r.retainedCount,relationCount:r.relations.length,closureComplete:r.closureComplete,dataDeleted:r.dataDeleted}));
+  console.log(JSON.stringify({case:'actual-schema-retained-closure',engine,durationMs:Math.round(performance.now()-started),retainedCount:r.retainedCount,relationCount:r.relations.length,closureComplete:r.closureComplete,dataDeleted:r.dataDeleted}));
  }finally{await f.pg.close();}
 });
