@@ -48,14 +48,14 @@ export async function restoreIsolatedCluster(directory:string,postgresBin:string
   const boundary=(await client.query("SELECT current_setting('data_directory') directory,current_setting('unix_socket_directories') socket,current_setting('listen_addresses') listening,inet_server_addr() address")).rows[0];
   if(boundary.directory!==plan.data||boundary.socket!==plan.socket||boundary.listening!==''||boundary.address!==null)throw new RecoveryError('CLUSTER_BOUNDARY_MISMATCH');
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-  const snapshot=await databaseVerificationSnapshot(client,signal),cluster=await clusterVerificationSnapshot(client,signal);
+  const snapshot=await databaseVerificationSnapshot(client,signal,verification.snapshot.columnPrivileges!==undefined),cluster=await clusterVerificationSnapshot(client,signal);
   if(!isDeepStrictEqual(snapshot,verification.snapshot)||!isDeepStrictEqual(cluster,verification.cluster))throw new RecoveryError('RESTORED_CLUSTER_MISMATCH');
   const sequenceSafety=await verifyRecoveredSequenceSafety(client,signal);
   await client.query('COMMIT');
   const exported=(await command([postgresBin+'/pg_dumpall','--roles-only','--no-role-passwords','--no-password','--host',plan.socket,'--port',String(plan.port),'--username',plan.bootstrapRole,'--database','postgres'])).stdout;
   if(!isDeepStrictEqual(canonicalRoleExport(exported),canonicalRoleExport(roleText)))throw new RecoveryError('RESTORED_ROLES_MISMATCH');
   const authenticationQuarantine=await quarantineRecoveredAuthentication(client,plan.data,snapshot,signal);
-  result={backupId:metadata.backupId,archiveSha256:metadata.archiveSha256,schemaRevision:snapshot.schemaRevision,tablesCompared:snapshot.tables.length,rowsCompared:snapshot.tables.reduce((n,t)=>n+t.fingerprint.rows,0),rolesAndMembershipsVerified:true,databaseAccessAndSettingsVerified:true,originalExportedSnapshotMatched:true,snapshotMatchPrecedesAuthenticationQuarantine:true,authenticationQuarantine,sequenceSafety,networkListeningAllowed:false,applicationActivationAllowed:false,passwordsRestored:false,sequenceValuesVerified:false,osIsolationVerified,fullServerRebuildVerified:false};
+  result={backupId:metadata.backupId,archiveSha256:metadata.archiveSha256,schemaRevision:snapshot.schemaRevision,tablesCompared:snapshot.tables.length,rowsCompared:snapshot.tables.reduce((n,t)=>n+t.fingerprint.rows,0),columnPrivilegesVerified:snapshot.columnPrivileges!==undefined,rolesAndMembershipsVerified:true,databaseAccessAndSettingsVerified:true,originalExportedSnapshotMatched:true,snapshotMatchPrecedesAuthenticationQuarantine:true,authenticationQuarantine,sequenceSafety,networkListeningAllowed:false,applicationActivationAllowed:false,passwordsRestored:false,sequenceValuesVerified:false,osIsolationVerified,fullServerRebuildVerified:false};
  }finally{await client?.end().catch(()=>{});if(startAttempted)await command(plan.stop,true);}
  return {...result,isolatedPostgresStopped:true};
 }

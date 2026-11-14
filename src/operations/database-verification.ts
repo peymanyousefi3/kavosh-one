@@ -5,7 +5,7 @@ import { z } from 'zod';
 const digest=z.string().regex(/^[a-f0-9]{64}$/),fingerprint=z.object({rows:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),sha256:digest}).strict();
 export const databaseVerification=z.object({format:z.literal('kavosh-database-verification-v1'),schemaRevision:z.number().int().positive(),
  tables:z.array(z.object({schema:z.string().min(1).max(63),name:z.string().min(1).max(63),fingerprint}).strict()).max(10000),
- relations:fingerprint,functions:fingerprint,policies:fingerprint,sequenceValuesCovered:z.literal(false),globalRolesCovered:z.literal(false)}).strict();
+ relations:fingerprint,functions:fingerprint,policies:fingerprint,columnPrivileges:fingerprint.optional(),sequenceValuesCovered:z.literal(false),globalRolesCovered:z.literal(false)}).strict();
 const clusterVerification=z.object({databaseAccess:fingerprint,globalRoleProperties:fingerprint}).strict();
 export const backupVerification=z.object({archiveSha256:digest,snapshot:databaseVerification,cluster:clusterVerification.optional()}).strict();
 const namespaces="n.nspname!~'^pg_' AND n.nspname<>'information_schema'";
@@ -49,7 +49,12 @@ export function globalRolePropertiesFingerprint(client:Pick<pg.Client,'query'>,s
 // The caller MUST hold its original REPEATABLE READ transaction. Capture after
 // pg_dump finishes but before COMMIT,using the same exported MVCC snapshot.
 // Optional acceptance work only;ordinary nightly backups do not scan twice.
-export async function databaseVerificationSnapshot(client:pg.Client,signal?:AbortSignal){
+// Only authenticated legacy baselines may opt out;new exports always include
+// column ACLs. Names,not attribute numbers,remain stable across dropped columns.
+export function columnPrivilegesFingerprint(client:Pick<pg.Client,'query'>,signal?:AbortSignal){
+ return fingerprintQuery(client,`SELECT jsonb_build_array(n.nspname,c.relname,a.attname,pg_get_userbyid(x.grantor),x.grantee=0,CASE WHEN x.grantee=0 THEN NULL ELSE pg_get_userbyid(x.grantee) END,x.privilege_type,x.is_grantable)::text value FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace CROSS JOIN LATERAL aclexplode(a.attacl) x WHERE ${namespaces} AND a.attnum>0 AND NOT a.attisdropped ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C",a.attname COLLATE "C",pg_get_userbyid(x.grantor) COLLATE "C",x.grantee=0,pg_get_userbyid(x.grantee) COLLATE "C",x.privilege_type COLLATE "C",x.is_grantable`,signal);
+}
+export async function databaseVerificationSnapshot(client:pg.Client,signal?:AbortSignal,includeColumnPrivileges=true){
  if(signal?.aborted)throw new Error('VERIFICATION_CANCELLED');
  const isolation=await client.query<{isolation:string;read_only:string}>("SELECT current_setting('transaction_isolation') isolation,current_setting('transaction_read_only') read_only");
  if(isolation.rows[0]?.isolation!=='repeatable read'||isolation.rows[0]?.read_only!=='on')throw new Error('VERIFICATION_SNAPSHOT_REQUIRED');
@@ -62,5 +67,5 @@ export async function databaseVerificationSnapshot(client:pg.Client,signal?:Abor
  const relations=await fingerprintQuery(client,`SELECT to_jsonb(t)::text value FROM(SELECT n.nspname,c.relname,c.relkind,c.relrowsecurity,c.relforcerowsecurity,pg_get_userbyid(c.relowner) owner,c.reloptions,(SELECT jsonb_agg(jsonb_build_array(pg_get_userbyid(a.grantor),CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,a.privilege_type,a.is_grantable) ORDER BY pg_get_userbyid(a.grantor) COLLATE "C",(CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END) COLLATE "C",a.privilege_type COLLATE "C",a.is_grantable) FROM aclexplode(coalesce(c.relacl,acldefault(CASE WHEN c.relkind='S' THEN 'S'::"char" ELSE 'r'::"char" END,c.relowner))) a) acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${namespaces}) t ORDER BY t.nspname COLLATE "C",t.relname COLLATE "C"`,signal);
  const functions=await fingerprintQuery(client,`SELECT to_jsonb(t)::text value FROM(SELECT n.nspname,p.oid::regprocedure::text signature,pg_get_userbyid(p.proowner) owner,p.prosecdef,p.proconfig,pg_get_functiondef(p.oid) definition,(SELECT jsonb_agg(jsonb_build_array(pg_get_userbyid(a.grantor),CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END,a.privilege_type,a.is_grantable) ORDER BY pg_get_userbyid(a.grantor) COLLATE "C",(CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END) COLLATE "C",a.privilege_type COLLATE "C",a.is_grantable) FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a) acl FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${namespaces} AND p.prokind IN('f','p')) t ORDER BY t.nspname COLLATE "C",t.signature COLLATE "C"`,signal);
  const policies=await fingerprintQuery(client,"SELECT to_jsonb(t)::text value FROM pg_policies t WHERE schemaname!~'^pg_' AND schemaname<>'information_schema' ORDER BY schemaname COLLATE \"C\",tablename COLLATE \"C\",policyname COLLATE \"C\"",signal);
- return databaseVerification.parse({format:'kavosh-database-verification-v1',schemaRevision:revision,tables:result,relations,functions,policies,sequenceValuesCovered:false,globalRolesCovered:false});
+ return databaseVerification.parse({format:'kavosh-database-verification-v1',schemaRevision:revision,tables:result,relations,functions,policies,...includeColumnPrivileges?{columnPrivileges:await columnPrivilegesFingerprint(client,signal)}:{},sequenceValuesCovered:false,globalRolesCovered:false});
 }

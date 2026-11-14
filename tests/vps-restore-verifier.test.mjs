@@ -7,10 +7,11 @@ import { runInNewContext } from 'node:vm';
 
 // Command doubles exercise the verifier, not a real restore or cloud service.
 const source = readFileSync(new URL('../scripts/verify-vps-backup.mjs', import.meta.url), 'utf8').replace(/^import .*;\n/gm, '');
-function run({ mismatch = false, restoreFails = false,clusterProof=false,missingProof=false,wrongProofDigest=false,proofDecryptFails=false,args=['--execute'] } = {}) {
+function run({ mismatch = false, restoreFails = false,columnProof=false,columnMismatch=false,operatorPath='/srv/kavosh-one/operations/recovery-'+'a'.repeat(40),clusterProof=false,missingProof=false,wrongProofDigest=false,proofDecryptFails=false,args=['--execute'] } = {}) {
  const ciphertext = Buffer.from('synthetic encrypted backup bytes'), id = '90f95990-a8ec-4db3-b763-b8a1f63a78ab';
  const digest=createHash('sha256').update(ciphertext).digest('hex');
  const snapshot = { format:'kavosh-database-verification-v1',schemaRevision:396,tables:[{schema:'public',name:'signature_ingest_limits',fingerprint:{rows:1,sha256:'a'.repeat(64)}}],relations:{rows:1,sha256:'b'.repeat(64)},functions:{rows:1,sha256:'c'.repeat(64)},policies:{rows:1,sha256:'d'.repeat(64)},sequenceValuesCovered:false,globalRolesCovered:false };
+ if(columnProof)snapshot.columnPrivileges={rows:3,sha256:'9'.repeat(64)};
  const verification={archiveSha256:digest,snapshot,...clusterProof?{cluster:{databaseAccess:{rows:1,sha256:'e'.repeat(64)},globalRoleProperties:{rows:30,sha256:'f'.repeat(64)}}}:{}};
  const backup = { id, ciphertextSha256:digest,encryptedBytes:ciphertext.length,serverMajor:18,schemaRevision:396,verification,verificationArchive:{filename:'verification.json.age',ciphertextSha256:wrongProofDigest?'e'.repeat(64):digest,encryptedBytes:ciphertext.length} };
  const commands = [], logs = [], removed = [];
@@ -25,10 +26,12 @@ function run({ mismatch = false, restoreFails = false,clusterProof=false,missing
    if(binary==='/opt/homebrew/bin/rclone'){assert.equal(args[0],'cat');assert.ok(!args.includes('--max-size'));return Buffer.from(ciphertext);}
    if (binary !== '/usr/bin/ssh') return Buffer.alloc(0);
    const command = args.at(-1);
+   if(command.includes('KAVOSH_BACKUP_OPERATOR_CLI='))return Buffer.from(JSON.stringify(operatorPath));
    if (command.includes('latest.json')||command.includes('delivery-status.json')) return Buffer.from(JSON.stringify({ localBackup: backup, offsiteCopy: { independentCopyVerified: true, ciphertextSha256: backup.ciphertextSha256 },snapshotBaselineOffsiteVerified:!missingProof,verificationOffsiteCopy:{independentCopyVerified:true,ciphertextSha256:backup.verificationArchive.ciphertextSha256} }));
    if (command.includes('databaseVerificationSnapshot')) {
     const value = structuredClone(snapshot);
     if (mismatch) value.tables[0].fingerprint.sha256='PRIVATE_NEVER_LOG_HASH';
+    if(columnMismatch)delete value.columnPrivileges;
     return Buffer.from(JSON.stringify(value));
    }
    return Buffer.from(command.includes('datconnlimit') ? '0' : '');
@@ -45,6 +48,12 @@ test('restore verifier accepts only complete equality and removes its isolated t
  const r = run(); assert.equal(r.exitCode, undefined, JSON.stringify(r.logs)); assert.equal(JSON.parse(r.logs.at(-1)).actualIsolatedPostgresRestoreVerified, true);
  assert.ok(r.commands.some(([_, args]) => args.at(-1).includes('DROP DATABASE "kavosh_recovery_90f95990a8ec4db3b763b8a1f63a78ab"'))); assert.equal(r.removed.length, 5);
  assert.equal(JSON.parse(r.logs.at(-1)).originalExportedSnapshotMatched,true);assert.ok(!r.commands.some(([_,args])=>args.at(-1).includes('-d kavosh_one ')));assert.equal(r.commands.filter(([binary])=>binary==='/opt/homebrew/bin/rclone').length,2);
+});
+test('column proof is compared when recorded;legacy archives do not claim it and untrusted operator paths fail closed',()=>{
+ const legacy=run();assert.equal(JSON.parse(legacy.logs.at(-1)).columnPrivilegesVerified,false);
+ const current=run({columnProof:true});assert.equal(current.exitCode,undefined,JSON.stringify(current.logs));assert.equal(JSON.parse(current.logs.at(-1)).columnPrivilegesVerified,true);
+ const query=current.commands.find(([_,args])=>args.at(-1).includes('const {databaseVerificationSnapshot}'));assert.ok(query);assert.ok(query[1].at(-1).includes('sudo -u postgres '));assert.ok(!query[1].at(-1).includes('/current/'));
+ for(const options of [{columnProof:true,columnMismatch:true},{operatorPath:'/tmp/injected'},{operatorPath:'/srv/kavosh-one/operations/recovery-'+'a'.repeat(40)+'/../other'}]){const bad=run(options);assert.equal(bad.exitCode,1);assert.equal(bad.removed.length,5);assert.ok(!bad.logs.some(line=>line.includes('originalExportedSnapshotMatched')));}
 });
 test('explicit recovery selection uses only a validated backup-owned receipt and rejects path or identity substitution',()=>{
  const id='90f95990-a8ec-4db3-b763-b8a1f63a78ab',r=run({args:['--execute',id]});assert.equal(r.exitCode,undefined);assert.ok(r.commands[0][1].at(-1).endsWith('/backup-'+id+'/delivery-status.json'));

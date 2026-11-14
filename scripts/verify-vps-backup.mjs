@@ -12,13 +12,27 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const remote = (command, options = {}) => execFileSync('/usr/bin/ssh', [...ssh, command], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000, maxBuffer: 3145728, ...options });
 const sql = (database, statement) => remote('sudo -u postgres psql -X -At -v ON_ERROR_STOP=1 -d ' + database + ' -c ' + quote(statement)).toString().trim();
 const get = service => execFileSync('/usr/bin/security', ['find-generic-password', '-a', 'kavosh-one', '-s', service, '-w'], { stdio: ['ignore', 'pipe', 'pipe'] });
-function restoredSnapshot(database){
+function restoredSnapshot(database,includeColumnPrivileges){
  assert.match(database,/^kavosh_recovery_[a-f0-9]{32}$/);
+ const inspect=`import assert from 'node:assert/strict';
+import {lstatSync,readFileSync,realpathSync} from 'node:fs';
+const config='/etc/kavosh-one/media-backup.env';
+function sealed(path,directory=false){const s=lstatSync(path);assert.equal(s.uid,0);assert.equal(s.mode&0o022,0);assert.equal(directory?s.isDirectory():s.isFile(),true);assert.equal(realpathSync(path),path);}
+sealed('/etc',true);sealed('/etc/kavosh-one',true);sealed(config);
+const matches=readFileSync(config,'utf8').split('\\n').filter(line=>line.startsWith('KAVOSH_BACKUP_OPERATOR_CLI='));assert.equal(matches.length,1);
+const match=/^KAVOSH_BACKUP_OPERATOR_CLI=(\\/srv\\/kavosh-one\\/operations\\/recovery-[a-f0-9]{40})\\/scripts\\/database-recovery[.]js$/.exec(matches[0]);assert.ok(match);const root=match[1];
+for(const path of ['/srv','/srv/kavosh-one','/srv/kavosh-one/operations',root,root+'/src',root+'/src/operations'])sealed(path,true);
+sealed(root+'/src/operations/database-verification.js');console.log(JSON.stringify(root));`;
+ const root=JSON.parse(remote('sudo /usr/bin/node --input-type=module -e '+quote(inspect)).toString());
+ assert.match(root,/^\/srv\/kavosh-one\/operations\/recovery-[a-f0-9]{40}$/);
  const code=`import assert from 'node:assert/strict';
-import pg from '/srv/kavosh-one/current/node_modules/pg/lib/index.js';
-import {databaseVerificationSnapshot} from '/srv/kavosh-one/current/.recovery-tool/src/operations/database-verification.js';
+import {pathToFileURL} from 'node:url';
+const root=${JSON.stringify(root)};
+const {default:pg}=await import(pathToFileURL(root+'/node_modules/pg/lib/index.js'));
+const {databaseVerificationSnapshot}=await import(pathToFileURL(root+'/src/operations/database-verification.js'));
 const database=${JSON.stringify(database)},c=new pg.Client({host:'/var/run/postgresql',user:'postgres',database,ssl:false,connectionTimeoutMillis:5000,statement_timeout:30000});
-try{await c.connect();await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const r=await c.query('SELECT current_database() name,datconnlimit FROM pg_database WHERE datname=current_database()');assert.equal(r.rows[0].name,database);assert.equal(r.rows[0].datconnlimit,0);console.log(JSON.stringify(await databaseVerificationSnapshot(c,AbortSignal.timeout(45000))));}finally{await c.query('ROLLBACK').catch(()=>{});await c.end();}`;
+try{await c.connect();await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');const r=await c.query('SELECT current_database() name,datconnlimit FROM pg_database WHERE datname=current_database()');assert.equal(r.rows[0].name,database);assert.equal(r.rows[0].datconnlimit,0);console.log(JSON.stringify(await databaseVerificationSnapshot(c,AbortSignal.timeout(45000),${JSON.stringify(includeColumnPrivileges)})));}finally{await c.query('ROLLBACK').catch(()=>{});await c.end();}`;
+ // Root inspects only paths;package code runs as the offline database identity.
  return JSON.parse(remote('sudo -u postgres /usr/bin/node --input-type=module -e '+quote(code)).toString());
 }
 let stage = 'configuration', directory, encrypted, plaintext, proofEncrypted,proofPlaintext,target, created = false, cleanupFailed = false;
@@ -53,11 +67,11 @@ try {
  sql('postgres', 'CREATE DATABASE "' + target + '" CONNECTION LIMIT 0;'); created = true;
  stage = 'native PostgreSQL restore with original ownership and ACLs'; const input = openSync(plaintext, 'r');
  try { const result = spawnSync('/usr/bin/ssh', [...ssh, 'sudo -u postgres pg_restore --single-transaction --exit-on-error --no-password --no-tablespaces --dbname=' + target], { stdio: [input, 'pipe', 'pipe'], timeout: 60000, maxBuffer: 1048576 }); assert.equal(result.status, 0, 'Isolated pg_restore failed; raw diagnostics suppressed.'); } finally { closeSync(input); }
- stage = 'data, functions, permissions and row-policy comparison'; const restored = restoredSnapshot(target);
+ stage = 'data, functions, permissions and row-policy comparison'; const restored = restoredSnapshot(target,source.columnPrivileges!==undefined);
  if(JSON.stringify(restored)!==JSON.stringify(source))console.error('RESTORE_COMPARISON_MISMATCH');
  assert.deepEqual(restored, source);
  assert.equal(sql('postgres', "SELECT datconnlimit FROM pg_database WHERE datname='" + target + "';"), '0');
- console.log(JSON.stringify({ backupId: backup.id, ciphertextSha256: backup.ciphertextSha256, encryptedBytes: backup.encryptedBytes, sourceSchemaRevision: source.schemaRevision, permanentTablesCompared: source.tables.length, rowsCompared: source.tables.reduce((n,t)=>n+t.fingerprint.rows,0), originalDataPermissionsFunctionsAndPoliciesMatch: true, originalExportedSnapshotMatched:true, independentDriveDownloadVerified: true, independentEncryptedCompanionDownloadVerified:true,actualIsolatedPostgresRestoreVerified: true, sourceDatabaseRestoreCommandsIssued:0,privateRecoveryKeyTransferredToVps: false, recoveredDatabaseOrdinaryConnectionsBlocked: true, globalRoleRecoveryVerified: false,sequenceValuesRecoveryVerified:false, mediaRecoveryVerified: false }));
+ console.log(JSON.stringify({ backupId: backup.id, ciphertextSha256: backup.ciphertextSha256, encryptedBytes: backup.encryptedBytes, sourceSchemaRevision: source.schemaRevision, permanentTablesCompared: source.tables.length, rowsCompared: source.tables.reduce((n,t)=>n+t.fingerprint.rows,0),columnPrivilegesVerified:source.columnPrivileges!==undefined, originalDataPermissionsFunctionsAndPoliciesMatch: true, originalExportedSnapshotMatched:true, independentDriveDownloadVerified: true, independentEncryptedCompanionDownloadVerified:true,actualIsolatedPostgresRestoreVerified: true, sourceDatabaseRestoreCommandsIssued:0,privateRecoveryKeyTransferredToVps: false, recoveredDatabaseOrdinaryConnectionsBlocked: true, globalRoleRecoveryVerified: false,sequenceValuesRecoveryVerified:false, mediaRecoveryVerified: false }));
  }
 } catch(error) {
  const diagnostic=String(error?.stderr??''),reason=/invalid_grant|invalid_client|unauthorized|invalid authentication|401/i.test(diagnostic)?'authentication':/not found|directory not found|404/i.test(diagnostic)?'not_found':/permission|forbidden|403/i.test(diagnostic)?'permission':error?.code==='ERR_ASSERTION'?'integrity_or_contract':error?.code==='ENOENT'?'local_tool_missing':'unclassified';

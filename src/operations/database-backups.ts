@@ -206,11 +206,11 @@ export async function restoreDatabaseBackup(raw:unknown,externalSignal?:AbortSig
   if(revision!==i.expectedRevision)throw new RecoveryError('RESTORED_SCHEMA_MISMATCH');
   if(i.expectedVerification){
    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-   const actual=await databaseVerificationSnapshot(client,signal);
+   const actual=await databaseVerificationSnapshot(client,signal,i.expectedVerification.snapshot.columnPrivileges!==undefined);
    if(!isDeepStrictEqual(actual,i.expectedVerification.snapshot))throw new RecoveryError('RESTORED_SNAPSHOT_MISMATCH');
    await client.query('COMMIT');
   }
-  return {restored:true,verifiedSchemaRevision:revision,archiveSha256:i.expectedSha256,backupSnapshotVerified:!!i.expectedVerification,sequenceValuesVerified:false,applicationActivationAllowed:false,ordinaryClientConnectionsBlocked:true,requiresPrivacyAndOutboxReconciliation:true,rolesRestored:false,databaseAccessRestored:false,requiresIsolatedClusterForDatabaseAccessRecovery:true,mediaRestored:false};
+  return {restored:true,verifiedSchemaRevision:revision,archiveSha256:i.expectedSha256,backupSnapshotVerified:!!i.expectedVerification,columnPrivilegesVerified:i.expectedVerification?.snapshot.columnPrivileges!==undefined,sequenceValuesVerified:false,applicationActivationAllowed:false,ordinaryClientConnectionsBlocked:true,requiresPrivacyAndOutboxReconciliation:true,rolesRestored:false,databaseAccessRestored:false,requiresIsolatedClusterForDatabaseAccessRecovery:true,mediaRestored:false};
  }catch(e){if(e instanceof RecoveryError)throw e;throw new RecoveryError('DATABASE_RESTORE_FAILED');}
  finally{
   await client?.end().catch(()=>{});

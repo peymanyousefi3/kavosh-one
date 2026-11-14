@@ -37,6 +37,6 @@ export async function quarantineRecoveredAuthentication(client:pg.Client,dataDir
  }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error;}
  // Independent read-only verification:all business/audit/finance/learning,
  // account/password/MFA records and schema authority must stay byte-identical.
- await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');try{if(!isDeepStrictEqual(unchanged(await databaseVerificationSnapshot(client,signal)),unchanged(original)))throw new RecoveryError('RECOVERY_BUSINESS_PRESERVATION_FAILED');}finally{await client.query('ROLLBACK');}
+ await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');try{if(!isDeepStrictEqual(unchanged(await databaseVerificationSnapshot(client,signal,original.columnPrivileges!==undefined)),unchanged(original)))throw new RecoveryError('RECOVERY_BUSINESS_PRESERVATION_FAILED');}finally{await client.query('ROLLBACK');}
  return{...result,originalBusinessAndAccountRecordsPreserved:true,originalCredentialAndInvitationHistoryPreserved:true,externalQueuesReplayed:false,providerAndPrivacyReconciliationRequired:true,applicationSecretRotationAndMfaMigrationRequired:true,applicationActivationAllowed:false};
 }
