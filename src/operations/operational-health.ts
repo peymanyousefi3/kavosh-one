@@ -18,11 +18,12 @@ export const operationalWorkerUnits={
  scanner:'kavosh-one-scanner.service'
 } as const;
 export const optionalOperationalWorkerUnits={'signature-completion':'kavosh-one-signature-completion.service'} as const;
-export function selectedOperationalWorkerUnits(signingFlag?:string){
+export function selectedOperationalWorkerUnits(signingFlag?:string,imageFlag?:string){
  if(signingFlag!==undefined&&signingFlag!=='true'&&signingFlag!=='false')throw Error('INVALID_SIGNATURE_MONITOR_FLAG');
- return signingFlag==='true'?{...operationalWorkerUnits,...optionalOperationalWorkerUnits}:operationalWorkerUnits;
+ if(imageFlag!==undefined&&imageFlag!=='true'&&imageFlag!=='false')throw Error('INVALID_PROFILE_IMAGE_MONITOR_FLAG');
+ return{...operationalWorkerUnits,...signingFlag==='true'?optionalOperationalWorkerUnits:{},...imageFlag==='true'?{'profile-images':'kavosh-one-profile-images.service'}:{}};
 }
-const workers=z.object(Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,service])) as Record<keyof typeof operationalWorkerUnits,typeof service>).extend({'signature-completion':service.optional()}).strict();
+const workers=z.object(Object.fromEntries(Object.keys(operationalWorkerUnits).map(key=>[key,service])) as Record<keyof typeof operationalWorkerUnits,typeof service>).extend({'signature-completion':service.optional(),'profile-images':service.optional()}).strict();
 export const healthObservation=z.object({observedAt:time,ready:z.boolean(),freeBackupDiskBytes:z.string().regex(/^(0|[1-9][0-9]{0,30})$/),web:service,backup:service,configuration:service,backupTimerActive:z.boolean().nullable(),configurationTimerActive:z.boolean().nullable(),workers:workers.optional()}).strict();
 export function evaluateOperationalHealth(raw:unknown){
  const observation=healthObservation.parse(raw),now=Date.parse(observation.observedAt),issues:{component:string;code:string;severity:'warning'|'critical'}[]=[];

@@ -27,6 +27,12 @@ test('operator-enabled signing worker states are observed without requiring acti
  for(const [patch,code]of [[{active:'inactive'},'WORKER_NOT_RUNNING'],[{active:'failed'},'WORKER_NOT_RUNNING'],[{active:'unknown'},'WORKER_STATUS_UNAVAILABLE'],[{exitStatus:1},'WORKER_PROCESS_FAILURE']] as const){const r=evaluateOperationalHealth({...enabled,workers:{...enabled.workers,'signature-completion':{...signing,...patch}}});assert.equal(r.status,'critical');assert.deepEqual(r.issues,[{component:'worker:signature-completion',code,severity:'critical'}]);}
  assert.throws(()=>evaluateOperationalHealth({...enabled,workers:{...enabled.workers,'signature-completion':{...signing,secret:'PRIVATE'}}}));
 });
+test('separately enabled image worker is monitored without enabling signing or changing legacy worker requirements',()=>{
+ for(const flag of [undefined,'false'])assert.deepEqual(selectedOperationalWorkerUnits(undefined,flag),operationalWorkerUnits);
+ assert.deepEqual(selectedOperationalWorkerUnits('false','true'),{...operationalWorkerUnits,'profile-images':'kavosh-one-profile-images.service'});assert.equal(Object.keys(selectedOperationalWorkerUnits('true','true')).length,14);
+ for(const flag of ['yes','1','TRUE',''])assert.throws(()=>selectedOperationalWorkerUnits(undefined,flag),/INVALID_PROFILE_IMAGE_MONITOR_FLAG/);
+ const image={...completed,active:'active'};assert.equal(evaluateOperationalHealth({...normal,workers:{...workers,'profile-images':image}}).status,'healthy');const r=evaluateOperationalHealth({...normal,workers:{...workers,'profile-images':{...image,active:'failed'}}});assert.deepEqual(r.issues,[{component:'worker:profile-images',code:'WORKER_NOT_RUNNING',severity:'critical'}]);assert.equal(r.queueProgressVerified,false);
+});
 test('readiness failure,process failure and disk thresholds remain bounded without duplicate web alerts',()=>{
  assert.equal(evaluateOperationalHealth({...normal,ready:false}).issues[0].code,'READINESS_UNAVAILABLE');const stopped=evaluateOperationalHealth({...normal,ready:false,web:{...completed,active:'inactive'}});assert.equal(stopped.issues.length,1);assert.equal(stopped.issues[0].code,'WEB_NOT_RUNNING');
  for(const [bytes,status]of [['0','critical'],['2147483647','critical'],['2147483648','warning'],['4294967295','warning'],['4294967296','healthy'],['999999999999999999999999','healthy']])assert.equal(evaluateOperationalHealth({...normal,freeBackupDiskBytes:bytes}).status,status);

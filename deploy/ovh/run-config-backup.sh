@@ -24,6 +24,7 @@ env -i PATH=/usr/bin:/bin LANG=C /usr/bin/tar -C / -cf - \
  etc/systemd/system/kavosh-one-auth-delivery.service \
  etc/systemd/system/kavosh-one-file-inspection.service \
  etc/systemd/system/kavosh-one-file-copy@.service \
+ etc/systemd/system/kavosh-one-profile-images.service \
  etc/systemd/system/kavosh-one-background@.service \
  etc/systemd/system/kavosh-one-background@platform-notices.service.d \
  etc/systemd/system/kavosh-one-background@reports.service.d \

@@ -8,7 +8,7 @@ import {evaluateOperationalHealth,healthObservation,systemdExitTime,selectedOper
 const run=promisify(execFile);let temporary:string|undefined;
 try{
  if(process.argv.length!==2||process.getuid?.()===0||process.env.STATE_DIRECTORY!=='/var/lib/kavosh-one-health')throw new Error('INVALID_MONITOR_CONTEXT');
- const operationalWorkerUnits=selectedOperationalWorkerUnits(process.env.SIGNATURE_COMPLETION_MONITOR_ENABLED);
+ const operationalWorkerUnits=selectedOperationalWorkerUnits(process.env.SIGNATURE_COMPLETION_MONITOR_ENABLED,process.env.PROFILE_IMAGE_MONITOR_ENABLED);
  const directory=await realpath(process.env.STATE_DIRECTORY);if(directory!=='/var/lib/kavosh-one-health')throw new Error('INVALID_MONITOR_CONTEXT');await privateDirectory(directory);
  for(const key of ['DATABASE_URL','AUTH_SECRET','IDENTITY_DATABASE_URL','BACKUP_DATABASE_URL','CREDENTIALS_DIRECTORY'])if(process.env[key]!==undefined)throw new Error('MONITOR_CREDENTIALS_REFUSED');
  const current=directory+'/status.json';let previous:ReturnType<typeof evaluateOperationalHealth>|undefined;
