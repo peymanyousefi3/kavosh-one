@@ -1,0 +1,47 @@
+{
+  "status": "Accepted scoped backend release; not full backend completion",
+  "sourceCommit": "b1fe836d56224c0be155dcbf0df15348f6ebf065", "apiVersion": "0.475.0", "schemaRevision": 427,
+  "stagingReceipt": "deploy/ovh/storage-capacity-corrected-staging-2026-11-14.json",
+  "gates": {"nativeRun": 43604142380, "nativeConclusion": "success", "successfulJobs": 13, "secretRun": 43604142554, "secretConclusion": "success"},
+  "testedSource": {"merge": "07495a69d3a7a4e656bd2f05e948087c6213f27b", "actualCheckoutObservedInJob": 132475026940, "tree": "9e200c35510c9b86ec66327592a0817ee30a4041", "mergeTreeMatchesSource": true, "productionHttpSmokesPassed": true, "dependencyAudit": "No known vulnerabilities found"},
+  "nativeCapacityTests": {"job": 132475026892, "cases": 13, "passed": 13, "failed": 0, "skipped": 0, "twoReservationRaceMs": 75, "wholeQuickGroup": {"tests": 551, "passed": 538, "failed": 0, "skipped": 13, "durationMs": 786989.760038}},
+  "historicalUpgradeCorrection": {"job": 132475026790, "historical425to426AndCurrentPreservationPassed": true, "testDurationMs": 3248.148997, "wholeQuickGroup": {"tests": 544, "passed": 540, "failed": 0, "skipped": 4, "durationMs": 853056.053044}, "oldFailedRun": 43602726755, "oldFailureNeverBypassed": true},
+  "activation": {
+    "operatorSha256": "ac3372249e3646b7d095f22793ca811a923d7d80394c0ce65df8fa0c23cdcc34",
+    "readOnlyCheckLauncherSha256": "647fc3e4d417dcf1f8b3810714b9ec83f3b4c65254cdee03c20f25b6e0d1f74e",
+    "webPid": 852737, "webInvocation": "1b52b77d9d864dbbb86315f320c7e5c6",
+    "actualWebCwd": "/srv/kavosh-one/releases/b1fe836/.next/standalone",
+    "workers": [{"name": "notifications", "pid": 852732, "invocation": "d24d885bba4d4acaac0db102d146a82c", "automaticRestarts": 0}, {"name": "messages", "pid": 852731, "invocation": "6abfcd9167c6470c81560f3a4a778b7f", "automaticRestarts": 0}],
+    "actualWorkerCwdsVerified": 2,
+    "workerRuntime": "/srv/kavosh-one/operations/background-b1fe836d56224c0be155dcbf0df15348f6ebf065",
+    "backgroundUnitSha256": "950c772ef026ee860b1af99f14b681eb298bff033313a9d7d307e282cfb6d848",
+    "readOnlyWorkerRoleChecksPassed": 2, "jobsClaimedByChecks": 0, "messagesSentByChecks": 0,
+    "databaseMigrationsApplied": ["427_storage_capacity_alerts.sql"], "allAppliedMigrationChecksumsMatch": true,
+    "legacyWorkersStoppedDuringBrokerGrantUpgrade": true, "readinessRetried": true, "zeroDowntimeClaimed": false
+  },
+  "boundedLiveChecks": {"passed": 7, "readinessStatus": 200, "landingStatus": 200, "newPrivateRoutesFailClosed": true, "exactCompactContractVerified": true, "contractBytes": 2316500, "contractSha256": "51b1441d6fe964c2dc66db7ef47596d27031c8265c24e1f9ca5a7609c752e74c", "businessRowsInsertedByChecks": 0, "providerTestSends": 0},
+  "protectedState": {"landingPid": 653511, "landingInvocation": "091c68e402434f4ab1b9ae9d07284208", "reportsPid": 827204, "platformNoticesPid": 818527, "signingPid": 765295, "imageWorkerPid": 812227, "protectedProcessesUnchanged": true, "routingUnchanged": true, "caddyMainSha256": "10dda8a775670386aa48c264e78c4b04577a576855d29314143c3ed7eee33aad", "caddyOneSha256": "320aa2ea533bdfcabe94b9137c048700dcdeaf2c49b1dedeef61a75b794a06bb"},
+  "preMigrationRecovery": {"backupId": "0b1494ff-9821-4c9e-b234-abf8df86953e", "sourceSchemaRevision": 426, "receipt": "deploy/ovh/storage-capacity-staging-2026-11-14.json#/preMigrationRecovery", "actualIsolatedRestoreVerified": true},
+  "postMigrationRecovery": {
+    "backupId": "341f2d45-462c-43fc-8148-e7e6a55e65f2", "invocation": "9dedc247ab654e8a90c4ed014c66f990", "sourceSchemaRevision": 427,
+    "ciphertextSha256": "0fe68e9de0fbdcf3f4b6511862abce00d54b04930ed8dc632e534c9994ef0291", "encryptedBytes": 7758482,
+    "permanentTablesCompared": 452, "rowsCompared": 853, "columnPrivilegesVerified": true,
+    "originalDataPermissionsFunctionsAndPoliciesMatch": true, "originalExportedSnapshotMatched": true,
+    "independentDriveAndEncryptedCompanionDownloadsVerified": true, "authenticatedOffServerDecryptionVerified": true,
+    "actualIsolatedPostgresRestoreVerified": true, "ordinaryConnectionsToRestoredDatabaseBlocked": true,
+    "sourceDatabaseRestoreCommandsIssued": 0, "privateRecoveryKeyTransferredToVps": false, "temporaryRecoveryDatabasesRemaining": 0,
+    "globalRoleRecoveryReperformed": false, "sequenceRecoveryReperformed": false, "mediaRecoveryReperformed": false
+  },
+  "changedSettingsRecovery": {
+    "backupId": "4462d1eb-3427-4efd-8dbb-2ac5a205471d", "invocation": "8df6cce6abc444e1b9ce7c494bdb0b6e",
+    "ciphertextSha256": "c2e108e39549a58421d232e253b328e37b3050d4e624a071832cc3dbb6522677", "encryptedBytes": 194792,
+    "independentDriveDownloadVerified": true, "authenticatedOffServerDecryptionVerified": true,
+    "requiredFilesChecked": 55, "archiveEntriesChecked": 100, "passwordFreeRolesVerified": true,
+    "newBackgroundUnitSha256Matches": true, "tlsKeyPairAndServiceCredentialBindingsVerified": true,
+    "privateDataKeysIncluded": true, "agreementBackupReaderIncluded": true, "imageWorkerBindingVerified": true,
+    "platformGatewayEnabled": false, "publicProfilesEnabled": false, "landingPageExcluded": true,
+    "privateRecoveryKeyTransferredToVps": false, "configurationApplied": false, "fullServerRebuildVerified": false
+  },
+  "operations": {"observedAt": "2026-11-14T14:41:13.599Z", "status": "healthy", "ready": true, "requiredWorkersObserved": 14, "issues": 0, "coverage": "required_process_states_observed", "queueProgressVerified": false, "actualEnabledTimers": ["kavosh-one-backup.timer", "kavosh-one-config-backup.timer", "kavosh-one-monitor.timer"]},
+  "limits": ["Storage alerts measure reserved claims,not provider physical usage or billing.", "No real provider test sends,new payments,signatures,purchases or provider-original deletion.", "No fresh global-role,sequence,media,full-host or failover recovery claim; earlier scoped evidence remains separate.", "Tenant disposition execution,complete138-entry reconciliation and remaining owner-visibility/provider/legal gates remain open.", "Stripe activation remains deferred,social feeds excluded,and UI/PDF design still requires owner input."]
+}
