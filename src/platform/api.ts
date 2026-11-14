@@ -43,12 +43,16 @@ const cancellationConfirmation=cancellationWithdrawal.extend({expectedSubscripti
 const holdReason=reason.refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v));
 const legalHoldCreate=z.object({caseReference:name.refine(v=>v.isWellFormed()&&!/[\u0000-\u001f\u007f]/.test(v)),reason:holdReason}).strict();
 const legalHoldRelease=z.object({expectedVersion:z.literal(1),confirmAcademyId:id,reason:holdReason}).strict();
+const retentionDecision=z.object({relation:z.string().regex(/^public\.[A-Za-z_][A-Za-z0-9_$]{0,62}$/),decision:z.enum(['retain','eligible']),basis:holdReason.max(500),eligibleOn:z.iso.date().nullable()}).strict().refine(v=>v.decision==='retain'?v.eligibleOn===null:v.eligibleOn!==null);
+const dispositionReview=z.object({expectedAcademyVersion:z.number().int().positive().max(2147483647),expectedSubscriptionVersion:z.number().int().min(0).max(2147483647),retentionDecisions:z.array(retentionDecision).min(1).max(2000),reviewReference:holdReason.max(500),reviewTimeZone:z.string().min(1).max(100),reason:holdReason}).strict();
 const ownerInbox=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),afterCreatedAt:z.iso.datetime({offset:true}).optional(),afterId:id.optional(),unread:z.enum(['true','false']).transform(v=>v==='true').optional()}).strict().refine(v=>(v.afterCreatedAt===undefined)===(v.afterId===undefined));
 const empty=z.object({}).strict();
 const cancellationQueue=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),academyId:id.optional(),readiness:z.enum(['all','waiting','ready']).default('all'),afterReviewAfter:z.iso.datetime({offset:true}).optional(),afterId:id.optional()}).strict().refine(v=>(v.afterReviewAfter===undefined)===(v.afterId===undefined));
 function invitationToken(secret:string,userId:string,academyId:string,key:string){return 'kvi_'+createHmac('sha256',secret).update(JSON.stringify(['platform-master-invitation:v1',userId,academyId,key])).digest('base64url');}
 export type PlatformSession={userId:string;sessionId:string};
 export const platformContract=[
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations/{cancellationId}/disposition-reviews',method:'post',schema:dispositionReview,summary:'Verified MFA platform owner records explicit retention decisions for EVERY current school relation after confirmed native30-day cancellation,with exact current academy/subscription versions. Bound1MiB JSON;no caller SQL or primary-key export. Retained relations and all their native referenced parents stay protected. Unknown,duplicate or omitted classifications,future eligibility,active legal holds and unsafe source permissions reject atomically. Immutable review links exact native source manifest and audit,with exact retries. Review reference is owner-supplied evidence,not statutory-compliance certification. No deletion,execution grant,provider change or source-copy cleanup.'},
+ {path:'/api/platform/v1/academies/{id}/subscription/cancellations/{cancellationId}/disposition-reviews/{reviewId}',method:'get',summary:'Verified MFA owner reads one immutable school/cancellation-bound retention review with recorded decisions and source/audit references. Source freshness is explicitly not rechecked;historical review is never current execution authority. Read is privately audited;no raw records,keys or provider access.'},
  {path:'/api/platform/v1/academies/{id}/students/{studentId}/care',method:'get',accessPurposeRequired:true,summary:'Verified MFA platform owner reads one exact school/student current care edition metadata with privately audited purpose. Unrecorded is version0/state null. No care text,envelope,commitment,student impersonation or business changes.'},
  {path:'/api/platform/v1/academies/{id}/students/{studentId}/care/history',method:'get',accessPurposeRequired:true,querySchema:homeworkHistoryQuery,summary:'Verified MFA owner reads only immutable care edition metadata under exact school/student binding and private purpose audit. Ascending version cursor,at most5records;no allergies,considerations,encrypted envelope,commitment or modification.'},
  {path:'/api/platform/v1/academies/{id}/students/{studentId}/care/reveal',method:'post',readOnly:true,accessPurposeRequired:true,schema:careReveal,summary:'Verified MFA owner explicitly reveals one exact original encrypted care edition under school/student/version binding and private purpose. Uses the existing authenticated care vault and commitment validation without school-user impersonation. Critical private-content-redacted access audit commits atomically before any plaintext response. No idempotency cache,publication,medical verification,source mutation or external delivery;missing keys or corrupt evidence fail closed. Historical information is not silently restored as current.'},
@@ -123,6 +127,7 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
    const planTarget=/^plans\/([a-f0-9-]{36})(\/(?:change|duplicate|history))?$/.exec(path);
    const subscriptionTarget=/^academies\/([a-f0-9-]{36})\/subscription(?:\/(history|assign|free-exemption))?$/.exec(path);
    const cancellationTarget=/^academies\/([a-f0-9-]{36})\/subscription\/cancellations(?:\/([a-f0-9-]{36})(?:\/(withdraw|confirm))?)?$/.exec(path);
+   const dispositionTarget=/^academies\/([a-f0-9-]{36})\/subscription\/cancellations\/([a-f0-9-]{36})\/disposition-reviews(?:\/([a-f0-9-]{36}))?$/.exec(path);
    const noticeTarget=/^notifications\/([a-f0-9-]{36})\/read$/.exec(path);
    const holdTarget=/^academies\/([a-f0-9-]{36})\/(retention|legal-holds)(?:\/([a-f0-9-]{36})(\/release)?)?$/.exec(path);
    const directoryTarget=/^academies\/([a-f0-9-]{36})\/records\/([^/]+)$/.exec(path);
@@ -173,6 +178,11 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
     else throw new ApiError(405,'METHOD_NOT_ALLOWED');
    }else if(path==='subscription-cancellations'){
     if(request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const pairs=[...url.searchParams];if(new Set(pairs.map(([k])=>k)).size!==pairs.length)throw new ApiError(400,'INVALID_QUERY');input=cancellationQueue.parse(Object.fromEntries(pairs));operation='cancellations.queue';
+   }else if(dispositionTarget){
+    if(url.search)throw new ApiError(400,'INVALID_QUERY');const academyId=id.parse(dispositionTarget[1]),cancellationId=id.parse(dispositionTarget[2]);
+    if(request.method==='POST'&&!dispositionTarget[3]){key=id.parse(request.headers.get('idempotency-key'));input={...dispositionReview.parse(await jsonBody(request,1048576)),academyId,cancellationId};operation='disposition.prepare';}
+    else if(request.method==='GET'&&dispositionTarget[3]){input={academyId,cancellationId,reviewId:id.parse(dispositionTarget[3])};operation='disposition.get';}
+    else throw new ApiError(405,'METHOD_NOT_ALLOWED');
    }else if(cancellationTarget){
     const academyId=id.parse(cancellationTarget[1]),cancellationId=cancellationTarget[2]?id.parse(cancellationTarget[2]):undefined;
     if(request.method==='GET'&&!cancellationTarget[3]){
@@ -270,6 +280,9 @@ export function createPlatformApi(database:Database,resolve:(request:Request)=>P
     else if(['PLATFORM_SUBSCRIPTION_VERSION_CHANGED','PLATFORM_SUBSCRIPTION_UNCHANGED','PLATFORM_PLAN_NOT_CURRENT'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_FREE_ACADEMY_PROTECTED','PLATFORM_FREE_ACADEMY_ALREADY_BOUND','PLATFORM_FREE_ACADEMY_ACTIVE_FREE_REQUIRED'].includes(message)){status=409;code=message;}
     else if(['PLATFORM_IDEMPOTENCY_CONFLICT','PLATFORM_ACADEMY_VERSION_CHANGED','PLATFORM_MASTER_VERIFICATION_REQUIRED','PLATFORM_PROVISIONING_REENTRY_FORBIDDEN','PLATFORM_MASTER_INVITATION_UNAVAILABLE','PLATFORM_INVITATION_NO_LONGER_CURRENT','PLATFORM_INVITATION_REISSUE_REQUIRED'].includes(message)){status=409;code=message;}
+    else if(message==='PLATFORM_DISPOSITION_NOT_FOUND'){status=404;code=message;}
+    else if(['PLATFORM_DISPOSITION_RETENTION_PENDING','PLATFORM_DISPOSITION_CLASSIFICATION_INCOMPLETE','PLATFORM_DISPOSITION_CANCELLATION_REQUIRED','ACADEMY_LEGAL_HOLD_ACTIVE'].includes(message)){status=409;code=message;}
+    else if(['DISPOSITION_RETENTION_LIMIT_EXCEEDED','DISPOSITION_MANIFEST_LIMIT_EXCEEDED'].includes(message)){status=422;code=message;}
     else if(message==='INVALID_PLATFORM_INPUT'){status=400;code=message;}
    }
    return Response.json({error:{code}},{status,headers:{...headers,...(status===429?{'Retry-After':'60'}:{})}});

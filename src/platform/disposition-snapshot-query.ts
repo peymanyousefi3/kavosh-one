@@ -8,7 +8,7 @@ const qualified=(schema:string,name:string)=>quote(schema)+'.'+quote(name);
 // Shared query compiler for the direct test inspector and the installer-sealed
 // native owner broker. This returns trusted SQL,never an externally accepted
 // query. The broker must bind values and enforce authority separately.
-export function buildDispositionSnapshotQuery(raw:unknown,seedRelations:string[],withManifest:boolean){
+export function buildDispositionSnapshotQuery(raw:unknown,seedRelations:string[],withManifest:boolean,wholeRelationRetention=false){
  const catalog=validatedDispositionCatalog(raw),structure=dispositionSchemaOrder(catalog);
  if(structure.blockers.some(b=>b.code!=='ACTION_DEPENDENCY_CYCLE'))throw new ApiError(409,'DISPOSITION_SCHEMA_REVIEW_REQUIRED');
  const relations=new Map(catalog.relations.map(r=>['public.'+r.name,r]));
@@ -21,6 +21,10 @@ export function buildDispositionSnapshotQuery(raw:unknown,seedRelations:string[]
   });
   const root=relations.get('public.academies')!;
   const initial=[`SELECT 'public.academies'::text relation,${key('a',root)} record_key FROM public.academies a WHERE a.id=$1::uuid`,'SELECT relation,record_key FROM accepted'];
+  // Keep relation-wide obligations native: a retained ledger may have far
+  // more rows than the small individual-exception input permits. Never send
+  // every financial primary key through JavaScript just to preserve a table.
+  if(wholeRelationRetention)for(const r of catalog.relations)initial.push(`SELECT ${literal('public.'+r.name)}::text relation,${key('t',r)} record_key FROM ${table(r)} t WHERE ${scope('t',r)}=$1::uuid AND $5::jsonb?${literal('public.'+r.name)}`);
   const parents:string[]=[],anomalies:string[]=[];
   for(const f of catalog.foreignKeys){
    const childName=f.childSchema+'.'+f.childRelation,parentName=f.parentSchema+'.'+f.parentRelation,c=relations.get(childName),p=relations.get(parentName);

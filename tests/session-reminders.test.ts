@@ -131,7 +131,10 @@ test('canceling or rescheduling before delivery rejects the old reminder and a n
  }finally{await f.pg.close();}
 });
 test('rescheduling a queued class supersedes its old reminder while another actually due time receives fresh delivery',async()=>{
- const f=await fixture();try{
+ // Keep this rescheduling scenario inside its reviewed late window even when
+ // the two worker steps straddle a real minute boundary. The separate expired
+ // window test still requires no reminder after its deadline.
+ const f=await fixture(4,3);try{
   assert.equal((await f.work()).outcome,'queued',JSON.stringify(f.errors));const start=f.start.subtract({minutes:1}),end=f.end.subtract({minutes:1});assert.equal((await f.changeSession(2,{kind:'reschedule',start:f.local(start),end:f.local(end)})).response.status,200);
   assert.equal((await f.deliver()).outcome,'cancelled');await f.ready();assert.equal((await f.work()).outcome,'queued',JSON.stringify(f.errors));assert.equal((await f.deliver()).outcome,'succeeded');assert.equal((await f.request('notifications?origin=automation',undefined,'staff')).body.data.length,1);assert.equal((await f.pg.query('SELECT * FROM public.session_reminder_occurrences')).rows.length,2);
  }finally{await f.pg.close();}

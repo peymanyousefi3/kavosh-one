@@ -14,7 +14,7 @@ const literal=(s:string)=>"E'"+s.replaceAll('\\','\\\\').replaceAll("'","''")+"'
 // No runtime route accepts this SQL,or any other caller-supplied statement.
 export function compileDispositionInspector(raw:unknown,expectedCatalogFingerprint:string){
  if(!/^[a-f0-9]{64}$/.test(expectedCatalogFingerprint))throw new ApiError(400,'DISPOSITION_SCHEMA_INVALID');
- const catalog=validatedDispositionCatalog(raw),{sql,structure}=buildDispositionSnapshotQuery(catalog,catalog.relations.map(r=>'public.'+r.name),true);
+ const catalog=validatedDispositionCatalog(raw),{sql,structure}=buildDispositionSnapshotQuery(catalog,catalog.relations.map(r=>'public.'+r.name),true,true);
  const catalogRead=`SELECT meta.snapshot FROM (${dispositionCatalogQuery}) meta`;
  const readerGuard=`  SELECT current_user='${dispositionInspectorRole}' AND NOT r.rolcanlogin AND NOT r.rolsuper AND NOT r.rolbypassrls AND NOT r.rolcreaterole AND NOT r.rolcreatedb AND NOT r.rolreplication AND NOT r.rolinherit
    AND NOT EXISTS(SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid)
@@ -33,13 +33,21 @@ export function compileDispositionInspector(raw:unknown,expectedCatalogFingerpri
     OR has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE,REFERENCES')
     OR NOT EXISTS(SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid=c.oid AND p.polname='disposition_reader_select' AND p.polcmd='r' AND p.polpermissive AND p.polroles=ARRAY[r.oid] AND pg_get_expr(p.polqual,p.polrelid)='true')
     OR EXISTS(SELECT 1 FROM pg_catalog.pg_policy p WHERE p.polrelid=c.oid AND NOT p.polpermissive AND p.polcmd IN('r','*') AND EXISTS(SELECT 1 FROM unnest(p.polroles) member WHERE CASE WHEN member=0 THEN true ELSE pg_has_role(r.oid,member,'USAGE') END))) THEN RAISE EXCEPTION 'UNSAFE_DISPOSITION_READER' USING ERRCODE='42501';END IF;`;
- const body=`DECLARE catalog_state jsonb;current_hash text;seed jsonb;part jsonb;source_relation jsonb;data jsonb;result jsonb;safe boolean;audit_id uuid:=gen_random_uuid();
+ const body=`DECLARE catalog_state jsonb;current_hash text;seed jsonb;part jsonb;source_relation jsonb;data jsonb;result jsonb;safe boolean;row_seeds jsonb;retained_relations jsonb;audit_id uuid:=gen_random_uuid();
  BEGIN
   PERFORM platform_private.authorize_owner(p_user,p_session);
-  IF p_academy IS NULL OR p_seeds IS NULL OR jsonb_typeof(p_seeds)<>'array' OR p_max_rows IS NULL OR p_max_rows NOT BETWEEN 1 AND 1000000 OR p_max_source_rows IS NULL OR p_max_source_rows NOT BETWEEN 1 AND 1000000 OR p_purpose IS NULL OR length(btrim(p_purpose)) NOT BETWEEN 1 AND 2000 OR p_purpose~'[[:cntrl:]]' THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
-  IF jsonb_array_length(p_seeds)>10000 OR octet_length(p_seeds::text)>2097152 OR (SELECT count(DISTINCT value) FROM jsonb_array_elements(p_seeds))<>jsonb_array_length(p_seeds) THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
+  IF p_academy IS NULL OR p_seeds IS NULL OR p_max_rows IS NULL OR p_max_rows NOT BETWEEN 1 AND 1000000 OR p_max_source_rows IS NULL OR p_max_source_rows NOT BETWEEN 1 AND 1000000 OR p_purpose IS NULL OR length(btrim(p_purpose)) NOT BETWEEN 1 AND 2000 OR p_purpose~'[[:cntrl:]]' OR octet_length(p_seeds::text)>2097152 THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
+  IF jsonb_typeof(p_seeds)='array' THEN row_seeds=p_seeds;retained_relations='[]'::jsonb;
+  ELSIF jsonb_typeof(p_seeds)='object' THEN
+   IF p_seeds-ARRAY['records','relations']<>'{}'::jsonb OR jsonb_typeof(p_seeds->'records') IS DISTINCT FROM 'array' OR jsonb_typeof(p_seeds->'relations') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
+   row_seeds=p_seeds->'records';retained_relations=p_seeds->'relations';
+  ELSE RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
+  IF jsonb_array_length(row_seeds)>10000 OR (SELECT count(DISTINCT value) FROM jsonb_array_elements(row_seeds))<>jsonb_array_length(row_seeds) OR jsonb_array_length(retained_relations)>2000 OR (SELECT count(DISTINCT value) FROM jsonb_array_elements(retained_relations))<>jsonb_array_length(retained_relations) THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
   ${readerGuard}
-  FOR seed IN SELECT value FROM jsonb_array_elements(p_seeds) LOOP
+  FOR part IN SELECT value FROM jsonb_array_elements(retained_relations) LOOP
+   IF jsonb_typeof(part)<>'string' OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(catalog_state->'relations') r WHERE 'public.'||(r->>'name')=part#>>'{}') THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
+  END LOOP;
+  FOR seed IN SELECT value FROM jsonb_array_elements(row_seeds) LOOP
    IF jsonb_typeof(seed)<>'object' OR seed-ARRAY['relation','key']<>'{}'::jsonb OR jsonb_typeof(seed->'relation') IS DISTINCT FROM 'string' OR jsonb_typeof(seed->'key') IS DISTINCT FROM 'array' THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
    IF jsonb_array_length(seed->'key') NOT BETWEEN 1 AND 32 THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_INPUT_INVALID' USING ERRCODE='22023';END IF;
    SELECT value INTO source_relation FROM jsonb_array_elements(catalog_state->'relations') WHERE 'public.'||(value->>'name')=seed->>'relation';
@@ -50,8 +58,8 @@ export function compileDispositionInspector(raw:unknown,expectedCatalogFingerpri
   END LOOP;
   PERFORM pg_advisory_xact_lock_shared(hashtextextended(p_academy::text,374));
   IF EXISTS(SELECT 1 FROM platform_private.academy_legal_holds h WHERE h.academy_id=p_academy AND NOT EXISTS(SELECT 1 FROM platform_private.academy_legal_hold_releases r WHERE r.hold_id=h.id)) THEN RAISE EXCEPTION 'ACADEMY_LEGAL_HOLD_ACTIVE' USING ERRCODE='23514';END IF;
-  EXECUTE ${literal('SELECT to_jsonb(snapshot) FROM ('+sql+') snapshot')} INTO data USING p_academy,p_seeds,p_max_rows,p_max_source_rows;
-  IF (data->>'academy_count')::integer<>1 OR (data->>'accepted_count')::integer<>jsonb_array_length(p_seeds) THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_SOURCE_MISSING' USING ERRCODE='23514';END IF;
+  EXECUTE ${literal('SELECT to_jsonb(snapshot) FROM ('+sql+') snapshot')} INTO data USING p_academy,row_seeds,p_max_rows,p_max_source_rows,retained_relations;
+  IF (data->>'academy_count')::integer<>1 OR (data->>'accepted_count')::integer<>jsonb_array_length(row_seeds) THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_SOURCE_MISSING' USING ERRCODE='23514';END IF;
   IF (data->>'retained_count')::integer>p_max_rows THEN RAISE EXCEPTION 'DISPOSITION_RETENTION_LIMIT_EXCEEDED' USING ERRCODE='23514';END IF;
   IF (data->'source_manifest'->>'totalRows')::integer>p_max_source_rows THEN RAISE EXCEPTION 'DISPOSITION_MANIFEST_LIMIT_EXCEEDED' USING ERRCODE='23514';END IF;
   IF data->'source_manifest' IS NULL OR (data->'source_manifest'->>'retainedRows')::integer<>(data->>'retained_count')::integer OR (data->'source_manifest'->>'totalRows')::integer<>(data->'source_manifest'->>'candidateRows')::integer+(data->>'retained_count')::integer THEN RAISE EXCEPTION 'DISPOSITION_MANIFEST_INVALID' USING ERRCODE='23514';END IF;
