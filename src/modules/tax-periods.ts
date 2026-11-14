@@ -9,8 +9,8 @@ import { payrollTaxScope,payrollTaxDefinition } from './payroll-tax-profiles.ts'
 import { lockFinanceBook } from '../core/finance-lock.ts';
 import { lockAcademyTopology } from './academy.ts';
 import { authorizedNetPayRun } from './payrun-net.ts';
-import { sourceContributionsInput,sourceContributionsData } from './source-contributions-preview.ts';
-import { calculatedPayrollRequest } from '../core/calculated-payroll-input.ts';
+import { sourceContributionsFields,sourceContributionsData } from './source-contributions-preview.ts';
+import { calculatedPayrollFields,hasSinglePayrollHistoryAttestation } from '../core/calculated-payroll-input.ts';
 import { calculateOntarioRegularIncomeTax } from '../core/ontario-payroll-income-tax.ts';
 import { formatMoneyTotal,parseMoney,readMinorUnits } from '../core/money.ts';
 
@@ -21,8 +21,8 @@ const fields={taxProfileVersion:version,definition,reason:text},create=z.object(
 const paging=z.object({profileId:uuid.optional(),personId:uuid.optional(),employerId:uuid.optional(),taxYear:z.coerce.number().int().min(1900).max(9999).optional(),active:z.enum(['true','false']).optional(),after:uuid.optional(),limit:z.coerce.number().int().min(1).max(100).default(25)}).strict();
 const sourceQuery=z.object({personId:uuid,employerId:uuid,taxYear:z.coerce.number().int().min(1900).max(9999),payOn:date}).strict().refine(q=>q.payOn.startsWith(q.taxYear+'-'));
 const read=z.object({version:z.coerce.number().int().positive().max(2147483647).optional()}).strict(),history=z.object({afterVersion:z.coerce.number().int().min(0).max(2147483647).default(0),limit:z.coerce.number().int().min(1).max(10).default(5)}).strict();
-const preview=sourceContributionsInput.omit({expectedTaxProfileVersion:true,timeZone:true,paymentKind:true,payPeriodsPerYear:true}).extend({expectedPeriodVersion:version}).strict();
-const taxesPreview=calculatedPayrollRequest.omit({periodId:true});
+const preview=sourceContributionsFields.omit({expectedTaxProfileVersion:true,timeZone:true,paymentKind:true,payPeriodsPerYear:true}).extend({expectedPeriodVersion:version}).strict().refine(hasSinglePayrollHistoryAttestation,'Choose exactly one payroll-history attestation.');
+const taxesPreview=calculatedPayrollFields.omit({periodId:true}).refine(hasSinglePayrollHistoryAttestation,'Choose exactly one payroll-history attestation.');
 type Profile={id:string;person_id:string;employer_id:string;tax_year:number};
 type Header={id:string;profile_id:string;code:string;version:number};
 type Basis={profile:{id:string;personId:string;employerId:string;taxYear:number}|null;taxEdition:{version:number;effectiveOn:string;active:boolean}|null;before:unknown;otherPeriods:unknown[];unavailable:string|null};
@@ -55,7 +55,7 @@ export async function taxPeriodCalculationData(ctx:ApiContext,id:string,raw:unkn
   if(!d.active||!d.regularRunId)throw new ApiError(409,'TAX_PERIOD_ACTIVE_REGULAR_RUN_REQUIRED');await authorizedNetPayRun(ctx,d.regularRunId);
   if(withTax&&(await ctx.db.query("SELECT 1 FROM public.payrun_groups g CROSS JOIN LATERAL jsonb_array_elements(g.source_snapshot->'items') i WHERE g.id=$1 AND i->>'kind'='manual_bonus' LIMIT 1",[d.regularRunId])).rows.length)throw new ApiError(409,'TAX_PERIOD_NON_PERIODIC_EARNINGS_REVIEW_REQUIRED');
   const b=(await ctx.db.query<{b:Basis}>('SELECT public.tax_period_basis($1,$2::jsonb) b',[id,JSON.stringify({expectedVersion:h.version,taxProfileVersion:r.taxVersion,definition:d})])).rows[0].b;if(b.unavailable)throw new ApiError(409,b.unavailable);
-  const scenario={pensionableEarnings:i.pensionableEarnings,insurableEarnings:i.insurableEarnings,noQuebecTransfer:i.noQuebecTransfer,noOtherSameEmployerPayments:i.noOtherSameEmployerPayments,noNonCashOrZeroNetPayments:i.noNonCashOrZeroNetPayments,eligibilityReview:i.eligibilityReview},data=await sourceContributionsData(ctx,d.regularRunId,{...scenario,expectedTaxProfileVersion:r.taxVersion,timeZone:d.timeZone,paymentKind:'regular_salary_or_wages',payPeriodsPerYear:d.payPeriodsPerYear});
+  const scenario={pensionableEarnings:i.pensionableEarnings,insurableEarnings:i.insurableEarnings,noQuebecTransfer:i.noQuebecTransfer,noOtherSameEmployerPayments:i.noOtherSameEmployerPayments,noNonCashOrZeroNetPayments:i.noNonCashOrZeroNetPayments,noOtherNonCashPayments:i.noOtherNonCashPayments,eligibilityReview:i.eligibilityReview},data=await sourceContributionsData(ctx,d.regularRunId,{...scenario,expectedTaxProfileVersion:r.taxVersion,timeZone:d.timeZone,paymentKind:'regular_salary_or_wages',payPeriodsPerYear:d.payPeriodsPerYear});
   let taxResult:Record<string,unknown>={};if(withTax){
    const profile=payrollTaxDefinition.parse((await ctx.db.query<{definition:unknown}>('SELECT definition FROM public.payroll_tax_profile_revisions WHERE profile_id=$1 AND version=$2',[h.profile_id,r.taxVersion])).rows[0].definition);
    if(profile.provinceOfEmployment!=='ON')throw new ApiError(409,'TAX_PERIOD_ON_INCOME_TAX_RULES_UNSUPPORTED');if(profile.federalTd1.status!=='recorded'||profile.provincialDeclaration.status!=='recorded'||profile.incomeTaxExemption!=='none')throw new ApiError(409,'TAX_PERIOD_RECORDED_TD1_REQUIRED');if(profile.ontarioTaxReductionClaimCount===undefined)throw new ApiError(409,'TAX_PERIOD_ON_REDUCTION_REVIEW_REQUIRED');

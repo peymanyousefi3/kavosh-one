@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.458.0",
+    "version": "0.459.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -55853,6 +55853,11 @@
                         "type": "boolean",
                         "const": true
                       },
+                      "noOtherNonCashPayments": {
+                        "description": "Explicitly permits only current reviewed actual zero-net settlements in recorded history;attests no other noncash history. Mutually exclusive with noNonCashOrZeroNetPayments. Missing or stale recognition still blocks calculation.",
+                        "type": "boolean",
+                        "const": true
+                      },
                       "eligibilityReview": {
                         "type": "string",
                         "minLength": 1,
@@ -55874,7 +55879,6 @@
                       "insurableEarnings",
                       "noQuebecTransfer",
                       "noOtherSameEmployerPayments",
-                      "noNonCashOrZeroNetPayments",
                       "eligibilityReview",
                       "fullyTaxableCashRemuneration",
                       "noBonusesOrOtherTaxAdjustments"
@@ -55915,7 +55919,7 @@
     },
     "/api/v1/payroll/payruns/{id}/net/source-contributions-preview": {
       "post": {
-        "summary": "Read-only standard2026 CPP/CPP2/EI calculation from current effective worker/employer tax settings and permission-complete reviewed payment-linked YTD,not manually retyped past amounts. Strict declared subject/standard-plan eligibility;refuses current-run payment history,incomplete YTD,missing past declarations,Quebec amounts or effective past Quebec employment,employee or uncertain zero-net history under whole original posting/source rights with a500posting ceiling,and known overlapping paid-service windows for regular exemption scenarios. Zero-net review includes current retained actual settlements in the selected timezone/window even when planned in another year;corrections and withdrawals are not tax recognition. Historical schemas omit unavailable settlement tables. No exemption reservation,statutory-period proof,external-history verification,income-tax/net statement or payment.",
+        "summary": "Read-only standard2026 CPP/CPP2/EI calculation from current effective worker/employer tax settings and permission-complete reviewed same-employer YTD,not manually retyped past amounts. Choose exactly one true history attestation:original noNonCashOrZeroNetPayments remains strict;noOtherNonCashPayments permits only current explicitly reviewed actual zero-net settlements while affirming no other noncash history. Cash and zero-net source references stay separate;no fictional cash payment. Strict declared subject/standard-plan eligibility;refuses current-run settlement reuse,incomplete or reversed-but-still-recognized YTD,missing past declarations,Quebec history and overlapping regular service. Full original posting/work/account authority and500posting ceiling retained. Actual timezone/date governs zero-net history even when planned in another year;settlement alone is not tax recognition. Opt-in fails closed before schema411. No exemption reservation,statutory-period proof,external-history verification,income-tax/net statement or payment.",
         "parameters": [
           {
             "name": "id",
@@ -55980,6 +55984,11 @@
                     "type": "boolean",
                     "const": true
                   },
+                  "noOtherNonCashPayments": {
+                    "description": "Explicitly permits only current reviewed actual zero-net settlements in recorded history;attests no other noncash history. Mutually exclusive with noNonCashOrZeroNetPayments. Missing or stale recognition still blocks calculation.",
+                    "type": "boolean",
+                    "const": true
+                  },
                   "eligibilityReview": {
                     "type": "string",
                     "minLength": 1,
@@ -55995,7 +56004,6 @@
                   "insurableEarnings",
                   "noQuebecTransfer",
                   "noOtherSameEmployerPayments",
-                  "noNonCashOrZeroNetPayments",
                   "eligibilityReview"
                 ],
                 "additionalProperties": false
@@ -58064,6 +58072,11 @@
                     "type": "boolean",
                     "const": true
                   },
+                  "noOtherNonCashPayments": {
+                    "description": "Explicitly permits only current reviewed actual zero-net settlements in recorded history;attests no other noncash history. Mutually exclusive with noNonCashOrZeroNetPayments. Missing or stale recognition still blocks calculation.",
+                    "type": "boolean",
+                    "const": true
+                  },
                   "eligibilityReview": {
                     "type": "string",
                     "minLength": 1,
@@ -58080,7 +58093,6 @@
                   "insurableEarnings",
                   "noQuebecTransfer",
                   "noOtherSameEmployerPayments",
-                  "noNonCashOrZeroNetPayments",
                   "eligibilityReview",
                   "expectedPeriodVersion"
                 ],
@@ -58208,6 +58220,11 @@
                     "type": "boolean",
                     "const": true
                   },
+                  "noOtherNonCashPayments": {
+                    "description": "Explicitly permits only current reviewed actual zero-net settlements in recorded history;attests no other noncash history. Mutually exclusive with noNonCashOrZeroNetPayments. Missing or stale recognition still blocks calculation.",
+                    "type": "boolean",
+                    "const": true
+                  },
                   "eligibilityReview": {
                     "type": "string",
                     "minLength": 1,
@@ -58228,7 +58245,6 @@
                   "insurableEarnings",
                   "noQuebecTransfer",
                   "noOtherSameEmployerPayments",
-                  "noNonCashOrZeroNetPayments",
                   "eligibilityReview",
                   "fullyTaxableCashRemuneration",
                   "noBonusesOrOtherTaxAdjustments"

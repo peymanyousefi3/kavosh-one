@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {t4aRecordFixture,zeroNetSource} from './t4a-record-fixture.ts';
 import {upgradeToCurrent} from './migration-upgrade.ts';
 import {parse} from 'csv-parse/sync';
@@ -77,7 +78,7 @@ test('actual410to411 preserves original settlements,financial histories and old 
  const f=await fixture({throughSchema:410});try{
   const tables=['zero_net_settlements','zero_net_settlement_revisions','paid_tax_records','paid_tax_record_revisions','finance_journals','finance_journal_lines','approval_requests','audit_events','outbox_events'],snapshot=async()=>{const out=[];for(const t of tables)out.push((await f.pg.query('SELECT to_jsonb(r) row FROM public.'+t+' r ORDER BY to_jsonb(r)::text')).rows);return out;},before=await snapshot(),moneyBefore=await financialRows(f);
   const helpers="SELECT oid,proowner,proacl,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid IN('public.zero_net_settlement_plan(uuid,integer,jsonb)'::regprocedure,'public.paid_tax_record_plan(uuid,uuid,integer,jsonb)'::regprocedure) ORDER BY oid",authority=(await f.pg.query(helpers)).rows;
-  await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(helpers)).rows,authority);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,411);assert.equal((await f.request(f.path,f.taxInput)).response.status,200);assert.deepEqual(await financialRows(f),moneyBefore);
+  await f.pg.exec(await readFile(new URL('../db/migrations/411_zero_net_tax_records.sql',import.meta.url),'utf8'));assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(helpers)).rows,authority);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,411);await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(helpers)).rows,authority);assert.equal((await f.request(f.path,f.taxInput)).response.status,200);assert.deepEqual(await financialRows(f),moneyBefore);
  }finally{await f.pg.close();}
 });
 test('native simultaneous zero-net tax edits retain one reviewed edition and one audit effect',{skip:!process.env.TEST_DATABASE_URL},async()=>{
@@ -121,6 +122,13 @@ test('zero-only T4 retains actual settlement totals when the separate cash payme
  const f=await fixture();try{
   const reversal=await f.request('payroll/payments/'+f.payment.id+'/reverse',{period:{id:f.period.id,version:1},postedOn:'2026-02-16',reason:'Synthetic separate cash correction'});assert.equal(reversal.response.status,201,JSON.stringify(reversal.body));assert.equal((await f.request(f.path,f.taxInput)).response.status,200);
   const before=await financialRows(f),slip=await f.request('reports/payroll/t4-working-paper?profileId='+f.profile.id+'&timeZone=America%2FToronto');assert.equal(slip.response.status,200,JSON.stringify(slip.body));assert.equal(slip.body.data.paymentCount,0);assert.equal(slip.body.data.zeroNetSettlementCount,1);assert.equal(slip.body.data.recordedTotals.gross.amount,'100.00');assert.equal(slip.body.data.recordedTotals.net.amount,'0.00');assert.equal(slip.body.data.fields.find((r:any)=>r.box==='22').amount.amount,'100.00');assert.deepEqual(slip.body.data.paymentSources,[]);assert.equal(slip.body.data.zeroNetSettlementSources[0].postingId,f.zero.posted.id);assert.deepEqual(await financialRows(f),before);
+ }finally{await f.pg.close();}
+});
+test('a reversed zero-net posting stays unresolved until explicit tax withdrawal then becomes corrected without losing its history',async()=>{
+ const f=await fixture();try{
+  await recognizeCash(f);assert.equal((await f.request(f.path,f.taxInput)).response.status,200);assert.equal((await f.request('payroll/net-postings/'+f.zero.posted.id+'/reverse',{period:{id:f.period.id,version:1},postedOn:'2026-02-17',reason:'Synthetic corrected fully-offset posting'})).response.status,201);
+  const before=await f.request(yearPath(f.profile.id));assert.equal(before.response.status,200);assert.equal(before.body.data.unresolvedZeroNetSettlementCount,1);assert.equal(before.body.data.completeWithinRecordedSettlements,false);
+  assert.equal((await f.request(f.path,{expectedVersion:1,settlementVersion:1,definition:null,reason:'Synthetic explicit withdrawal after original posting reversal'})).response.status,200);const after=await f.request(yearPath(f.profile.id));assert.equal(after.response.status,200);assert.equal(after.body.data.unresolvedZeroNetSettlementCount,0);assert.equal(after.body.data.correctedZeroNetSettlementCount,1);assert.equal(after.body.data.totals.gross.amount,'508.50');assert.equal(after.body.data.completeWithinRecordedSettlements,true);assert.deepEqual((await f.request(f.path+'/history')).body.data.map((s:any)=>s.state),['recorded','withdrawn']);assert.equal((await f.pg.query('SELECT * FROM public.payrun_payments WHERE posting_id=$1',[f.zero.posted.id])).rows.length,0);
  }finally{await f.pg.close();}
 });
 test('ordinary annual totals cannot silently omit a recognized zero-net source behind another hub account',async()=>{
