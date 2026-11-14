@@ -40,7 +40,7 @@ export async function notificationJobs(ctx:ApiContext):Promise<Reply|null>{
    }
    await record(ctx.db,ctx.credential,ctx.requestId,'notification.batch_queued',eventId,event.projection.hubId,{rulesScanned:Math.min(rows.length,input.limit),jobs:queued.length,severity:'critical',externalRequestMade:false});
    const pending=queued.some(j=>j.jobStatus==='queued'||j.jobStatus==='running');
-   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['signature_check','approval','audit','session','report_schedule','report_job','pay_statement','account_security','calendar_event','work_signature','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due','checkout'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
+   return {status:pending?202:200,body:{data:queued,nextCursor:rows.length>input.limit?rows[input.limit-1].id:null,rulesScanned:Math.min(rows.length,input.limit),supportedSources:['image_processing','signature_check','approval','audit','session','report_schedule','report_job','pay_statement','account_security','calendar_event','work_signature','tuition_due','expense_due','payroll_due','counterparty_statement','statement_due','privacy_due','checkout'],backgroundWorkerRequired:pending,queued:pending,delivered:false,externalRequestMade:false}};
   });
  }
  const queue=/^automations\/rules\/([^/]+)\/queue$/.exec(ctx.path),list=/^automations\/rules\/([^/]+)\/jobs$/.exec(ctx.path),detail=/^automations\/jobs\/([^/]+)(?:\/(cancel))?$/.exec(ctx.path);
