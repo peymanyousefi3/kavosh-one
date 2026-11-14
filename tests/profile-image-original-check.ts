@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import {randomUUID,createHash} from 'node:crypto';
+import sharp from 'sharp';
+import type {operationsFixture} from './operations-fixture.ts';
+import type {Database} from '../src/core/database.ts';
+import {processOneInspection} from '../src/files/inspection-worker.ts';
+import {processOneCopy} from '../src/files/copy-worker.ts';
+import {validateImage} from '../src/files/image-validation.ts';
+import {detectContentSignature} from '../src/files/content-signature.ts';
+
+// Runs only AFTER the original-PDF signing fixture proves retained purpose
+// consent and an approved academic showcase. Worker transport receipts remain
+// synthetic fixtures,never live-provider or real signing certification.
+export async function checkOriginalProfileImages(f:Awaited<ReturnType<typeof operationsFixture>>,student:string,profile:string,publicId:string,awardId:string){
+ const ok=(r:Awaited<ReturnType<typeof f.request>>,status=200)=>{assert.equal(r.response.status,status,JSON.stringify({body:r.body,errors:f.metrics.queryFailures}));return r.body.data;};
+ await f.pg.query('DELETE FROM auth_private.human_rate_windows WHERE session_id=$1',[f.actors.master.session]);
+ const policy=ok(await f.request('storage-policy'));assert.equal(policy.uploadsEnabled,true);ok(await f.request('storage-policy',{expectedVersion:policy.version,maximumFiles:Math.max(policy.maximumFiles,100),allowedMimeTypes:[...new Set([...policy.allowedMimeTypes,'image/png'])],reason:'Synthetic academic image source upload policy'}));
+ const bytes=await sharp({create:{width:16,height:8,channels:3,background:'blue'}}).png().toBuffer(),hash=createHash('sha256').update(bytes).digest('hex');
+ const file=ok(await f.request('files',{anchor:{kind:'person',id:student},domain:'student_private',name:'PRIVATE original academic photograph',claimedMimeType:'image/png',expectedBytes:bytes.length,expectedSha256:hash}),201),grant=ok(await f.request('files/'+file.id+'/upload-link',{expectedMetadataVersion:1}),201),inspection=ok(await f.request('files/'+file.id+'/inspection',{expectedMetadataVersion:1,grantId:grant.id}),202);
+ const database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_file_worker');return c;}};
+ const now=Date.now(),observation={formatVersion:1 as const,engineVersion:'1.5.4',databaseVersion:30001,databaseCreatedAt:new Date(Math.floor((now-60000)/1000)*1000).toISOString().replace('.000Z','Z'),observedAt:new Date(now).toISOString(),observedBeforeAt:new Date(now).toISOString(),timeZone:'UTC',maximumAgeSeconds:172800};
+ try{assert.deepEqual(await processOneInspection(database,[f.a],randomUUID(),async task=>{assert.equal(task.inspectionId,inspection.id);return{outcome:'no_detection',bytes:bytes.length,sha256:hash,etag:'"synthetic-academic-source"',providerContentType:'application/octet-stream',signature:await detectContentSignature(bytes),imageValidation:await validateImage(bytes,'image/png'),databaseObservation:observation};}),{claimed:true,recorded:true});}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+ await f.pg.query("UPDATE public.file_upload_grants SET issued_at=date_trunc('second',clock_timestamp())-interval '10 minutes',expires_at=date_trunc('second',clock_timestamp())-interval '5 minutes' WHERE file_id=$1",[file.id]);
+ const destination=createHash('sha256').update('synthetic-academic-image-destination').digest('hex'),route=ok(await f.request('storage/routes',{definition:{name:'Synthetic reviewed academic image destination',enabled:true,sourceTargetId:grant.storageTargetId,destinationTargetId:destination,serving:{enabled:true,allowedMimeTypes:['image/png'],maximumLinkSeconds:30}},reason:'Synthetic private image copy and serving review'}),201),copy=ok(await f.request('files/'+file.id+'/copies',{fileVersion:1,inspectionId:inspection.id,attemptNo:1,routeId:route.id,routeVersion:1}),202);
+ try{assert.deepEqual(await processOneCopy(database,[f.a],randomUUID(),async task=>{assert.equal(task.fileId,file.id);return{outcome:'written_verified',bytes:task.expectedBytes,sha256:task.expectedSha256,source:{storageTargetId:task.sourceTargetId,etag:'"synthetic-academic-source"'},destination:{storageTargetId:task.destinationTargetId,etag:'"synthetic-academic-retained"'}};}),{claimed:true,recorded:true});}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}
+ ok(await f.request('achievements/'+awardId+'/assets',{expectedVersion:0,awardVersion:1,assets:[{fileId:file.id,fileVersion:1,copyId:copy.id,kind:'image',label:'PRIVATE original academic image'}],reason:'Reviewed private achievement image'}));
+ const path='community/profiles/'+profile+'/image-release',selection=[{kind:'achievement',awardId,awardVersion:1,assetVersion:1,attachmentNo:1,alt:{en:'Reviewed robotics project image',fr:'Projet robotique','zh-CN':'机器人项目'}}],input={expectedVersion:0,state:'published',selection,reason:'Explicit image selection after original signed purpose consent'};
+ const release=ok(await f.request(path,input));assert.equal(release.version,1);assert.equal(release.imagesServed,false);assert.equal((await f.request(path)).body.data.sourceCurrent,true);const source=(await f.pg.query<{source:any}>('SELECT source FROM public.profile_image_releases WHERE profile_id=$1',[profile])).rows[0].source;assert.equal(source.images[0].file.fileId,file.id);assert.equal(source.academicReleaseVersion,1);assert.equal(source.publicId,publicId);
+ assert.equal((await f.request(path,{...input,expectedVersion:1,selection:[{...selection[0],assetVersion:2}]})).response.status,409);
+ ok(await f.request('files/'+file.id+'/change',{expectedVersion:1,archived:true,reason:'Private original image withdrawal'}));assert.equal((await f.request(path)).body.data.sourceCurrent,false);await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);assert.ok((await f.pg.query("SELECT public.published_academic_profile($1,'public') data",[publicId])).rows[0].data,'image withdrawal must not hide the separate text showcase');ok(await f.request(path,{expectedVersion:1,state:'withdrawn',selection:[],reason:'Withdraw sharing without removing originals'}));assert.equal((await f.pg.query('SELECT count(*)::integer n FROM public.file_records WHERE id=$1',[file.id])).rows[0].n,1);
+ await f.pg.query('DELETE FROM auth_private.human_rate_windows WHERE session_id=$1',[f.actors.master.session]);
+}
