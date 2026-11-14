@@ -3,6 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+test('T4 foreign employment reporting documents retained US/ZZ allocations without new amount or eligibility overrides',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),r=api.paths['/api/v1/reports/payroll/t4-working-paper'].get;
+ assert.deepEqual(r.parameters.filter((p:any)=>p.in==='query').map((p:any)=>p.name).sort(),['profileId','timeZone']);assert.equal(r.requestBody,undefined);
+ assert.match(r.summary,/Reviewed US\/ZZ employment codes use only retained CAD allocations/);assert.match(r.summary,/unassessed Canadian T4\/nonresident eligibility/);assert.match(r.summary,/no foreign deduction calculation or foreign return/);assert.match(r.summary,/Quebec reporting,unreviewed foreign fallback/);
+});
 test('reviewed derivative image delivery separates public and verified-member paths with strict selectors and fixed binary WebP output',()=>{
  const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8'));for(const prefix of ['/api/public/v1/profiles/{id}','/api/v1/community/published-profiles/{id}']){const index=api.paths[prefix+'/images'],binary=api.paths[prefix+'/images/{version}/{number}'];assert.deepEqual(Object.keys(index),['get']);assert.deepEqual(Object.keys(binary),['get']);for(const r of [index.get,binary.get]){assert.equal(r.requestBody,undefined);assert.deepEqual(r.parameters.filter((p:any)=>p.in==='query'),[]);if(prefix.startsWith('/api/public'))assert.deepEqual(r.security,[]);else assert.deepEqual(r.security,[{humanSession:[],academySelection:[]}]);}assert.deepEqual(binary.get.responses['200'].content['image/webp'].schema,{type:'string',format:'binary'});assert.match(binary.get.summary,/SHA256/);assert.match(binary.get.summary,/No DB connection|No native codec or database connection/);const path=binary.get.parameters.filter((p:any)=>p.in==='path');assert.deepEqual(path.map((p:any)=>p.name),['id','version','number']);assert.equal(path.find((p:any)=>p.name==='number').schema.pattern,'^(?:[1-9]|[1-9][0-9]|100)$');}
 });
