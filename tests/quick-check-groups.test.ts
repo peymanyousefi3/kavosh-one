@@ -5,6 +5,12 @@ import { execFileSync } from 'node:child_process';
 import { quickCheckGroups,quickCheckGroupCount,verifyQuickCheckFiles } from '../scripts/run-quick-checks.mjs';
 
 const prefix="node --import tsx --test --test-concurrency=1 --test-skip-pattern='large|one thousand' ";
+test('backend scope review maps all138 approved feature entries exactly once without treating file inventory as release acceptance',async()=>{
+ const register=JSON.parse(await readFile(new URL('../backend-work.json',import.meta.url),'utf8')),review=JSON.parse(await readFile(new URL('../backend-scope-review.json',import.meta.url),'utf8'));
+ assert.equal(review.version,1);assert.match(review.meaning,/not proof/);assert.match(review.meaning,/No progress percentage/);assert.deepEqual(Object.keys(review.areas).sort(),register.areas.map((a:{id:string})=>a.id).sort());let count=0;
+ for(const area of register.areas){const covered:number[]=[];for(const group of review.areas[area.id]){assert.ok(group.source.length&&group.tests.length);for(const index of group.features){assert.ok(Number.isInteger(index)&&index>=0&&index<area.features.length);covered.push(index);count++;}for(const path of [...group.source,...group.tests]){assert.match(path,/^(src\/|tests\/|db\/migrations\/)[A-Za-z0-9_./-]+$/);assert.ok(!path.includes('..'));assert.ok((await readFile(new URL('../'+path,import.meta.url))).length>0,path);}for(const path of group.tests)assert.match(path,/^tests\/.+\.test\.ts$/);}assert.deepEqual(covered.sort((a,b)=>a-b),area.features.map((_:string,i:number)=>i),area.id);}
+ assert.equal(count,138);assert.match(review.areas.platform.find((g:{features:number[]})=>g.features.includes(6)).gate,/UNFINISHED/);assert.match(review.areas.accounting.find((g:{features:number[]})=>g.features.includes(5)).gate,/deferred/);
+});
 test('contractor zero-net recognition runs exactly once with native concurrency in the existing accounting job',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),step=workflow.split('      - name: Native reviewed contractor settlement deductions')[1]?.split('      - name:')[0];assert.ok(step);assert.ok(step.includes('if: matrix.group == 3'));assert.ok(step.includes('tests/zero-net-t4a-records.test.ts'));assert.equal(workflow.match(/tests\/zero-net-t4a-records\.test\.ts/g)?.length,1);assert.doesNotMatch(step,/continue-on-error|test-name-pattern|test-skip-pattern/);
 });
