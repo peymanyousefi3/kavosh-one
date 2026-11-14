@@ -11,7 +11,7 @@ const get = service => {
  try { return JSON.parse(bytes.toString()); } finally { bytes.fill(0); }
 };
 try {
- assert.equal(process.platform, 'darwin'); assert.deepEqual(process.argv.slice(2), ['--execute']); process.umask(0o077);
+ assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(JSON.stringify(args)==='["--execute"]'||JSON.stringify(args)==='["--execute","--require-private-data"]');const requirePrivateData=args.length===2;process.umask(0o077);
  stage = 'trusted server receipt';
  const receipt = JSON.parse(execFileSync('/usr/bin/ssh', ['-F', '.local-tools/ovh.ssh-config', 'kavosh-one-production', 'sudo cat /var/lib/kavosh-one-config-backups/latest.json'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 }));
  assert.match(receipt.id, /^[a-f0-9-]{36}$/); assert.match(receipt.ciphertextSha256, /^[a-f0-9]{64}$/);
@@ -39,11 +39,20 @@ try {
  assert.equal(new Set(entries).size,entries.length);
  for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name)||/^etc\/systemd\/system\/kavosh-one-backup\.service\.d(?:\/?|\/media\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@platform-notices\.service\.d(?:\/?|\/operational-health\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@reports\.service\.d(?:\/?|\/runtime\.conf)$/.test(name));}
  const content = name => execFileSync('/usr/bin/tar', ['-xOf', plaintext, name], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1048576 });
- let mediaBackupOperator,operationalHealthProfileSha256,reportRuntimeProfileSha256,signedEvidenceBackupConfigured=false,agreementBackupReaderIncluded=false,agreementCompletionWorkerEnabled=false,agreementWorkerMonitorEnabled=false;const serviceUnitSha256={};
+ let mediaBackupOperator,operationalHealthProfileSha256,reportRuntimeProfileSha256,signedEvidenceBackupConfigured=false,agreementBackupReaderIncluded=false,agreementCompletionWorkerEnabled=false,agreementWorkerMonitorEnabled=false,privateDataKeysIncluded=false;const serviceUnitSha256={};
  for (const name of required) {
   const bytes = content(name);
   try {
    assert.ok(bytes.length > 0);
+   if(name==='etc/kavosh-one/web.env'){
+    const matches=[...bytes.toString().matchAll(/^((?:STUDENT_CARE|PAYROLL)_PRIVATE_[A-Z0-9_]+)=(.*)$/gm)];
+    if(matches.length){
+     const expected=['STUDENT_CARE','PAYROLL'].flatMap(p=>['_PRIVATE_ACTIVE_KEY_ID','_PRIVATE_KEYS','_PRIVATE_FINGERPRINT_KEY'].map(s=>p+s));assert.equal(matches.length,expected.length);assert.deepEqual(matches.map(m=>m[1]).sort(),expected.sort());const values=Object.fromEntries(matches.map(m=>[m[1],JSON.parse(m[2])])),material=[];
+     for(const prefix of ['STUDENT_CARE','PAYROLL']){const active=values[prefix+'_PRIVATE_ACTIVE_KEY_ID'],keys=JSON.parse(values[prefix+'_PRIVATE_KEYS']);assert.match(active,/^[a-z][a-z0-9_-]{0,31}$/);assert.ok(keys&&typeof keys==='object'&&!Array.isArray(keys));const entries=Object.entries(keys);assert.ok(entries.length>=1&&entries.length<=10&&Object.hasOwn(keys,active));for(const [id,key]of entries){assert.match(id,/^[a-z][a-z0-9_-]{0,31}$/);material.push(key);}material.push(values[prefix+'_PRIVATE_FINGERPRINT_KEY']);}
+     for(const key of material){assert.match(key,/^[A-Za-z0-9_-]{43}$/);const decoded=Buffer.from(key,'base64url');try{assert.equal(decoded.length,32);assert.equal(decoded.toString('base64url'),key);}finally{decoded.fill(0);}}assert.equal(new Set(material).size,material.length);privateDataKeysIncluded=true;
+    }
+    if(requirePrivateData)assert.equal(privateDataKeysIncluded,true);
+   }
    if(/^etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$/.test(name))serviceUnitSha256[name.slice('etc/systemd/system/'.length)]=createHash('sha256').update(bytes).digest('hex');
    if(name==='etc/systemd/system/kavosh-one-monitor.service'){
     const template=readFileSync(new URL('../deploy/ovh/kavosh-one-monitor.service',import.meta.url)).toString(),flag='Environment=SIGNATURE_COMPLETION_MONITOR_ENABLED=false\n';assert.equal(template.split(flag).length,2);
@@ -77,7 +86,7 @@ try {
    if(signedEvidenceBackupConfigured){const targetsBytes=content('etc/kavosh-one/media-readers.json');signingBytes.push(targetsBytes);const targets=JSON.parse(targetsBytes.toString());assert.equal(targets.length,3);assert.equal(targets.map(t=>t.stage).sort().join(','),'clean,quarantine,signature-evidence');assert.deepEqual(targets.find(t=>t.stage==='signature-evidence').configuration,reader);assert.equal(new Set(targets.map(t=>t.configuration.accessKeyId)).size,3);}
   }
  }finally{for(const bytes of signingBytes)bytes.fill(0);}
- console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,databaseTlsKeyPairVerified:true,agreementWorkerVaultBindingVerified:true,agreementBackupReaderIncluded,agreementCompletionWorkerEnabled,agreementWorkerMonitorEnabled,signedEvidenceBackupConfigured,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
+ console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,privateDataKeysIncluded,databaseTlsKeyPairVerified:true,agreementWorkerVaultBindingVerified:true,agreementBackupReaderIncluded,agreementCompletionWorkerEnabled,agreementWorkerMonitorEnabled,signedEvidenceBackupConfigured,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
 } catch { console.error('CONFIG_BACKUP_ACCEPTANCE_FAILED: ' + stage); process.exitCode = 1; }
 finally {
  for (const file of [plaintext, encrypted]) if (file) try { unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') { console.error('CONFIG_PROOF_CLEANUP_REQUIRED'); process.exitCode = 1; } }
