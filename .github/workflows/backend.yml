@@ -269,7 +269,7 @@ jobs:
         run: node --import tsx --test --test-concurrency=1 tests/database-template.test.ts tests/platform-health.test.ts tests/platform-directories.test.ts tests/platform-class-operations.test.ts tests/platform-learning-session.test.ts tests/platform-learning-history.test.ts tests/platform-homework.test.ts tests/platform-finance.test.ts tests/platform-operational-events.test.ts
       - name: Native reviewed contractor settlement deductions
         if: matrix.group == 3
-        run: node --import tsx --test --test-concurrency=1 tests/t4a-non-tax-deductions.test.ts tests/consolidated-private-package.test.ts tests/zero-net-settlements.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/t4a-non-tax-deductions.test.ts tests/consolidated-private-package.test.ts tests/zero-net-settlements.test.ts tests/zero-net-tax-records.test.ts
       - name: Complete assigned quick-logic group without dropping or duplicating files
         run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
   learning:

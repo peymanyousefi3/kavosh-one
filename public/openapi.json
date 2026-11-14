@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.457.0",
+    "version": "0.458.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -60162,12 +60162,429 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission leaves this optional review list absent;explicitly reviewed actual settlements have their own YTD selection.",
               "type": "string",
               "enum": [
                 "true",
                 "false"
               ]
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/tax-profiles/{profileId}/zero-net-postings/{postingId}": {
+      "post": {
+        "summary": "Human-reviewed tax recognition of an existing current actual zero-net payroll settlement. Exact retained settlement edition,original whole posting/accounts and private tax-profile rights required. Full posted deduction/contribution conservation and explicit classifications,year/timezone and optional RP edition;no fake cash payment,bank movement,journal,automatic statutory clearance or CRA filing. Corrections and null withdrawal retain immutable original history.",
+        "parameters": [
+          {
+            "name": "profileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "postingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "settlementVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "definition": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "reportingAccount": {
+                            "description": "Explicit reviewed RP-account edition for this recorded payment,not a mutable worker default or bank account. Missing remains unassigned.",
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 2147483646
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": "^[A-Za-z0-9_+./-]+$"
+                          },
+                          "taxableEarnings": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^\\d+(?:\\.\\d+)?$"
+                          },
+                          "pensionableEarnings": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^\\d+(?:\\.\\d+)?$"
+                          },
+                          "insurableEarnings": {
+                            "type": "string",
+                            "maxLength": 80,
+                            "pattern": "^\\d+(?:\\.\\d+)?$"
+                          },
+                          "employeeDeductions": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "CPP",
+                                    "CPP2",
+                                    "QPP",
+                                    "QPP2",
+                                    "EI",
+                                    "QPIP",
+                                    "income_tax",
+                                    "other"
+                                  ]
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "kind",
+                                "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "employerContributions": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "CPP",
+                                    "CPP2",
+                                    "QPP",
+                                    "QPP2",
+                                    "EI",
+                                    "QPIP",
+                                    "other"
+                                  ]
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "kind",
+                                "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "review": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 2000
+                          },
+                          "t4Allocations": {
+                            "description": "Explicit reviewed reporting allocations,not residence or a mutable current profile. Earnings and every employee deduction must sum exactly to this payment recognition. Array order is the reviewed within-payment order for shared annual earnings ceilings.",
+                            "minItems": 1,
+                            "maxItems": 15,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "provinceOfEmployment": {
+                                  "type": "string",
+                                  "enum": [
+                                    "AB",
+                                    "BC",
+                                    "MB",
+                                    "NB",
+                                    "NL",
+                                    "NS",
+                                    "NT",
+                                    "NU",
+                                    "ON",
+                                    "PE",
+                                    "QC",
+                                    "SK",
+                                    "YT",
+                                    "US",
+                                    "ZZ"
+                                  ]
+                                },
+                                "taxableEarnings": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "pensionableEarnings": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "insurableEarnings": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "employeeDeductions": {
+                                  "maxItems": 100,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "code": {
+                                        "type": "string",
+                                        "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                      },
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "CPP",
+                                          "CPP2",
+                                          "QPP",
+                                          "QPP2",
+                                          "EI",
+                                          "QPIP",
+                                          "income_tax",
+                                          "other"
+                                        ]
+                                      },
+                                      "amount": {
+                                        "type": "string",
+                                        "maxLength": 80,
+                                        "pattern": "^\\d+(?:\\.\\d+)?$"
+                                      }
+                                    },
+                                    "required": [
+                                      "code",
+                                      "kind",
+                                      "amount"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": [
+                                "provinceOfEmployment",
+                                "taxableEarnings",
+                                "pensionableEarnings",
+                                "insurableEarnings",
+                                "employeeDeductions"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "t4Order": {
+                            "description": "Optional reviewed ordering among separate payments with the exact same attested instant. Requires explicit T4 allocations;not a payment date or payroll amount override.",
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1000000
+                          }
+                        },
+                        "required": [
+                          "timeZone",
+                          "taxableEarnings",
+                          "pensionableEarnings",
+                          "insurableEarnings",
+                          "employeeDeductions",
+                          "employerContributions",
+                          "review"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "settlementVersion",
+                  "definition",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Current private zero-net tax recognition and independently current settlement/reversal/source-usability flags. No cash payment or identity fields.",
+        "parameters": [
+          {
+            "name": "profileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "postingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/tax-profiles/{profileId}/zero-net-postings/{postingId}/history": {
+      "get": {
+        "summary": "Editor-only immutable zero-net tax editions and original approvals/reasons,ascending bounded cursor at most10rows. No payment or journal creation.",
+        "parameters": [
+          {
+            "name": "profileId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "postingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
             }
           }
         ],
@@ -78256,7 +78673,7 @@
     },
     "/api/v1/reports/payroll/paid-tax-year-to-date": {
       "get": {
-        "summary": "Central private one-worker/employer paid-tax-year report,using the exact existing payment-date YTD service and complete source rights. Includes typed employee/employer totals,daily charts,recognized references and explicit unresolved-payment warnings and separately listed retained nonemployee reporting contexts. Candidate selection includes reviewed paid dates so timezone/year mismatches cannot silently disappear. Optional includeUnassignedZeroNetSources adds a separately permission-checked review list across all planned years,never tax totals or inferred settlement dates;combined payment/source ceiling500 and every source retained in queued download authority. Omission preserves legacy output. CAD payment totals only;not T4/T4A or statutory certification.",
+        "summary": "Central private one-worker/employer paid-tax-year report,using the exact existing payment-date YTD service and complete source rights. Includes typed employee/employer totals,daily charts,recognized references and explicit unresolved-payment warnings and separately listed retained nonemployee reporting contexts. Candidate selection includes reviewed paid dates so timezone/year mismatches cannot silently disappear. Optional includeUnassignedZeroNetSources adds a separately permission-checked review list across all planned years,never tax totals or inferred settlement dates;combined payment/source ceiling500 and every source retained in queued download authority. Default totals also include separately identified current reviewed actual zero-net settlement tax records;missing or stale recognition stays unresolved. No fake cash payment or general noncash-benefit recognition. CAD recorded remuneration only;not T4/T4A or statutory certification.",
         "parameters": [
           {
             "name": "through",
@@ -78283,7 +78700,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission leaves this optional review list absent;explicitly reviewed actual settlements have their own YTD selection.",
               "type": "string",
               "enum": [
                 "true",
@@ -78348,7 +78765,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission leaves this optional review list absent;explicitly reviewed actual settlements have their own YTD selection.",
               "type": "string",
               "enum": [
                 "true",
@@ -78420,7 +78837,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission preserves legacy scope and output.",
+              "description": "Opt-in separate review of all active positive-gross zero-net postings for this worker and selected payer,regardless of planned year. No settlement date or tax year is inferred,and no amount enters payment-tax totals. Retained reviewed settlement edition/state and original local date are separately identified when present;withdrawal removes active date fields. Receipt references and private review text are excluded. This is not current settlement clearance or tax recognition. Requires complete original source rights. Omission leaves this optional review list absent;explicitly reviewed actual settlements have their own YTD selection.",
               "type": "string",
               "enum": [
                 "true",
@@ -79990,7 +80407,7 @@
     },
     "/api/v1/reports/payroll/t4-working-paper": {
       "get": {
-        "summary": "Private2026 provincial T4 working papers from complete reviewed recorded payment recognition,not ledger/planned wages. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate RP-account/province slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Optional independently reviewed per-province full-period box28 marks never default from zero amounts or current pay settings;contradictory retained pensionable/insurable earnings or contributions refuse mapping. Box14 amount limit is checked per province with exact integers and exposed alongside the preserved working-paper amount,never silently clamped. Reviewed per-province boxes20/44/46 draw only from retained other deduction codes and cannot exceed their recorded capacity. Positive union dues require explicit receipt-agreement review. Box52 uses reviewed whole dollars with a seven-digit box50 plan and explicit eligibility review,not a computed entitlement. Account-specific declarations take precedence;legacy province-only declarations refuse ambiguous same-province multiple-account matching rather than duplicating amounts. Missing declarations stay unreviewed;supporting references stay private. Other official fields remain unassessed. Legal identity,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
+        "summary": "Private2026 provincial T4 working papers from reviewed actual cash payments and separately identified zero-net settlement tax recognition,not ledger/planned wages. Missing or stale actual-settlement recognition refuses mapping. Shared annual caps use namespaced source identities;zero-net sources never acquire cash payment IDs. Frozen reviewed payment allocations or explicitly labelled unreviewed legacy profile fallback. Separate RP-account/province slips share annual earnings limits in attested-time and reviewed allocation order;ambiguous same-instant cap choices require review,never UUID ordering. Boxes14/16/16A/18/22/24/26 retain actual deductions. Missing recognition or legacy province,Quebec/foreign reporting and ambiguous orders refuse mapping. Optional box45 uses a separately reviewed December31 dental-access declaration with version provenance,never insurance usage or a guessed code1. Optional independently reviewed per-province full-period box28 marks never default from zero amounts or current pay settings;contradictory retained pensionable/insurable earnings or contributions refuse mapping. Box14 amount limit is checked per province with exact integers and exposed alongside the preserved working-paper amount,never silently clamped. Reviewed per-province boxes20/44/46 draw only from retained other deduction codes and cannot exceed their recorded capacity. Positive union dues require explicit receipt-agreement review. Box52 uses reviewed whole dollars with a seven-digit box50 plan and explicit eligibility review,not a computed entitlement. Account-specific declarations take precedence;legacy province-only declarations refuse ambiguous same-province multiple-account matching rather than duplicating amounts. Missing declarations stay unreviewed;supporting references stay private. Other official fields remain unassessed. Legal identity,other information,external/noncash/zero-net eligibility remain unassessed;never an issued or ready-to-file form.",
         "parameters": [
           {
             "name": "profileId",
