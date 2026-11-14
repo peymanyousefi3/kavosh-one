@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import sharp from 'sharp';
 import { operationsFixture } from './operations-fixture.ts';
 import { processOneInspection,inspectStoredFile,type InspectionResult,type InspectionTask } from '../src/files/inspection-worker.ts';
-import { validateImage } from '../src/files/image-validation.ts';
+import { validateImage,deriveProfileImage } from '../src/files/image-validation.ts';
 import { detectContentSignature } from '../src/files/content-signature.ts';
 import type { Database } from '../src/core/database.ts';
 import { createImageValidationServer } from '../src/files/image-service.ts';
@@ -97,7 +97,7 @@ check('native image boundary rejects altered hashes, byte counts, types, version
  for(const invalid of [{...r,inputSha256:'0'.repeat(64)},{...r,inputBytes:r.inputBytes+1},{...r,inputBytes:String(r.inputBytes)},{...r,validator:'unreviewed'},
   {...r,libvips:'other'},{...r,width:r.width+1},{...r,maximumPixels:1},{...r,maximumFrames:0},{...r,decodedBytes:0},{...r,decodedSha256:null},
   {...r,mime:'image/jpeg'},{...r,mime:null},{...r,resources:null},{...r,resources:{...r.resources,peakRssKiB:0}},{...r,resources:{...r.resources,secret:'PRIVATE'}},
-  {...r,safeToServe:true},{...r,outcome:null},{...r,outcome:'rejected',reason:'DECODER_REJECTED'},[],{}]) {
+  {...r,safeToServe:true},{...r,outcome:null},{...r,outcome:'rejected',reason:'DECODER_REJECTED'},await deriveProfileImage(f.bytes,'image/png','avatar'),[],{}]) {
   await assert.rejects(f.finish(job,value,invalid),/INVALID_FILE_IMAGE_EVIDENCE/);await f.assertEmpty();
  }
  await assert.rejects(f.finish(job,{...value,signature:undefined}),/INVALID_FILE_IMAGE_EVIDENCE/);await f.assertEmpty();
@@ -105,7 +105,7 @@ check('native image boundary rejects altered hashes, byte counts, types, version
 });
 check('worker rejects malformed or differently bound image evidence without fabricating a decoder decision',async f=>{
  const value=await f.evidence();if(value.outcome!=='no_detection'||!value.imageValidation)throw new Error('ACTUAL_DECODE_REQUIRED');
- for(const imageValidation of [{...value.imageValidation,inputSha256:'0'.repeat(64)},{...value.imageValidation,inputBytes:f.bytes.length+1},{...value.imageValidation,unknown:true}]) {
+ for(const imageValidation of [{...value.imageValidation,inputSha256:'0'.repeat(64)},{...value.imageValidation,inputBytes:f.bytes.length+1},{...value.imageValidation,unknown:true},await deriveProfileImage(f.bytes,'image/png','avatar')]) {
   const item=await f.prepare();assert.deepEqual(await f.run({...value,imageValidation} as InspectionResult),{claimed:true,recorded:true});
   const v=(await f.request('files/'+item.id+'/inspection')).body.data;assert.equal(v.processing.lastReason,'INSPECTOR_INVALID_RESULT');assert.equal(v.attempts[0].imageValidation,null);
  }

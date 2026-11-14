@@ -128,6 +128,10 @@ jobs:
         run: node --import tsx --test --test-concurrency=1 tests/boldsign.test.ts tests/boldsign-template.test.ts tests/boldsign-template-pdf.test.ts tests/boldsign-send-request.test.ts tests/boldsign-work-send-request.test.ts tests/boldsign-dispatch.test.ts tests/boldsign-stored-request.test.ts tests/signing-control-api.test.ts tests/signing-orchestrator.test.ts
       - name: Conditional separate-target storage promotion and original-byte verification
         run: node --import tsx --test --test-concurrency=1 tests/r2.test.ts tests/r2-inspection.test.ts tests/r2-promotion.test.ts
+      - name: Image preparation preserves original bytes and cannot substitute for persisted scan evidence
+        run: node --import tsx --test --test-concurrency=1 tests/image-validation.test.ts tests/image-service.test.ts tests/file-image-evidence.test.ts tests/profile-image-preparation.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Focused agreement-content persistence and private source approvals
         run: node --import tsx --test --test-concurrency=1 --test-skip-pattern='one hundred simultaneous' tests/agreement-content.test.ts tests/agreement-package-content.test.ts tests/agreement-packages.test.ts tests/signature-sends.test.ts tests/signature-dispatch.test.ts tests/signature-result-worker.test.ts
         env:

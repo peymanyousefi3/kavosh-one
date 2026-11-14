@@ -89,7 +89,8 @@ process.once('message',async message=>{
  try {
   if(!message||!Buffer.isBuffer(message.bytes)||message.bytes.length<1||message.bytes.length>33_554_432||!supported.has(message.claimedMimeType)
    ||!Number.isSafeInteger(message.maximumPixels)||message.maximumPixels<1||message.maximumPixels>64_000_000
-   ||!Number.isSafeInteger(message.maximumFrames)||message.maximumFrames<1||message.maximumFrames>256)throw new Error('INVALID_INPUT');
+   ||!Number.isSafeInteger(message.maximumFrames)||message.maximumFrames<1||message.maximumFrames>256
+   ||message.profileImagePurpose!==undefined&&!['avatar','achievement'].includes(message.profileImagePurpose))throw new Error('INVALID_INPUT');
   const {bytes,claimedMimeType,maximumPixels,maximumFrames}=message;
   const base={validator:'sharp@0.35.5',libvips:sharp.versions.vips,inputBytes:bytes.length,inputSha256:createHash('sha256').update(bytes).digest('hex'),maximumPixels,maximumFrames};
   const rejected=reason=>({...base,outcome:'rejected',reason});
@@ -119,7 +120,21 @@ process.once('message',async message=>{
      await pipeline(image,sink);
      if(!info||info.width!==width||info.height!==height*frames||!Number.isInteger(info.channels)||info.channels<1||info.channels>4
       ||decodedBytes!==width*height*frames*info.channels)result=rejected('DECODER_REJECTED');
-     else result={...base,outcome:'decoded',mime:hint.mime,width,height,frames,channels:info.channels,decodedBytes,decodedSha256:hash.digest('hex')};
+     else {
+      result={...base,outcome:'decoded',mime:hint.mime,width,height,frames,channels:info.channels,decodedBytes,decodedSha256:hash.digest('hex')};
+      if(message.profileImagePurpose){
+       const purpose=message.profileImagePurpose,limit=purpose==='avatar'?512:2048,maximumBytes=purpose==='avatar'?1048576:4194304;
+       // Decode ALL source frames above before selecting the first display
+       // frame. Re-encoding without keepMetadata/withMetadata drops EXIF/GPS,
+       // XMP,ICC and comments;auto-orient before resize preserves phone photos.
+       // https://sharp.pixelplumbing.com/api-output/#keepmetadata
+       const derivative=sharp(bytes,{page:0,pages:1,failOn:'warning',unlimited:false,limitInputPixels:maximumPixels,limitInputChannels:5,sequentialRead:true});
+       try{const {data,info:out}=await derivative.autoOrient().resize({width:limit,height:limit,fit:'inside',withoutEnlargement:true}).webp({quality:90,effort:3}).toBuffer({resolveWithObject:true});
+        if(out.format!=='webp'||out.width<1||out.height<1||out.width>limit||out.height>limit||data.length<12||data.length>maximumBytes)throw Error('PROFILE_IMAGE_LIMIT');
+        result.profileImage={purpose,mime:'image/webp',width:out.width,height:out.height,bytes:data.length,sha256:createHash('sha256').update(data).digest('hex'),base64:data.toString('base64'),framePolicy:'first_frame',metadataPolicy:'stripped'};data.fill(0);
+       }finally{derivative.destroy();}
+      }
+     }
     }
    }catch{result=rejected('DECODER_REJECTED');}
    finally{image.destroy();}
