@@ -28,6 +28,9 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['', '/history','/observations']){const r=await fetch(base+'/api/v1/storage-policy/capacity-alerts'+suffix);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/reservedBytes|warningPercent|maximumFiles|stack/);}
+  {const r=await fetch(base+'/api/v1/storage-policy/capacity-alerts',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
+  {const r=await fetch(base+'/api/v1/storage-policy/capacity-alerts/check',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');}
   for(const suffix of ['', '/privacy']){
     const path=base+'/api/public/v1/academies/00000000-0000-4000-8000-000000000001/policies'+suffix;
     const r=await fetch(path);assert.equal(r.status,503);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('x-content-type-options'),'nosniff');assert.deepEqual(await r.json(),{error:{code:'PUBLIC_POLICY_UNAVAILABLE'}});

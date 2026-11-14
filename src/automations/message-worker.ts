@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { assertRuntimeRole,assertSchemaReady,type Database } from '../core/database.ts';
 import { deliveryRecipientPolicy,deliverySourceFrom } from '../modules/notification-deliveries.ts';
-import { automationEventCurrentSourceSQL } from '../modules/automation-events.ts';
+import { automationEventCurrentSourceSQL,automationSourceKinds } from '../modules/automation-events.ts';
 import { emailMessage,smsMessage,MessageDeliveryError,type messageTransport } from '../integrations/message-delivery.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),ids=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
@@ -25,7 +25,7 @@ export async function processOneMessage(database:Database,academies:string[],con
  if(!routes.length)return {claimed:false,recorded:false};const db=await database.connect();let transaction=false,broken=false;
  try{
   await assertRuntimeRole(db,'message_worker');await assertSchemaReady(db);
-  const lease=(await db.query<Lease>('SELECT * FROM public.claim_notification_delivery($1::jsonb)',[JSON.stringify(routes)])).rows[0];if(!lease)return {claimed:false,recorded:false};
+  const lease=(await db.query<Lease>('SELECT * FROM public.claim_notification_delivery($1::jsonb,$2::text[])',[JSON.stringify(routes),automationSourceKinds])).rows[0];if(!lease)return {claimed:false,recorded:false};
   async function begin(){await db.query('BEGIN');transaction=true;await db.query("SELECT set_config('app.academy_id',$1,true),set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)",[lease.academy_id]);}
   async function commit(){await db.query('COMMIT');transaction=false;}
   async function finish(outcome:'accepted'|'failed'|'unknown'|'cancelled',providerId:string|null,error:string|null){await begin();const recorded=(await db.query<{ok:boolean}>('SELECT public.finish_notification_delivery($1,$2,$3,$4,$5) ok',[lease.id,lease.lease_token,outcome,providerId,error])).rows[0]?.ok===true;await commit();return {claimed:true,recorded,outcome};}

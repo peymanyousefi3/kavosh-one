@@ -4,7 +4,7 @@ export interface Connection {
   release(destroy?: boolean): void;
 }
 export interface Database { connect(): Promise<Connection> }
-export const expectedSchemaRevision=426;
+export const expectedSchemaRevision=427;
 export async function assertSchemaReady(db:Connection) {
   const result=await db.query<{revision:number}>('SELECT public.schema_revision() AS revision');
   if(!Number.isInteger(result.rows[0]?.revision)||result.rows[0].revision<expectedSchemaRevision)throw new Error('SCHEMA_NOT_CURRENT');
@@ -31,7 +31,7 @@ export async function assertRuntimeRole(db: Connection,purpose:'web'|'automation
           OR has_any_column_privilege(current_user,c.oid,'INSERT,UPDATE,REFERENCES'))))
       AND (NOT $2::boolean OR NOT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname='public' AND p.prosecdef AND has_function_privilege(current_user,p.oid,'EXECUTE')
-        AND p.oid<>ALL(array_remove(ARRAY[to_regprocedure('public.claim_notification_delivery(jsonb)'),to_regprocedure('public.begin_notification_delivery(uuid,uuid)'),
+        AND p.oid<>ALL(array_remove(ARRAY[to_regprocedure('public.claim_notification_delivery(jsonb)'),to_regprocedure('public.claim_notification_delivery(jsonb,text[])'),to_regprocedure('public.storage_capacity_notice_current(uuid)'),to_regprocedure('public.storage_capacity_notice_allows(uuid,jsonb)'),to_regprocedure('public.lock_storage_capacity_source()'),to_regprocedure('public.begin_notification_delivery(uuid,uuid)'),
           to_regprocedure('public.finish_notification_delivery(uuid,uuid,text,text,text)'),to_regprocedure('public.lock_notification_delivery_source(uuid,uuid)'),
           to_regprocedure('public.account_security_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.pay_statement_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.payrun_net_source_allows(uuid,text,jsonb)'),to_regprocedure('public.privacy_request_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.privacy_reminder_notice_current(uuid)'),to_regprocedure('public.privacy_reminder_notice_allows(uuid,uuid,jsonb)'),to_regprocedure('public.profile_consent_notice_allows(uuid,jsonb)'),to_regprocedure('public.report_comment_human_verified(uuid)'),to_regprocedure('public.checkout_notice_allows(uuid,jsonb)'),to_regprocedure('public.checkout_notice_current(uuid)'),to_regprocedure('public.image_processing_notice_allows(uuid,jsonb)'),to_regprocedure('public.image_processing_notice_current(uuid)'),to_regprocedure('public.image_processing_notice_upper(uuid,uuid)'),to_regprocedure('public.signature_check_notice_allows(uuid,jsonb)'),to_regprocedure('public.signature_check_notice_current(uuid)'),to_regprocedure('public.signature_check_notice_upper(uuid,uuid)'),
           to_regprocedure('public.work_signature_evidence_notice_state(uuid)'),to_regprocedure('public.tuition_reminder_notice_current(uuid)'),

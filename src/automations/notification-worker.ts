@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { assertRuntimeRole,assertSchemaReady,type Database } from '../core/database.ts';
 import { loadGrants,type ApiContext } from '../core/api.ts';
 import { ApiError,type Credential } from '../core/policy.ts';
+import {automationSourceKinds} from '../modules/automation-events.ts';
 import { notifications } from '../modules/notifications.ts';
 
 const uuid=z.string().uuid().transform(v=>v.toLowerCase()),academies=z.array(uuid).min(1).max(1000).refine(v=>new Set(v).size===v.length);
@@ -14,7 +15,7 @@ export async function processOneNotification(database:Database,allowedAcademies:
  const ids=academies.parse(allowedAcademies);if(signal?.aborted)return {claimed:false,recorded:false};const db=await database.connect();let lease:Lease|undefined,transaction=false,broken=false;
  try{
   await assertRuntimeRole(db,'automation_worker');await assertSchemaReady(db);
-  lease=(await db.query<Lease>('SELECT * FROM public.claim_notification_job($1)',[ids])).rows[0];if(!lease)return {claimed:false,recorded:false};
+  lease=(await db.query<Lease>('SELECT * FROM public.claim_notification_job($1,$2::text[])',[ids,automationSourceKinds])).rows[0];if(!lease)return {claimed:false,recorded:false};
   let result:'succeeded'|'cancelled'|'retry'='retry',runId:string|null=null,problem:string|null=null;
   try{
    // Authentication/rate accounting commits before domain work,as in the web
