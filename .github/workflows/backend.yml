@@ -129,7 +129,7 @@ jobs:
       - name: Conditional separate-target storage promotion and original-byte verification
         run: node --import tsx --test --test-concurrency=1 tests/r2.test.ts tests/r2-inspection.test.ts tests/r2-promotion.test.ts
       - name: Image preparation preserves original bytes and cannot substitute for persisted scan evidence
-        run: node --import tsx --test --test-concurrency=1 tests/image-validation.test.ts tests/image-service.test.ts tests/file-image-evidence.test.ts tests/profile-image-preparation.test.ts tests/profile-image-releases.test.ts
+        run: node --import tsx --test --test-concurrency=1 tests/image-validation.test.ts tests/image-service.test.ts tests/file-image-evidence.test.ts tests/profile-image-preparation.test.ts tests/profile-image-retention.test.ts tests/profile-image-releases.test.ts
         env:
           TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
       - name: Focused agreement-content persistence and private source approvals

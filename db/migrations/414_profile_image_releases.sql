@@ -12,6 +12,8 @@ ALTER TABLE public.profile_image_releases ENABLE ROW LEVEL SECURITY;ALTER TABLE 
 CREATE POLICY tenant_boundary ON public.profile_image_releases USING(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid) WITH CHECK(academy_id=nullif(current_setting('app.academy_id',true),'')::uuid);
 GRANT SELECT ON public.profile_image_releases TO kavosh_runtime;
 GRANT INSERT(academy_id,profile_id,version,state,selection,source,changed_by,approval_id,reason) ON public.profile_image_releases TO kavosh_runtime;
+CREATE TRIGGER academy_preservation_delete BEFORE DELETE ON public.profile_image_releases FOR EACH ROW EXECUTE FUNCTION platform_private.prevent_held_record_deletion();
+CREATE TRIGGER academy_preservation_truncate BEFORE TRUNCATE ON public.profile_image_releases FOR EACH STATEMENT EXECUTE FUNCTION platform_private.prevent_preserved_truncate();
 CREATE FUNCTION public.profile_image_selection_valid(v jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE SET search_path=pg_catalog AS $$
 DECLARE x jsonb;t jsonb;k text;identities text[]:=ARRAY[]::text[];BEGIN
  IF jsonb_typeof(v) IS DISTINCT FROM 'array' OR jsonb_array_length(v)>100 OR octet_length(v::text)>65536 THEN RETURN false;END IF;
