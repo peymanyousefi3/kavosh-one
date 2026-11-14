@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { expenseFixture } from './expense-fixture.ts';
 
-export async function inventoryFixture(){
- const f=await expenseFixture();
+export async function inventoryFixture(options:Parameters<typeof expenseFixture>[0]={}){
+ const f=await expenseFixture(options);
  try{
  const item=await f.made('inventory/items',{code:'ROBOT',definition:{name:'Bulk robot kits',tracking:'bulk'},reason:'Synthetic stock catalogue'});
  const location=await f.made('inventory/locations',{hubId:f.hub,code:'ROOM-A',definition:{name:'Hub A robotics room',custodianId:f.actors.staff.person},reason:'Synthetic physical location'});

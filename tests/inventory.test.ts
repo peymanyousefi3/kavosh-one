@@ -4,6 +4,9 @@ import { test } from 'node:test';
 import { inventoryFixture as fixture } from './inventory-fixture.ts';
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+check('stock exposes the original item unit and tracking edition after current catalogue labels change',async f=>{
+ assert.equal((await f.receive()).response.status,201);const changed=await f.request('inventory/items/'+f.item.id+'/change',{expectedVersion:1,definition:{name:'New kit grouping',active:true,tracking:'bulk',unit:'set',photo:null},reason:'Current catalogue update for later receipts'});assert.equal(changed.response.status,200);const current=await f.request('inventory/items/'+f.item.id);assert.equal(current.body.data.definition.unit,'set');const stock=(await f.stock()).body.data[0];assert.equal(stock.quantity,'3');assert.equal(stock.item_name,'Bulk robot kits');assert.equal(stock.item_unit,'piece');assert.equal(stock.item_tracking,'bulk');assert.equal(stock.roundedManagementValue,'106.50');
+});
 
 check('expense-backed stock receipts retain quantity and cost without another ledger expense, and transfers conserve both hubs',async f=>{
  const journals=(await f.pg.query('SELECT id FROM public.finance_journals')).rows.length,key=randomUUID(),r=await f.receive({},'master',key);assert.equal(r.response.status,201,JSON.stringify(r.body));const lotId=r.body.data.lotId;
