@@ -11,7 +11,7 @@ const get = service => {
  try { return JSON.parse(bytes.toString()); } finally { bytes.fill(0); }
 };
 try {
- assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(JSON.stringify(args)==='["--execute"]'||JSON.stringify(args)==='["--execute","--require-private-data"]');const requirePrivateData=args.length===2;process.umask(0o077);
+ assert.equal(process.platform, 'darwin');const args=process.argv.slice(2);assert.ok(['["--execute"]','["--execute","--require-private-data"]','["--execute","--require-private-data","--require-platform-connection"]'].includes(JSON.stringify(args)));const requirePrivateData=args.length>=2,requirePlatformConnection=args.length===3;process.umask(0o077);
  stage = 'trusted server receipt';
  const receipt = JSON.parse(execFileSync('/usr/bin/ssh', ['-F', '.local-tools/ovh.ssh-config', 'kavosh-one-production', 'sudo cat /var/lib/kavosh-one-config-backups/latest.json'], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 }));
  assert.match(receipt.id, /^[a-f0-9-]{36}$/); assert.match(receipt.ciphertextSha256, /^[a-f0-9]{64}$/);
@@ -39,7 +39,7 @@ try {
  assert.equal(new Set(entries).size,entries.length);
  for (const name of entries) {assert.ok(!name.startsWith('/')&&!name.split('/').some(part=>part==='.'||part==='..')&&!name.includes('\0'));assert.ok(name === 'roles.sql' || /^(etc\/kavosh-one(?:\/|$)|etc\/kavosh-one-tls(?:\/|$)|etc\/kavosh-one-scanner(?:\/|$)|etc\/postgresql\/18\/main(?:\/|$)|etc\/apparmor\.d\/local\/usr\.sbin\.clamd$|etc\/apparmor\.d\/kavosh-one-parser$|etc\/caddy\/kavosh-one\.caddy$|etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$)/.test(name)||/^etc\/systemd\/system\/kavosh-one-backup\.service\.d(?:\/?|\/media\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@platform-notices\.service\.d(?:\/?|\/operational-health\.conf)$/.test(name)||/^etc\/systemd\/system\/kavosh-one-background@reports\.service\.d(?:\/?|\/runtime\.conf)$/.test(name));}
  const content = name => execFileSync('/usr/bin/tar', ['-xOf', plaintext, name], { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1048576 });
- let mediaBackupOperator,operationalHealthProfileSha256,reportRuntimeProfileSha256,signedEvidenceBackupConfigured=false,agreementBackupReaderIncluded=false,agreementCompletionWorkerEnabled=false,agreementWorkerMonitorEnabled=false,privateDataKeysIncluded=false;const serviceUnitSha256={};
+ let mediaBackupOperator,operationalHealthProfileSha256,reportRuntimeProfileSha256,signedEvidenceBackupConfigured=false,agreementBackupReaderIncluded=false,agreementCompletionWorkerEnabled=false,agreementWorkerMonitorEnabled=false,privateDataKeysIncluded=false,platformConnectionIncluded=false,platformGatewayEnabled=false;const serviceUnitSha256={};
  for (const name of required) {
   const bytes = content(name);
   try {
@@ -52,6 +52,9 @@ try {
      for(const key of material){assert.match(key,/^[A-Za-z0-9_-]{43}$/);const decoded=Buffer.from(key,'base64url');try{assert.equal(decoded.length,32);assert.equal(decoded.toString('base64url'),key);}finally{decoded.fill(0);}}assert.equal(new Set(material).size,material.length);privateDataKeysIncluded=true;
     }
     if(requirePrivateData)assert.equal(privateDataKeysIncluded,true);
+    const platformMatches=[...bytes.toString().matchAll(/^(PLATFORM_(?:ENABLED|DATABASE_URL))=(.*)$/gm)];
+    if(platformMatches.length){assert.deepEqual(platformMatches.map(m=>m[1]).sort(),['PLATFORM_DATABASE_URL','PLATFORM_ENABLED']);const values=Object.fromEntries(platformMatches.map(m=>[m[1],JSON.parse(m[2])]));assert.ok(['true','false'].includes(values.PLATFORM_ENABLED));const url=new URL(values.PLATFORM_DATABASE_URL);assert.equal(url.protocol,'postgresql:');assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'5432');assert.equal(url.pathname,'/kavosh_one');assert.equal(url.username,'kavosh_one_platform');assert.match(url.password,/^[A-Za-z0-9_-]{64}$/);assert.equal(url.search,'');assert.equal(url.hash,'');platformConnectionIncluded=true;platformGatewayEnabled=values.PLATFORM_ENABLED==='true';}
+    if(requirePlatformConnection)assert.equal(platformConnectionIncluded,true);
    }
    if(/^etc\/systemd\/system\/kavosh-one[^/]*\.(?:service|timer)$/.test(name))serviceUnitSha256[name.slice('etc/systemd/system/'.length)]=createHash('sha256').update(bytes).digest('hex');
    if(name==='etc/systemd/system/kavosh-one-monitor.service'){
@@ -68,6 +71,11 @@ try {
  stage='archived database TLS certificate and private key matching';
  const certificate=content('etc/kavosh-one-tls/server.crt'),privateKey=content('etc/kavosh-one-tls/server.key');
  try{assert.ok(new X509Certificate(certificate).checkPrivateKey(createPrivateKey(privateKey)));}finally{certificate.fill(0);privateKey.fill(0);}
+ stage='archived platform connection and TLS authentication binding';
+ if(platformConnectionIncluded){
+  const hbaPath='etc/postgresql/18/main/pg_hba.conf',beforePath='etc/kavosh-one/platform-hba.before';for(const name of [hbaPath,beforePath]){assert.ok(entries.includes(name));if(!required.includes(name))required.push(name);}const parts=['roles.sql',hbaPath,beforePath].map(content);
+  try{assert.match(parts[0].toString(),/\bCREATE ROLE "?kavosh_one_platform"?;/);assert.match(parts[0].toString(),/\bGRANT "?kavosh_platform_service"? TO "?kavosh_one_platform"?(?:\s|;)/);assert.equal(parts[1].toString().split('\n').filter(l=>l.trim()==='hostssl kavosh_one kavosh_one_platform 127.0.0.1/32 scram-sha-256').length,1);assert.ok(parts[2].length>0);}finally{for(const bytes of parts)bytes.fill(0);}
+ }
  stage='archived agreement worker and separate private vault binding';
  const signingNames=['initial-academy.json','boldsign-production.json','signature-vault-production.json','signature-completion.env'],signingBytes=signingNames.map(name=>content('etc/kavosh-one/'+name));
  try{
@@ -86,7 +94,7 @@ try {
    if(signedEvidenceBackupConfigured){const targetsBytes=content('etc/kavosh-one/media-readers.json');signingBytes.push(targetsBytes);const targets=JSON.parse(targetsBytes.toString());assert.equal(targets.length,3);assert.equal(targets.map(t=>t.stage).sort().join(','),'clean,quarantine,signature-evidence');assert.deepEqual(targets.find(t=>t.stage==='signature-evidence').configuration,reader);assert.equal(new Set(targets.map(t=>t.configuration.accessKeyId)).size,3);}
   }
  }finally{for(const bytes of signingBytes)bytes.fill(0);}
- console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,privateDataKeysIncluded,databaseTlsKeyPairVerified:true,agreementWorkerVaultBindingVerified:true,agreementBackupReaderIncluded,agreementCompletionWorkerEnabled,agreementWorkerMonitorEnabled,signedEvidenceBackupConfigured,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
+ console.log(JSON.stringify({ backupId: receipt.id, encryptedBytes: receipt.encryptedBytes, ciphertextSha256: receipt.ciphertextSha256, independentDriveDownloadVerified: true, authenticatedOffServerDecryptionVerified: true, requiredFilesChecked: required.length, archiveEntriesChecked: entries.length, passwordFreeRolesVerified: true,privateDataKeysIncluded,platformConnectionIncluded,platformGatewayEnabled,databaseTlsKeyPairVerified:true,agreementWorkerVaultBindingVerified:true,agreementBackupReaderIncluded,agreementCompletionWorkerEnabled,agreementWorkerMonitorEnabled,signedEvidenceBackupConfigured,mediaBackupOperator,serviceUnitSha256,operationalHealthProfileSha256,reportRuntimeProfileSha256, landingPageExcluded: true, privateRecoveryKeyTransferredToVps: false, configurationApplied: false, fullServerRebuildVerified: false }));
 } catch { console.error('CONFIG_BACKUP_ACCEPTANCE_FAILED: ' + stage); process.exitCode = 1; }
 finally {
  for (const file of [plaintext, encrypted]) if (file) try { unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') { console.error('CONFIG_PROOF_CLEANUP_REQUIRED'); process.exitCode = 1; } }

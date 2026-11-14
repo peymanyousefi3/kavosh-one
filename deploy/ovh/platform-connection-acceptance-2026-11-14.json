@@ -1,0 +1,10 @@
+{
+  "status": "restricted_connection_prepared_and_recovered_gateway_disabled",
+  "operatorSha256": "50cf7ba969174c3fb4bd660758d183d84426b3a7f85099019433eac57e6ee295",
+  "scope": "First-time local TLS platform-service connection only. No owner enrollment, human verification, impersonation or public gateway activation.",
+  "actualPreflightCorrection": "An initial prefix guard confused the existing platform-notices worker with the owner connection and refused before mutation. Replaced it with PostgreSQL parsed exact HBA identities; reproduced both the worker-prefix acceptance and exact-target refusal in runnable tests.",
+  "actualConnectionProbe": {"invocationId": "c8f345f1edcb402b846cca5aa47729a3", "result": "success", "realTlsLogin": true, "originalLeastPrivilegeAssertionPassed": true, "unenrolledOwnerDenied": true, "gatewayEnabled": false, "ownerEnrolled": false, "peakMemoryBytes": 78987264, "cpuNanoseconds": 1989715000, "businessWrites": 0, "providerOperations": 0},
+  "recovery": {"backupId": "d0ce5feb-8d9c-46d9-aaf0-ce62e51631b9", "producerInvocationId": "8c279701cad044b6bf462822b144925e", "roleExportInvocationId": "aeed09dc8b9d49a9bbc1dcdc3a12282f", "ciphertextSha256": "81e38b5978cd86e657b83c9fd65fd0ffa6c6a1b614c602e3d0fa87cbcf04f0b3", "encryptedBytes": 164072, "independentDownloadAndAuthenticatedDecryption": true, "requiredFilesChecked": 51, "archiveEntriesChecked": 81, "privateDataKeysIncluded": true, "exactPlatformRoleMembershipAndLocalTlsBindingIncluded": true},
+  "preservation": {"priorCredentialsPreserved": true, "priorHbaRulesPreserved": true, "landingModified": false, "originalBoldsignDriveOrEmailObjectsModified": false, "secretMaterialInReceipt": false},
+  "limitations": ["A prepared connection is not verified human owner enrollment or an enabled owner gateway.", "Recovery acceptance is not entire-host reconstruction, permanent Google authorization or second-device recovery custody proof."]
+}
