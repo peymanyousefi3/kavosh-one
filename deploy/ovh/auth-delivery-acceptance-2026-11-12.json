@@ -1,0 +1,14 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "worker": "kavosh-one-auth-delivery.service",
+  "unixUser": "kavosh-one-auth-delivery",
+  "databaseLogin": "kavosh_one_auth_delivery",
+  "databaseRole": "kavosh_delivery",
+  "verifiedAsUnprivilegedWorker": { "roleSafety": true, "databaseTls": true, "deliveryQueueSelectUpdate": true, "deliveryQueueInsertDeleteDenied": true, "otherAccountAndFinanceTablesDenied": true, "webCredentialFileUnreadable": true, "pendingMessages": 0, "messagesSentByIsolationCheck": 0 },
+  "runtimeObserved": { "active": true, "restartCount": 0, "memoryBytes": 36331520, "memoryLimitMiB": 256, "cpuLimitPercentOfOneCore": 25, "databasePoolLimit": 2 },
+  "emailAndSmsProviderKeysAreNotInWebEnvironment": true,
+  "mailboxReadMoveDeleteCapabilityAdded": false,
+  "encryptedConfigurationBackup": { "id": "9e56a8aa-31cb-4f81-80c9-ecea38929be1", "createdAt": "2026-11-12T22:12:49.905Z", "encryptedBytes": 102616, "ciphertextSha256": "9c38e5a6f8a2f4872ef9c35c360e03fb43aaa86869b36f215466fe2e6c020c94", "independentDriveCopyVerified": true, "thisNewArchiveOffServerDecryptionRetested": false },
+  "landingPage": { "processIdStill": 536773, "processStartStill": "2026-11-06T01:33:33Z", "serviceRestarted": false },
+  "notClaimed": [ "Frontend login/recovery experience, which still needs UI approval", "Live onboarding of real academy users; there are no human accounts yet", "International SMS delivery or enough email quota for the full academy rollout" ]
+}

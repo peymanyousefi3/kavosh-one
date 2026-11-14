@@ -1,0 +1,4 @@
+# Only Kavosh One's fixed configuration and private local socket are added.
+/etc/kavosh-one-scanner/clamd.conf r,
+/run/kavosh-one-scanner/ rw,
+/run/kavosh-one-scanner/clamd.sock rw,

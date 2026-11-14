@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "8a5dc55b43c1e2fe1389c32a473f82d1f34e4498",
+  "backendCiRun": 43281805173,
+  "secretSafetyCiRun": 43281805418,
+  "ciStatus": "success",
+  "origin": "https://one.kavosh.ai",
+  "dns": { "provider": "Cloudflare", "recordAdded": "one.kavosh.ai", "type": "A", "target": "148.113.194.110", "proxied": true, "existingRecordsEdited": false, "godaddyChanges": false },
+  "host": "vps-239b6953.vps.ovh.ca",
+  "identityVerifiedAgainstExistingKnownHosts": true,
+  "service": { "name": "kavosh-one", "user": "kavosh-one", "address": "127.0.0.1:3100", "release": "/srv/kavosh-one/releases/8a5dc55", "productionBuildOnLinux": true, "automaticStartEnabled": true },
+  "database": { "name": "kavosh_one", "postgresVersion": "18.6", "schemaRevision": 388, "address": "127.0.0.1:5432", "certificateVerificationRequired": true, "webLogin": "kavosh_one_web", "identityLogin": "kavosh_one_identity", "restrictedRoleReadinessVerified": true, "runtimeHasMigrationCredentials": false, "schoolsProvisioned": 0 },
+  "landingPreservation": { "originalCaddySha256": "c74d2f16285cdc0736b48afbfd2d2c5bf84099baf1092d06ff6c9f0b124c22e5", "originalConfigPrefixPreserved": true, "originalProcessId": 536773, "originalProcessStart": "2026-11-06T01:33:33Z", "processRestarted": false, "httpStatusAfterDeployment": 200, "filesChanged": false },
+  "liveAcceptance": { "httpsHealth": 200, "httpsReadiness": 200, "protectedAnonymousRequestsDenied": 3, "spoofedAppProxyHeadersOverwritten": true, "reservedCloudflareHeaderRejected": true, "crossOriginPostRejected": true, "invalidLoginInputRejected": true, "oversizedRequestRejected": true, "concurrentReadinessRequestsPassed": 5, "fullHumanLoginJourneyVerified": false, "realAccountsCreated": 0, "financialWrites": 0, "providerMessagesSent": 0 },
+  "notCompletedByThisDeployment": [ "Approved UI and dashboard; the root path currently has no frontend", "Production email and SMS provider onboarding and live verification", "School and verified master-account activation", "Production signing and card-payment provider activation", "Unattended offsite backup scheduling and restore acceptance on this host", "Google OAuth production publication; the existing test authorization expires after seven days", "Production media scanner and storage workflow activation", "Full application go-live acceptance and SLO monitoring" ]
+}

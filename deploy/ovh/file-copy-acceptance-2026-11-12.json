@@ -1,0 +1,12 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "promotion": { "service": "kavosh-one-file-copy@promotion.service", "unixUid": 990, "databaseLogin": "kavosh_one_file_promotion", "credentialRoles": ["quarantine-read-only", "clean-read-write"], "observedMemoryBytes": 51879936 },
+  "verification": { "service": "kavosh-one-file-copy@verification.service", "unixUid": 982, "databaseLogin": "kavosh_one_file_verification", "credentialRoles": ["clean-read-only"], "observedMemoryBytes": 48115712 },
+  "bothWorkers": { "active": true, "enabledOnBoot": true, "postRestartFailures": 0, "gracefulShutdownExitCode": 0, "memoryLimitMiBEach": 512, "cpuLimitPercentOfOneCoreEach": 25, "databasePoolLimitEach": 2 },
+  "verifiedAsActualUnprivilegedWorkers": { "ownDatabaseLogins": true, "databaseTls": true, "directAccountFinanceAndFileTablesDenied": true, "webSecretsUnreadable": true, "modeSpecificCredentialsOnly": true, "emptyQueues": true },
+  "logicChecks": { "exactSchoolAndTargetRouting": true, "foreignTargetHasNoConnectionFallback": true, "unrelatedWebCredentialEnvironmentRefused": true, "existingConfigurationsNotOverwritten": true, "invalidHbaRestoresExactOriginalBytes": true },
+  "filesCopiedOrPublishedByIsolationChecks": 0,
+  "existingProviderStorageAcceptance": "provider-acceptance-2026-11-12.json",
+  "encryptedConfigurationBackup": { "id": "02852324-0dae-4c74-8c35-fb2515530e45", "createdAt": "2026-11-12T23:13:58.369Z", "ciphertextSha256": "ff11ff591ffdb2764b317025d043fe2c5f97b5a65903d894e11213170d03dd00", "independentDriveCopyVerified": true },
+  "limitations": [ "This deployment verified daemon startup, credentials, role isolation and empty queues; it did not create a real academy copy job", "Copy and reconciliation functions have separate database tests; direct conditional provider copy was tested in the earlier storage acceptance", "Storage policies, live user onboarding, browser upload/download and playback acceptance still require academy activation and approved UI", "Google backup connection remains Testing until production publication" ]
+}

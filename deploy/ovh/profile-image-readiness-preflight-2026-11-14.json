@@ -1,0 +1,50 @@
+{
+  "status": "read_only_live_preflight_with_parser_upgrade_required_not_deployed",
+  "candidateBase": "4ceecf45636dc10f44712fa0577bc5c934cb0145",
+  "runningRelease": "bf251c0b513183cb83695be63098e644f2fe4f37",
+  "database": {
+    "revision": 413,
+    "appliedFiles": 413,
+    "allAppliedChecksumsMatchCurrentCheckout": true,
+    "snapshot": "repeatable_read_read_only_with_shared_migration_lock",
+    "pending": ["414_profile_image_releases.sql", "415_profile_image_jobs.sql", "416_published_profile_images.sql", "417_profile_image_processing.sql", "418_profile_image_incidents.sql", "419_profile_image_delivery.sql"],
+    "changed": false
+  },
+  "preserved": {
+    "landingPid": 653511,
+    "landingInvocation": "091c68e402434f4ab1b9ae9d07284208",
+    "webPid": 793465,
+    "webInvocation": "e6fa69f1b23a49568a57e2fcd7557509",
+    "reportsPid": 793451,
+    "signingPid": 765295,
+    "caddySha256": "10dda8a775670386aa48c264e78c4b04577a576855d29314143c3ed7eee33aad",
+    "oneCaddySha256": "320aa2ea533bdfcabe94b9137c048700dcdeaf2c49b1dedeef61a75b794a06bb",
+    "landingUnitSha256": "c7a8372cf2b09421221cee84272969067e5ece370338bf0375d9f6337a0668f5",
+    "databaseBackupTimerEnabled": true,
+    "configurationBackupTimerEnabled": true,
+    "healthMonitorTimerEnabled": true
+  },
+  "actualParserProbe": {
+    "clientUid": 991,
+    "socket": "/run/kavosh-one-parser-image/validator.sock",
+    "input": "fixed_synthetic_2x2_png_only",
+    "inspectionHttpStatus": 200,
+    "inspectionDecoded": true,
+    "inspectionInputHashMatches": true,
+    "avatarPreparationHttpStatus": 400,
+    "profilePreparationUpgradeRequired": true,
+    "queueClaims": 0,
+    "originalMediaReadOrModified": 0,
+    "providerOperations": 0,
+    "servicesRestarted": false
+  },
+  "requiredBeforeActivation": [
+    "Final exact-source hosted and secret gates.",
+    "Build and verify the updated isolated image-parser artifact;preserve PDF/video/scanner isolation and existing landing routes.",
+    "Use the operator-configured host socket,not the parser-internal container path.",
+    "Both fixed preparation-purpose startup probes must pass before database pool creation or job claims.",
+    "Controlled migration,private worker provisioning,actual identity isolation,authenticated off-server settings verification and copy-only derivative recovery remain unperformed."
+  ],
+  "fullBackendComplete": false,
+  "uiUxChanged": false
+}

@@ -1,0 +1,36 @@
+[Unit]
+Description=Kavosh One private official-signature antivirus engine
+After=clamav-freshclam.service
+
+[Service]
+Type=simple
+User=clamav
+Group=kavosh-one-inspection
+Environment=TZ=UTC
+RuntimeDirectory=kavosh-one-scanner
+RuntimeDirectoryMode=0750
+ExecStart=/usr/sbin/clamd --config-file=/etc/kavosh-one-scanner/clamd.conf
+Restart=on-failure
+RestartSec=15s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+InaccessiblePaths=/etc/kavosh-one /etc/kavosh-one-tls /srv/kavosh /srv/kavosh-one
+ReadOnlyPaths=/var/lib/clamav /etc/clamav/certs
+MemoryMax=2G
+CPUQuota=75%
+TasksMax=32
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

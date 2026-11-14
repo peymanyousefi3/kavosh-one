@@ -9,6 +9,11 @@
 # Dependencies and build output
 node_modules/
 .next/
+.notification-worker/
+.auth-worker/
+.inspection-worker/
+.recovery-tool/
+.storage-probe/
 dist/
 coverage/
 .wrangler/
@@ -17,6 +22,10 @@ coverage/
 data/
 uploads/
 backups/
+*.dump
+*.age
+*.agekey
+*.pgpass
 exports/
 *.sqlite
 *.sqlite3
@@ -25,5 +34,8 @@ exports/
 .DS_Store
 
 # Generated local tooling
+/.local-tools/
 __pycache__/
 *.tsbuildinfo
+.signature-worker/
+.health-monitor/

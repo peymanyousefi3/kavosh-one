@@ -1,0 +1,18 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "service": "kavosh-one-file-inspection.service",
+  "active": true,
+  "enabledOnBoot": true,
+  "observedRestartCount": 0,
+  "observedMemoryBytes": 47689728,
+  "memoryLimitMiB": 512,
+  "cpuLimitPercentOfOneCore": 50,
+  "databasePoolLimit": 2,
+  "actualUnprivilegedWorkerUid": 991,
+  "isolationVerified": { "restrictedDatabaseRole": true, "databaseTls": true, "directAccountFinanceAndFileTablesDenied": true, "webSecretsUnreadable": true, "privateImagePdfVideoSocketsAccessible": true, "freshAntivirusDatabaseAccessible": true, "signatureDetectorPackaged": true, "emptyQueue": true },
+  "combinedVpsPipeline": { "actualR2ReadOnlySource": true, "freshAntivirusScan": true, "contentSignatureDetection": true, "privateNativeImageDecoder": true, "validSyntheticPngDecoded": true, "corruptSyntheticPngRefused": true, "syntheticObjects": 2, "totalSyntheticBytes": 192, "syntheticObjectsRemoved": 2, "independentAbsenceChecksPassed": 2, "otherObjectsModifiedOrDeleted": 0, "filesPublished": 0, "realAcademyRecordsChanged": 0 },
+  "encryptedConfigurationBackup": { "id": "27eadfb1-14b1-446a-a005-bc57d5790f16", "createdAt": "2026-11-12T23:07:26.898Z", "ciphertextSha256": "6231135aa956b5f35ec9a0d422e40c4617f6858e04ae4a1529d92143d43c9df0", "independentDriveCopyVerified": true },
+  "landingPage": { "processIdStill": 536773, "processStartStill": "2026-11-06T01:33:33Z", "httpStatus": 200 },
+  "kavoshOneReadinessHttpStatus": 200,
+  "limitations": [ "The combined live probe bypassed durable queue creation; queue fencing and persistence are covered by database tests, not this provider probe", "Actual user/browser upload and playback acceptance still require approved UI and verified accounts", "Copy/promotion and independent copy-verification daemons are separate work", "Google backup connection remains Testing until production publication", "No media-file offsite backup was performed" ]
+}

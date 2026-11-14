@@ -1,0 +1,21 @@
+{
+  "status": "Read-only structural inspection, not a disposition policy or deletion executor",
+  "sourceSchemaRevision": 427,
+  "publicAcademyRelations": 400,
+  "distinctEnabledDeleteTriggerFunctions": 128,
+  "nondeferrableTenantForeignKeys": 1211,
+  "deferrableTenantForeignKeys": 118,
+  "pre427Observation": {"sourceSchemaRevision": 426, "publicAcademyRelations": 397, "distinctEnabledDeleteTriggerFunctions": 127, "nondeferrableTenantForeignKeys": 1205, "deferrableTenantForeignKeys": 115, "unprotectedPreservedRelations": []},
+  "crossSchemaForeignKeyPairs": 16,
+  "crossSchemaTargets": ["auth_private", "identity", "platform_private", "public"],
+  "unprotectedPreservedRelations": [],
+  "operationalExemptions": ["assignment_cities", "assignment_classes", "assignment_countries", "assignment_hubs", "assignment_people", "assignment_regions", "report_job_issue_backlog", "role_assignments", "role_permissions"],
+  "businessRowsExamined": false,
+  "databaseChangesPerformed": false,
+  "confirmedMissing": "Reviewed tenant data-disposition execution, including lawful retention, app-copy cleanup and restore-deletion enforcement. Cancellation/read-only transition and legal-hold release are not erasure.",
+  "implementationConstraints": ["Preserve active legal holds and mandatory record retention.", "Never disable immutable protections or use a raw bulk-delete bypass.", "Preserve other academies and shared identity/security records.", "Provider originals remain copy-only; clearing a metadata link is not proof of deleting bytes.", "Use exact owner-reviewed disposition manifests and durable evidence; do not imply that approval alone executed deletion.", "A restored old backup must not silently republish disposed data."],
+  "primarySourcesRechecked": ["https://www.canada.ca/en/revenue-agency/services/tax/businesses/topics/keeping-records/where-keep-your-records-long-request-permission-destroy-them-early.html", "https://www.priv.gc.ca/en/privacy-topics/privacy-laws-in-canada/the-personal-information-protection-and-electronic-documents-act-pipeda/p_principle/principles/p_use/", "https://www.ontario.ca/laws/statute/00e41"],
+  "researchBoundaries": ["A blanket six-year timer is insufficient: CRA lists exceptions including some indefinite historical records,late returns and unresolved objections/appeals.", "Ontario employment record periods differ by record category; overlapping obligations need evaluation.", "Privacy retention must remain purpose-based; these sources do not certify a particular school-wide purge plan."],
+  "legalApplicabilityCertified": false,
+  "productionDataDeleted": false
+}

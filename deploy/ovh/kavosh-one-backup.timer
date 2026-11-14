@@ -1,0 +1,11 @@
+[Unit]
+Description=Kavosh One daily backup around 3 AM Toronto time
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 America/Toronto
+RandomizedDelaySec=120
+Persistent=true
+Unit=kavosh-one-backup.service
+
+[Install]
+WantedBy=timers.target

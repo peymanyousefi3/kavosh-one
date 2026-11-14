@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+node_modules
+.next
+.notification-worker
+data
+uploads
+backups
+exports
+*.log
+docs
+tests

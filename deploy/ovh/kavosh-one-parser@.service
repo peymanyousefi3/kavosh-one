@@ -1,0 +1,29 @@
+[Unit]
+Description=Kavosh One isolated %i file validator
+After=local-fs.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=exec
+# Podman creates the namespaces; the application inside runs as UID10002/10003
+# with no capabilities. Never give the parser a container-engine socket.
+RuntimeDirectory=kavosh-one-parser-%i kavosh-one-parser-%i-control
+RuntimeDirectoryMode=0750
+ExecStart=/bin/sh /srv/kavosh-one/deploy/run-parser.sh %i
+ExecStop=/usr/bin/podman stop --time 10 --cidfile /run/kavosh-one-parser-%i-control/container.cid
+ExecStopPost=-/usr/bin/podman rm --ignore --cidfile /run/kavosh-one-parser-%i-control/container.cid
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+KillMode=mixed
+Delegate=yes
+MemoryMax=1280M
+MemorySwapMax=0
+CPUQuota=60%
+TasksMax=96
+LimitNOFILE=2048
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

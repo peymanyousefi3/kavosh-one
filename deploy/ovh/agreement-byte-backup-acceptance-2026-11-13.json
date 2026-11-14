@@ -1,0 +1,48 @@
+{
+  "sourceRevision": "9840509a5d62d52cf6fe2929b02576cbdbb51133",
+  "sourceArchiveSha256": "2586bf3285999e42804c81cfdf643cb0efdd5edd74fe23a9164223916e1ef7d5",
+  "componentGate": {"run": 43511866177, "job": 132183857714, "name": "database-recovery", "conclusion": "success", "fullApplicationGateAccepted": false},
+  "isolatedBuild": {
+    "unit": "kavosh-one-recovery-build-9840509.service",
+    "invocationId": "c3eb692359414970bccda9a68a9dd78d",
+    "result": "success", "exitCode": 0,
+    "wallSeconds": 6.560774, "cpuSeconds": 3.302649, "peakMemoryBytes": 240050176,
+    "privateNetwork": true, "buildUser": "kavosh-one-build",
+    "sourceFilesHashCompared": 1445, "compiledFilesHashCompared": 26,
+    "internalPackageLinksVerified": 554, "packageEntriesVerified": 25853,
+    "rootOwned": true, "groupOtherWritesDenied": true,
+    "packagingCorrection": "Initial integrity check found missing internal worker-workspace targets in the copied dependency graph. Added the original sealed workers directory;unchanged integrity check then passed. No weakened checks or escaped links."
+  },
+  "cloudBackup": {
+    "unit": "kavosh-one-agreement-byte-backup-9840509.service",
+    "invocationId": "59254ed515b64613a77dd2bdb3ee0832",
+    "result": "success", "exitCode": 0,
+    "wallSeconds": 22.278357, "cpuSeconds": 2.644026, "peakMemoryBytes": 64929792,
+    "collectionId": "d0ea18e5-4f45-43c5-8b70-a9263eb4eef9",
+    "syntheticAcademyId": "22ecdcaf-d64d-4b75-a476-d15f7c037f02",
+    "catalogCiphertextSha256": "b307b36a1bc46e693d7e4f05a743d7bfabeb9d9a9c0792d7b0485179a5a2424e",
+    "catalogEncryptedBytes": 4302,
+    "syntheticObjects": 3, "syntheticSourceBytes": 157,
+    "allArchivesIndependentlyCopied": true, "matchingFinalInventory": true,
+    "databaseCredentialsProvided": false, "privateRecoveryKeyTransferredToVps": false,
+    "databaseRequests": 0, "providerRequests": 0, "realPeopleUsed": false,
+    "existingObjectsChanged": 0, "activeBackupConfigurationChanged": false,
+    "observationCorrection": "The launcher waited synchronously on the oneshot and its10second observation expired. Authoritative systemd invocation and journal proved the original service succeeded;it was not restarted. Future launcher uses no-block plus separate terminal observation."
+  },
+  "independentMacRecovery": {
+    "independentDriveDownloads": 4,
+    "authenticatedCatalogAndArtifactDecryptionVerified": true,
+    "exactOriginalSyntheticArtifactsRecovered": 3, "exactOriginalBytesRecovered": 157,
+    "privateRecoveryKeyTransferredToVps": false,
+    "sourceOrRemoteObjectsModified": false,
+    "databaseReferencesVerified": false,
+    "productionAgreementRestoreVerified": false
+  },
+  "productionUnchanged": {"runtime": "3a2e8bc729be1b5e9ac22cd8832f522f2ee51c04", "schema": 407, "webPid": 739737, "reportPid": 739721, "landingPid": 653511, "automaticRestarts": 0},
+  "limitations": [
+    "Synthetic byte recovery only;not ingestion,legal validity,all recorded agreement references,production agreement restoration or full-host recovery.",
+    "Scheduled signing-evidence backup remains disabled until controlled configuration and schema/release acceptance.",
+    "Google Cloud was independently observed in External/Testing mode with publishing disabled pending branding configuration. Refresh-token testing expiry remains an unattended-backup gate;no Google setting was changed.",
+    "Whole-application native gate was still running when the independently passed recovery component was built. No website build or activation is implied."
+  ]
+}

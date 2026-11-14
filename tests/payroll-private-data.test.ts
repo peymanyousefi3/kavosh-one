@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { createDecipheriv,randomBytes,randomUUID } from 'node:crypto';
+import { test } from 'node:test';
+import { createPayrollPrivateVault,payrollPrivateEnvelope } from '../src/core/payroll-private-data.ts';
+
+const key=()=>randomBytes(32).toString('base64url'),settings=()=>({activeKeyId:'current',keys:{current:key()},fingerprintKey:key()}),scope=()=>({academyId:randomUUID(),personId:randomUUID(),version:1});
+test('payroll private encryption uses independent native authenticated decryption and randomized nonces without persisting plaintext',()=>{
+ const c=settings(),v=createPayrollPrivateVault(c),b=scope(),plain='PRIVATE synthetic payroll record 中文 français',a=v.seal(b,plain),next=v.seal(b,plain);assert.equal(payrollPrivateEnvelope.safeParse(a).success,true);assert.notEqual(a.nonce,next.nonce);assert.notEqual(a.ciphertext,next.ciphertext);assert.equal(v.open(b,a),plain);assert.equal(v.open({...b,academyId:b.academyId.toUpperCase(),personId:b.personId.toUpperCase()},a),plain);assert.ok(!JSON.stringify(a).includes(plain));
+ const decipher=createDecipheriv('aes-256-gcm',Buffer.from(c.keys.current,'base64url'),Buffer.from(a.nonce,'base64url'),{authTagLength:16});decipher.setAAD(Buffer.concat([Buffer.from(JSON.stringify(['kavosh-payroll-identity-v1',b.academyId,b.personId,b.version])),Buffer.from('\0'+c.activeKeyId)]));decipher.setAuthTag(Buffer.from(a.tag,'base64url'));assert.equal(Buffer.concat([decipher.update(Buffer.from(a.ciphertext,'base64url')),decipher.final()]).toString('utf8'),plain);
+});
+test('payroll private authentication rejects cross-school person and revision replay plus altered ciphertext nonce tag key and shape',()=>{
+ const v=createPayrollPrivateVault(settings()),b=scope(),a=v.seal(b,'PRIVATE synthetic identity'),unavailable=(f:()=>unknown)=>assert.throws(f,(e:unknown)=>e instanceof Error&&e.message==='PAYROLL_PRIVATE_DATA_UNAVAILABLE');
+ for(const other of [{...b,academyId:randomUUID()},{...b,personId:randomUUID()},{...b,version:2}])unavailable(()=>v.open(other,a));
+ const flip=(s:string)=>(s[0]==='A'?'B':'A')+s.slice(1);for(const altered of [{...a,ciphertext:flip(a.ciphertext)},{...a,nonce:flip(a.nonce)},{...a,tag:flip(a.tag)},{...a,keyId:'retired'},{...a,format:'other'},{...a,tag:a.tag+'='},{...a,ciphertext:'A'},{...a,nonce:a.nonce.slice(1)},{...a,extra:true}])unavailable(()=>v.open(b,altered));unavailable(()=>createPayrollPrivateVault(settings()).open(b,a));
+});
+test('payroll private key rotation reads retained old ciphertext and writes new editions without reusing the fingerprint key',()=>{
+ const c=settings(),b=scope(),old=createPayrollPrivateVault(c),saved=old.seal(b,'PRIVATE before key rotation'),rotated=createPayrollPrivateVault({...c,activeKeyId:'next',keys:{...c.keys,next:key()}});assert.equal(rotated.open(b,saved),'PRIVATE before key rotation');assert.equal(rotated.seal(b,'PRIVATE after key rotation').keyId,'next');assert.equal(rotated.fingerprint(b,'same semantic input'),old.fingerprint(b,'same semantic input'));assert.notEqual(rotated.fingerprint({...b,version:2},'same semantic input'),old.fingerprint(b,'same semantic input'));assert.notEqual(rotated.fingerprint(b,'changed'),old.fingerprint(b,'same semantic input'));assert.notEqual(createPayrollPrivateVault(settings()).fingerprint(b,'same semantic input'),old.fingerprint(b,'same semantic input'));
+ const relabeled=createPayrollPrivateVault({...c,activeKeyId:'alias',keys:{alias:c.keys.current}});assert.throws(()=>relabeled.open(b,{...saved,keyId:'alias'}),/PAYROLL_PRIVATE_DATA_UNAVAILABLE/);
+});
+test('payroll private configuration and input fail closed with bounded byte sizes and no supplied secret in errors',()=>{
+ const c=settings(),b=scope(),v=createPayrollPrivateVault(c);for(const invalid of [undefined,{}, {...c,activeKeyId:'missing'},{...c,keys:{}},{...c,keys:{current:'not-a-real-key'}},{...c,keys:{...c.keys,duplicate:c.keys.current}},{...c,fingerprintKey:c.keys.current},{...c,keys:{current:c.keys.current+'='}},{...c,keys:Object.fromEntries(Array.from({length:11},(_,i)=>['key'+i,key()]))}])assert.throws(()=>createPayrollPrivateVault(invalid),(e:unknown)=>e instanceof Error&&e.message==='PAYROLL_PRIVATE_CONFIG_INVALID');
+ assert.equal(v.open(b,v.seal(b,'a'.repeat(16384))).length,16384);for(const invalid of ['',1,'a'.repeat(16385),'中'.repeat(6000),'\ud800']){assert.throws(()=>v.seal(b,invalid),/INVALID_PAYROLL_PRIVATE_INPUT/);assert.throws(()=>v.fingerprint(b,invalid),/INVALID_PAYROLL_PRIVATE_INPUT/);}for(const bad of [{...b,version:0},{...b,version:2147483648},{...b,extra:true},{...b,academyId:'bad'}])assert.throws(()=>v.seal(bad,'valid synthetic input'),/INVALID_PAYROLL_PRIVATE_INPUT/);
+});

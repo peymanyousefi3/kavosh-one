@@ -1,0 +1,599 @@
+name: Backend foundation
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full_suite:
+        description: Run both complete database suites, including large-load cases (release/milestone gate)
+        type: boolean
+        default: false
+        required: false
+permissions:
+  contents: read
+# Keep each checkpoint's evidence. Do not cancel an earlier run when another
+# commit is pushed, including when GitHub is slow to finalize its run status.
+jobs:
+  disposition-postgres18:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Bounded disposition topology,retained-row closure and actual PostgreSQL18 enforcement semantics
+        run: node --import tsx --test --test-concurrency=1 tests/tenant-disposition-schema.test.ts tests/tenant-disposition-retained-rows.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Exact owner retention review and failure rollback on PostgreSQL18
+        run: node --import tsx --test --test-name-pattern='^disposition review' tests/platform-plans.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+  database-recovery:
+    runs-on: ubuntu-latest
+    container: postgres:17
+    timeout-minutes: 12
+    steps:
+      - name: Install runner tools inside the disposable database-client container
+        run: apt-get update && apt-get install --yes --no-install-recommends ca-certificates curl git xz-utils
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Isolated deployment preservation and rollback logic (no live server access)
+        run: node --test tests/ovh-deployment.test.mjs tests/scheduled-backups.test.mjs tests/vps-restore-verifier.test.mjs tests/media-reference-verifier.test.mjs tests/media-batch-verifier.test.mjs tests/config-backup.test.mjs tests/private-data-provisioning.test.mjs tests/platform-provisioning.test.mjs tests/twilio-provisioning.test.mjs tests/sms-acceptance.test.mjs tests/postmark-acceptance.test.mjs tests/auth-delivery-startup.test.mjs tests/auth-delivery-provisioning.test.mjs tests/boldsign-acceptance.test.mjs tests/parser-deployment.test.mjs
+      - name: Isolation diagnostics never claim queued work or contact message providers
+        # Keep queue-claiming code out of diagnostics,even when queues contain work.
+        run: node --import tsx --test tests/worker-isolation-checks.test.ts tests/migration-preflight.test.ts tests/media-backup-provisioning.test.ts tests/cluster-recovery-unit.test.ts tests/cluster-recovery-operator.test.ts tests/recovery-sequences.test.ts tests/recovery-authentication.test.ts tests/operational-health.test.ts tests/health-status.test.ts
+      - name: Verify the official pinned encryption tool before execution
+        run: |
+          install -d -m 700 /tmp/kavosh-backup-tools
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o /tmp/kavosh-backup-tools/age.tar.gz
+          echo 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  /tmp/kavosh-backup-tools/age.tar.gz' | sha256sum --check --strict
+          tar -xzf /tmp/kavosh-backup-tools/age.tar.gz -C /tmp/kavosh-backup-tools age/age age/age-keygen
+      - name: Initial school and file-worker setup stays isolated; cleanup touches only confirmed synthetic probes
+        run: node --test tests/first-school-provisioning.test.mjs tests/file-inspection-provisioning.test.mjs tests/file-inspection-probe.test.mjs tests/file-copy-daemon.test.mjs tests/profile-image-daemon.test.mjs tests/profile-image-provisioning.test.mjs tests/background-provisioning.test.mjs tests/signature-ingest-provisioning.test.mjs tests/signature-webhook-secret.test.mjs
+      - name: Start only a disposable loopback PostgreSQL instance
+        run: |
+          install -d -o postgres -g postgres -m 700 /tmp/kavosh-backup-postgres
+          umask 077
+          printf '%s\n' 'synthetic-ci-password' > /tmp/kavosh-backup-ci-password
+          chown postgres:postgres /tmp/kavosh-backup-ci-password
+          runuser -u postgres -- initdb -D /tmp/kavosh-backup-postgres --auth-local=trust --auth-host=scram-sha-256 --pwfile=/tmp/kavosh-backup-ci-password --no-locale -E UTF8
+          runuser -u postgres -- pg_ctl -D /tmp/kavosh-backup-postgres -l /tmp/kavosh-backup-postgres/server.log -o '-h 127.0.0.1 -p 5432' -w start
+      - name: Real encrypted full database restore and adverse-case checks,no live credentials or external delivery
+        run: |
+          pnpm operations:health:build
+          pnpm db:recovery:build
+          node .recovery-tool/scripts/database-recovery.js --help
+          RECOVERY_COMPILED_CLI="$PWD/.recovery-tool/scripts/database-recovery.js" PG_DUMP_BIN="$(command -v pg_dump)" PG_RESTORE_BIN="$(command -v pg_restore)" node --import tsx --test --test-concurrency=1 tests/database-backups.test.ts tests/database-verification.test.ts tests/role-recovery.test.ts tests/drive-backups.test.ts tests/media-backups.test.ts tests/media-reference-plan.test.ts tests/media-recovery.test.ts tests/media-collection-recovery.test.ts tests/media-archive-reuse.test.ts tests/media-backup-batch.test.ts
+        env:
+          NODE_ENV: test
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+          AGE_BIN: /tmp/kavosh-backup-tools/age/age
+          AGE_KEYGEN_BIN: /tmp/kavosh-backup-tools/age/age-keygen
+      - name: Reconstruct global roles and database access in a second disposable socket-only cluster
+        run: RECOVERY_POSTGRES_BIN="$(pg_config --bindir)" node --import tsx --test tests/fresh-cluster-recovery.test.ts
+        env:
+          NODE_ENV: test
+          KAVOSH_FRESH_CLUSTER_TEST: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+  verify:
+    runs-on: ubuntu-latest
+    # Run41804739143 hit20m at the final container HTTP check after its full
+    # suites/build passed. Leave headroom for runner variation and coverage.
+    # Keep shared-role tests serial; production limits/assertions are unchanged.
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: node --test tests/build-typecheck.test.mjs
+      - name: Agreement completion queue adapter rejects stale sources and unsafe claims
+        run: node --import tsx --test --test-concurrency=1 tests/completion-orchestrator.test.ts tests/signature-completion-job-worker.test.ts tests/signature-completion-config.test.ts tests/signature-completion-provisioning.test.ts tests/signature-evidence-config.test.ts tests/signature-completion-status.test.ts tests/signature-completion-retries.test.ts tests/signature-completion-incidents.test.ts tests/signature-completion-alerts.test.ts
+      - name: Account-wide signing callbacks retain only their exact school and original connection
+        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^account callback|^actual388to389|^bound-only|^initial provisioning' tests/boldsign-inbox.test.ts tests/signature-dispatch.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Payment signature, durable isolated intake and original signing compatibility (no provider calls)
+        run: node --import tsx --test --test-concurrency=1 --test-skip-pattern='one hundred concurrent' tests/stripe-event.test.ts tests/stripe-checkout.test.ts tests/checkout-worker.test.ts tests/stripe-inbox.test.ts tests/payment-checkouts.test.ts tests/checkout-dispatch.test.ts tests/checkout-result-worker.test.ts tests/boldsign-inbox.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Exact reference exchange rates, reviewed corrections and brief real-database conflicts
+        run: node --import tsx --test --test-concurrency=1 tests/exchange-rates.test.ts tests/asset-currency-valuation.test.ts tests/reporting-currency-defaults.test.ts tests/outlook-reference.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Private report capture logic and original financial-source compatibility
+        run: node --import tsx --test --test-concurrency=1 tests/counterparty-capture.test.ts tests/counterparty-render.test.ts tests/counterparty-parts.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Historical financial and academic report archive upgrade compatibility
+        run: node --import tsx --test --test-concurrency=1 --test-name-pattern='^schema142 preserves|^actual146-to147 upgrade|^249 to250 retains|^255 to256 retains|^253 to254 preserves|^queued paid tax actual175to176|^queued remittance actual155to156|^actual152to153' tests/payroll-gross-report.test.ts tests/achievements.test.ts tests/allocated-expense-reports.test.ts tests/profitability-report.test.ts tests/payroll-cost-attributions.test.ts tests/payruns.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Real-library login verification recovery and concurrent phone-change logic
+        run: node --import tsx --test --test-skip-pattern='5,000' tests/identity.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Independent embedded contact-recovery and identity-upgrade compatibility
+        run: node --import tsx --test --test-name-pattern='phone change|email change|contact change' tests/identity.test.ts
+      - name: Focused signing transport and original-byte verification
+        run: node --import tsx --test --test-concurrency=1 tests/boldsign.test.ts tests/boldsign-template.test.ts tests/boldsign-template-pdf.test.ts tests/boldsign-send-request.test.ts tests/boldsign-work-send-request.test.ts tests/boldsign-dispatch.test.ts tests/boldsign-stored-request.test.ts tests/signing-control-api.test.ts tests/signing-orchestrator.test.ts
+      - name: Conditional separate-target storage promotion and original-byte verification
+        run: node --import tsx --test --test-concurrency=1 tests/r2.test.ts tests/r2-inspection.test.ts tests/r2-promotion.test.ts
+      - name: Image preparation preserves original bytes and cannot substitute for persisted scan evidence
+        run: node --import tsx --test --test-concurrency=1 tests/image-validation.test.ts tests/image-service.test.ts tests/file-image-evidence.test.ts tests/profile-image-preparation.test.ts tests/profile-image-retention.test.ts tests/profile-image-delivery.test.ts tests/profile-image-releases.test.ts tests/profile-image-jobs.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Focused agreement-content persistence and private source approvals
+        run: node --import tsx --test --test-concurrency=1 --test-skip-pattern='one hundred simultaneous' tests/agreement-content.test.ts tests/agreement-package-content.test.ts tests/agreement-packages.test.ts tests/signature-sends.test.ts tests/signature-dispatch.test.ts tests/signature-result-worker.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Focused loaded-scanner-database failure persistence
+        run: node --import tsx --test --test-name-pattern='strict loaded-database|scanner observation|schema112' tests/file-worker.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Compile and package the isolated file-inspection worker without a TypeScript runtime
+        run: pnpm files:build
+      - name: Compile and package per-service background daemons and their spreadsheet worker asset
+        run: pnpm background:build
+      - name: Compile the private signing intake checker and operator registration tool
+        run: pnpm signatures:build
+      - name: API contract matches the implemented schemas
+        run: pnpm api:generate && git diff --exit-code -- public/openapi.json
+      # Routine native logic runs in isolated jobs below. Run42108232836
+      # passed that suite but exhausted30m while building the final container.
+      # Preserve ALL checks and the timeout;do not cancel earlier checkpoint runs.
+      - name: Complete embedded-database suite (explicit milestone run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
+        run: pnpm test
+      - name: Complete PostgreSQL suite (explicit milestone run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_suite }}
+        run: pnpm test
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Migration is repeatable without reapplying existing SQL
+        run: pnpm db:migrate && pnpm db:migrate
+        env:
+          MIGRATION_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+          DATABASE_SSL_MODE: disable
+      - run: pnpm build
+      - run: pnpm test:http
+      - run: pnpm audit --prod --audit-level high
+      - name: Build the minimal non-root notification worker
+        run: docker build --file Dockerfile.notification-worker --tag kavosh-notifications:ci .
+      - name: Verify the isolated worker defaults off with a read-only filesystem
+        run: |
+          set +e
+          task_worker_output=$(docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true kavosh-notifications:ci 2>&1)
+          task_worker_status=$?
+          set -e
+          printf '%s\n' "$task_worker_output"
+          test "$task_worker_status" -eq 1
+          printf '%s\n' "$task_worker_output" | grep -F 'Notification worker stopped; check isolated configuration without logging credentials.'
+      - name: Verify the platform-notice entrypoint has its own complete minimal runtime
+        run: |
+          set +e
+          task_platform_output=$(docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-notifications:ci scripts/process-platform-notices.js 2>&1)
+          task_platform_status=$?
+          set -e
+          test "$task_platform_status" -eq 1
+          printf '%s\n' "$task_platform_output" | grep -Fx 'Platform notice worker stopped; check isolated configuration without logging credentials.'
+      - name: Verify actual worker UID, minimal dependencies and read-only application directory
+        run: |
+          docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-notifications:ci --input-type=module -e '
+            import {writeFileSync,readFileSync,statSync} from "node:fs";
+            import pg from "pg";
+            import {z} from "zod";
+            if(process.getuid()===0||process.env.NODE_ENV!=="production"||!pg.Pool||!z.object)throw Error("WORKER_RUNTIME_INVALID");
+            if(statSync("/app/package.json").uid!==process.getuid())throw Error("WORKER_FILE_OWNER_INVALID");
+            try{writeFileSync("/app/package.json","probe");throw Error("APPLICATION_FILES_WRITABLE");}catch(error){if(error.code!=="EROFS")throw error;}
+            const status=readFileSync("/proc/self/status","utf8");if(!/^CapEff:\s+0+$/m.test(status)||!/^NoNewPrivs:\s+1$/m.test(status))throw Error("WORKER_ISOLATION_INVALID");
+            for(const name of ["next","tsx"]){try{import.meta.resolve(name);throw Error("UNNECESSARY_RUNTIME_DEPENDENCY");}catch(error){if(error.code!=="ERR_MODULE_NOT_FOUND")throw error;}}
+          '
+      - name: Build the minimal non-root outbound-message worker
+        run: docker build --file Dockerfile.message-worker --tag kavosh-messages:ci .
+      - name: Verify outbound worker remains disabled without credentials and needs no web runtime
+        run: |
+          set +e
+          task_message_output=$(docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true kavosh-messages:ci 2>&1)
+          task_message_status=$?
+          set -e
+          test "$task_message_status" -eq 1
+          printf '%s\n' "$task_message_output" | grep -Fx 'Outbound message worker stopped;check isolated configuration without logging credentials or recipients.'
+          docker run --rm --read-only --tmpfs /tmp --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-messages:ci --input-type=module -e '
+            import pg from "pg";import nodemailer from "nodemailer";import {z} from "zod";
+            import {readFileSync} from "node:fs";
+            if(process.getuid()===0||!pg.Pool||!nodemailer.createTransport||!z.object)throw Error("MESSAGE_WORKER_RUNTIME_INVALID");
+            const status=readFileSync("/proc/self/status","utf8");if(!/^CapEff:\s+0+$/m.test(status)||!/^NoNewPrivs:\s+1$/m.test(status))throw Error("MESSAGE_WORKER_ISOLATION_INVALID");
+            for(const name of ["next","tsx","better-auth"]){try{import.meta.resolve(name);throw Error("UNNECESSARY_MESSAGE_RUNTIME_DEPENDENCY");}catch(error){if(error.code!=="ERR_MODULE_NOT_FOUND")throw error;}}
+          '
+      - name: Build VPS container
+        run: docker build --tag kavosh-one:ci .
+      - name: Verify the packaged Excel worker with no network or writable filesystem
+        run: docker run --rm --read-only --network none --cap-drop ALL --security-opt no-new-privileges:true --entrypoint node kavosh-one:ci scripts/spreadsheet-runtime-smoke.mjs
+      - name: Run non-root container with a read-only filesystem
+        run: docker run --detach --name kavosh-one-ci --publish 127.0.0.1:3198:3000 --read-only --tmpfs /tmp kavosh-one:ci
+      - name: Verify the actual standalone container
+        run: pnpm test:http
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:3198
+      - name: Remove disposable test container
+        if: always()
+        run: docker rm --force kavosh-one-ci || true
+  business-logic:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.full_suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # Run42523421190 group3 was still executing when cancelled at30m.
+      # Smaller unchanged serial batches;no dropped checks or stress expansion.
+      # Every runner still owns an independent PostgreSQL service.
+      max-parallel: 6
+      matrix:
+        group: ['1', '2', '3', '4', '5', '6']
+    # Native roles must NEVER be shared between concurrent groups.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      NOTIFICATION_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-notifications.js
+      REPORT_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-reports.js
+      MESSAGE_WORKER_COMPILED_ENTRY: .notification-worker/scripts/process-messages.js
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      # One strict invocation covers all four original daemon entrypoints and
+      # packages their spreadsheet assets;do not compile shared imports thrice.
+      - run: pnpm background:build
+      - name: Native owner access, school isolation and immutable audit
+        if: matrix.group == 1
+        run: node --import tsx --test --test-concurrency=1 tests/database-template.test.ts tests/platform-health.test.ts tests/platform-directories.test.ts tests/platform-class-operations.test.ts tests/platform-learning-session.test.ts tests/platform-learning-history.test.ts tests/platform-homework.test.ts tests/platform-student-care.test.ts tests/platform-finance.test.ts tests/platform-operational-events.test.ts tests/platform-access-directories.test.ts tests/platform-tuition-directories.test.ts tests/platform-expense-directories.test.ts tests/platform-inventory-directories.test.ts
+      - name: Native reviewed contractor settlement deductions
+        if: matrix.group == 3
+        run: node --import tsx --test --test-concurrency=1 tests/t4a-non-tax-deductions.test.ts tests/consolidated-private-package.test.ts tests/zero-net-settlements.test.ts tests/zero-net-tax-records.test.ts tests/zero-net-t4a-records.test.ts
+      - name: Complete assigned quick-logic group without dropping or duplicating files
+        run: node scripts/run-quick-checks.mjs '${{ matrix.group }}'
+  learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Independent PostgreSQL service: keep native roles/fixtures isolated.
+    # The old monolithic run42033366344 spent9m33here,then exceeded30m
+    # during build after all logic passed. Keep every check,run in parallel.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Focused learning, achievements, shared evidence and time persistence
+        run: node --import tsx --test --test-concurrency=1 tests/session-staff-feedback.test.ts tests/session-evidence-reviews.test.ts tests/session-evidence-report.test.ts tests/poll-template-use.test.ts tests/poll-templates.test.ts tests/poll-response-moderation.test.ts tests/poll-results.test.ts tests/poll-responses.test.ts tests/poll-answer.test.ts tests/date-time-input.test.ts tests/polls.test.ts tests/report-comments.test.ts tests/homework-solutions.test.ts tests/homework-grades.test.ts tests/homework-submissions.test.ts tests/homeworks.test.ts tests/student-feedback.test.ts tests/achievements.test.ts tests/community-profiles.test.ts tests/assessment-rubrics.test.ts tests/report-publications.test.ts tests/session-reports.test.ts tests/session-attendance.test.ts tests/session-time.test.ts
+        env:
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+  image-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build minimal distribution-Node image validator
+        run: docker build --file Dockerfile.image-service --tag kavosh-image:ci .
+      - name: Refuse a runtime missing required isolation controls
+        run: |
+          if docker run --rm --network none kavosh-image:ci; then
+            echo 'Unsafe image-service startup was accepted'
+            exit 1
+          fi
+      - name: Run actual isolated resource-limited native image service
+        run: >-
+          docker run --detach --name kavosh-image-ci --network none --read-only
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --memory 1g --memory-swap 1g --cpus 1 --pids-limit 64
+          --tmpfs /run/kavosh-image:rw,noexec,nosuid,nodev,size=1m,uid=10002,gid=10001,mode=0750
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10002,gid=10001,mode=0700
+          kavosh-image:ci
+      - name: Verify actual PIE/cgroup/security controls and full native socket decoding
+        run: docker exec kavosh-image-ci node scripts/image-service-smoke.mjs
+      - name: Verify graceful service shutdown
+        run: |
+          docker stop --time 10 kavosh-image-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' kavosh-image-ci)" = 0
+      - name: Remove disposable image-service container
+        if: always()
+        run: docker rm --force kavosh-image-ci || true
+      - name: Package only the tested credential-free image runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/image-runtime"
+          docker save kavosh-image:ci | gzip -1 > "$RUNNER_TEMP/image-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/image-runtime"
+          sha256sum runtime.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-image-runtime
+          path: ${{ runner.temp }}/image-runtime/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  pdf-parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SIGNING_SOURCE_PATTERN: '^approved source,real PDF parsing|^two-party worker source'
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install exact binary PDF dependencies with official registry hashes
+        run: >-
+          python -m pip install --disable-pip-version-check --only-binary=:all:
+          --require-hashes -r workers/pdf-validator/requirements.txt
+      - name: Audit the pinned Python dependencies without adding tools to runtime requirements
+        run: |
+          python -m pip install --disable-pip-version-check pip-audit==2.10.1
+          python -m pip_audit --require-hashes --progress-spinner off --strict -r workers/pdf-validator/requirements.txt
+      - name: Check original enrollment,worker,queue and delivery logic before larger regressions
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 --test-name-pattern="$SIGNING_SOURCE_PATTERN" tests/signing-original-flow.test.ts tests/work-signature-original.test.ts
+        env:
+          PDF_VALIDATION_TEST_REQUIRED: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Required actual native PDF parser and remaining process-failure checks
+        run: TEST_PDF_PYTHON_BINARY="$(command -v python)" node --import tsx --test --test-concurrency=1 --test-skip-pattern="$SIGNING_SOURCE_PATTERN" tests/pdf-validation.test.ts tests/pdf-service.test.ts tests/signed-pdf-validation.test.ts tests/signature-evidence-inspection.test.ts tests/file-pdf-evidence.test.ts tests/file-copies.test.ts tests/file-copy-worker.test.ts tests/file-copy-reconciliation.test.ts tests/copy-check-adapter.test.ts tests/file-downloads.test.ts tests/download-config.test.ts tests/signing-original-flow.test.ts tests/work-signature-original.test.ts
+        env:
+          PDF_VALIDATION_TEST_REQUIRED: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Build minimal credential-free native PDF service
+        run: docker build --file Dockerfile.pdf-service --tag kavosh-pdf:ci .
+      - name: Refuse a PDF runtime missing required isolation controls
+        run: |
+          if docker run --rm --network none kavosh-pdf:ci; then
+            echo 'Unsafe PDF-service startup was accepted'
+            exit 1
+          fi
+      - name: Run actual isolated resource-limited PDF service
+        run: >-
+          docker run --detach --name kavosh-pdf-ci --network none --read-only
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --memory 1g --memory-swap 1g --cpus 1 --pids-limit 64
+          --tmpfs /run/kavosh-pdf:rw,noexec,nosuid,nodev,size=1m,uid=10002,gid=10001,mode=0750
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10002,gid=10001,mode=0700
+          kavosh-pdf:ci
+      - name: Verify actual PDF interpreter PIE,kernel controls,socket privacy and original-byte parsing
+        run: docker exec kavosh-pdf-ci node scripts/pdf-service-smoke.mjs
+      - name: Verify graceful PDF service shutdown
+        run: |
+          docker stop --time 10 kavosh-pdf-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' kavosh-pdf-ci)" = 0
+      - name: Remove disposable PDF-service container
+        if: always()
+        run: docker rm --force kavosh-pdf-ci || true
+      - name: Package only the tested credential-free PDF runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/pdf-runtime"
+          docker save kavosh-pdf:ci | gzip -1 > "$RUNNER_TEMP/pdf-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/pdf-runtime"
+          sha256sum runtime.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-pdf-runtime
+          path: ${{ runner.temp }}/pdf-runtime/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+  scanner-engine:
+    runs-on: ubuntu-latest
+    # Run42267995981 spent4m46s installing the engine;all27 assertions passed
+    # before the5m job limit cancelled the job. Keep runtime/test limits intact.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install actual scanner engine on the disposable CI runner
+        run: |
+          set -euo pipefail
+          # The Azure mirror failed DNS resolution in two actual runs. Keep
+          # Ubuntu's signed repositories and normal TLS/signature validation.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i 's|https\{0,1\}://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --yes --no-install-recommends clamav-daemon
+      - name: Actual isolated ClamAV engine with harmless test signature (not production signatures)
+        run: node --import tsx --test --test-concurrency=1 tests/clamav.test.ts tests/clamav-database.test.ts tests/r2-inspection.test.ts tests/clamav-engine.test.ts
+        env:
+          TEST_CLAMD_BINARY: /usr/sbin/clamd
+  video-parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: synthetic-ci-password
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install synthetic-only test encoder on the disposable runner
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends ffmpeg
+      - name: Check exact source pins,download ceilings and bounded transient retries
+        run: node --import tsx --test tests/video-source-download.test.ts
+      - name: Reuse public source archives with mandatory checksum revalidation
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ runner.temp }}/kavosh-video-sources
+          key: video-sources-8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e-686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
+      - name: Verify public source archives without a duplicate host compilation
+        run: node scripts/cache-video-sources.mjs "$RUNNER_TEMP/kavosh-video-sources"
+      - name: Build actual decoder and non-root test image once
+        run: >-
+          docker build --file Dockerfile.video-service --target video-tests --tag kavosh-video-tests:ci
+          --build-context "video-sources=$RUNNER_TEMP/kavosh-video-sources"
+          --build-context "video-test-files=./tests" .
+      - name: Assemble credential-free native video service from the same cached build stage
+        run: >-
+          docker build --file Dockerfile.video-service --tag kavosh-video:ci
+          --build-context "video-sources=$RUNNER_TEMP/kavosh-video-sources" .
+      - name: Verify test and production images contain identical decoder bytes
+        run: |
+          test "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint sha256sum kavosh-video-tests:ci /opt/video/ffmpeg /opt/video/ffprobe)" = "$(docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true --entrypoint sha256sum kavosh-video:ci /opt/video/ffmpeg /opt/video/ffprobe)"
+      - name: Generate tiny original synthetic codec and soundtrack fixtures
+        run: |
+          node scripts/video-codec-fixtures.mjs "$RUNNER_TEMP/kavosh-video-codec-fixtures"
+          echo "TEST_VIDEO_CODEC_FIXTURES=$RUNNER_TEMP/kavosh-video-codec-fixtures" >> "$GITHUB_ENV"
+        env:
+          TEST_VIDEO_FIXTURE_ENCODER: /usr/bin/ffmpeg
+      - name: Quick real full-video/audio decode and adverse-case checks,no live services
+        run: >-
+          docker run --rm --init --network host
+          --env VIDEO_VALIDATION_TEST_REQUIRED --env VIDEO_CODEC_TEST_REQUIRED --env TEST_DATABASE_URL
+          --env TEST_VIDEO_CODEC_FIXTURES=/fixtures
+          --mount "type=bind,source=$RUNNER_TEMP/kavosh-video-codec-fixtures,target=/fixtures,readonly"
+          kavosh-video-tests:ci node --import tsx --test --test-concurrency=1
+          tests/video-validation.test.ts tests/video-service.test.ts tests/video-codecs.test.ts
+          tests/file-video-evidence.test.ts tests/file-video-copies.test.ts tests/file-video-downloads.test.ts
+          tests/family-video-media.test.ts tests/file-video-streams.test.ts tests/video-transfer.test.ts
+        env:
+          VIDEO_VALIDATION_TEST_REQUIRED: 'true'
+          VIDEO_CODEC_TEST_REQUIRED: 'true'
+          TEST_DATABASE_URL: postgresql://postgres:synthetic-ci-password@127.0.0.1:5432/postgres
+      - name: Refuse video startup without required runtime isolation
+        run: |
+          if docker run --rm --network none kavosh-video:ci; then
+            echo 'Unsafe video-service startup was accepted'
+            exit 1
+          fi
+      - name: Run actual private resource-limited video service
+        run: >-
+          docker run --detach --init --name kavosh-video-ci --network none --read-only
+          --cap-drop ALL --security-opt no-new-privileges:true
+          --memory 1g --memory-swap 1g --cpus 2 --pids-limit 64
+          --tmpfs /run/kavosh-video:rw,noexec,nosuid,nodev,size=1m,uid=10003,gid=10001,mode=0750
+          --tmpfs /tmp:rw,noexec,nosuid,nodev,size=160m,uid=10003,gid=10001,mode=0700
+          --mount "type=bind,source=$RUNNER_TEMP/kavosh-video-codec-fixtures,target=/fixtures,readonly"
+          kavosh-video:ci
+      - name: Verify actual decoder PIE,kernel controls,private socket,complete decode and temp cleanup
+        run: docker exec kavosh-video-ci node scripts/video-service-smoke.mjs
+      - name: Verify graceful video service shutdown
+        run: |
+          docker stop --time 10 kavosh-video-ci
+          test "$(docker inspect --format '{{.State.ExitCode}}' kavosh-video-ci)" = 0
+      - name: Remove disposable video-service container
+        if: always()
+        run: docker rm --force kavosh-video-ci || true
+      - name: Package only the tested credential-free video runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/video-runtime"
+          docker save kavosh-video:ci | gzip -1 > "$RUNNER_TEMP/video-runtime/runtime.tar.gz"
+          cd "$RUNNER_TEMP/video-runtime"
+          sha256sum runtime.tar.gz > SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > SOURCE_COMMIT
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tested-video-runtime
+          path: ${{ runner.temp }}/video-runtime/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

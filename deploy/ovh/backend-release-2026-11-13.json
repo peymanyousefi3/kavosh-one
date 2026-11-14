@@ -1,0 +1,21 @@
+{
+  "origin": "https://one.kavosh.ai",
+  "runtimeSourceCommit": "e51ee944c48f66f6d11127b49bbcd0888d530828",
+  "migrationOperatorCommit": "371a25e15af890c9a324a306674c7f99fbe9d7b9",
+  "readonlyWorkerDiagnosticCommit": "31ab98a",
+  "previousReleaseRetained": "/srv/kavosh-one/releases/3ba3721",
+  "currentRelease": "/srv/kavosh-one/releases/e51ee94",
+  "activatedAt": "2026-11-13T06:53:53Z",
+  "schemaRevision": 396,
+  "apiVersion": "0.433.0",
+  "buildEvidence": "deploy/ovh/staged-release-2026-11-13.json",
+  "migration": {"preflightAppliedChecksumsMatched":390,"appliedFiles":6,"postflightAppliedChecksumsMatched":396,"pendingFiles":0,"transactional":true,"localOsPostgresPeerIdentity":true,"newAdministratorPasswordCreated":false,"webTlsPolicyChanged":false},
+  "workerHandoff": {"allNineServicesActive":true,"automaticRestarts":0,"oldOperationDirectoriesPreserved":true,"preparedBundleDirectory":"/srv/kavosh-one/operations/release-e51ee94","sevenReadOnlyRoleChecksPassed":true,"inspectionDiagnosticLaunchCorrection":"The first separate diagnostic used a nonexistent same-name group and did not execute application code. Repeated with verified kavosh-one-inspection group and parser-client supplementary group;passed. Running inspection daemon was unaffected.","signatureCompletionUnitInstalled":true,"signatureCompletionEnabled":false,"signatureCompletionActive":false},
+  "publicAcceptance": {"https":true,"databaseReadiness":true,"anonymousProtectedRequestsDenied":6,"deployedContractMatchesCheckout":true,"spoofedProxyHeadersIgnored":true,"reservedCloudflareHeaderRejectedAtEdge":true,"crossOriginRejected":true,"malformedLoginRejected":true,"oversizedBodyRejected":true,"concurrentReadinessRequests":5,"fullUserJourneyVerified":false},
+  "databaseBackup": {"id":"eb66aed3-1368-4182-8504-e5297b0dca6f","schemaRevision":396,"encryptedBytes":7247346,"independentDriveCopyVerified":true,"restoreVerified":false,"mediaIncluded":false},
+  "settingsBackup": {"id":"c14f5135-b78f-4c65-a18e-1560970425f1","completedAt":"2026-11-13T06:56:36.304Z","encryptedBytes":143592,"independentDriveCopyVerified":true,"privateAgeKeyOnVps":false,"automaticallyRestored":false,"mediaIncluded":false},
+  "backupSchedules": {"databaseTorontoTime":"03:00 plus up to120seconds jitter","settingsTorontoTime":"03:05 plus up to120seconds jitter","bothTimersActive":true,"oldBackupsDeleted":false},
+  "landingObservation": {"httpsStatusBeforeAndAfter":200,"priorPid":536773,"observedPid":653511,"restartObservedAt":"2026-11-13T06:54:28Z","causeEstablished":false,"systemdStoppingMessageObserved":true,"landingRestartCommandIssuedByThisHandoff":false,"landingFilesRoutesDnsChangedByThisHandoff":false,"unitModificationTime":"2026-09-11T20:33:58.205120198Z","caddyFileModificationTime":"2026-11-12T19:47:29.480210151Z","outageDurationMeasured":false},
+  "postcheckCounts": {"humanLoginAccounts":0,"authenticationOutboxRows":0,"operationalDeliveryRows":0,"signatureCompletionJobs":0},
+  "limitations": ["Complete backend acceptance remains unfinished","Separate private signing-evidence storage authorization is pending;completion worker stays disabled","Daily database copies lack the optional snapshot-proof companion unless explicitly created using backup-proof;no retrospective proof claimed","Media/full-host/global-role restore and independent recovery-key escrow remain unfinished","Google OAuth remains Testing,not permanent production publication","Landing restart cause is not established;do not claim continuous process preservation","Stripe deferred;social feed excluded;no UI or visual PDF design performed"]
+}

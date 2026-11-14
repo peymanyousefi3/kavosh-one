@@ -1,0 +1,8 @@
+import assert from 'node:assert/strict';
+import { expenseFixture } from './expense-fixture.ts';
+export async function journalCounterpartyFixture(throughSchema?:number){const f=await expenseFixture({throughSchema});try{
+ const balance=await f.made('finance/accounts',{code:'COUNTERPARTY-LOANS',name:'Synthetic external balances',kind:'asset',operationalRole:'other',hubId:f.hub,currencyId:f.currency.id,currencyVersion:1,reason:'Explicit principal balance account'}),payee=await f.made('finance/payees',{hubId:f.hub,kind:'hub',code:'LOAN-HUB',name:'Synthetic loan hub',reason:'Typed external hub identity'});
+ const input={periodId:f.period.id,periodVersion:1,postedOn:'2026-11-08',description:'Private synthetic loan journal',reference:'LOAN-RECORD',reason:'Explicit manual loan review,not an external transfer',lines:[{accountId:balance.id,accountVersion:1,side:'debit',amount:'100'},{accountId:f.cash.id,accountVersion:1,side:'credit',amount:'100'}],counterpartyLines:[{lineNumber:1,payee:{id:payee.id,version:1},category:'loan_advance'}]};
+ const post=(patch:Record<string,unknown>={},as='master',key?:string)=>f.request('finance/journals',{...input,...patch},as,{key}),reverse=(id:string,as='master')=>f.request('finance/journals/'+id+'/reverse',{periodId:f.period.id,periodVersion:1,postedOn:'2026-11-10',description:'Private loan correction',reason:'Retain the original principal record'},as),detail=(id:string,as='master')=>f.request('finance/journals/'+id+'/counterparties',undefined,as);
+ return {...f,balance,loanPayee:payee,loanInput:input,post,reverse,detail};
+ }catch(error){await f.pg.close();throw error;}}

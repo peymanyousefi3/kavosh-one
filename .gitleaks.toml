@@ -1,0 +1,10 @@
+title = "Kavosh source secret checks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "stripe-webhook-signing-secret"
+description = "Stripe webhook signing material must never be a committed literal"
+regex = '''whsec_[A-Za-z0-9]{16,}'''
+keywords = ["whsec_"]

@@ -1,0 +1,53 @@
+# Decoder has no database,storage,identity credentials or network interface.
+FROM scratch AS video-sources
+FROM scratch AS video-test-files
+FROM alpine:3.24 AS build
+RUN apk add --no-cache nodejs npm python3 build-base nasm linux-headers meson ninja pkgconf
+WORKDIR /build
+RUN npm install --global pnpm@11.25.0
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY workers/image-service/package.json ./workers/image-service/package.json
+COPY workers/notification-worker/package.json ./workers/notification-worker/package.json
+COPY workers/pdf-validator/package.json ./workers/pdf-validator/package.json
+COPY workers/video-validator/package.json workers/video-validator/ffmpeg-source.json ./workers/video-validator/
+COPY workers/message-worker/package.json ./workers/message-worker/package.json
+RUN pnpm install --frozen-lockfile
+COPY scripts/build-video-runtime.mjs ./scripts/build-video-runtime.mjs
+COPY scripts/video-source-download.mjs ./scripts/video-source-download.mjs
+# Optional read-only source context reuses the host's verified archives. The build
+# script rechecks their exact pins;absent mounts retain the normal HTTPS build.
+RUN --mount=type=bind,from=video-sources,target=/run/kavosh-video-sources,readonly if [ -e /run/kavosh-video-sources/ffmpeg-9.0.2.tar.xz ] || [ -e /run/kavosh-video-sources/dav1d-1.5.4.tar.xz ]; then export VIDEO_BUILD_SOURCE_DIRECTORY=/run/kavosh-video-sources; fi; node scripts/build-video-runtime.mjs > /build/video-runtime.json && node --input-type=module -e 'import{readFileSync,mkdirSync,copyFileSync}from"node:fs";const r=JSON.parse(readFileSync("/build/video-runtime.json","utf8"));mkdirSync("/opt/video",{recursive:true});for(const name of["ffmpeg","ffprobe"])copyFileSync(r[name+"Path"],"/opt/video/"+name);copyFileSync(r.root+"/source/COPYING.LGPLv2.1","/opt/video/COPYING.LGPLv2.1");copyFileSync(r.av1LicensePath,"/opt/video/COPYING.dav1d");'
+COPY src/core/policy.ts ./src/core/policy.ts
+COPY src/files/video-validation.ts src/files/video-service.ts src/files/video-runtime.ts src/files/isolated-runtime.ts src/files/content-signature.ts ./src/files/
+COPY scripts/video-validator-service.ts ./scripts/video-validator-service.ts
+RUN pnpm exec tsc --ignoreConfig --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck --rewriteRelativeImportExtensions --types node --rootDir . --outDir /compiled scripts/video-validator-service.ts
+RUN pnpm --filter @kavosh/video-validator deploy --prod /runtime
+
+# CI reuses the actual musl decoder from this build instead of compiling a
+# second host-ABI decoder. Test dependencies never enter the production image.
+FROM build AS video-tests
+COPY --from=video-test-files / ./tests/
+COPY src ./src
+COPY scripts ./scripts
+COPY db ./db
+COPY public ./public
+COPY tsconfig.json ./tsconfig.json
+RUN addgroup -g 10001 parser && adduser -D -u 10003 -G parser parser
+ENV TEST_FFMPEG_BINARY=/opt/video/ffmpeg TEST_FFPROBE_BINARY=/opt/video/ffprobe TEST_VIDEO_PYTHON_BINARY=/usr/bin/python3
+USER 10003:10001
+
+FROM alpine:3.24 AS runtime
+RUN apk add --no-cache nodejs python3 libstdc++ && addgroup -g 10001 parser && adduser -D -u 10003 -G parser parser
+WORKDIR /app
+ENV NODE_ENV=production TZ=UTC
+COPY --from=build /runtime/package.json ./package.json
+COPY --from=build /runtime/node_modules ./node_modules
+COPY --from=build /compiled/src ./src
+COPY --from=build /compiled/scripts ./scripts
+COPY --from=build /opt/video /opt/video
+COPY src/files/video-inspector.py src/files/signature-detector.mjs ./src/files/
+COPY scripts/video-service-smoke.mjs ./scripts/video-service-smoke.mjs
+COPY scripts/video-codec-fixtures.mjs ./scripts/video-codec-fixtures.mjs
+RUN mkdir /run/kavosh-video && chown 10003:10001 /run/kavosh-video && chmod 0750 /run/kavosh-video
+USER 10003:10001
+CMD ["node", "scripts/video-validator-service.js"]

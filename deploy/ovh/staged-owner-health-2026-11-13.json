@@ -1,0 +1,70 @@
+{
+  "status": "staged_checks_passed_not_activated",
+  "runtimeSourceCommit": "dd3748bf2aa655b994c1d61e1ae071067f0cb87f",
+  "sourceArchiveSha256": "784552fada3916663d56597d8634217919488dee37c9eb25d4a956242d7652b9",
+  "stagedRelease": "/srv/kavosh-one/releases/dd3748b",
+  "apiVersion": "0.434.0",
+  "packagedContractSha256": "cc39186d17c0dc91147ddb5e60a0f2ba91f02d188f292518ee45406d6de404b9",
+  "dependencies": "Independent copy of existing Linux node_modules after both pnpm lockfiles matched; no install or live dependency mutation.",
+  "builder": {
+    "account": "kavosh-one-build",
+    "privateNetwork": true,
+    "productionCredentialsUnreadable": true,
+    "landingDirectoryNotWritable": true,
+    "liveReleaseModified": false,
+    "memoryLimitBytes": 2147483648,
+    "cpuQuotaPercent": 75,
+    "reportedPeakMemory": "1.7G",
+    "wallSeconds": 133.941,
+    "cpuSeconds": 100.161,
+    "exitStatus": 0,
+    "completed": ["strict_next_standalone", "auth", "background", "files", "signatures", "database_recovery", "operational_health"]
+  },
+  "package": {
+    "serverOwner": "root:root",
+    "serverMode": "0644",
+    "builderCannotWritePackagedServer": true,
+    "publicAndStaticAssetsCopied": true,
+    "initialGuardCorrection": "Next had already traced an identical public/openapi.json. The no-existing-public-directory guard stopped before a check was launched. Identity was verified before completing only this new staged package."
+  },
+  "packagedChecks": {
+    "unit": "kavosh-one-smoke-dd3748b.service",
+    "privateNetwork": true,
+    "readOnlyFilesystem": true,
+    "productionCredentials": false,
+    "hostPortOpened": false,
+    "httpAuthorizationHeadersAndContract": "passed",
+    "spreadsheetRuntime": "passed",
+    "spreadsheetBytes": 2837,
+    "wallSeconds": 19.252,
+    "cpuSeconds": 9.641,
+    "reportedPeakMemory": "202.3M",
+    "exitStatus": 0
+  },
+  "nativePostgresql18": {
+    "unit": "kavosh-one-native-owner-dd3748b-c.service",
+    "test": "tests/platform-health.test.ts",
+    "encoding": "UTF8",
+    "privateNetworkAndIpc": true,
+    "loopbackListenerInsidePrivateNamespaceOnly": true,
+    "liveDatabaseFilesSocketsAndCredentialsInaccessible": true,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "caseDurationMs": 12784.73905,
+    "processDurationMs": 36572.66316,
+    "wallSeconds": 39.362,
+    "cpuSeconds": 19.655,
+    "reportedPeakMemory": "439.5M",
+    "exitStatus": 0,
+    "temporaryDataRemoved": true,
+    "earlierHarnessFailures": ["Initial socket-only URL rejected by existing loopback safety guard before application logic", "Second isolated empty database defaulted to unsupported SQL_ASCII; explicit UTF8 reused from existing recovery helper before successful run"],
+    "guardOrApplicationChecksWeakened": false
+  },
+  "preservation": {"liveRelease": "releases/e51ee94", "liveWebMainPid": 653820, "landingHttpsStatus": 200},
+  "limitations": [
+    "Schema397 has not been applied to production;no live release or monitor runtime-publication switch occurred.",
+    "Current source also includes the later audit-comparison commit ed0fb97,API0.435. That later source is not part of this staged build acceptance.",
+    "No live owner session,external delivery or full user journey is certified by these synthetic checks."
+  ]
+}

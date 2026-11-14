@@ -1,0 +1,41 @@
+[Unit]
+Description=Kavosh One isolated login verification and recovery delivery
+After=network-online.target postgresql@18-main.service
+Requires=postgresql@18-main.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=kavosh-one-auth-delivery
+Group=kavosh-one-auth-delivery
+WorkingDirectory=/srv/kavosh-one/operations/auth-v2
+EnvironmentFile=/etc/kavosh-one/auth-delivery.env
+ExecStart=/usr/bin/node scripts/deliver-auth.js
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+MemoryMax=256M
+CPUQuota=25%
+TasksMax=64
+LimitNOFILE=1024
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

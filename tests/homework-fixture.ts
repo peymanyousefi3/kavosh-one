@@ -1,0 +1,18 @@
+import assert from 'node:assert/strict';
+import { reportFixture } from './report-fixture.ts';
+
+export async function homeworkAnswerFixture(throughSchema?:number){
+ const f=await reportFixture(throughSchema),student=f.actors.peer.person,guardian=f.actors.manager.person;
+ assert.equal((await f.request('students',{personId:student,legalName:'PRIVATE answer learner',dateOfBirth:'2014-03-20',recruiter:{kind:'academy'}})).response.status,201);const enrollment=await f.request('classes/'+f.c.id+'/enrollments',{studentId:student,studentProfileVersion:1,joinsOn:'2026-01-02',reason:'PRIVATE answer enrollment'});assert.equal(enrollment.response.status,201);
+ const taskInput={expectedVersion:0,sessionVersion:1,state:'published',document:f.document,recipients:[{enrollmentId:enrollment.body.data.id,enrollmentVersion:1}],dueAt:'2100-01-10T18:00:00-05:00',acceptLate:false,reason:'PRIVATE answer instructions'};
+ const made=await f.request('sessions/'+f.c.session.id+'/homeworks/change',taskInput);assert.equal(made.response.status,200,JSON.stringify(made.body));const homework=made.body.data;
+ const ownRole=await f.request('roles',{name:'Self homework workflow',permissions:['received-homework.view','received-submissions.view','homework-submissions.submit'].map(capability=>({capability,effect:'allow'}))});assert.equal(ownRole.response.status,201);
+ const target='people/'+student+'/access',v=(await f.request(target)).body.data.version;assert.equal((await f.request(target,{expectedVersion:v,assignments:[{roleId:ownRole.body.data.id,allHubs:false,personIds:[student]}]})).response.status,200);
+ await f.pg.query("INSERT INTO public.role_permissions VALUES($1,$2,'homework-submissions.view','allow')",[f.a,f.staffRole]);const staff='people/'+f.actors.staff.person+'/access',sv=(await f.request(staff)).body.data.version;assert.equal((await f.request(staff,{expectedVersion:sv,assignments:[{roleId:f.staffRole,allHubs:false,classIds:[f.c.id]}]})).response.status,200);
+ const file=await f.request('files',{anchor:{kind:'person',id:student},domain:'student_private',name:'PRIVATE answer-code.txt',claimedMimeType:'text/plain',expectedBytes:123,expectedSha256:'b'.repeat(64)});assert.equal(file.response.status,201,JSON.stringify(file.body));
+ const input={expectedVersion:0,homeworkVersion:1,state:'draft',answer:{text:'PRIVATE unfinished robot answer\n  print("hello")',attachments:[]}},path='students/'+student+'/homework/'+homework.id+'/submission';
+ const save=(i:unknown=input,as='peer',key?:string)=>f.request(path,i,as,key?{key}:{}),read=(as='peer',suffix='')=>f.request(path+suffix,undefined,as),change=(i:unknown)=>f.request('homeworks/'+homework.id+'/change',i);
+ async function parent(){assert.equal((await f.request('guardians',{personId:guardian,legalName:'PRIVATE answer guardian'})).response.status,201);assert.equal((await f.request('students/'+student+'/guardians',{guardianId:guardian,relationship:'parent',reason:'PRIVATE answer family'})).response.status,201);const role=await f.request('roles',{name:'Own child submitted answers',permissions:[{capability:'received-submissions.view',effect:'allow'}]});assert.equal(role.response.status,201);const p='people/'+guardian+'/access',v=(await f.request(p)).body.data.version;assert.equal((await f.request(p,{expectedVersion:v,assignments:[{roleId:role.body.data.id,allHubs:false,personIds:[student]}]})).response.status,200);return role.body.data.id as string;}
+ return {...f,student,guardian,enrollment:enrollment.body.data,homework,taskInput,ownRole:ownRole.body.data.id,classFile:f.file,file:file.body.data,input,path,save,read,parent,change};
+}
+

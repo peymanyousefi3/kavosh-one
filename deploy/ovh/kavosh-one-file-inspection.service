@@ -1,0 +1,42 @@
+[Unit]
+Description=Kavosh One isolated private file-inspection worker
+After=network-online.target postgresql@18-main.service kavosh-one-scanner.service kavosh-one-parser@image.service kavosh-one-parser@pdf.service kavosh-one-parser@video.service
+Requires=postgresql@18-main.service kavosh-one-scanner.service kavosh-one-parser@image.service kavosh-one-parser@pdf.service kavosh-one-parser@video.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=kavosh-one-file-inspection
+Group=kavosh-one-inspection
+SupplementaryGroups=kavosh-one-parser-clients
+WorkingDirectory=/srv/kavosh-one/operations/inspection-v1
+EnvironmentFile=/etc/kavosh-one/file-inspection.env
+ExecStart=/usr/bin/node scripts/inspect-files.js
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=20s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+MemoryMax=512M
+CPUQuota=50%
+TasksMax=64
+LimitNOFILE=1024
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,27 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "workers": [
+    { "mode": "notifications", "unixUid": 981, "databaseLogin": "kavosh_one_notifications", "observedMemoryBytes": 28381184 },
+    { "mode": "reports", "unixUid": 980, "databaseLogin": "kavosh_one_reports", "observedMemoryBytes": 46514176 },
+    { "mode": "messages", "unixUid": 979, "databaseLogin": "kavosh_one_messages", "observedMemoryBytes": 29679616 },
+    { "mode": "platform-notices", "unixUid": 978, "databaseLogin": "kavosh_one_platform_notices", "observedMemoryBytes": 22347776 }
+  ],
+  "allWorkers": { "active": true, "enabledOnBoot": true, "postRestartFailures": 0, "gracefulShutdownExitCode": 0, "memoryLimitMiBEach": 512, "cpuLimitPercentOfOneCoreEach": 25, "databaseConnectionLimitEach": 2 },
+  "verifiedAsActualUnprivilegedWorkers": { "ownTlsDatabaseLogin": true, "roleContract": true, "identitySchemaDenied": true, "webSecretsUnreadable": true, "emptyQueues": true },
+  "providerCredentials": { "messagesOnly": true, "mailboxReadAccessAdded": false },
+  "reportSpreadsheetSmoke": { "actualReportWorkerUid": 980, "syntheticRows": 2, "xlsxBytes": 2837, "passed": true },
+  "rulesCreated": 0,
+  "messagesSent": 0,
+  "financialPostingsCreated": 0,
+  "schoolActivated": false,
+  "encryptedConfigurationBackup": { "id": "3fc4ac27-0a12-4581-b5b0-bc28fc302cde", "createdAt": "2026-11-12T23:29:20.064Z", "ciphertextSha256": "66aae00fcf0cdc005eba3453d13830d7661d4b3cc66c966ec4992a9d69a2a470", "independentDriveCopyVerified": true },
+  "preservation": { "landingPageHttpStatus": 200, "landingPagePid": 536773, "landingPageStartedAt": "2026-11-06T01:33:33Z", "oneReadinessHttpStatus": 200 },
+  "limitations": [
+    "Empty-queue checks prove deployment and role configuration, not a real scheduled academy workflow or message delivery",
+    "No active human account, rule, report schedule or recipient was manufactured to exercise live delivery",
+    "Spreadsheet smoke proves runtime XLSX generation, not visual document quality or financial calculations",
+    "Automation and report workers retain their existing RLS-bound runtime permissions; they are not function-only database roles",
+    "Latest encrypted configuration archive was independently read back from Drive, not restored as a complete server",
+    "Google backup connection remains Testing until production publication"
+  ]
+}

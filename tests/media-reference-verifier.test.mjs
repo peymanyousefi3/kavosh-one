@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import {test} from 'node:test';
+import {readFileSync} from 'node:fs';
+import {createHash} from 'node:crypto';
+import {join} from 'node:path';
+import {runInNewContext} from 'node:vm';
+const source=readFileSync(new URL('../scripts/verify-vps-media-reference.mjs',import.meta.url),'utf8').replace(/^import .*;\n/gm,'').replaceAll('import.meta.url',JSON.stringify(import.meta.url));
+async function check(mode='normal'){
+ const signing=mode==='signing'||mode==='signing-reader-mismatch';
+ const id='aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',academy='bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb',cipher=Buffer.from('age-encryption.org/v1\nSYNTHETIC_REFERENCE_PLAN'),rows=[{type:'header'},{type:'academy',academyId:academy,unconfirmedUploads:0},{type:'complete'}],plain=Buffer.from(rows.map(row=>JSON.stringify(row)+'\n').join('')),hash=b=>createHash('sha256').update(b).digest('hex');
+ const plan={filename:'media-references.jsonl',format:'kavosh-media-reference-plan-v1',databaseBackupId:mode==='binding'?'wrong':id,archiveSha256:'c'.repeat(64),schemaRevision:396,plaintextSha256:hash(plain),plaintextBytes:plain.length,academies:1,references:0,unconfirmedUploads:0,scope:signing?'recorded_ordinary_and_signed_evidence_objects':'recorded_ordinary_file_objects',signedEvidenceIncluded:signing},archive={filename:'media-references.jsonl.age',ciphertextSha256:hash(cipher),encryptedBytes:cipher.length},receipt={localBackup:{id,ciphertextSha256:'c'.repeat(64),schemaRevision:396,mediaReferencePlan:plan,mediaReferenceArchive:archive},mediaReferencePlanOffsiteVerified:mode!=='unverified',mediaReferenceOffsiteCopy:{independentCopyVerified:true,ciphertextSha256:archive.ciphertextSha256}};
+ const files=new Map(),logs=[],commands=[];let removed=false,closed=0;
+ const context={assert,Buffer,JSON,Number,Set,URL,join,createHash,fileURLToPath:u=>u.pathname,AbortSignal,process:{platform:'darwin',argv:['node','script','--execute',mode==='path'?'../../private':id],env:{},umask(){}},console:{log:s=>logs.push(s),error:s=>logs.push(s)},promisify:fn=>fn,execFile:async(binary,args)=>{
+  commands.push([binary,args]);if(binary==='/usr/bin/ssh')return{stdout:Buffer.from(JSON.stringify(receipt)),stderr:Buffer.alloc(0)};
+  if(binary==='/usr/bin/security')return{stdout:Buffer.from(JSON.stringify(args.includes('kavosh-one-production-backup-recovery')?{identity:'PRIVATE_REFERENCE_KEY'}:{token:{scope:'https://www.googleapis.com/auth/drive.file'}})),stderr:Buffer.alloc(0)};
+  if(binary==='/opt/homebrew/bin/rclone'){assert.equal(args[0],'cat');return{stdout:Buffer.from(mode==='ciphertext'?'CORRUPT':cipher),stderr:Buffer.alloc(0)};}
+  assert.equal(binary,'/opt/homebrew/bin/age');assert.ok(!args.includes('PRIVATE_REFERENCE_KEY'));return{stdout:Buffer.from(mode==='plaintext'?'CORRUPT':plain),stderr:Buffer.alloc(0)};
+ },mkdtemp:async()=>'/private/tmp/reference-proof-owned',realpath:async p=>p,open:async path=>({writeFile:async bytes=>files.set(path,Buffer.from(bytes)),close:async()=>{}}),readFile:async path=>files.get(path).toString(),rm:async()=>{removed=true;files.clear();},openMediaReferencePlan:async(input,school,targets)=>{
+  assert.equal(input.databaseBackupId,id);assert.equal(input.archiveSha256,plan.archiveSha256);assert.equal(school,academy);assert.equal(targets.size,0);if(mode==='reader')throw Error('PRIVATE_PARSER_DIAGNOSTIC');return{references:0,unconfirmedUploads:0,signedEvidenceIncluded:mode==='signing-reader-mismatch'?false:signing,referencesForSchool:(async function*(){})(),close:async()=>{closed++;}};
+ }};
+ await runInNewContext('(async()=>{'+source+'})()',context);assert.doesNotMatch(logs.join(''),/PRIVATE_REFERENCE_KEY|PRIVATE_PARSER_DIAGNOSTIC/);assert.ok(!JSON.stringify(commands).includes('PRIVATE_REFERENCE_KEY'));assert.equal(files.size,0);return{logs,commands,removed,closed,exitCode:context.process.exitCode};
+}
+test('off-server reference verifier binds exact archive and source,keeps keys local and removes private files',async()=>{for(const mode of ['normal','signing']){const result=await check(mode);assert.equal(result.exitCode,undefined,JSON.stringify(result.logs));assert.equal(result.closed,1);assert.equal(result.removed,true);const receipt=JSON.parse(result.logs[0]);assert.equal(receipt.offServerAuthenticatedReferencePlanVerified,true);assert.equal(receipt.signedEvidenceIncluded,mode==='signing');assert.equal(receipt.mediaBytesRecovered,false);assert.equal(receipt.recoveryKeyTransferredToVps,false);}});
+test('unverified receipts,path substitution,wrong binding,corruption and parser failures never claim acceptance',async()=>{for(const mode of ['path','unverified','binding','ciphertext','plaintext','reader','signing-reader-mismatch']){const result=await check(mode);assert.equal(result.exitCode,1,mode);assert.ok(!result.logs.some(line=>line.includes('offServerAuthenticatedReferencePlanVerified')));if(mode==='path')assert.equal(result.commands.length,0);}});

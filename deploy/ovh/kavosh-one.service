@@ -1,0 +1,46 @@
+[Unit]
+Description=Kavosh One backend (independent of Kavosh landing page)
+After=network.target postgresql@18-main.service
+Requires=postgresql@18-main.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=kavosh-one
+Group=kavosh-one
+SupplementaryGroups=kavosh-one-monitor
+WorkingDirectory=/srv/kavosh-one/current/.next/standalone
+EnvironmentFile=/etc/kavosh-one/web.env
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+# The packaged Next server exits 143 for a requested SIGTERM, not a crash.
+SuccessExitStatus=143
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+LimitNOFILE=8192
+TasksMax=128
+MemoryHigh=768M
+MemoryMax=1G
+CPUQuota=150%
+Nice=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

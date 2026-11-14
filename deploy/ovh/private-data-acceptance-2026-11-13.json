@@ -1,0 +1,63 @@
+{
+  "scope": "First-time separate application encryption keys for private student care and payroll identities;configuration and recovery acceptance only,not application activation or whole-backend completion.",
+  "preflight": {
+    "privateEnvironmentSettingsPresent": 0,
+    "careRevisions": 0,
+    "payrollPrivateIdentityRevisions": 0,
+    "privateProposalsAcrossAllStates": 0,
+    "existingKeyReplacementOrRotation": false
+  },
+  "provisioning": {
+    "operatorSourceSha256": "48791ab3eec4a265c52e1f3dc128c9fee5d0ec225b7f0ad4a9a2505a57ed23a4",
+    "separateCareAndPayrollKeys": true,
+    "independentEncryptionAndFingerprintMaterial": true,
+    "existingConfigurationPreserved": true,
+    "rootOnlyAtomicEnvironmentUpdate": true,
+    "databaseWrites": 0,
+    "providerOperations": 0,
+    "serviceRestarted": false
+  },
+  "actualIsolatedProbe": {
+    "invocationId": "dd032c0eed9a41288719e54d006f0063",
+    "uid": 994,
+    "exitStatus": 0,
+    "cpuNanoseconds": 441431000,
+    "peakMemoryBytes": 23314432,
+    "actualSystemdEnvironmentParsingVerified": true,
+    "authenticatedRoundTrips": 2,
+    "wrongEditionAndDomainDenied": true,
+    "realPrivateRecordsRead": 0,
+    "databaseWrites": 0,
+    "providerOperations": 0
+  },
+  "independentEncryptedRecovery": {
+    "producerInvocationId": "0583e26e6948463e804ada405e7194c2",
+    "roleExportInvocationId": "9a9612c487314459a67ed8a71da34075",
+    "backupId": "b39b8e9c-fa5f-45c5-8571-ee38b5037cc1",
+    "encryptedBytes": 164072,
+    "ciphertextSha256": "3515f81df1e28bac551e940d1f649a8f94112a4662ab263843988b561b14456a",
+    "independentDriveDownloadVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "privateDataKeysIncluded": true,
+    "requiredFilesChecked": 49,
+    "archiveEntriesChecked": 80,
+    "existingReportRuntimeProfileSha256": "14fab93b76504f754787b6f6857a13fcf407de9cad0325bc9201fad47b0a6cb2",
+    "databaseTlsAndSigningReaderBindingsPreserved": true,
+    "privateRecoveryKeyTransferredToVps": false,
+    "configurationAppliedFromArchive": false
+  },
+  "unchanged": {
+    "applicationRuntime": "7a6bd0322fe95bbbcb5fe17a7d34aed1c6873bac",
+    "schemaRevision": 411,
+    "webPid": 783692,
+    "webInvocationId": "bedab7e64d844f388bdfe6848da4058a",
+    "landingPid": 653511,
+    "landingInvocationId": "091c68e402434f4ab1b9ae9d07284208",
+    "landingDnsMxInboxOrProviderOriginalsChanged": false
+  },
+  "limitations": [
+    "Running web process has not reloaded the new keys;activation waits for the verified combined release.",
+    "No actual student care or payroll identity record was created or decrypted.",
+    "Encrypted configuration authentication is not whole-host rebuild,failover or permanent Google OAuth proof."
+  ]
+}

@@ -1,0 +1,78 @@
+import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod';
+import { jsonBody,record,type ApiContext,type Reply } from '../core/api.ts';
+import { propose,permissionScope,master,type ApprovalRegistry,type Proposal } from '../core/approvals.ts';
+import { ApiError,requireScope,scopeNonempty,type Capability,type Scope } from '../core/policy.ts';
+import { parseMoney,readMinorUnits,formatMoney } from '../core/money.ts';
+import { lockFinanceBook } from '../core/finance-lock.ts';
+import { lockAcademyTopology } from './academy.ts';
+import { accountRow } from './finance.ts';
+import { paymentMethodRow } from './payment-methods.ts';
+import { permittedPerson } from './students.ts';
+import { permittedFile } from './files.ts';
+import { accountingDate } from './finance-periods.ts';
+import { prepareJournal,journalDependencies,applyJournal } from './finance-journals.ts';
+
+const uuid=z.string().uuid().transform(v=>v.toLowerCase()),version=z.number().int().positive().max(2147483647),text=z.string().refine(v=>v.isWellFormed()&&!v.includes('\0')),reason=text.trim().min(1).max(2000),ref=z.object({id:uuid,version}).strict();
+const create=z.object({fromAccount:ref,toAccount:ref,method:ref,period:ref,amount:text.max(80),postedOn:accountingDate,transferredAt:z.iso.datetime({offset:true}).max(100),reference:text.trim().max(200).default(''),handledById:uuid.nullable().default(null),evidence:ref.nullable().default(null),missingEvidenceReason:text.trim().max(2000).default(''),taxTreatment:z.literal('internal_transfer_no_supply'),reason}).strict().refine(v=>v.evidence!==null||v.missingEvidenceReason.length>0);
+const reverse=z.object({period:ref,postedOn:accountingDate,reason}).strict(),reversal=reverse.extend({transferId:uuid});
+const query=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),after:uuid.optional(),accountId:uuid.optional(),from:accountingDate.optional(),through:accountingDate.optional(),status:z.enum(['recorded','reversed']).optional()}).strict().refine(v=>!v.from||!v.through||v.from<=v.through);
+type Transfer={id:string;from_account:string;from_version:number;to_account:string;to_version:number;currency_id:string;unit_scale:number;amount_minor:string;method_id:string;method_version:number;posted_on:string;transferred_at:Date|string;reference:string;handled_by:string|null;evidence_file:string|null;evidence_version:number|null;reversal_id:string|null};
+function allowed(ctx:ApiContext,cap:Capability){const s=permissionScope(ctx,cap);if(!scopeNonempty(s))throw new ApiError(403,'FORBIDDEN');return s;}
+async function accounts(ctx:ApiContext,from:string,to:string,edit=false){
+ const rows=await Promise.all([accountRow(ctx,from),accountRow(ctx,to)]);for(const a of rows){requireScope(allowed(ctx,'transfers.view'),a.hubId??undefined);if(edit)requireScope(allowed(ctx,'transfers.edit'),a.hubId??undefined);}return rows;
+}
+async function row(ctx:ApiContext,id:string,edit=false):Promise<Transfer>{allowed(ctx,'transfers.view');const r=(await ctx.db.query<Transfer>('SELECT t.*,t.amount_minor::text,t.posted_on::text FROM public.finance_transfers t WHERE id=$1',[id])).rows[0];if(!r)throw new ApiError(404,'NOT_FOUND');try{await accounts(ctx,r.from_account,r.to_account,edit);}catch(error){if(error instanceof ApiError&&error.status===403)throw new ApiError(404,'NOT_FOUND');throw error;}return r;}
+async function basis(ctx:ApiContext,raw:unknown,lock=false,checkState=true){
+ const input=create.parse(raw);let [from,to]=await accounts(ctx,input.fromAccount.id,input.toAccount.id,true);
+ if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);[from,to]=await accounts(ctx,from.id,to.id,true);}
+ if(from.id===to.id||from.currencyId!==to.currencyId||from.unitScale!==to.unitScale)throw new ApiError(400,'TRANSFER_DISTINCT_SAME_UNIT_ACCOUNTS_REQUIRED');
+ const amount=parseMoney(input.amount,from.unitScale);if(amount<=0n)throw new ApiError(400,'POSITIVE_TRANSFER_REQUIRED');
+if(!['cash','bank','credit_card'].includes(from.operationalRole)||!['cash','bank','credit_card'].includes(to.operationalRole))throw new ApiError(400,'TRANSFER_TREASURY_ACCOUNT_REQUIRED');
+ const method=await paymentMethodRow(ctx,input.method.id);if(method.hubId!==null&&![from.hubId,to.hubId].includes(method.hubId))throw new ApiError(400,'TRANSFER_METHOD_OWNER_MISMATCH');
+ if(checkState&&(!method.active||method.version!==input.method.version))throw new ApiError(409,'PAYMENT_METHOD_CHANGED');
+ const handler=input.handledById?await permittedPerson(ctx,input.handledById,'people.view'):null;if(handler&&(handler.kind!=='human'||(checkState&&handler.status!=='active')))throw new ApiError(409,'ACTIVE_HUMAN_HANDLER_REQUIRED');
+ const evidence=input.evidence?await permittedFile(ctx,input.evidence.id):null;if(evidence&&(evidence.domain!=='finance_private'||(evidence.anchor_kind!=='academy'&&!(evidence.anchor_kind==='hub'&&[from.hubId,to.hubId].includes(evidence.hub_id)))||(checkState&&(evidence.archived||evidence.version!==input.evidence!.version))))throw new ApiError(409,'TRANSFER_EVIDENCE_INVALID');
+ const value=formatMoney(amount,from.unitScale),journal={periodId:input.period.id,periodVersion:input.period.version,postedOn:input.postedOn,description:'Recorded internal account transfer',reference:input.reference,purpose:'activity' as const,reason:input.reason,lines:[{accountId:to.id,accountVersion:input.toAccount.version,side:'debit' as const,amount:value},{accountId:from.id,accountVersion:input.fromAccount.version,side:'credit' as const,amount:value}]};
+ const prepared=await prepareJournal(ctx,false,journal,lock,checkState);
+ return {auth:prepared.scope,from:{id:from.id,version:from.version,hubId:from.hubId,currencyId:from.currencyId,unitScale:from.unitScale},to:{id:to.id,version:to.version,hubId:to.hubId},method:{id:method.id,version:method.version,active:method.active},handler:handler?{id:handler.id,status:handler.status}:null,evidence:evidence?{id:evidence.id,version:evidence.version,archived:evidence.archived}:null,amount:amount.toString(),journal};
+}
+async function reverseBasis(ctx:ApiContext,raw:unknown,lock=false,checkState=true){
+ const input=reversal.parse(raw);let r=await row(ctx,input.transferId,true);if(lock){await lockFinanceBook(ctx);await lockAcademyTopology(ctx);await ctx.db.query('SELECT id FROM public.finance_transfers WHERE id=$1 FOR UPDATE',[r.id]);r=await row(ctx,r.id,true);}
+ if(checkState&&r.reversal_id)throw new ApiError(409,'TRANSFER_ALREADY_REVERSED');if(input.postedOn<r.posted_on)throw new ApiError(400,'CORRECTION_PRECEDES_TRANSFER');
+ const journal={periodId:input.period.id,periodVersion:input.period.version,postedOn:input.postedOn,description:'Correction of recorded internal transfer',reference:r.reference,reason:input.reason,reversesId:r.id},prepared=await prepareJournal(ctx,true,journal,lock,checkState);return {auth:prepared.scope,transfer:r,journal};
+}
+async function reviewState(ctx:ApiContext,reversing:boolean,b:Record<string,unknown>&{journal:unknown}){const {auth,...state}=b;return JSON.parse(JSON.stringify({...state,posting:await journalDependencies(ctx,reversing,b.journal,'review')}));}
+async function validate(ctx:ApiContext,reversing:boolean,raw:unknown){return(reversing?await reverseBasis(ctx,raw,true,false):await basis(ctx,raw,true,false)).auth;}
+async function dependencies(ctx:ApiContext,reversing:boolean,raw:unknown,purpose:'request'|'review'){try{return await reviewState(ctx,reversing,reversing?await reverseBasis(ctx,raw):await basis(ctx,raw));}catch(error){if(purpose==='review'&&error instanceof ApiError&&[400,403,404,409].includes(error.status))return {unavailable:error.code};throw error;}}
+async function detail(ctx:ApiContext,r:Transfer){
+ const labels=(await ctx.db.query('SELECT m.name AS "methodName",c.code AS "currencyCode" FROM public.finance_payment_method_revisions m JOIN public.finance_currencies c ON c.academy_id=m.academy_id WHERE m.method_id=$1 AND m.version=$2 AND c.id=$3',[r.method_id,r.method_version,r.currency_id])).rows[0];let evidence:null|{id:string;version:number;storedContentVerified:false}=null;
+ if(r.evidence_file)try{await permittedFile(ctx,r.evidence_file);evidence={id:r.evidence_file,version:r.evidence_version!,storedContentVerified:false};}catch(error){if(!(error instanceof ApiError)||![403,404].includes(error.status))throw error;}
+ return {id:r.id,fromAccount:{id:r.from_account,version:r.from_version},toAccount:{id:r.to_account,version:r.to_version},amount:formatMoney(readMinorUnits(r.amount_minor),r.unit_scale),...labels,methodId:r.method_id,methodVersion:r.method_version,postedOn:r.posted_on,transferredAt:r.transferred_at,reference:r.reference,handledById:r.handled_by,status:r.reversal_id?'reversed':'recorded',reversalId:r.reversal_id,evidence,hasEvidenceReference:r.evidence_file!==null,missingEvidenceException:r.evidence_file===null,taxTreatment:'internal_transfer_no_supply',additionalTaxPosting:false,moneyMovementPerformed:false,externallyVerified:false,bankBalanceVerified:false};
+}
+async function apply(ctx:ApiContext,p:Proposal){
+ if(ctx.credential.kind!=='human')throw new ApiError(403,'HUMAN_REVIEW_REQUIRED');const reversing=p.action==='finance.transfer.reverse',b=reversing?await reverseBasis(ctx,p.payload,true):await basis(ctx,p.payload,true);if(!isDeepStrictEqual(await reviewState(ctx,reversing,b),p.review_context))throw new ApiError(409,'TRANSFER_SOURCE_CHANGED');let id=p.target_id;
+ if('transfer' in b){id=b.transfer.id;const input=reversal.parse(p.payload);await ctx.db.query('INSERT INTO public.finance_transfer_reversals(academy_id,id,transfer_id,approval_id,reason) VALUES($1,$2,$3,$4,$5)',[ctx.credential.academy_id,p.target_id,id,p.id,input.reason]);await applyJournal(ctx,{...p,payload:b.journal},true);await ctx.db.query('UPDATE public.finance_transfers SET reversal_id=$2 WHERE id=$1',[id,p.target_id]);}
+ else{const input=create.parse(p.payload);try{await ctx.db.query(`INSERT INTO public.finance_transfers(academy_id,id,from_account,from_version,to_account,to_version,currency_id,unit_scale,amount_minor,method_id,method_version,period_id,period_version,posted_on,transferred_at,reference,handled_by,evidence_file,evidence_version,missing_evidence_reason,reason,approval_id,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,[ctx.credential.academy_id,id,b.from.id,input.fromAccount.version,b.to.id,input.toAccount.version,b.from.currencyId,b.from.unitScale,b.amount,input.method.id,input.method.version,input.period.id,input.period.version,input.postedOn,input.transferredAt,input.reference,input.handledById,input.evidence?.id??null,input.evidence?.version??null,input.missingEvidenceReason,input.reason,p.id,ctx.credential.person_id]);}catch(error){if(error&&typeof error==='object'&&'code' in error&&error.code==='23505')throw new ApiError(409,'TRANSFER_REFERENCE_EXISTS');throw error;}await applyJournal(ctx,{...p,payload:b.journal},false);}
+ const result=await row(ctx,id);await record(ctx.db,ctx.credential,ctx.requestId,reversing?'finance.transfer.reversed':'finance.transfer.recorded',id,null,{approvalId:p.id,severity:'critical',hasReason:true,missingEvidence:result.evidence_file===null});return detail(ctx,result);
+}
+async function reviewer(ctx:ApiContext,p:Proposal){if(await master(ctx))return;const handler=p.action==='finance.transfer.reverse'?(await row(ctx,reversal.parse(p.payload).transferId)).handled_by:create.parse(p.payload).handledById;if(handler===ctx.credential.person_id)throw new ApiError(403,'BENEFICIARY_REVIEW_FORBIDDEN');}
+export const transferActions:ApprovalRegistry={
+ 'finance.transfer.record':{requestCapability:'transfers.edit',privacyCapability:'transfers.edit',createdStatus:201,validate:(c,id,i)=>validate(c,false,i),dependencies:(c,id,i,p)=>dependencies(c,false,i,p),authorizeReviewer:reviewer,apply},
+ 'finance.transfer.reverse':{requestCapability:'transfers.edit',privacyCapability:'transfers.edit',createdStatus:201,validate:(c,id,i)=>validate(c,true,i),dependencies:(c,id,i,p)=>dependencies(c,true,i,p),authorizeReviewer:reviewer,apply}
+};
+function params(s:Scope){return [s.all,s.hubs,s.excludedHubs??[],!s.excludedAreas?.length];}
+function visible(start:number){return `NOT EXISTS(SELECT 1 FROM public.finance_accounts a WHERE a.academy_id=t.academy_id AND a.id IN(t.from_account,t.to_account) AND NOT((a.hub_id IS NULL AND $${start}::boolean AND cardinality($${start+2}::uuid[])=0 AND $${start+3}::boolean) OR(a.hub_id IS NOT NULL AND($${start}::boolean OR a.hub_id=ANY($${start+1}::uuid[])) AND NOT a.hub_id=ANY($${start+2}::uuid[]))))`;}
+export async function transfers(ctx:ApiContext,registry:ApprovalRegistry=transferActions):Promise<Reply|null>{
+ const match=/^finance\/transfers(?:\/([^/]+)(?:\/(reverse))?)?$/.exec(ctx.path);if(!match)return null;const id=match[1]?uuid.parse(match[1]):null,section=match[2];
+ if(ctx.request.method==='POST'){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));if(!id){const input=create.parse(await jsonBody(ctx.request));return propose(ctx,registry,'finance.transfer.record',null,0,input);}if(section!=='reverse')throw new ApiError(405,'METHOD_NOT_ALLOWED');await row(ctx,id,true);return propose(ctx,registry,'finance.transfer.reverse',null,0,{...reverse.parse(await jsonBody(ctx.request)),transferId:id});}
+ if(ctx.request.method!=='GET'||section)throw new ApiError(405,'METHOD_NOT_ALLOWED');if(id){z.object({}).strict().parse(Object.fromEntries(new URL(ctx.request.url).searchParams));return {status:200,body:{data:await detail(ctx,await row(ctx,id))}};}
+ const q=query.parse(Object.fromEntries(new URL(ctx.request.url).searchParams)),rows=(await ctx.db.query<{id:string;amountMinor:string;unitScale:number}>(`SELECT t.id,t.from_account AS "fromAccountId",t.to_account AS "toAccountId",t.amount_minor::text AS "amountMinor",t.unit_scale AS "unitScale",c.code AS "currencyCode",t.posted_on::text AS "postedOn",CASE WHEN t.reversal_id IS NULL THEN 'recorded' ELSE 'reversed' END AS status FROM public.finance_transfers t JOIN public.finance_currencies c ON c.academy_id=t.academy_id AND c.id=t.currency_id WHERE ${visible(1)} AND ${visible(5)} AND($9::uuid IS NULL OR t.id>$9) AND($10::uuid IS NULL OR $10 IN(t.from_account,t.to_account)) AND($11::date IS NULL OR t.posted_on>=$11) AND($12::date IS NULL OR t.posted_on<=$12) AND($13::text IS NULL OR(t.reversal_id IS NULL)=($13='recorded')) ORDER BY t.id LIMIT $14`,[...params(allowed(ctx,'transfers.view')),...params(allowed(ctx,'accounts.view')),q.after??null,q.accountId??null,q.from??null,q.through??null,q.status??null,q.limit+1])).rows;
+ return {status:200,body:{data:rows.slice(0,q.limit).map(r=>({...r,amount:formatMoney(readMinorUnits(r.amountMinor),r.unitScale)})),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
+}
+export const transfersContract=[
+ {path:'/api/v1/finance/transfers',method:'get',summary:'Whole-record permission-filtered internal account transfers; not income, expenses or verified bank balances',querySchema:query},
+{path:'/api/v1/finance/transfers',method:'post',summary:'Request reviewed same-currency cash/bank/card-liability transfer record with named method and protected evidence or explicit exception. No bank execution, fees, FX or tax supply.',schema:create},
+ {path:'/api/v1/finance/transfers/{id}',method:'get',summary:'Read a permitted retained transfer record without private approval notes'},
+ {path:'/api/v1/finance/transfers/{id}/reverse',method:'post',summary:'Request an exact retained ledger correction in an open period; does not physically reverse a bank transfer',schema:reverse}
+] as const;

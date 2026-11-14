@@ -1,0 +1,15 @@
+{
+  "host": "vps-239b6953.vps.ovh.ca",
+  "database": "kavosh_one",
+  "schemaRevision": 388,
+  "schedule": { "enabled": true, "timeZone": "America/Toronto", "time": "03:00", "maximumRandomDelaySeconds": 120, "missedRunCatchUp": true, "overlapProtection": "systemd oneshot and host flock", "nextObservedRun": "2026-11-13T03:00:59-05:00" },
+  "isolation": { "unixUser": "kavosh-one-backup", "databaseLogin": "kavosh_one_backup", "databaseScopedReadOnlyBypassRls": true, "superuser": false, "tlsCertificateVerificationRequired": true, "webCannotReadBackupCredentials": true, "privateAgeKeyOnVps": false, "recoveryKeyStore": "macOS Keychain: kavosh-one-production-backup-recovery" },
+  "tools": { "age": "1.3.2", "rclone": "1.75.2", "officialArchiveChecksumsVerified": true },
+  "liveBackup": { "id": "95da438f-a532-4a86-84af-b9507a1318d3", "encryptedBytes": 7117143, "ciphertextSha256": "b5046051b18abbc2105f2dcd0cf5e0cb9e17fe5666059ccab25afaf5e9f28653", "localArchiveRetained": true, "independentDriveCopyFullyDownloadedAndHashed": true, "elapsedSeconds": 11.442, "peakMemoryMiB": 80 },
+  "isolatedRestore": { "independentDriveDownload": true, "fullyAuthenticatedDecryptionBeforeExecutingSql": true, "privateRecoveryKeyStayedOnMac": true, "postgresMajor": 18, "permanentTablesCompared": 427, "storedRowsCompared": 700, "dataFunctionsPermissionsAndRowPoliciesMatch": true, "sourceDatabaseUnchanged": true, "ordinaryRecoveryConnectionsBlocked": true, "testDatabaseAndLocalTemporaryFilesRemoved": true },
+  "quickOperatorLogicTests": { "passed": 10, "failed": 0, "includesOffsiteFailureLocalPreservation": true, "includesLowDiskRefusal": true, "includesRouteRollback": true },
+  "landingPage": { "processIdStill": 536773, "processStartStill": "2026-11-06T01:33:33Z", "filesAndRoutesChangedByBackupWork": false },
+  "automaticDeletionEnabled": false,
+  "permanentOffsiteAuthorizationReady": false,
+  "remaining": [ "Google OAuth app is still Testing: seven-day grant restriction must be removed before calling this permanent unattended offsite protection", "Google requires completed public homepage/privacy-policy branding before publishing; no invented legal URL or landing-page change was made", "Role/configuration-secret recovery and media recovery are not included in this database-only archive", "Off-host alert delivery requires production email/SMS credentials; service failure is currently visible in systemd journal and private latest.json", "Recovery key is in this Mac's Keychain; independent owner-controlled key escrow is not yet verified" ]
+}

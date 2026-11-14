@@ -1,0 +1,39 @@
+[Unit]
+Description=Kavosh One encrypted configuration and role backup (not landing page)
+After=network-online.target postgresql@18-main.service kavosh-one-role-export.service
+Requires=postgresql@18-main.service kavosh-one-role-export.service
+
+[Service]
+Type=oneshot
+# Root must read root-only credentials;this is never a web or bot process.
+User=root
+EnvironmentFile=/etc/kavosh-one/backup.env
+LoadCredential=drive.json:/etc/kavosh-one/drive.json
+StateDirectory=kavosh-one-config-backups
+StateDirectoryMode=0700
+ReadWritePaths=/run/kavosh-one-role-export
+ExecStart=/usr/bin/flock --nonblock /var/lib/kavosh-one-config-backups/backup.lock /bin/bash /srv/kavosh-one/deploy/run-config-backup.sh
+TimeoutStartSec=20min
+TimeoutStopSec=15s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# Ubuntu's RestrictSUIDSGID also rejects openat2, which this tar requires.
+# No identity changes are needed: deny them explicitly and retain read-only
+# filesystem protection plus non-executable writable backup directories.
+SystemCallFilter=~@setuid
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_DAC_OVERRIDE
+NoExecPaths=/var/lib/kavosh-one-config-backups /run/kavosh-one-role-export
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=256M
+CPUQuota=25%
+Nice=15
+IOSchedulingClass=idle
+

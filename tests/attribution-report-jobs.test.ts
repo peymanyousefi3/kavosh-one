@@ -1,0 +1,139 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createHash,randomUUID } from 'node:crypto';
+import { parse } from 'csv-parse/sync';
+import { expenseFixture } from './expense-fixture.ts';
+import { processOneReport } from '../src/reports/export-worker.ts';
+import type { Database } from '../src/core/database.ts';
+import { attributionAuthorization } from '../src/modules/financial-attribution-access.ts';
+import { setTimeout as delay } from 'node:timers/promises';
+import { readFile } from 'node:fs/promises';
+import { record } from '../src/core/api.ts';
+import type { Credential } from '../src/core/policy.ts';
+import { upgradeToCurrent } from './migration-upgrade.ts';
+import { spawn } from 'node:child_process';
+
+const range={from:'2026-01-01',through:'2026-12-31'};
+async function fixture(options:Parameters<typeof expenseFixture>[0]={}){
+ const f=await expenseFixture(options);try{
+  const invoice=(await f.issue()).body.data;assert.ok(invoice?.id);const release=await f.request('finance/invoices/'+invoice.id+'/recognitions',{amount:'40',deferredAccount:{id:f.deferred.id,version:1},revenueAccount:{id:f.income.id,version:1},earnedOn:'2026-11-06',postedOn:'2026-11-07',period:{id:f.period.id,version:1},reference:'QUEUED-EARNING',earningReview:'PRIVATE earning evidence',reason:'PRIVATE earning approval'});assert.equal(release.response.status,201,JSON.stringify(release.body));
+  const bill=await f.bill();assert.equal(bill.response.status,201,JSON.stringify(bill.body));
+  const role=await f.made('roles',{name:'Financial attribution exports',permissions:['invoices.view','expenses.view','financial-reports.view','accounts.view','ledger.view','report-presets.view','report-schedules.view','report-schedules.edit'].map(capability=>({capability,effect:'allow'}))}),path='people/'+f.actors.staff.person+'/access';assert.equal((await f.request(path,{expectedVersion:(await f.request(path)).body.data.version,assignments:[{roleId:role.id,allHubs:false,hubIds:[f.hub]}]})).response.status,200);
+  const errors:{message:string;sql:string}[]=[],database:Database={async connect(){const c=f.pg.runtime?await f.pg.runtime.connect():{query:f.pg.query.bind(f.pg),release(){}};await c.query('SET ROLE kavosh_automation_worker');return {async query<Row>(sql:string,params?:unknown[]){try{return await c.query<Row>(sql,params);}catch(error){errors.push({message:(error as Error).message,sql:sql.slice(0,160)});throw error;}},release(destroy?:boolean){c.release(destroy);}};}};
+  const work=async(db=database)=>{try{return await processOneReport(db,[f.a]);}finally{if(!f.pg.runtime)await f.pg.exec('RESET ROLE');}},queue=(reportId='finance.tuition-income',parameters:Record<string,string>=range,as='staff',key?:string)=>f.request('reports/jobs',{reportId,parameters},as,{key}),download=(id:string,as='staff')=>f.request('reports/jobs/'+id+'/download',undefined,as),state=(id:string,as='staff')=>f.request('reports/jobs/'+id,undefined,as);
+  return {...f,invoice,release:release.body.data,billRecord:bill.body.data,role,database,work,queue,download,state,errors};
+ }catch(error){await f.pg.close();throw error;}
+}
+test('queued tuition and expense CSVs retain exact totals hashes and private same-snapshot source manifests',async()=>{
+ const f=await fixture();try{
+  for(const [reportId,field,value]of [['finance.tuition-income','recognizedRevenue','4000'],['finance.expense-costs','expense','10650']]){
+   const key=randomUUID(),queued=await f.queue(reportId,range,'staff',key);assert.equal(queued.response.status,202,JSON.stringify(queued.body));assert.deepEqual((await f.queue(reportId,range,'staff',key)).body,queued.body);const id=queued.body.data.id;
+   assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));const file=await f.download(id);assert.equal(file.response.status,200,JSON.stringify(file.body));const rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.section==='currency_total'&&r.field===field)?.amount_minor,value);assert.doesNotMatch(file.body,/PRIVATE|authorizationContext|"invoices"|"recognitions"|"bills"/);
+   const saved=await f.state(id);assert.equal(saved.response.status,200);assert.equal(saved.body.result.sha256,createHash('sha256').update(file.body).digest('hex'));assert.equal(saved.body.result.bytes,Buffer.byteLength(file.body));const proof=(await f.pg.query<{authorization_context:unknown}>('SELECT authorization_context FROM public.report_job_results WHERE job_id=$1',[id])).rows[0].authorization_context;
+   assert.deepEqual(proof,reportId==='finance.tuition-income'?{kind:'tuition_attribution',invoices:[f.invoice.id],recognitions:[f.release.id]}:{kind:'expense_attribution',bills:[f.billRecord.id]});assert.equal((await f.download(id,'peer')).response.status,404);assert.equal((await f.request('reports/jobs/'+id,undefined,'foreignMaster',{academy:f.b})).response.status,404);assert.equal((await f.download(id,'master')).body,file.body);
+  }
+ }finally{await f.pg.close();}
+});
+test('retained tuition attribution denies bytes and hash after exact invoice scope is lost despite other financial rights',async()=>{
+ const f=await fixture();try{
+  const queued=await f.queue();assert.equal(queued.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));const id=queued.body.data.id;assert.equal((await f.download(id)).response.status,200);
+  const deny=await f.made('roles',{name:'Deny captured invoice student',permissions:[{capability:'invoices.view',effect:'deny'}]}),path='people/'+f.actors.staff.person+'/access';assert.equal((await f.request(path,{expectedVersion:(await f.request(path)).body.data.version,assignments:[{roleId:f.role.id,allHubs:false,hubIds:[f.hub]},{roleId:deny.id,allHubs:false,personIds:[f.student.id]}]})).response.status,200);
+  for(const read of [f.state,f.download]){const result=await read(id);assert.equal(result.response.status,403,JSON.stringify(result.body));assert.equal(result.body.error.code,'REPORT_SOURCE_ACCESS_CHANGED');assert.doesNotMatch(JSON.stringify(result.body),/sha256|recognizedRevenue|4000|body/);assert.equal(result.response.headers.get('content-disposition'),null);}
+  assert.equal((await f.request('reports/finance/tuition-income?'+new URLSearchParams(range),undefined,'staff')).response.status,200,'A newly filtered live report still works;the old retained file must not be partly exposed');
+ }finally{await f.pg.close();}
+});
+test('retained earning-only files recheck every captured release account without blocking unrelated earlier invoice files',async()=>{
+ const f=await fixture();try{
+  const global=await f.made('finance/accounts',{code:'QUEUED-GLOBAL',name:'Shared earning destination',kind:'income',operationalRole:'revenue',currencyId:f.currency.id,currencyVersion:1,reason:'Explicit shared earning control'}),release=await f.request('finance/invoices/'+f.invoice.id+'/recognitions',{amount:'20',deferredAccount:{id:f.deferred.id,version:1},revenueAccount:{id:global.id,version:1},earnedOn:'2026-11-08',postedOn:'2026-11-08',period:{id:f.period.id,version:1},reference:'GLOBAL-QUEUED',earningReview:'PRIVATE global release review',reason:'Explicit reviewed global destination'});assert.equal(release.response.status,201,JSON.stringify(release.body));
+  const path='people/'+f.actors.staff.person+'/access';assert.equal((await f.request(path,{expectedVersion:(await f.request(path)).body.data.version,assignments:[{roleId:f.role.id,allHubs:true}]})).response.status,200);
+  const q=await f.queue('finance.tuition-income',{from:'2026-11-08',through:'2026-11-08'});assert.equal(q.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));const proof=(await f.pg.query('SELECT authorization_context FROM public.report_job_results WHERE job_id=$1',[q.body.data.id])).rows[0].authorization_context;assert.deepEqual(proof,{kind:'tuition_attribution',invoices:[f.invoice.id],recognitions:[release.body.data.id]});
+  const older=await f.queue('finance.tuition-income',{from:'2026-11-05',through:'2026-11-07'});assert.equal(older.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));
+  assert.equal((await f.request(path,{expectedVersion:(await f.request(path)).body.data.version,assignments:[{roleId:f.role.id,allHubs:false,hubIds:[f.hub]}]})).response.status,200);
+  assert.equal((await f.download(q.body.data.id)).response.status,403);assert.equal((await f.state(q.body.data.id)).response.status,403);assert.equal((await f.download(older.body.data.id)).response.status,200);
+  const current=await f.request('reports/finance/tuition-income?'+new URLSearchParams({from:'2026-11-08',through:'2026-11-08'}),undefined,'staff');assert.equal(current.response.status,200);assert.deepEqual(current.body.data.currencies,[]);
+ }finally{await f.pg.close();}
+});
+test('filtered retained costs still require every original bill context and account,not just exported lines',async()=>{
+ const f=await fixture();try{
+  const shared=await f.made('finance/accounts',{code:'QUEUED-AP',name:'Shared payable',kind:'liability',operationalRole:'payable',currencyId:f.currency.id,currencyVersion:1,reason:'Explicit mixed-bill control'}),other=await f.made('finance/accounts',{code:'QUEUED-COST-B',name:'Other hub cost',kind:'expense',operationalRole:'expense',hubId:f.otherHub,currencyId:f.currency.id,currencyVersion:1,reason:'Other hub original source'}),tax=await f.made('finance/tax-codes',{code:'QUEUED-TAX-B',name:'Other source tax',hubId:f.otherHub,countryCode:'CA',classification:'taxable',ratePercent:'13',startsOn:'2026-01-01',legalBasis:'Synthetic declared example',reason:'Other source mapping'});
+  const mixed=await f.bill({documentNumber:'QUEUED-MIXED',payableAccount:{id:shared.id,version:1},lines:[{...f.input.lines[0],amount:'200'},{...f.input.lines[0],hubId:f.otherHub,classId:null,studentId:null,expenseAccount:{id:other.id,version:1},taxCode:{id:tax.id,version:1},taxAccount:null,recoverablePercent:'0',amount:'300'}]});assert.equal(mixed.response.status,201,JSON.stringify(mixed.body));
+  const path='people/'+f.actors.staff.person+'/access';assert.equal((await f.request(path,{expectedVersion:(await f.request(path)).body.data.version,assignments:[{roleId:f.role.id,allHubs:true}]})).response.status,200);const parameters={...range,classIds:f.c.id},q=await f.queue('finance.expense-costs',parameters);assert.equal(q.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));const rows=parse((await f.download(q.body.data.id)).body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='expense')?.amount_minor,'31950');
+  const finance=await f.made('roles',{name:'Retain full account rights only',permissions:['financial-reports.view','accounts.view','ledger.view'].map(capability=>({capability,effect:'allow'}))});assert.equal((await f.request(path,{expectedVersion:(await f.request(path)).body.data.version,assignments:[{roleId:f.role.id,allHubs:false,hubIds:[f.hub]},{roleId:finance.id,allHubs:true}]})).response.status,200);
+  assert.equal((await f.download(q.body.data.id)).response.status,403);assert.equal((await f.state(q.body.data.id)).response.status,403);const fresh=await f.queue('finance.expense-costs',parameters);assert.equal(fresh.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));assert.deepEqual((await f.pg.query('SELECT authorization_context FROM public.report_job_results WHERE job_id=$1',[fresh.body.data.id])).rows[0].authorization_context,{kind:'expense_attribution',bills:[f.billRecord.id]});
+ }finally{await f.pg.close();}
+});
+test('source permission loss before execution cancels a queued attribution job without borrowing its approver rights',async()=>{
+ const f=await fixture();try{
+  for(const [id,cap]of [['finance.tuition-income','invoices.view'],['finance.expense-costs','expenses.view']]){const q=await f.queue(id);assert.equal(q.response.status,202);await f.pg.query('DELETE FROM public.role_permissions WHERE role_id=$1 AND capability=$2',[f.role.id,cap]);assert.equal((await f.work()).outcome,'cancelled',JSON.stringify(f.errors));assert.equal((await f.pg.query('SELECT * FROM public.report_job_results WHERE job_id=$1',[q.body.data.id])).rows.length,0);}
+ }finally{await f.pg.close();}
+});
+test('saved relative attribution presets freeze dates and retain provenance without granting creator authority',async()=>{
+ const f=await fixture();try{
+  for(const reportId of ['finance.tuition-income','finance.expense-costs']){
+   const preset=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Reusable attributed finance',reportId,parameters:{},dateWindow:{kind:'last_days',days:3660,timeZone:'America/Toronto'}},reason:'Reviewed relative source selection'}),q=await f.request('reports/presets/'+preset.id+'/queue',{expectedVersion:1,overrides:{}},'staff');assert.equal(q.response.status,202,JSON.stringify(q.body));assert.ok(q.body.data.resolvedDateWindow.resolvedAt);assert.equal(q.body.data.configuration.dateWindow,undefined);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));
+   const file=await f.download(q.body.data.id),rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.field==='presetId')?.value,preset.id);assert.equal(rows.find(r=>r.field==='presetVersion')?.value,'1');assert.equal(JSON.parse(rows.find(r=>r.field==='dateWindow')!.value).resolvedAt,q.body.data.resolvedDateWindow.resolvedAt);
+   const change=await f.request('reports/presets/'+preset.id+'/queue',{expectedVersion:1,overrides:{from:'2026-11-07',through:'2026-11-07'}},'staff');assert.equal(change.response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));assert.deepEqual((await f.state(change.body.data.id)).body.data.resolvedDateWindow.overriddenFields.sort(),['from','through']);
+  }
+ }finally{await f.pg.close();}
+});
+test('failed retained-file persistence rolls back generated audit and bytes before a safe report retry',async()=>{
+ const f=await fixture();try{
+  const q=await f.queue();assert.equal(q.response.status,202);await f.pg.exec('CREATE FUNCTION public.suppress_attribution_result_test() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL;END $$;CREATE TRIGGER suppress_attribution_result_test BEFORE INSERT ON public.report_job_results FOR EACH ROW EXECUTE FUNCTION public.suppress_attribution_result_test()');
+  try{assert.equal((await f.work()).outcome,'retry',JSON.stringify(f.errors));}finally{await f.pg.exec('DROP TRIGGER suppress_attribution_result_test ON public.report_job_results;DROP FUNCTION public.suppress_attribution_result_test()');}
+  assert.equal((await f.pg.query('SELECT * FROM public.report_job_results')).rows.length,0);assert.equal((await f.pg.query("SELECT * FROM public.audit_events WHERE action='report.generated'")).rows.length,0);
+  await f.pg.exec('BEGIN');try{await f.pg.exec('SET LOCAL ROLE kavosh_automation_policy');await f.pg.query("UPDATE public.report_jobs SET available_at=clock_timestamp()-interval '1 second' WHERE id=$1",[q.body.data.id]);await f.pg.exec('COMMIT');}catch(error){await f.pg.exec('ROLLBACK');throw error;}
+  assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));assert.equal((await f.download(q.body.data.id)).response.status,200);assert.equal((await f.pg.query('SELECT * FROM public.report_job_results')).rows.length,1);
+ }finally{await f.pg.close();}
+});
+test('native result manifests reject ambiguous duplicate malformed and incompatible attribution sources',async()=>{
+ const f=await fixture();try{
+  const valid=[['finance.tuition-income',{kind:'tuition_attribution',invoices:[f.invoice.id],recognitions:[f.release.id]}],['finance.expense-costs',{kind:'expense_attribution',bills:[f.billRecord.id]}]] as const;
+  for(const [report,p]of valid){assert.equal(attributionAuthorization.safeParse(p).success,true);assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.report_result_context_valid($1,$2::jsonb) ok',[report,JSON.stringify(p)])).rows[0].ok,true);}
+  for(const p of [{kind:'tuition_attribution',invoices:[f.invoice.id,f.invoice.id],recognitions:[]},{kind:'tuition_attribution',invoices:[],recognitions:[f.release.id]},{kind:'tuition_attribution',invoices:['bad'],recognitions:[]},{kind:'tuition_attribution',invoices:[],recognitions:[],approved:true},{kind:'tuition_attribution',invoices:[]},{kind:'expense_attribution',bills:[f.billRecord.id,f.billRecord.id]},{kind:'expense_attribution',bills:[null]}]){
+   const report=p.kind==='tuition_attribution'?'finance.tuition-income':'finance.expense-costs';assert.equal(attributionAuthorization.safeParse(p).success,false,JSON.stringify(p));assert.equal((await f.pg.query<{ok:boolean}>('SELECT public.report_result_context_valid($1,$2::jsonb) ok',[report,JSON.stringify(p)])).rows[0].ok,false,JSON.stringify(p));
+  }
+  assert.equal((await f.pg.query<{ok:boolean}>("SELECT public.report_result_context_valid('finance.tuition-income','{\"hubIds\":[],\"includesGlobal\":false}'::jsonb) ok")).rows[0].ok,false);
+  for(const patch of [{authorizationContext:valid[0][1]},{approved:true},{source:'override'}])assert.equal((await f.request('reports/jobs',{reportId:'finance.tuition-income',parameters:range,...patch},'staff')).response.status,400);
+ }finally{await f.pg.close();}
+});
+if(process.env.TEST_DATABASE_URL)test('queued attribution money and authority use one actual source snapshot during a concurrent earning release',async()=>{
+ const f=await fixture();let release!:()=>void,reached!:()=>void;const gate=new Promise<void>(resolve=>release=resolve),prepared=new Promise<void>(resolve=>reached=resolve);let generating:ReturnType<typeof f.work>|undefined;
+ try{
+  const q=await f.queue();assert.equal(q.response.status,202);let sourceQueries=0;
+  const database:Database={async connect(){const c=await f.database.connect();return {async query<Row>(sql:string,params?:unknown[]){const result=await c.query<Row>(sql,params);if(sql.startsWith('WITH owned AS NOT MATERIALIZED')){sourceQueries++;reached();await gate;}return result;},release(destroy?:boolean){c.release(destroy);}};}};
+  const start=performance.now();generating=f.work(database);await Promise.race([prepared,delay(2000).then(()=>{throw new Error('ATTRIBUTION_SOURCE_NOT_CAPTURED');})]);const change=await f.request('finance/invoices/'+f.invoice.id+'/recognitions',{amount:'10',deferredAccount:{id:f.deferred.id,version:1},revenueAccount:{id:f.income.id,version:1},earnedOn:'2026-11-08',postedOn:'2026-11-08',period:{id:f.period.id,version:1},reference:'DURING-QUEUED-READ',earningReview:'PRIVATE separate committed earning',reason:'Real concurrent source change'});assert.equal(change.response.status,201,JSON.stringify(change.body));release();assert.equal((await generating).outcome,'succeeded',JSON.stringify(f.errors));assert.equal(sourceQueries,1);
+  const rows=parse((await f.download(q.body.data.id)).body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(rows.find(r=>r.section==='currency_total'&&r.field==='recognizedRevenue')?.amount_minor,'4000');assert.deepEqual((await f.pg.query('SELECT authorization_context FROM public.report_job_results WHERE job_id=$1',[q.body.data.id])).rows[0].authorization_context,{kind:'tuition_attribution',invoices:[f.invoice.id],recognitions:[f.release.id]});
+  assert.equal((await f.request('reports/finance/tuition-income?'+new URLSearchParams(range),undefined,'staff')).body.data.currencies[0].recognizedRevenue.minor,'5000');console.log(JSON.stringify({measurement:'brief-queued-attribution-source-snapshot',requests:2,elapsedMs:Math.ceil(performance.now()-start)}));
+ }finally{release();await Promise.allSettled([generating].filter(Boolean));await f.pg.close();}
+});
+test('attribution job upgrade preserves actual older CSV bytes histories and helper authority before enabling new formats',async()=>{
+ const f=await fixture({throughSchema:244});try{
+  const q=await f.request('reports/jobs',{reportId:'finance.trial-balance',parameters:{through:'2026-12-31'}},'staff');assert.equal(q.response.status,202);const file=await f.request('reports/finance/trial-balance/export?through=2026-12-31',undefined,'staff');assert.equal(file.response.status,200);
+  // Historical244protocol with an actual existing read-only CSV,not a current
+  // worker pretending the future schema is installed. Keep native leases and
+  // the original verified actor;never fake readiness or disable source guards.
+  await f.pg.exec('SET ROLE kavosh_automation_worker');try{
+   await f.pg.query("SELECT set_config('app.academy_id',$1,false)",[f.a]);const lease=(await f.pg.query<{id:string;lease_token:string}>('SELECT * FROM public.claim_report_job($1)',[[f.a]])).rows[0];assert.equal(lease.id,q.body.data.id);const c=(await f.pg.query<Credential&{user_id:string}>('SELECT * FROM public.report_job_actor($1,$2)',[lease.id,lease.lease_token])).rows[0];assert.equal(c.person_id,f.actors.staff.person);assert.equal(c.allowed,true);
+   await f.pg.exec('BEGIN');try{assert.equal((await f.pg.query<{valid:boolean}>('SELECT public.lock_human($1,$2) valid',[c.token_id,c.user_id])).rows[0].valid,true);await record({query:f.pg.query.bind(f.pg),release(){}},c,randomUUID(),'report.generated',lease.id,null,{reportId:'finance.trial-balance',sha256:createHash('sha256').update(file.body).digest('hex'),bytes:Buffer.byteLength(file.body),externalRequestMade:false});assert.equal((await f.pg.query<{ok:boolean}>("SELECT public.finish_report_job($1,$2,'succeeded',NULL,$3,'historical-trial-balance.csv',$4::jsonb) ok",[lease.id,lease.lease_token,file.body,JSON.stringify({hubIds:[f.hub],includesGlobal:false})])).rows[0].ok,true);await f.pg.exec('COMMIT');}catch(error){await f.pg.exec('ROLLBACK');throw error;}
+  }finally{await f.pg.exec('RESET ROLE');}
+  const tables=['report_jobs','report_job_results','tuition_invoices','tuition_recognitions','expense_bills','finance_journals','finance_journal_lines','role_permissions','audit_events','outbox_events'],before=[];for(const table of tables)before.push((await f.pg.query('SELECT * FROM public.'+table+' ORDER BY 1,2')).rows);
+  const query="SELECT oid,proowner,proacl,proconfig FROM pg_proc WHERE oid=ANY(ARRAY['public.report_job_guard()'::regprocedure,'public.report_job_preset_guard()'::regprocedure,'public.report_result_context_valid(text,jsonb)'::regprocedure]) ORDER BY oid",authority=(await f.pg.query(query)).rows;
+  await f.pg.exec(await readFile(new URL('../db/migrations/245_attribution_report_jobs.sql',import.meta.url),'utf8'));for(const[i,table]of tables.entries())assert.deepEqual((await f.pg.query('SELECT * FROM public.'+table+' ORDER BY 1,2')).rows,before[i],table);assert.deepEqual((await f.pg.query(query)).rows,authority);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,245);
+  await upgradeToCurrent(f.pg);assert.equal((await f.download(q.body.data.id)).body,file.body);assert.equal((await f.queue()).response.status,202);assert.equal((await f.work()).outcome,'succeeded',JSON.stringify(f.errors));
+ }finally{await f.pg.close();}
+});
+
+// Opt-in real-wall-clock proof. Keep the default quick suite free of a wait
+// for the next calendar minute;this check never stages a pointer or disables
+// native guards. Run locally with the compiled daemon when requested.
+if(process.env.TEST_DATABASE_URL&&process.env.RUN_REAL_CLOCK_REPORT_SCHEDULE_CHECK==='true')test('real-clock attribution schedules generate both formats with a restricted packaged daemon and no API tick',{timeout:90000},async()=>{
+ const f=await fixture();let child:ReturnType<typeof spawn>|undefined,login:string|undefined;try{
+  const due=(await f.pg.query<{at:string}>("SELECT to_char((date_trunc('minute',clock_timestamp())+CASE WHEN extract(second FROM clock_timestamp())>=55 THEN interval '2 minutes' ELSE interval '1 minute' END) AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') at")).rows[0].at,presets:string[]=[];
+  for(const reportId of ['finance.tuition-income','finance.expense-costs']){const p=await f.made('reports/presets',{anchor:{kind:'hub',id:f.hub},definition:{name:'Real-clock attributed finance',reportId,parameters:{},dateWindow:{kind:'last_days',days:3660,timeZone:'UTC'}},reason:'Reviewed actual scheduler integration'});presets.push(p.id);const proposed=await f.request('reports/presets/'+p.id+'/schedules',{definition:{name:'Actual next-minute test',enabled:true,presetVersion:1,timing:{timeZone:'UTC',localTime:due.slice(11,16),startsOn:due.slice(0,10),cycle:{kind:'daily'},maxDelayMinutes:5}},reason:'Reviewed current owner automation'},'staff');assert.equal(proposed.response.status,202,JSON.stringify(proposed.body));const approved=await f.approve(proposed.body.approval.id);assert.equal(approved.response.status,200,JSON.stringify(approved.body));assert.equal(new Date(approved.body.data.nextPlannedOccurrence).getTime(),new Date(due).getTime());}
+  const name=(await f.pg.query<{name:string}>('SELECT current_database() name')).rows[0].name;assert.match(name,/^kavosh_test_[a-f0-9]{32}$/);login='kavosh_attr_'+randomUUID().replaceAll('-','');const password='synthetic_only_'+randomUUID().replaceAll('-','');await f.pg.exec(`CREATE ROLE ${login} LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS PASSWORD '${password}';GRANT kavosh_automation_worker TO ${login}`);
+  const url=new URL(process.env.TEST_DATABASE_URL!);url.username=login;url.password=password;url.pathname='/'+name;let output='';const command=process.env.REPORT_WORKER_COMPILED_ENTRY?[process.env.REPORT_WORKER_COMPILED_ENTRY]:['--import','tsx','scripts/process-reports.ts'];child=spawn(process.execPath,command,{cwd:process.cwd(),env:{PATH:process.env.PATH,NODE_ENV:'test',DATABASE_SSL_MODE:'disable',REPORT_WORKER_ENABLED:'true',REPORT_SCHEDULER_ENABLED:'true',REPORT_WORKER_DATABASE_URL:url.toString(),REPORT_WORKER_ACADEMIES:JSON.stringify([f.a])},stdio:['ignore','ignore','pipe']});child.stderr?.on('data',data=>{if(output.length<2000)output+=String(data).slice(0,2000-output.length);});
+  const began=performance.now(),deadline=began+75000;let done=false;while(performance.now()<deadline){done=(await f.pg.query("SELECT 1 FROM public.report_jobs WHERE status='succeeded'")).rows.length===2;if(done||child.exitCode!==null)break;await delay(500);}assert.ok(done,'Actual scheduled attribution did not finish: '+output);
+  const jobs=(await f.pg.query<{id:string;requester_id:string;preset_id:string;window_resolution:{resolvedAt:string}}> ('SELECT id,requester_id,preset_id,window_resolution FROM public.report_jobs ORDER BY id')).rows;assert.equal(jobs.length,2);for(const j of jobs){assert.equal(j.requester_id,f.actors.staff.person);assert.ok(presets.includes(j.preset_id));assert.equal(new Date(j.window_resolution.resolvedAt).getTime(),new Date(due).getTime());const file=await f.download(j.id);assert.equal(file.response.status,200);const rows=parse(file.body,{columns:true,bom:true}) as Record<string,string>[];assert.equal(new Date(JSON.parse(rows.find(r=>r.field==='scheduledOccurrence')!.value).dueAt).getTime(),new Date(due).getTime());}
+  const exited=new Promise<number|null>(resolve=>child!.once('exit',resolve));child.kill('SIGTERM');assert.equal(await Promise.race([exited,delay(2000,undefined,{ref:false}).then(()=>-1)]),0);assert.doesNotMatch(output,/postgresql:|synthetic_only_|password|token_hash/i);console.log(JSON.stringify({measurement:'real-clock-scheduled-attribution',jobs:2,elapsedMs:Math.ceil(performance.now()-began),providerIO:false}));
+ }finally{if(child&&child.exitCode===null){child.kill('SIGKILL');await new Promise(resolve=>child!.once('exit',resolve));}if(login)await f.pg.exec('DROP ROLE '+login);await f.pg.close();}
+});

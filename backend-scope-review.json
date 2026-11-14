@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "scope": "All 138 original backend feature entries in backend-work.json. Indices are zero-based within each area's original ordered features.",
+  "meaning": "Source and runnable-test traceability only, not proof that an entire feature, deployment or provider integration passed. Historical acceptance remains in backend-work.json and dated deployment receipts. UI/UX is excluded. No progress percentage is inferred from file counts.",
+  "areas": {
+    "foundation": [
+      {"features":[0,1],"source":["src/core/database.ts"],"tests":["tests/foundation.test.ts"]},
+      {"features":[2,3,5,6,7],"source":["src/auth/config.ts","src/auth/gateway.ts","src/auth/phone-change.ts"],"tests":["tests/identity.test.ts","tests/account-security.test.ts"]},
+      {"features":[4],"source":["src/modules/guardians.ts"],"tests":["tests/guardians.test.ts","tests/self-guardians.test.ts"]},
+      {"features":[8],"source":["src/core/audit-diff.ts"],"tests":["tests/audit-events.test.ts"]},
+      {"features":[9,10,12],"source":["src/modules/administration.ts","src/core/policy.ts"],"tests":["tests/foundation.test.ts","tests/geographic-access.test.ts","tests/exact-record-scopes.test.ts"]},
+      {"features":[11],"source":["src/modules/student-care.ts","src/core/payroll-private-data.ts"],"tests":["tests/student-care.test.ts","tests/payroll-private-data.test.ts"]},
+      {"features":[13,14],"source":["src/core/approvals.ts","src/modules/bot-credentials.ts"],"tests":["tests/approval-assessments.test.ts","tests/bot-credentials.test.ts"]},
+      {"features":[15,16],"source":["src/modules/files.ts","src/integrations/clamav.ts"],"tests":["tests/files.test.ts","tests/file-downloads.test.ts"]}
+    ],
+    "academy": [
+      {"features":[0,1,2],"source":["src/modules/academy.ts","src/core/geography.ts"],"tests":["tests/geographic-access.test.ts","tests/classes.test.ts"]},
+      {"features":[3],"source":["src/modules/classes.ts"],"tests":["tests/classes.test.ts"]},
+      {"features":[4],"source":["src/modules/staff.ts","src/modules/enrollments.ts"],"tests":["tests/staff.test.ts","tests/enrollments.test.ts"]},
+      {"features":[5,6,7,8,10],"source":["src/modules/calendar.ts","src/modules/business-calendars.ts"],"tests":["tests/calendar.test.ts","tests/business-calendars.test.ts","tests/received-calendar.test.ts"]},
+      {"features":[9],"source":["src/modules/calendar-events.ts"],"tests":["tests/calendar-events.test.ts"]}
+    ],
+    "enrollment": [
+      {"features":[0,2,3,4,5],"source":["src/modules/students.ts","src/modules/enrollments.ts","db/migrations/193_student_registration_corrections.sql"],"tests":["tests/students.test.ts","tests/enrollments.test.ts","tests/student-registration.test.ts","tests/registration-care.test.ts"]},
+      {"features":[1],"source":["src/modules/guardians.ts"],"tests":["tests/guardians.test.ts"]},
+      {"features":[6],"source":["src/modules/agreement-packages.ts","src/modules/agreement-content.ts"],"tests":["tests/agreement-content.test.ts","tests/agreements.test.ts"]},
+      {"features":[7,8],"source":["src/integrations/boldsign.ts","src/integrations/boldsign-completion.ts"],"tests":["tests/boldsign-send-request.test.ts","tests/agreement-checks.test.ts"],"gate":"No new real agreement sends are authorized by automated tests;provider originals remain copy-only."},
+      {"features":[9],"source":["src/modules/attendance-clearance.ts"],"tests":["tests/attendance-clearance.test.ts"]},
+      {"features":[10],"source":["src/modules/profile-consents.ts"],"tests":["tests/profile-consents.test.ts"]}
+    ],
+    "learning": [
+      {"features":[0],"source":["src/modules/session-attendance.ts"],"tests":["tests/session-attendance.test.ts"]},
+      {"features":[1],"source":["src/modules/session-time.ts"],"tests":["tests/session-time.test.ts"]},
+      {"features":[2,3,5],"source":["src/modules/session-reports.ts","src/modules/learning-media.ts"],"tests":["tests/session-reports.test.ts","tests/family-video-media.test.ts"]},
+      {"features":[4],"source":["src/modules/student-feedback.ts","src/modules/assessment-rubrics.ts"],"tests":["tests/student-feedback.test.ts"]},
+      {"features":[6,7],"source":["src/modules/session-evidence-reviews.ts","src/modules/session-evidence-report.ts"],"tests":["tests/session-evidence-reviews.test.ts","tests/session-evidence-report.test.ts"],"gate":"Graphical presentation awaits UI/UX approval;backend exception data is separate."},
+      {"features":[8],"source":["src/modules/homeworks.ts","src/modules/homework-submissions.ts","src/modules/homework-solutions.ts","src/modules/homework-grades.ts"],"tests":["tests/homeworks.test.ts","tests/homework-submissions.test.ts","tests/homework-solutions.test.ts","tests/homework-grades.test.ts"]},
+      {"features":[9],"source":["src/modules/report-comments.ts"],"tests":["tests/report-comments.test.ts"]},
+      {"features":[10],"source":["src/modules/polls.ts"],"tests":["tests/polls.test.ts","tests/poll-results.test.ts"]},
+      {"features":[11,12],"source":["src/modules/family-access.ts","src/modules/student-performance.ts"],"tests":["tests/student-feedback.test.ts","tests/homeworks.test.ts"]}
+    ],
+    "accounting": [
+      {"features":[0],"source":["src/core/money.ts","src/modules/exchange-rates.ts"],"tests":["tests/money.test.ts","tests/reporting-currency-defaults.test.ts"]},
+      {"features":[1,2],"source":["src/modules/finance-journals.ts","src/modules/finance-ledger.ts","src/modules/finance-periods.ts","src/modules/finance-closing.ts"],"tests":["tests/finance-journals.test.ts","tests/finance-ledger.test.ts","tests/finance-periods.test.ts","tests/finance-closing.test.ts"]},
+      {"features":[3,4,6],"source":["src/modules/invoices.ts","src/modules/receipts.ts","src/modules/collectors.ts","src/modules/payment-methods.ts"],"tests":["tests/invoices.test.ts","tests/receipts.test.ts","tests/collectors.test.ts"]},
+      {"features":[5],"source":["src/integrations/stripe-checkout.ts","src/integrations/stripe-inbox.ts","src/modules/provider-disputes.ts"],"tests":["tests/payment-checkouts.test.ts","tests/checkout-result-worker.test.ts"],"gate":"Owner explicitly deferred live Stripe setup;do not claim live card/refund/dispute acceptance."},
+      {"features":[7],"source":["src/modules/finance-taxes.ts","src/modules/expense-tax-source.ts"],"tests":["tests/finance-taxes.test.ts","tests/expense-tax-source.test.ts"]},
+      {"features":[8],"source":["src/modules/receivables-aging.ts","src/modules/payables-aging.ts"],"tests":["tests/receivables-aging.test.ts","tests/payables-aging.test.ts"]},
+      {"features":[9],"source":["src/modules/sharing.ts","src/modules/statement-settlements.ts"],"tests":["tests/sharing.test.ts","tests/statement-settlements.test.ts"]},
+      {"features":[10,11,12],"source":["src/modules/transfers.ts","src/modules/expenses.ts","src/modules/expense-commitments.ts"],"tests":["tests/transfers.test.ts","tests/expenses.test.ts","tests/expense-commitments.test.ts"]},
+      {"features":[13],"source":["src/core/bank-statement.ts","src/modules/balance-observations.ts","src/modules/reconciliations.ts"],"tests":["tests/bank-statement.test.ts","tests/balance-observations.test.ts","tests/reconciliations.test.ts"],"gate":"Manual/CSV/balance workflows,not live Canadian bank connectivity;bank API credentials remain deferred."},
+      {"features":[14,15],"source":["src/modules/financial-reports.ts","src/modules/profitability-report.ts","src/modules/expense-cost-allocations.ts"],"tests":["tests/financial-reports.test.ts","tests/profitability-report.test.ts","tests/allocated-expense-reports.test.ts"]},
+      {"features":[16],"source":["src/core/approvals.ts","src/modules/payroll-adjustments.ts"],"tests":["tests/payroll-adjustments.test.ts","tests/approval-assessments.test.ts"]}
+    ],
+    "payroll": [
+      {"features":[0,1,2],"source":["src/core/work-compensation.ts","src/modules/work-engagements.ts","src/modules/pay-periods.ts"],"tests":["tests/work-compensation.test.ts","tests/work-engagements.test.ts","tests/pay-periods.test.ts","tests/payroll-salary.test.ts","tests/payroll-project-accruals.test.ts"]},
+      {"features":[3,4],"source":["src/core/payroll-hourly-earnings.ts"],"tests":["tests/payroll-hourly-earnings.test.ts","tests/payroll-hourly-plan.test.ts"]},
+      {"features":[5],"source":["src/modules/payrun-readiness.ts","src/modules/payroll-hourly-accruals.ts"],"tests":["tests/payroll-preparations.test.ts","tests/payroll-hourly-accruals.test.ts"]},
+      {"features":[6],"source":["src/modules/payroll-adjustments.ts"],"tests":["tests/payroll-adjustments.test.ts"]},
+      {"features":[7],"source":["src/core/canadian-payroll-contributions.ts","src/core/ontario-payroll-income-tax.ts","src/modules/payroll-tax-profiles.ts"],"tests":["tests/payroll-tax-profiles.test.ts"],"gate":"Annual/jurisdiction rules and actual worker classification require accountant review before live payroll;not legal certification."},
+      {"features":[8,9],"source":["src/modules/payroll-gross-export.ts","src/modules/payroll-settlement-report.ts"],"tests":["tests/payroll-gross-report.test.ts","tests/financial-report-export.test.ts"],"gate":"Final official-form/PDF visual layout awaits owner UI/UX approval."},
+      {"features":[10],"source":["src/modules/year-end-private-package.ts","src/modules/t4a-consolidated-working-paper.ts"],"tests":["tests/year-end-private-package.test.ts","tests/t4a-consolidated-working-paper.test.ts"],"gate":"Reporting/export only,no CRA filing or unverified claim of final official-form visual acceptance."},
+      {"features":[11],"source":["src/modules/payrun-payments.ts"],"tests":["tests/payruns.test.ts","tests/zero-net-settlements.test.ts"]}
+    ],
+    "inventory": [
+      {"features":[0,1,2,3,4],"source":["src/modules/inventory.ts"],"tests":["tests/inventory.test.ts"]},
+      {"features":[5,6],"source":["src/modules/inventory-reports.ts","src/modules/asset-currency-valuation.ts"],"tests":["tests/inventory-reports.test.ts","tests/inventory-value.test.ts"],"gate":"Management expense/value views remain distinct from formal balance-sheet policy;no depreciation engine requested."}
+    ],
+    "reports": [
+      {"features":[0,1,2,3],"source":["src/modules/report-catalogue.ts","src/modules/financial-reports.ts","src/modules/profitability-report.ts"],"tests":["tests/financial-reports.test.ts","tests/profitability-report.test.ts"],"gate":"Chart-ready data is not graphical UI acceptance."},
+      {"features":[4],"source":["src/modules/report-presets.ts"],"tests":["tests/report-presets.test.ts"]},
+      {"features":[5,6,7],"source":["src/modules/report-jobs.ts","src/reports/export-worker.ts","src/reports/spreadsheet.ts"],"tests":["tests/report-jobs.test.ts","tests/report-spreadsheets.test.ts","tests/financial-report-export.test.ts"],"gate":"Final branded/PDF visual templates await UI/UX input."},
+      {"features":[8],"source":["src/modules/report-schedules.ts","src/reports/schedule-worker.ts"],"tests":["tests/report-schedules.test.ts","tests/report-schedule-worker.test.ts"]},
+      {"features":[9,10],"source":["src/modules/financial-outlook.ts","src/modules/payroll-forecast.ts"],"tests":["tests/financial-outlook.test.ts","tests/payroll-forecast.test.ts"]}
+    ],
+    "automation": [
+      {"features":[0,1],"source":["src/modules/notifications.ts","src/platform/operational-events.ts"],"tests":["tests/notifications.test.ts","tests/platform-operational-events.test.ts"]},
+      {"features":[2,3,4],"source":["src/core/automation-rules.ts","src/modules/automation-rules.ts","src/modules/automation-events.ts"],"tests":["tests/automation-rules-core.test.ts","tests/automation-rules.test.ts","tests/automation-events.test.ts"]},
+      {"features":[5],"source":["src/modules/session-follow-up.ts","src/automations/session-reminders.ts"],"tests":["tests/session-notifications.test.ts","tests/session-follow-up-filter.test.ts"]},
+      {"features":[6],"source":["src/automations/payroll-reminders.ts","src/automations/expense-reminders.ts","src/automations/tuition-reminders.ts","src/modules/statement-reminder-source.ts"],"tests":["tests/payroll-reminders.test.ts","tests/expense-reminders.test.ts"]},
+      {"features":[7,8,9],"source":["src/modules/notification-preferences.ts","src/modules/notification-jobs.ts","src/integrations/message-delivery.ts"],"tests":["tests/notification-preferences.test.ts","tests/notification-jobs.test.ts","tests/message-delivery.test.ts"],"gate":"Current VPS/provider delivery acceptance is separate from synthetic transport tests;no new real sends."},
+      {"features":[10,11,12,13],"source":["src/core/api.ts","src/core/policy.ts","src/core/approvals.ts","src/modules/bot-credentials.ts"],"tests":["tests/foundation.test.ts","tests/bot-credentials.test.ts","tests/bot-accounts.test.ts"]}
+    ],
+    "community": [
+      {"features":[0,1,9],"source":["src/modules/academic-profiles.ts","src/modules/profile-consents.ts","src/modules/profile-publications.ts"],"tests":["tests/academic-profiles.test.ts","tests/profile-consents.test.ts","tests/profile-publications.test.ts"]},
+      {"features":[2],"source":["src/profiles/qr.ts","src/profiles/share-id.ts"],"tests":["tests/profile-qr.test.ts","tests/profile-share-id.test.ts"]},
+      {"features":[3,4,5],"source":["src/modules/achievements.ts","src/modules/achievement-types.ts"],"tests":["tests/achievements.test.ts","tests/academic-rankings.test.ts"]},
+      {"features":[6],"source":["src/modules/profile-moderation.ts"],"tests":["tests/profile-publications.test.ts"]},
+      {"features":[7,8],"source":["src/modules/community-profiles.ts"],"tests":["tests/community-profiles.test.ts"],"gate":"Social posts/stories/feeds/comments and private DMs explicitly excluded;contextual class/homework discussion remains in learning."}
+    ],
+    "platform": [
+      {"features":[0,1,4,5],"source":["src/platform/api.ts","src/modules/academy-subscription.ts"],"tests":["tests/platform-admin.test.ts","tests/platform-plans.test.ts"]},
+      {"features":[2,3],"source":["src/modules/academy.ts","src/modules/website-policies.ts"],"tests":["tests/classes.test.ts","tests/website-policies.test.ts"],"gate":"Complete English/French/Simplified Chinese interface and branded visual acceptance await UI/UX;configuration support alone is not translated UI."},
+      {"features":[6],"source":["src/platform/disposition-schema.ts","src/platform/disposition-native-inspector.ts","src/platform/disposition-installation.ts","src/platform/disposition-delete-query.ts","db/migrations/429_disposition_reviews.sql","db/migrations/430_disposition_confirmation.sql"],"tests":["tests/platform-plans.test.ts","tests/tenant-disposition-schema.test.ts","tests/tenant-disposition-retained-rows.test.ts"],"gate":"UNFINISHED: source-bound retention review and fresh owner confirmation now exist;internal native candidate deletion is tested in owned databases,not yet connected to a backup-gated operator. Actual runtime disposal,semantic evidence preservation,app-copy cleanup and restore-deletion enforcement remain. Retention input is not professional legal certification."},
+      {"features":[7,8],"source":["src/modules/website-policies.ts","src/modules/privacy-requests.ts"],"tests":["tests/website-policies.test.ts","tests/privacy-requests.test.ts"],"gate":"Owner-approved legal texts/jurisdiction review remain launch gates;tracking a privacy case is not executing erasure."},
+      {"features":[9],"source":["src/modules/storage-capacity.ts"],"tests":["tests/storage-capacity.test.ts"]},
+      {"features":[10,11],"source":["src/operations/cluster-recovery.ts","src/operations/role-recovery.ts","src/operations/media-recovery.ts"],"tests":["tests/database-backups.test.ts","tests/drive-backups.test.ts","tests/fresh-cluster-recovery.test.ts","tests/role-recovery.test.ts","tests/media-recovery.test.ts"],"gate":"Independent dated restore receipts establish their specific tested scope,not full-host failover. Google OAuth permanent consent/public-policy publication still requires launch review."},
+      {"features":[12,13,14],"source":["src/operations/health-status.ts","src/core/postgres-config.ts","src/core/trusted-proxy.ts"],"tests":["tests/health-status.test.ts","tests/operational-health.test.ts","tests/foundation.test.ts"],"gate":"99.9% is a target,not measured by a smoke test. Preserve landing page/inbox;production source remains separately identified in release receipts. No guarantee of invulnerability or zero-downtime failover."}
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Kavosh One readiness and backups each minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00 UTC
+RandomizedDelaySec=5s
+AccuracySec=1s
+Unit=kavosh-one-monitor.service
+
+[Install]
+WantedBy=timers.target

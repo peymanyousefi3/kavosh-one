@@ -1,0 +1,4 @@
+#!/bin/sh
+# Fail closed before any Git objects are sent. Requires Node and the verified
+# Gitleaks executable (local .local-tools/gitleaks or installed on PATH).
+exec node scripts/check-secrets.mjs
