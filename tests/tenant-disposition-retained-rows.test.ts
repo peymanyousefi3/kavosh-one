@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID} from 'node:crypto';
-import type {Database} from '../src/core/database.ts';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {readdir} from 'node:fs/promises';
+import {expectedSchemaRevision,type Database} from '../src/core/database.ts';
 import {inspectRetainedDispositionRows,inspectDispositionManifest} from '../src/platform/disposition-retained-rows.ts';
 import {testDatabase} from './database.ts';
 import {operationsFixture} from './operations-fixture.ts';
-import {dispositionCatalogQuery} from '../src/platform/disposition-schema.ts';
-import {compileDispositionInspector,dispositionInspectorRole,dispositionInspectorSignature} from '../src/platform/disposition-native-inspector.ts';
+import {dispositionInspectorRole,dispositionInspectorSignature} from '../src/platform/disposition-native-inspector.ts';
+import {installDispositionInspectorInTransaction,inspectDispositionInstallation} from '../src/platform/disposition-installation.ts';
+import {upgradeToCurrent} from './migration-upgrade.ts';
 
 async function fixture(){
  const pg=await testDatabase(),a=randomUUID(),b=randomUUID();let released=0,connections=0;
@@ -196,15 +200,10 @@ test('sealed owner snapshot has native authority,audit and SELECT-only isolation
  try{
   const operatorSession=(await f.pg.query<{name:string}>('SELECT session_user name')).rows[0].name;
   const owner=f.actors.master;await f.pg.query('SELECT platform_private.register_owner($1,$2)',[owner.user,'Synthetic owner snapshot authority']);
-  const metadata=(await f.pg.query<{snapshot:unknown;fingerprint:string}>('SELECT meta.snapshot,encode(sha256(convert_to(meta.snapshot::text,\'UTF8\')),\'hex\') fingerprint FROM ('+dispositionCatalogQuery+') meta')).rows[0];
-  const compiled=compileDispositionInspector(metadata.snapshot,metadata.fingerprint);
   await f.pg.exec('BEGIN');try{
-   await f.pg.exec(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${role}') THEN CREATE ROLE ${role} NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION;END IF;END $$;
-    CREATE ROLE ${client} NOLOGIN;GRANT USAGE ON SCHEMA platform_private TO ${client};`);
-   await f.pg.exec(compiled.requiredBrokerGrants);
-   for(const relation of compiled.catalog.relations)await f.pg.exec(`GRANT SELECT ON public.${quote(relation.name)} TO ${role};CREATE POLICY disposition_reader_select ON public.${quote(relation.name)} FOR SELECT TO ${role} USING(true)`);
-   for(const grant of compiled.requiredExternalReads)await f.pg.exec(grant);
-   await f.pg.exec(compiled.definition+`GRANT EXECUTE ON FUNCTION ${dispositionInspectorSignature} TO ${client}`);await f.pg.exec('COMMIT');installed=true;
+   await f.pg.exec(`CREATE ROLE ${client} NOLOGIN;GRANT USAGE ON SCHEMA platform_private TO ${client};`);
+   await installDispositionInspectorInTransaction(f.pg);assert.equal((await inspectDispositionInstallation(f.pg)).current,true);assert.equal((await installDispositionInspectorInTransaction(f.pg)).changed,false);
+   await f.pg.exec(`GRANT EXECUTE ON FUNCTION ${dispositionInspectorSignature} TO ${client}`);await f.pg.exec('COMMIT');installed=true;
   }catch(error){await f.pg.exec('ROLLBACK');throw error;}
   const seeds=[{relation:'public.people',key:[f.a,owner.person]}];
   async function asClient<Row=Record<string,unknown>>(sql:string,args:unknown[]=[]){
@@ -256,4 +255,67 @@ test('sealed owner snapshot has native authority,audit and SELECT-only isolation
  }finally{
   try{await f.pg.exec('RESET ROLE');if(installed){await f.pg.exec('DROP OWNED BY '+client+';DROP ROLE '+client);}}finally{await f.pg.close();}
  }
+});
+
+test('managed disposition installation is repeatable,read-only when current and transactionally recoverable',async t=>{
+ const f=await operationsFixture(),role=dispositionInspectorRole;
+ const inspect=()=>inspectDispositionInstallation(f.pg);
+ async function isolated(action:()=>Promise<void>){await f.pg.exec('BEGIN');try{await action();}finally{await f.pg.exec('ROLLBACK');}}
+ try{
+  const baseline=await inspect();assert.equal(baseline.current,true);
+  const identity=async()=>(await f.pg.query('SELECT oid,proowner,proacl::text FROM pg_proc WHERE oid=$1::regprocedure',[dispositionInspectorSignature])).rows[0],before=await identity();
+  await t.test('current preflight and repeated install issue no writes even in a read-only transaction',async()=>{
+   await f.pg.exec('BEGIN READ ONLY');try{assert.equal((await inspect()).current,true);assert.equal((await installDispositionInspectorInTransaction(f.pg)).changed,false);}finally{await f.pg.exec('ROLLBACK');}assert.deepEqual(await identity(),before);
+  });
+  await t.test('catalog updates including dollar identifiers seal correctly and all DDL rolls back together',async()=>{
+   await isolated(async()=>{
+    await f.pg.exec('CREATE TABLE public."disposition$$quoted"(academy_id uuid NOT NULL,id uuid NOT NULL,PRIMARY KEY(academy_id,id));ALTER TABLE public."disposition$$quoted" ENABLE ROW LEVEL SECURITY;ALTER TABLE public."disposition$$quoted" FORCE ROW LEVEL SECURITY');
+    assert.equal((await inspect()).current,false);assert.equal((await installDispositionInspectorInTransaction(f.pg)).changed,true);assert.equal((await inspect()).current,true);assert.equal((await installDispositionInspectorInTransaction(f.pg)).changed,false);
+   });assert.deepEqual(await inspect(),baseline);assert.deepEqual(await identity(),before);assert.equal((await f.pg.query("SELECT to_regclass('public.\"disposition$$quoted\"') value")).rows[0].value,null);
+  });
+  await t.test('unsafe write privileges are rejected while missing declared dependencies and settings are repairable',async()=>{
+   await isolated(async()=>{await f.pg.exec(`GRANT UPDATE(name) ON public.people TO ${role}`);assert.equal((await inspect()).boundarySafe,false);await assert.rejects(installDispositionInspectorInTransaction(f.pg),/UNSAFE_DISPOSITION_READER/);});
+   await isolated(async()=>{await f.pg.exec(`REVOKE SELECT("phoneNumber") ON identity."user" FROM ${role}`);assert.equal((await inspect()).current,false);assert.equal((await installDispositionInspectorInTransaction(f.pg)).changed,true);assert.equal((await inspect()).current,true);});
+   await isolated(async()=>{await f.pg.exec(`ALTER FUNCTION ${dispositionInspectorSignature} SET jit=on`);assert.equal((await inspect()).current,false);assert.equal((await installDispositionInspectorInTransaction(f.pg)).changed,true);assert.equal((await inspect()).current,true);});assert.deepEqual(await inspect(),baseline);
+  });
+  await t.test('restrictive policies are not silently removed to manufacture a successful installation',async()=>{
+   await isolated(async()=>{await f.pg.exec(`CREATE POLICY synthetic_install_restrict ON public.people AS RESTRICTIVE FOR SELECT TO ${role} USING(false)`);assert.equal((await inspect()).current,false);await assert.rejects(installDispositionInspectorInTransaction(f.pg),/DISPOSITION_INSPECTOR_INSTALLATION_INVALID/);});assert.deepEqual(await inspect(),baseline);assert.deepEqual(await identity(),before);
+  });
+ }finally{await f.pg.close();}
+});
+
+test('actual migration CLI installs,checks,repairs and rolls back on an owned native database',{skip:!process.env.TEST_DATABASE_URL},async()=>{
+ const db=await testDatabase();try{
+  const name=(await db.query<{name:string}>('SELECT current_database() name')).rows[0].name;assert.match(name,/^kavosh_test_[a-f0-9]{32}$/);
+  const url=new URL(process.env.TEST_DATABASE_URL!);assert.ok(['localhost','127.0.0.1','[::1]'].includes(url.hostname));url.pathname='/'+name;
+  const cli=(args:string[]=[])=>{const result=spawnSync(process.execPath,['--import','tsx',fileURLToPath(new URL('../scripts/migrate.ts',import.meta.url)),...args],{cwd:fileURLToPath(new URL('../',import.meta.url)),env:{PATH:process.env.PATH??'',NODE_ENV:'test',DATABASE_SSL_MODE:'disable',MIGRATION_DATABASE_URL:url.toString()},encoding:'utf8',timeout:60000,maxBuffer:262144});if(url.password)assert.ok(!(result.stdout+result.stderr).includes(url.password));return result;};
+  // Intentionally unsafe existing role,only in this disposable test cluster.
+  // The CLI must roll its entire SQL+native installation back,not leave a
+  // misleading schema ledger behind. Restore the role even if the child fails.
+  await db.exec(`DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='${dispositionInspectorRole}') THEN CREATE ROLE ${dispositionInspectorRole} NOLOGIN NOINHERIT NOSUPERUSER NOBYPASSRLS NOCREATEROLE NOCREATEDB NOREPLICATION;END IF;END $$`);assert.equal((await db.query('SELECT rolcanlogin FROM pg_roles WHERE rolname=$1',[dispositionInspectorRole])).rows[0].rolcanlogin,false);
+  await db.exec(`ALTER ROLE ${dispositionInspectorRole} LOGIN`);try{const failed=cli();assert.equal(failed.status,1);assert.doesNotMatch(failed.stdout,/Applied |Installed /);assert.equal((await db.query("SELECT to_regclass('public.schema_migrations') ledger,to_regclass('public.academies') academy")).rows[0].ledger,null);assert.equal((await db.query("SELECT to_regclass('public.academies') value")).rows[0].value,null);}finally{await db.exec(`ALTER ROLE ${dispositionInspectorRole} NOLOGIN`);}
+  const started=performance.now(),first=cli();assert.equal(first.status,0,first.stderr.slice(-1000));assert.equal((await db.query('SELECT public.schema_revision() revision')).rows[0].revision,expectedSchemaRevision);assert.equal((await inspectDispositionInstallation(db)).current,true);
+  const names=(await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql'));assert.equal((await db.query('SELECT count(*)::integer n FROM public.schema_migrations')).rows[0].n,names.length);
+  const history=(await db.query('SELECT name,checksum,applied_at FROM public.schema_migrations ORDER BY name')).rows,identity=(await db.query('SELECT oid,proowner,proacl::text,prosrc FROM pg_proc WHERE oid=$1::regprocedure',[dispositionInspectorSignature])).rows;
+  const repeated=cli();assert.equal(repeated.status,0,repeated.stderr.slice(-1000));assert.equal(repeated.stdout.trim(),'');assert.deepEqual((await db.query('SELECT name,checksum,applied_at FROM public.schema_migrations ORDER BY name')).rows,history);assert.deepEqual((await db.query('SELECT oid,proowner,proacl::text,prosrc FROM pg_proc WHERE oid=$1::regprocedure',[dispositionInspectorSignature])).rows,identity);
+  const checked=cli(['--check']);assert.equal(checked.status,0);assert.equal(JSON.parse(checked.stdout).nativeDispositionInspector.current,true);assert.equal(JSON.parse(checked.stdout).databaseChanged,false);
+  await db.exec(`ALTER FUNCTION ${dispositionInspectorSignature} SET jit=on`);const stale=cli(['--check']);assert.equal(stale.status,1);assert.equal(JSON.parse(stale.stdout).nativeDispositionInspector.current,false);assert.equal(JSON.parse(stale.stdout).databaseChanged,false);assert.ok((await db.query<{configs:string[]}>('SELECT proconfig configs FROM pg_proc WHERE oid=$1::regprocedure',[dispositionInspectorSignature])).rows[0].configs.includes('jit=on'));
+  const repaired=cli();assert.equal(repaired.status,0,repaired.stderr.slice(-1000));assert.match(repaired.stdout,/Installed sealed native disposition inspector/);assert.equal((await inspectDispositionInstallation(db)).current,true);assert.deepEqual((await db.query('SELECT name,checksum,applied_at FROM public.schema_migrations ORDER BY name')).rows,history);
+  console.log(JSON.stringify({case:'actual-native-migration-cli',schema:expectedSchemaRevision,files:names.length,failedInstallRolledBack:true,repeatUnchanged:true,readOnlyStaleCheck:true,repairVerified:true,durationMs:Math.round(performance.now()-started),productionChanged:false}));
+ }finally{await db.close();}
+});
+
+test('real427 upgrade installs the native broker without changing existing school,identity,permissions or legal-hold evidence',async()=>{
+ const f=await operationsFixture({throughSchema:427});try{
+  const owner=f.actors.master;await f.pg.query('SELECT platform_private.register_owner($1,$2)',[owner.user,'Synthetic existing owner']);
+  await f.pg.query("SELECT platform_private.request($1,$2,'holds.create',$3,$4::jsonb)",[owner.user,owner.session,randomUUID(),JSON.stringify({academyId:f.a,caseReference:'EXISTING427-HOLD',reason:'Retain existing records during genuine upgrade'})]);
+  const tables=['public.academies','public.people','public.roles','public.role_permissions','public.role_assignments','public.assignment_hubs','identity.user','identity.session','auth_private.credentials','platform_private.owner_registration','platform_private.academy_legal_holds','platform_private.academy_legal_hold_releases','platform_private.audit_events','platform_private.request_receipts'];
+  const snapshot=async()=>{const rows=[];for(const table of tables)rows.push((await f.pg.query('SELECT to_jsonb(t) row FROM '+table+' t ORDER BY to_jsonb(t)::text')).rows);return rows;},before=await snapshot();
+  const functions="SELECT oid,proowner,proconfig,prosrc FROM pg_proc WHERE oid IN('platform_private.request(uuid,uuid,text,uuid,jsonb)'::regprocedure,'platform_private.authorize_owner(uuid,uuid,boolean)'::regprocedure,'platform_private.immutable_record()'::regprocedure) ORDER BY oid",original=(await f.pg.query(functions)).rows;
+  const permissions="SELECT p.oid::integer function_id,coalesce(r.rolname,'PUBLIC') grantee,a.privilege_type,a.is_grantable FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a LEFT JOIN pg_roles r ON r.oid=a.grantee WHERE p.oid IN('platform_private.request(uuid,uuid,text,uuid,jsonb)'::regprocedure,'platform_private.authorize_owner(uuid,uuid,boolean)'::regprocedure,'platform_private.immutable_record()'::regprocedure) ORDER BY p.oid,grantee,a.privilege_type",originalPermissions=(await f.pg.query(permissions)).rows;
+  assert.equal((await f.pg.query('SELECT public.schema_revision() n')).rows[0].n,427);assert.equal((await f.pg.query('SELECT to_regprocedure($1) fn',[dispositionInspectorSignature])).rows[0].fn,null);
+  await upgradeToCurrent(f.pg);assert.equal((await inspectDispositionInstallation(f.pg)).current,true);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(functions)).rows,original);
+  const updatedPermissions=(await f.pg.query(permissions)).rows;assert.deepEqual(updatedPermissions.filter(row=>row.grantee!==dispositionInspectorRole),originalPermissions);assert.deepEqual(updatedPermissions.filter(row=>row.grantee===dispositionInspectorRole),[{function_id:(await f.pg.query("SELECT 'platform_private.authorize_owner(uuid,uuid,boolean)'::regprocedure::oid::integer id")).rows[0].id,grantee:dispositionInspectorRole,privilege_type:'EXECUTE',is_grantable:false}]);
+  assert.equal((await f.request('people')).response.status,200);console.log(JSON.stringify({case:'427-managed-inspector-upgrade',preservedTables:tables.length,existingFunctionIdentityPreserved:true,legalHoldsPreserved:true,schema:expectedSchemaRevision,productionChanged:false}));
+ }finally{await f.pg.close();}
 });

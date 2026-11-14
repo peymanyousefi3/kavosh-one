@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import pg from 'pg';
 import { postgresOptions } from '../src/core/postgres-config.ts';
 import {userInfo} from 'node:os';
+import {installDispositionInspectorInTransaction,inspectDispositionInstallation} from '../src/platform/disposition-installation.ts';
 
 const connectionString = process.env.MIGRATION_DATABASE_URL;
 let client:pg.Client|undefined,transaction=false;
@@ -21,6 +22,7 @@ try {
   }
   client=new pg.Client(options);
   await client.connect();
+  const nativeDb={async query<Row>(sql:string,args?:unknown[]){return{rows:(await client!.query(sql,args)).rows as Row[]};},exec:(sql:string)=>client!.query(sql)};
   await client.query(check?'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY':'BEGIN');transaction=true;
   await client.query(check?'SELECT pg_advisory_xact_lock_shared(742061)':'SELECT pg_advisory_xact_lock(742061)');
   if(!check)await client.query(`CREATE TABLE IF NOT EXISTS public.schema_migrations (name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`);
@@ -42,13 +44,19 @@ try {
     pending.push(name);if(check)continue;
     await client.query(sql);
     await client.query('INSERT INTO public.schema_migrations (name,checksum) VALUES ($1,$2)', [name, checksum]);
-    console.log(`Applied ${name}`);
   }
   if(check){
     const revision=(await client.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0].revision;
+    const nativeInspector=revision>=428?await inspectDispositionInstallation(nativeDb):undefined;
     await client.query('ROLLBACK');transaction=false;
-    console.log(JSON.stringify({mode:'read_only_migration_preflight',currentRevision:revision,recordedFiles:recorded.length,allAppliedChecksumsMatch:true,pending,databaseChanged:false}));
-  }else{await client.query('COMMIT');transaction=false;}
+    console.log(JSON.stringify({mode:'read_only_migration_preflight',currentRevision:revision,recordedFiles:recorded.length,allAppliedChecksumsMatch:true,pending,databaseChanged:false,...nativeInspector?{nativeDispositionInspector:nativeInspector}:{}}));
+    if(nativeInspector&&!nativeInspector.current)process.exitCode=1;
+  }else{
+    const installed=names.includes('428_disposition_inspection_role.sql')?await installDispositionInspectorInTransaction(nativeDb):undefined;
+    await client.query('COMMIT');transaction=false;
+    for(const name of pending)console.log(`Applied ${name}`);
+    if(installed?.changed)console.log('Installed sealed native disposition inspector');
+  }
 } catch (error) {
   if(transaction)try { await client?.query('ROLLBACK'); } catch { /* The private transaction is never activated after a failure. */ }
   // Do not print pg errors: they may contain a connection string or row data.

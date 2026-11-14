@@ -7,6 +7,7 @@ import { readFile,readdir } from 'node:fs/promises';
 import { after } from 'node:test';
 import { expectedSchemaRevision,type Database } from '../src/core/database.ts';
 import { Kysely,PostgresDialect,PGliteDialect,CompiledQuery } from 'kysely';
+import {installDispositionInspectorInTransaction} from '../src/platform/disposition-installation.ts';
 
 export interface TestDatabase {
   identityDb(role?:'kavosh_identity'|'kavosh_delivery'): Kysely<unknown>;
@@ -68,15 +69,16 @@ export async function testDatabase(template?:string): Promise<TestDatabase> {
 // no actor,session,approval,financial or business rows are shared. Historical
 // schema/migration tests continue through the original empty-database path.
 const schemaTemplates=new Map<string,Promise<string>>();
-async function installTestSchema(db:{exec(sql:string):Promise<unknown>}){
+async function installTestSchema(db:Pick<TestDatabase,'exec'|'query'>){
  const directory=new URL('../db/migrations/',import.meta.url);
  for(const name of(await readdir(directory)).filter(n=>n.endsWith('.sql')).sort())await db.exec(await readFile(new URL(name,directory),'utf8'));
+ await db.exec('BEGIN');try{await installDispositionInspectorInTransaction(db);await db.exec('COMMIT');}catch(error){await db.exec('ROLLBACK');throw error;}
 }
 async function makeSchemaTemplate(connectionString:string){
  const url=new URL(connectionString);if(!['localhost','127.0.0.1','[::1]'].includes(url.hostname))throw new Error('Test schema templates require isolated loopback PostgreSQL');
  const name='kavosh_schema_'+randomUUID().replaceAll('-',''),owner=new pg.Client({connectionString});let created=false;
  try{await owner.connect();await owner.query(`CREATE DATABASE "${name}" TEMPLATE template0`);created=true;url.pathname='/'+name;const seed=new pg.Client({connectionString:url.toString()});
-  try{await seed.connect();await installTestSchema({exec:sql=>seed.query(sql)});if((await seed.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0]?.revision!==expectedSchemaRevision)throw new Error('Fixture schema is not current');}finally{await seed.end();}
+  try{await seed.connect();await installTestSchema({async query<Row>(sql:string,args?:unknown[]){return{rows:(await seed.query(sql,args)).rows as Row[]};},exec:sql=>seed.query(sql)});if((await seed.query<{revision:number}>('SELECT public.schema_revision() revision')).rows[0]?.revision!==expectedSchemaRevision)throw new Error('Fixture schema is not current');}finally{await seed.end();}
   // Seal the seed after its owner connection closes. Test clients and
   // background maintenance must not modify the source between fixture copies.
   await owner.query(`ALTER DATABASE "${name}" ALLOW_CONNECTIONS false`);return name;

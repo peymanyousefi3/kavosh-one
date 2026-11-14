@@ -1,4 +1,13 @@
 {
+  "tenantDispositionManagedInstallation": {
+    "status":"Atomic migration428 and current-catalog inspector installation implemented;local verification passed,native hosted verification pending. Not deployed or an erasure executor.",
+    "source":["db/migrations/428_disposition_inspection_role.sql","src/platform/disposition-installation.ts","scripts/migrate.ts","tests/tenant-disposition-retained-rows.test.ts","tests/database-fixtures.test.ts","tests/migration-preflight.test.ts"],
+    "implemented":"Migration runner installs the sealed owner-only broker against the final catalog in the same advisory-locked transaction as SQL and ledger changes. Metadata-only --check detects stale code,settings,permissions and policies without repairing. Current installation is an exact no-op;unsafe role boundaries reject and failed installation rolls back. Test templates and genuine historical upgrades use the same installer. No runtime/service raw SELECT or reader-role membership is added.",
+    "localEvidence":"Combined71-case cohort66pass,5explicit native-only skips,0fail;strict types passed. Managed installer/owner cohorts10of10 passed. Genuine427 upgrade preserved14existing tables including identity,permissions and immutable legal-hold/audit evidence;existing function identity/body/settings unchanged,only intended non-grantable authorize_owner EXECUTE added. Native migration-CLI rollback,repetition,read-only preflight and repair tests await hosted execution. No stress loop.",
+    "priorHostedVerification":"Prior sourcee0e0b3f run43619375046 is now SUCCESS14of14,secret43619374935SUCCESS;not evidence for this newer installation batch.",
+    "remaining":"Hosted native acceptance,then owner review/retention classification and actual confirmed disposal/copy cleanup/restore enforcement. Full approved-feature reconciliation remains required. No completion percentage or UI handoff yet.",
+    "production":"Unchangedb1fe836/API0.475/schema427;no VPS,provider,landing,inbox or visual changes."
+  },
   "tenantDispositionNativeInspector": {
     "status":"Installer-sealed native owner snapshot compiler and isolated authority integration implemented;not yet installed by a production migration,mounted in REST,persisted as an approved disposition plan or an erasure executor.",
     "source":["src/platform/disposition-native-inspector.ts","src/platform/disposition-snapshot-query.ts","src/platform/disposition-schema.ts","src/platform/disposition-retained-rows.ts","tests/tenant-disposition-retained-rows.test.ts"],

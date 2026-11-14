@@ -6,7 +6,8 @@ import { createApi } from '../src/core/api.ts';
 import { business } from '../src/modules/business.ts';
 import type { Capability } from '../src/core/policy.ts';
 import { mintToken,hashToken } from '../src/core/tokens.ts';
-import type { Database } from '../src/core/database.ts';
+import {expectedSchemaRevision,type Database} from '../src/core/database.ts';
+import {installDispositionInspectorInTransaction} from '../src/platform/disposition-installation.ts';
 import type { R2UploadConnections,R2DownloadConnections } from '../src/integrations/r2-config.ts';
 import type { PayrollPrivateVault } from '../src/core/payroll-private-data.ts';
 
@@ -15,6 +16,7 @@ export async function operationsFixture(options:{profileShareOrigin?:string;botC
   try {
     for(const file of options.throughSchema===undefined?[]:(await readdir(new URL('../db/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&Number.parseInt(n,10)<=options.throughSchema!).sort())
       await pg.exec(await readFile(new URL('../db/migrations/'+file,import.meta.url),'utf8'));
+    if(options.throughSchema===expectedSchemaRevision){await pg.exec('BEGIN');try{await installDispositionInspectorInTransaction(pg);await pg.exec('COMMIT');}catch(error){await pg.exec('ROLLBACK');throw error;}}
     const a=randomUUID(),b=randomUUID(),hub=randomUUID(),otherHub=randomUUID(),foreignHub=randomUUID();
     const actors=Object.fromEntries(['master','manager','staff','peer','foreignMaster'].map(key=>[key,{person:randomUUID(),user:randomUUID(),session:randomUUID()}]));
     const managerRole=randomUUID(),policyRole=randomUUID(),staffRole=randomUUID(),bot=randomUUID(),credential=randomUUID(),token=mintToken(),systemRole=randomUUID();

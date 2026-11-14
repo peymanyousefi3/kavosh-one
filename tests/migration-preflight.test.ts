@@ -7,13 +7,15 @@ import {createContext,runInContext} from 'node:vm';
 import {postgresOptions} from '../src/core/postgres-config.ts';
 
 const first='001_first.sql',next='002_next.sql',sql='SELECT 42;',checksum=createHash('sha256').update(sql).digest('hex');
-async function run(options:{env?:Record<string,string|undefined>;args?:string[];uid?:number;username?:string;history?:{name:string;checksum:string}[];fail?:string}={}){
+async function run(options:{env?:Record<string,string|undefined>;args?:string[];uid?:number;username?:string;history?:{name:string;checksum:string}[];fail?:string;files?:string[];revision?:number;nativeFailure?:boolean;nativeCurrent?:boolean}={}){
  const queries:string[]=[],logs:string[]=[];let connections=0,ended=false,configuration:unknown;
  const env=options.env??{MIGRATION_DATABASE_URL:'postgres://synthetic-private:password@localhost/test',NODE_ENV:'production'};
  const context=createContext({URL,createHash,userInfo:()=>({username:options.username??'postgres'}),
-  readdir:async()=>[first,next],readFile:async()=>sql,
+  readdir:async()=>options.files??[first,next],readFile:async()=>sql,
+  installDispositionInspectorInTransaction:async()=>{queries.push('NATIVE_INSTALL');if(options.nativeFailure)throw Error('synthetic-private-install');return{changed:true};},
+  inspectDispositionInstallation:async()=>{queries.push('NATIVE_PREFLIGHT');return{current:options.nativeCurrent??true,boundarySafe:true,catalogFingerprint:'a'.repeat(64),bodyHash:'b'.repeat(64)};},
   postgresOptions:(value:string|undefined)=>postgresOptions(value,env),
-  pg:{Client:class{constructor(value:unknown){configuration=value;connections++;}async connect(){if(options.fail==='connect')throw Error('synthetic-private-connect');}async query(query:string){queries.push(query);if(options.fail===query)throw Error('Migration changed synthetic-private-query');return{rows:query==='SELECT name,checksum FROM public.schema_migrations'?(options.history??[{name:first,checksum}]):[{revision:1}]};}async end(){ended=true;if(options.fail==='end')throw Error('synthetic-private-cleanup');}}},
+  pg:{Client:class{constructor(value:unknown){configuration=value;connections++;}async connect(){if(options.fail==='connect')throw Error('synthetic-private-connect');}async query(query:string){queries.push(query);if(options.fail===query)throw Error('Migration changed synthetic-private-query');return{rows:query==='SELECT name,checksum FROM public.schema_migrations'?(options.history??[{name:first,checksum}]):[{revision:options.revision??1}]};}async end(){ended=true;if(options.fail==='end')throw Error('synthetic-private-cleanup');}}},
   process:{env,argv:['node','script',...options.args??['--check']],getuid:()=>options.uid??100,exitCode:undefined as number|undefined},
   console:{log:(value:string)=>logs.push(value),error:(value:string)=>logs.push(value)}});
  const source=stripTypeScriptTypes(readFileSync(new URL('../scripts/migrate.ts',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replaceAll('import.meta.url',JSON.stringify(import.meta.url));
@@ -44,4 +46,11 @@ test('history mismatch,source removal and failures rollback and redact database 
 test('normal migration retains transactional application and records only pending files',async()=>{
  const r=await run({args:[]});assert.equal(r.exitCode,undefined);assert.ok(r.ended);assert.equal(r.queries[0],'BEGIN');assert.equal(r.queries.at(-1),'COMMIT');assert.equal(r.queries.filter(q=>q===sql).length,1);assert.equal(r.queries.filter(q=>q.startsWith('INSERT INTO')).length,1);assert.deepEqual(r.logs,['Applied '+next]);
  const failed=await run({args:[],fail:sql});assert.equal(failed.exitCode,1);assert.equal(failed.queries.at(-1),'ROLLBACK');assert.ok(!failed.queries.includes('COMMIT'));
+});
+test('native component installation shares the migration commit and reports success only after commit',async()=>{
+ const file='428_disposition_inspection_role.sql',r=await run({args:[],files:[first,file]});assert.equal(r.exitCode,undefined);assert.ok(r.queries.indexOf('NATIVE_INSTALL')>r.queries.findIndex(q=>q.startsWith('INSERT INTO')));assert.ok(r.queries.indexOf('NATIVE_INSTALL')<r.queries.indexOf('COMMIT'));assert.deepEqual(r.logs,['Applied '+file,'Installed sealed native disposition inspector']);
+ const failed=await run({args:[],files:[first,file],nativeFailure:true});assert.equal(failed.exitCode,1);assert.equal(failed.queries.at(-1),'ROLLBACK');assert.ok(!failed.queries.includes('COMMIT'));assert.ok(!failed.logs.some(l=>l.startsWith('Applied ')||l.startsWith('Installed ')));
+});
+test('current-schema native preflight stays read-only and refuses stale component acceptance',async()=>{
+ for(const current of [true,false]){const r=await run({files:[first],revision:428,nativeCurrent:current});assert.equal(r.exitCode,current?undefined:1);assert.ok(r.queries.includes('NATIVE_PREFLIGHT'));assert.ok(!r.queries.includes('NATIVE_INSTALL'));assert.equal(r.queries.at(-1),'ROLLBACK');const result=JSON.parse(r.logs[0]);assert.equal(result.nativeDispositionInspector.current,current);assert.equal(result.databaseChanged,false);}
 });

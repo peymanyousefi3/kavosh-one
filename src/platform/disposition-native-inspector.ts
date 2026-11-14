@@ -63,7 +63,7 @@ export function compileDispositionInspector(raw:unknown,expectedCatalogFingerpri
   INSERT INTO platform_private.audit_events(id,actor_user_id,session_id,action,academy_id,after_data,reason) VALUES(audit_id,p_user,p_session,'platform.disposition.snapshot.read',p_academy,jsonb_build_object('academyId',p_academy,'sourceFingerprint',result->'sourceFingerprint','retainedRows',data->'retained_count','candidateRows',data->'source_manifest'->'candidateRows','executionAuthorized',false),btrim(p_purpose));
   RETURN result;
  END`;
- return{catalog,requiredBrokerGrants:`GRANT USAGE ON SCHEMA public,identity,platform_private TO ${dispositionInspectorRole};GRANT CREATE ON SCHEMA platform_private TO ${dispositionInspectorRole};
+ return{catalog,body,requiredBrokerGrants:`GRANT USAGE ON SCHEMA public,identity,platform_private TO ${dispositionInspectorRole};GRANT CREATE ON SCHEMA platform_private TO ${dispositionInspectorRole};
   GRANT SELECT(user_id) ON platform_private.owner_registration TO ${dispositionInspectorRole};
   GRANT SELECT(id,"emailVerified","phoneNumberVerified","phoneNumber","mfaRequired","twoFactorEnabled") ON identity."user" TO ${dispositionInspectorRole};
   GRANT SELECT(id,"userId","expiresAt","mfaVerified") ON identity.session TO ${dispositionInspectorRole};
