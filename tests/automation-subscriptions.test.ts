@@ -14,6 +14,13 @@ async function fixture(){const f=await notificationFixture(),errors:{message:str
  const subscribe=(rule:string,as='master')=>f.request('automations/rules/'+rule+'/subscriptions',{expectedVersion:1,reason:'Watch approved automatic rule'},as);
  const ready=async(id:string)=>{await f.pg.exec('BEGIN');try{await f.pg.exec('SET LOCAL ROLE kavosh_automation_policy');await f.pg.query("UPDATE public.automation_subscriptions SET available_at=clock_timestamp()-interval '1 second' WHERE id=$1",[id]);await f.pg.exec('COMMIT');}catch(error){await f.pg.exec('ROLLBACK');throw error;}};
  return {...f,database,work,deliver,subscribe,ready,errors};}
+test('watcher queries reject repeated pagination selectors without changing subscriptions or queueing work',async()=>{
+ const f=await fixture();try{
+  const r=await f.rule(),s=await f.subscribe(r.id);assert.equal(s.response.status,201);const before=(await f.pg.query('SELECT * FROM public.automation_subscriptions ORDER BY id')).rows;
+  for(const query of ['?limit=1&limit=2','?after='+randomUUID()+'&after='+randomUUID()]){const result=await f.request('automations/rules/'+r.id+'/subscriptions'+query);assert.equal(result.response.status,400);assert.equal(result.body.error.code,'DUPLICATE_QUERY');}
+  assert.deepEqual((await f.pg.query('SELECT * FROM public.automation_subscriptions ORDER BY id')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.notification_jobs')).rows.length,0);
+ }finally{await f.pg.close();}
+});
 test('approved watcher starts at activation,queues each new authorized event once and uses the existing delivery worker',async()=>{
  const f=await fixture();try{
   const r=await f.rule(),old=await f.source(),s=await f.subscribe(r.id);assert.equal(s.response.status,201,JSON.stringify(s.body));assert.equal(s.body.data.historicalBackfill,false);assert.doesNotMatch(JSON.stringify(s.body),/credential_id|user_id|initial_snapshot|activation_transaction|lease_token/);const first=await f.work();assert.equal(first.outcome,'idle',JSON.stringify(f.errors));assert.equal((await f.pg.query('SELECT * FROM public.notification_jobs')).rows.length,0);

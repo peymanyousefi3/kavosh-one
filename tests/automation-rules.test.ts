@@ -13,6 +13,11 @@ async function fixture(){const f=await operationsFixture();try{
 }catch(error){await f.pg.close();throw error;}}
 type Fixture=Awaited<ReturnType<typeof fixture>>;
 function check(name:string,run:(f:Fixture)=>Promise<void>){test(name,async()=>{const f=await fixture();try{await run(f);}finally{await f.pg.close();}});}
+check('rule queries reject repeated selectors instead of silently choosing the last value',async f=>{
+ const r=(await f.create()).body.data,before=(await f.pg.query('SELECT * FROM public.request_keys ORDER BY key')).rows;
+ for(const path of ['automations/rules?limit=1&limit=2','automations/rules?enabled=false&enabled=true','automations/rules/'+r.id+'?version=2&version=1','automations/rules/'+r.id+'/history?limit=1&limit=2']){const result=await f.request(path);assert.equal(result.response.status,400,path);assert.equal(result.body.error.code,'DUPLICATE_QUERY');}
+ assert.deepEqual((await f.pg.query('SELECT * FROM public.request_keys ORDER BY key')).rows,before);assert.equal((await f.pg.query('SELECT * FROM public.automation_rule_revisions')).rows.length,1);
+});
 check('rules persist reviewed definitions, immutable versions, idempotent creates and disabled independent duplicates without claiming delivery',async f=>{
  const key=randomUUID(),created=await f.create({},'master',key);assert.equal(created.response.status,201,JSON.stringify(created.body));const r=created.body.data;assert.equal(r.autonomousEventFanoutEnabled,false);assert.equal(r.workerLiveness,'not_observed');assert.equal(r.definition.execution.mode,'dry_run');assert.equal((await f.create({},'master',key)).body.data.id,r.id);
  assert.equal((await f.change(r.id,{definition:{...f.definition,name:'Updated rule'}})).response.status,200);assert.equal((await f.request('automations/rules/'+r.id+'?version=1')).body.data.definition.name,f.definition.name);

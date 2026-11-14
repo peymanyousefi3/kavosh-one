@@ -28,7 +28,7 @@ export const automationSubscriptionActions:ApprovalRegistry={'automation.subscri
 }};
 export async function automationSubscriptions(ctx:ApiContext,registry:ApprovalRegistry=automationSubscriptionActions):Promise<Reply|null>{
  const collection=/^automations\/rules\/([^/]+)\/subscriptions$/.exec(ctx.path),item=/^automations\/subscriptions\/([^/]+)(?:\/(stop))?$/.exec(ctx.path);if(!collection&&!item)return null;
- const params=Object.fromEntries(new URL(ctx.request.url).searchParams);
+ const query=new URL(ctx.request.url).searchParams;if([...query].length!==new Set(query.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const params=Object.fromEntries(query);
  if(collection){const ruleId=uuid.parse(collection[1]);
   if(ctx.request.method==='POST'){empty.parse(params);return propose(ctx,registry,'automation.subscription.create',null,0,{...input.parse(await jsonBody(ctx.request)),ruleId});}
   if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');await automationRuleHeader(ctx,ruleId);const q=paging.parse(params),rows=(await ctx.db.query<{id:string}>('SELECT '+columns+' FROM public.automation_subscriptions s WHERE s.rule_id=$1 AND($2::uuid IS NULL OR s.id>$2) ORDER BY s.id LIMIT $3',[ruleId,q.after??null,q.limit+1])).rows;return {status:200,body:{data:rows.slice(0,q.limit),nextCursor:rows.length>q.limit?rows[q.limit-1].id:null}};
