@@ -1,4 +1,10 @@
 import assert from 'node:assert/strict';
+test('website policies separate private draft edits from exact-hash publication and anonymous published-only reads',()=>{
+ const api=JSON.parse(readFileSync(new URL('../public/openapi.json',import.meta.url),'utf8')),root='/api/v1/website-policies',publish=api.paths[root+'/{id}/publication'].post.requestBody.content['application/json'].schema;
+ assert.deepEqual(publish.required.sort(),['audience','documentSha256','documentVersion','expectedVersion','reason','reviewReference'].sort());assert.equal(publish.additionalProperties,false);assert.deepEqual(publish.properties.audience.enum,['public','internal','unpublished']);assert.equal(publish.properties.documentSha256.pattern,'^[a-f0-9]{64}$');
+ const publicRead=api.paths['/api/public/v1/academies/{id}/policies/{code}'];assert.deepEqual(Object.keys(publicRead),['get']);assert.deepEqual(publicRead.get.security,[]);assert.equal(publicRead.get.requestBody,undefined);assert.deepEqual(publicRead.get.parameters.map((p:{name:string})=>p.name),['id','code','locale']);
+ for(const suffix of ['/{id}/history','/{id}/publication-history'])assert.deepEqual(api.paths[root+suffix].get.parameters.filter((p:{in:string})=>p.in==='query').map((p:{name:string})=>p.name).sort(),['afterVersion','limit']);
+});
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

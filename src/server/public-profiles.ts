@@ -15,3 +15,4 @@ export function publicProfileApi(request:Request,id:string,resource:PublicProfil
  if(resource==='images'||resource==='image')return createPublicProfileImageApi(database,{...config,enabled:config.enabled&&process.env.PUBLIC_PROFILE_IMAGES_ENABLED==='true'},configuredR2Download)(request,id,resource==='image'?selection??null:undefined);
  return createPublicProfileApi(database,{...config,shareOrigin:process.env.PROFILE_SHARE_ORIGIN})(request,id,resource);
 }
+export {database as publicReadDatabase};

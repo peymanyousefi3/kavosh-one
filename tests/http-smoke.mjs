@@ -28,6 +28,12 @@ try {
     await delay(100);
   }
   assert.ok(ready,'Server did not become ready for HTTP checks');
+  for(const suffix of ['', '/privacy']){
+    const path=base+'/api/public/v1/academies/00000000-0000-4000-8000-000000000001/policies'+suffix;
+    const r=await fetch(path);assert.equal(r.status,503);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('x-content-type-options'),'nosniff');assert.deepEqual(await r.json(),{error:{code:'PUBLIC_POLICY_UNAVAILABLE'}});
+    const denied=await fetch(path,{method:'POST'});assert.equal(denied.status,405);assert.equal(denied.headers.get('cache-control'),'no-store');
+  }
+  for(const method of ['GET','POST']){const r=await fetch(base+'/api/v1/website-policies',{method,...method==='POST'?{headers:{'content-type':'application/json'},body:'{}'}:{}});assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');assert.doesNotMatch(await r.text(),/reviewReference|contentSha256|stack/);}
   const imageId='00000000-0000-4000-8000-000000000001';
   for(const [path,method]of [
     [`community/profiles/${imageId}/image-release`,'GET'],
