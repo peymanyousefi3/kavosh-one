@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.461.0",
+    "version": "0.462.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -6517,6 +6517,119 @@
           },
           "503": {
             "description": "Unsafe configuration,source projection or isolated reader unavailable"
+          }
+        }
+      }
+    },
+    "/api/public/v1/profiles/{id}/images": {
+      "get": {
+        "security": [],
+        "summary": "Separately default-off exact reviewed derivative image index. Current PUBLIC purpose consent,visibility,moderation,profile/academic/asset editions and full preparation gate every read;members-only eligibility never implies public sharing. Approved captions,dimensions and code-owned versioned relative download paths only,no private original IDs,cloud URLs,storage descriptors,hashes or credentials. Shared persistent public-profile budget;no queries or anonymous directory;no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved current derivative index,not private originals or signed storage links"
+          },
+          "404": {
+            "description": "Disabled,nonpublic,unreviewed,unprepared,withdrawn or stale"
+          },
+          "429": {
+            "description": "Shared persistent public-profile budget exhausted"
+          },
+          "503": {
+            "description": "Unsafe configuration or isolated reader unavailable"
+          }
+        }
+      }
+    },
+    "/api/public/v1/profiles/{id}/images/{version}/{number}": {
+      "get": {
+        "security": [],
+        "summary": "Separately default-off exact CURRENT reviewed WebP copy,never a private original. Canonical positive decimal release version1..2147483647and image number1..100;no queries or cloud input. Full conditional ETag,length and SHA256 verification BEFORE response,then independent current public authorization again,both reads metered. No native codec or database connection during storage IO. At most8streams and8MiB total owned buffers/process,each image <=4MiB;retained until actual transfer settlement and client consumption/cancellation;10second total deadline. No public bucket or signed URL,no-store,no ranges. Any withdrawal,moderation,consent,source or edition change fails closed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$",
+              "maxLength": 10
+            },
+            "description": "Canonical positive decimal,maximum2147483647"
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:[1-9]|[1-9][0-9]|100)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fully verified,current-authorized metadata-stripped derivative only",
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Disabled,nonpublic,withdrawn,unprepared,stale or authorization changed during IO"
+          },
+          "409": {
+            "description": "Stored derivative bytes,length or ETag no longer matches retained evidence"
+          },
+          "429": {
+            "description": "Shared persistent public-profile budget exhausted"
+          },
+          "503": {
+            "description": "Bounded delivery busy,unconfigured or unavailable"
           }
         }
       }
@@ -18046,6 +18159,128 @@
         "responses": {
           "200": {
             "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/community/published-profiles/{id}/images": {
+      "get": {
+        "summary": "Verified same-school current published-profiles.view scope and exact purpose-consented,moderation/visibility/profile/academic/asset/source-reviewed derivative index. No original-file permission or cloud URL. Approved captions/dimensions and code-owned versioned relative paths only;no private storage IDs,hashes,leases or source. No queries;no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/community/published-profiles/{id}/images/{version}/{number}": {
+      "get": {
+        "summary": "Current verified-school member WebP derivative only;never a private original or signed cloud link. Same current scope/denial/consent/visibility/moderation and exact reviewed/source/prepared gate as its index. Conditional ETag/full size/SHA256 verified before response,then the entire human/current-grant API gate runs again. No DB connection or native codec during IO. At most8streams and8MiB total owned buffers/process,each image <=4MiB;held through physical transfer and client consumption/cancellation;10second deadline. No queries/ranges;private no-store.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{22}$"
+                }
+              ]
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,9}$"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "type": "string",
+              "pattern": "^(?:[1-9]|[1-9][0-9]|100)$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "humanSession": [],
+            "academySelection": []
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change",
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
           },
           "201": {
             "description": "Created within granted rights or master self-approval"

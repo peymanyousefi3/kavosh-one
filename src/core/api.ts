@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import {isDeepStrictEqual} from 'node:util';
 import { z } from 'zod';
 import type { Database, Connection } from './database.ts';
 import { assertRuntimeRole } from './database.ts';
@@ -21,7 +22,8 @@ const paging = z.object({ limit: z.coerce.number().int().min(1).max(100).default
 function auditEpochMicros(value:string){const ms=Date.parse(value),fraction=value.match(/\.(\d+)/)?.[1]??'',year=new Date(ms).getUTCFullYear();if(!Number.isFinite(ms)||year<1900||year>9999||fraction.length>6)return null;return BigInt(ms)*1000n+BigInt(fraction.padEnd(6,'0').slice(3));}
 const auditInstant=z.iso.datetime({offset:true}).max(100).refine(v=>auditEpochMicros(v)!==null);
 const auditQuery=paging.extend({actorId:id.optional(),entityId:id.optional(),requestId:id.optional(),action:z.string().regex(/^[a-z][a-z0-9_.-]{0,149}$/).optional(),actorKind:z.enum(['human','bot']).optional(),from:auditInstant.optional(),through:auditInstant.optional()}).strict().refine(q=>{if(!q.from||!q.through)return true;const from=auditEpochMicros(q.from),through=auditEpochMicros(q.through);return from!==null&&through!==null&&from<=through;},'Choose an ordered inclusive timestamp interval.');
-export type Reply = { status: number; body: unknown; qr?:{profileId:string;academyId:string;origin:string};csv?:{filename:string};xlsx?:{filename:string};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
+const profileImageReplySchema=z.object({profileId:id,version:z.number().int().positive().max(2147483647),number:z.number().int().min(1).max(100),bytes:z.number().int().positive().max(4194304),fingerprint:z.string().regex(/^[a-f0-9]{64}$/)}).strict();
+export type Reply = { status: number; body: unknown; qr?:{profileId:string;academyId:string;origin:string};csv?:{filename:string};xlsx?:{filename:string};image?:{profileId:string;version:number;number:number;bytes:number;fingerprint:string;open:(reauthorize:()=>Promise<boolean>)=>Promise<ReadableStream<Uint8Array>>};video?:{mime:'video/mp4'|'video/quicktime'|'video/webm';plan:VideoRange;open:()=>Promise<ReadableStream<Uint8Array>|null>} };
 export interface ApiContext { db:Connection; credential:Credential; grants:Grant[]; request:Request; path:string; requestId:string; policyLock?:'shared'|'exclusive';financeBookLocked?:boolean;financeBookExclusive?:boolean;collectorFundLocks?:Set<string>;expenseSettlementSnapshot?:boolean;notificationJobId?:string;payrollPrivateVault?:()=>PayrollPrivateVault;studentCareVault?:()=>PayrollPrivateVault }
 export type ApiExtension = (context:ApiContext)=>Promise<Reply|null>;
 export const coreContract=[{path:'/api/v1/people/{id}',method:'get',summary:'Read a basic person record within current hub or selected-person permissions'},
@@ -296,6 +298,7 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if (actor.rows[0]?.kind !== (human?'human':'bot') || actor.rows[0]?.status !== 'active') throw new ApiError(401, 'UNAUTHORIZED');
       const grants=await loadGrants(db,c);
       const reply = await extension?.({db,credential:c,grants,request,path,requestId}) ?? await operation(db,c,grants,request,path,requestId);
+      if(reply.image){const match=/^community\/published-profiles\/([^/]+)\/images\/([1-9][0-9]{0,9})\/([1-9][0-9]{0,2})$/.exec(path),{open,...binding}=reply.image,parsed=profileImageReplySchema.safeParse(binding),profile=profileShareId.safeParse(match?.[1]);if(request.method!=='GET'||reply.status!==200||reply.body!==null||reply.csv||reply.xlsx||reply.video||reply.qr||typeof open!=='function'||!parsed.success||!profile.success||parsed.data.profileId!==profile.data||parsed.data.version!==Number(match?.[2])||parsed.data.number!==Number(match?.[3]))throw Error('INVALID_PROFILE_IMAGE_REPLY');}
       // Attachments are code-owned GET results only. Do not let a formatter
       // choose arbitrary headers, MIME types, filenames or cache policies.
       if(reply.csv&&(request.method!=='GET'||reply.status!==200||typeof reply.body!=='string'||typeof reply.csv.filename!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename)||Buffer.byteLength(reply.body,'utf8')>4_194_304))throw new Error('INVALID_CSV_REPLY');
@@ -303,6 +306,14 @@ export function createApi(database: Database, resolveHuman?: (request:Request)=>
       if(reply.video&&(reply.csv||reply.body!==null||!isVideoReadPath(path)||!['GET','HEAD'].includes(request.method)||!['video/mp4','video/quicktime','video/webm'].includes(reply.video.mime)||typeof reply.video.open!=='function'||!videoRangeSchema.safeParse(reply.video.plan).success||reply.status!==reply.video.plan.status||videoHead&&reply.status!==200))throw new Error('INVALID_VIDEO_REPLY');
       if(reply.qr){const match=/^community\/published-profiles\/([^/]+)\/qr\.png$/.exec(path),parsed=profileQrReplySchema.safeParse(reply.qr),selected=profileShareId.safeParse(match?.[1]);if(request.method!=='GET'||reply.status!==200||reply.body!==null||reply.csv||reply.xlsx||reply.video||!parsed.success||!selected.success||parsed.data.profileId!==selected.data||parsed.data.academyId!==c.academy_id)throw new Error('INVALID_PROFILE_QR_REPLY');profileQrTarget(parsed.data.origin,parsed.data.profileId,'members',c.academy_id);}
       await db.query('COMMIT'); transaction = false;
+      if(reply.image){
+        const connection=db;db=undefined;connection.release();const image=reply.image,{open,...binding}=image;
+        // Reuse the whole verified-human,current membership/grant/denial/source
+        // pipeline after storage IO. The private probe wrapper returns no binary
+        // or descriptor,so it cannot recursively open another image transfer.
+        const reauthorize=async()=>{const response=await createApi(database,resolveHuman,async context=>{const current=await extension?.(context)??await operation(context.db,context.credential,context.grants,context.request,context.path,context.requestId);if(!current.image)return{status:404,body:null};const {open:_,...now}=current.image,checked=profileImageReplySchema.safeParse(now);return{status:checked.success&&isDeepStrictEqual(checked.data,binding)?200:404,body:null};})(request,path);return response.status===200;};
+        const body=await open(reauthorize);if(!(body instanceof ReadableStream))throw Error('INVALID_PROFILE_IMAGE_BODY');try{return new Response(body,{headers:{...headers,'Cache-Control':'private, no-store','Content-Type':'image/webp','Content-Length':String(image.bytes),'Content-Disposition':'inline; filename="kavosh-profile-image.webp"','Accept-Ranges':'none','Cross-Origin-Resource-Policy':'same-origin','Referrer-Policy':'no-referrer','Content-Security-Policy':"sandbox; default-src 'none'"}});}catch(error){await body.cancel().catch(()=>{});throw error;}
+      }
       if(reply.qr){const connection=db;db=undefined;connection.release();const bytes=await renderProfileQr(reply.qr.origin,reply.qr.profileId,'members',request.signal,c.academy_id);return new Response(bytes,{status:200,headers:{...headers,'Cache-Control':'private, no-store','Content-Type':'image/png','Content-Length':String(bytes.byteLength),'Content-Disposition':`attachment; filename="${profileQrFilename(reply.qr.profileId)}"`,'Cross-Origin-Resource-Policy':'same-origin','Referrer-Policy':'no-referrer','Content-Security-Policy':"sandbox; default-src 'none'"}});}
       if(reply.xlsx){
         const connection=db;db=undefined;connection.release();

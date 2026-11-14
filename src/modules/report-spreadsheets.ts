@@ -15,7 +15,7 @@ export async function reportSpreadsheets(ctx:ApiContext,contracts:readonly Contr
   const url=new URL(ctx.request.url);url.pathname=url.pathname.slice(0,-5);
   const reply=await run({...ctx,path:sourcePath,request:new Request(url,{method:'GET',headers:ctx.request.headers,signal:ctx.request.signal})});
   if(reply&&reply.status!==200)return reply;
-  if(!reply||reply.status!==200||!reply.csv||reply.xlsx||reply.video||typeof reply.body!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename))throw new ApiError(503,'SPREADSHEET_SOURCE_UNAVAILABLE');
+  if(!reply||reply.status!==200||!reply.csv||reply.xlsx||reply.video||reply.image||typeof reply.body!=='string'||!/^[-a-z0-9_.]{1,160}\.csv$/.test(reply.csv.filename))throw new ApiError(503,'SPREADSHEET_SOURCE_UNAVAILABLE');
   if(Buffer.byteLength(reply.body)>4_194_304)throw new ApiError(413,'SPREADSHEET_SOURCE_TOO_LARGE');
   return {status:200,body:reply.body,xlsx:{filename:reply.csv.filename.slice(0,-4)+'.xlsx'}};
 }
