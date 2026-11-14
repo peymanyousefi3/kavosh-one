@@ -97,4 +97,16 @@ REVOKE CREATE ON SCHEMA public FROM kavosh_signature_evidence_policy;
 REVOKE ALL ON FUNCTION public.profile_image_job_source(uuid,uuid,integer,integer),public.enqueue_profile_image_jobs(),public.claim_profile_image_job(uuid[],uuid,integer),public.profile_image_object_id(jsonb,text),public.profile_image_receipt_valid(jsonb,jsonb),public.finish_profile_image_job(uuid,uuid,integer,integer,uuid,jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.profile_image_job_source(uuid,uuid,integer,integer),public.profile_image_object_id(jsonb,text),public.profile_image_receipt_valid(jsonb,jsonb) TO kavosh_signature_evidence_policy;
 GRANT EXECUTE ON FUNCTION public.claim_profile_image_job(uuid[],uuid,integer),public.finish_profile_image_job(uuid,uuid,integer,integer,uuid,jsonb) TO kavosh_profile_image_worker;
+-- Boolean preparation metadata only,not source access or image-serving
+-- authority. The API must independently check profile,file and current consent.
+CREATE FUNCTION public.profile_image_prepared(p_profile uuid,p_version integer) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
+ SELECT EXISTS(SELECT 1 FROM public.profile_image_releases r WHERE r.academy_id=nullif(current_setting('app.academy_id',true),'')::uuid AND r.profile_id=p_profile AND r.version=p_version AND r.state='published' AND jsonb_array_length(r.selection)>0
+ AND NOT EXISTS(SELECT 1 FROM public.profile_image_releases later WHERE later.academy_id=r.academy_id AND later.profile_id=r.profile_id AND later.version>r.version)
+ AND(SELECT count(*) FROM public.profile_image_jobs j WHERE j.academy_id=r.academy_id AND j.profile_id=r.profile_id AND j.release_version=r.version AND j.state='retained')=jsonb_array_length(r.selection))
+$$;
+GRANT CREATE ON SCHEMA public TO kavosh_signature_evidence_policy;
+ALTER FUNCTION public.profile_image_prepared(uuid,integer) OWNER TO kavosh_signature_evidence_policy;
+REVOKE CREATE ON SCHEMA public FROM kavosh_signature_evidence_policy;
+REVOKE ALL ON FUNCTION public.profile_image_prepared(uuid,integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.profile_image_prepared(uuid,integer) TO kavosh_runtime;
 CREATE OR REPLACE FUNCTION public.schema_revision() RETURNS integer LANGUAGE sql IMMUTABLE SET search_path=pg_catalog AS $$ SELECT 415 $$;
