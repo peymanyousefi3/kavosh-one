@@ -12,7 +12,8 @@ test('only three fixed credential-free parser instances can run; control files a
   for(const flag of ['--pull=never','--network=none','--read-only','--cap-drop=ALL','--security-opt=no-new-privileges','--security-opt=apparmor=kavosh-one-parser','--memory=1g','--memory-swap=1g','--cpus=0.5','--pids-limit=64'])assert.ok(args.includes(flag),flag);
   const binding=args[args.indexOf('--mount')+1];assert.equal(binding,`type=bind,source=/run/kavosh-one-parser-${kind},target=/run/kavosh-${kind}`);
   const control=args[args.indexOf('--cidfile')+1];assert.equal(control,`/run/kavosh-one-parser-${kind}-control/container.cid`);assert.equal(binding.includes('-control'),false);
-  assert.equal(args.includes('--init'),kind==='video');assert.ok(args.includes(`localhost/kavosh-one-${kind}:e0fa615`));assert.ok(args.includes('-i'));assert.doesNotMatch(args.join('\n'),/env-file|host-network|SMTP|AUTH_SECRET|DATABASE_URL|\/etc\/kavosh-one/);
+  const pin=kind==='image'?'a04355d4a1c5c25974fd0e7d7f10fc9b7b030537':'e0fa615';
+  assert.equal(args.includes('--init'),kind==='video');assert.ok(args.includes(`localhost/kavosh-one-${kind}:${pin}`));assert.ok(args.includes('-i'));assert.doesNotMatch(args.join('\n'),/env-file|host-network|SMTP|AUTH_SECRET|DATABASE_URL|\/etc\/kavosh-one/);
  }
  const profile=readFileSync(new URL('../deploy/ovh/kavosh-one-parser.apparmor',import.meta.url),'utf8');
  for(const rule of ['deny mount,','deny /sys/kernel/security/** rwklx,','peer="crun//&kavosh-one-parser"','peer="kavosh-one-parser//&crun"'])assert.ok(profile.includes(rule));
