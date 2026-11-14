@@ -6,12 +6,16 @@ import { mkdtemp,rmdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
-import { createImageValidationServer,validateImageViaService,deriveProfileImageViaService } from '../src/files/image-service.ts';
+import { createImageValidationServer,validateImageViaService,deriveProfileImageViaService,assertProfileImageService } from '../src/files/image-service.ts';
 import { validateImage,deriveProfileImage } from '../src/files/image-validation.ts';
 import { assertPrivateImageSocket } from '../src/files/image-runtime.ts';
 
 const sha=(b:Buffer)=>createHash('sha256').update(b).digest('hex');
 const png=()=>sharp({create:{width:8,height:4,channels:3,background:'red'}}).png().toBuffer();
+test('profile worker startup proves both preparation endpoints using fixed tiny native decodes and rejects an older parser',async()=>{
+ const live=await fixture();try{await assertProfileImageService({socketPath:live.socketPath});}finally{await live.close();}
+ let calls=0;const old=await fixture(createServer((req,res)=>{calls++;assert.equal(req.url,'/v1/profile-image/avatar');req.resume();res.writeHead(400,{'content-type':'application/json','content-length':'2',connection:'close'});res.end('{}');}));try{await assert.rejects(assertProfileImageService({socketPath:old.socketPath}),{code:'IMAGE_SERVICE_UNAVAILABLE'});assert.equal(calls,1);}finally{await old.close();}
+});
 test('private profile-image protocol returns measured metadata-stripped copies only at fixed purposes while ordinary inspection stays metadata-only',async()=>{
  const f=await fixture(),b=await png(),before=Buffer.from(b);try{for(const purpose of ['avatar','achievement']){const r=await deriveProfileImageViaService(b,'image/png',purpose,{socketPath:f.socketPath});assert.equal(r.outcome,'decoded',JSON.stringify(r));if(r.outcome!=='decoded')continue;assert.equal(r.profileImage.purpose,purpose);const bytes=Buffer.from(r.profileImage.base64,'base64');assert.equal(sha(bytes),r.profileImage.sha256);assert.equal((await sharp(bytes).metadata()).format,'webp');assert.deepEqual(b,before);}const plain=await f.validate(b);assert.equal('profileImage'in plain,false);for(const path of ['/v1/profile-image/public','/v1/profile-image/avatar?url=https://localhost','/v1/profile-image/../avatar'])assert.equal((await f.raw(b,{},'POST',path)).status,400);await assert.rejects(deriveProfileImageViaService(b,'image/png','unknown',{socketPath:f.socketPath}),{code:'INVALID_PROFILE_IMAGE_PURPOSE'});assert.equal((await f.raw(b,{authorization:'Bearer PRIVATE'},'POST','/v1/profile-image/avatar')).status,400);}finally{await f.close();}
 });

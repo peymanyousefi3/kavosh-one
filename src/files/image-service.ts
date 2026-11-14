@@ -98,3 +98,10 @@ async function processImageViaService(input:Uint8Array,claimedMimeType:string,op
 }
 export const validateImageViaService=(input:Uint8Array,claimedMimeType:string,options:{socketPath:string;signal?:AbortSignal}):Promise<ImageValidation>=>processImageViaService(input,claimedMimeType,options) as Promise<ImageValidation>;
 export async function deriveProfileImageViaService(input:Uint8Array,claimedMimeType:string,purpose:string,options:{socketPath:string;signal?:AbortSignal}):Promise<ProfileImageValidation>{const p=profileImagePurposeSchema.safeParse(purpose);if(!p.success)throw new ApiError(400,'INVALID_PROFILE_IMAGE_PURPOSE');return processImageViaService(input,claimedMimeType,options,p.data) as Promise<ProfileImageValidation>;}
+// Startup compatibility only: two fixed2x2 synthetic decodes,no academy,media,
+// storage,queue or publication. Reject an older inspection-only parser before
+// it can turn otherwise valid queued jobs into repeated processing failures.
+export async function assertProfileImageService(options:{socketPath:string;signal?:AbortSignal}){
+ const input=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAEklEQVQImWMwqVhtUrGaAUIBACO2BV0eTnkKAAAAAElFTkSuQmCC','base64');
+ for(const purpose of ['avatar','achievement'] as const){const result=await deriveProfileImageViaService(input,'image/png',purpose,options);if(result.outcome!=='decoded'||result.profileImage.width!==2||result.profileImage.height!==2)throw new ApiError(503,'PROFILE_IMAGE_SERVICE_NOT_READY');}
+}
