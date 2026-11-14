@@ -2,8 +2,7 @@ import { z } from 'zod';
 import type { ApiContext,Reply } from '../core/api.ts';
 import { ApiError } from '../core/policy.ts';
 import { reportDateWindow } from '../core/report-window.ts';
-import { readMinorUnits } from '../core/money.ts';
-import { exactReportMoney } from '../core/aging.ts';
+import {sumT4aAllocations as sum} from '../core/t4a-service-allocation.ts';
 import { csvRow,csvText } from '../core/csv.ts';
 import { t4aWorkingPaperData,assertT4aReportBounds,t4aWorkingPaperStatement,projectT4aWorkingPaper,type T4aWorkingPaperRows } from './t4a-working-paper.ts';
 import { supplierTaxWorkingPaperData,supplierTaxReportAuthorization,supplierTaxReportConfigurationAccess,requireSupplierTaxReportResultAccess,supplierTaxReportJobAccess,supplierTaxWorkingPaperStatement,requireSupplierTaxWorkingPaperRows,projectSupplierTaxWorkingPaper,type SupplierTaxWorkingPaperRows } from './supplier-tax-working-paper.ts';
@@ -25,22 +24,23 @@ type Payroll=Awaited<ReturnType<typeof t4aWorkingPaperData>>;
 type Supplier=Awaited<ReturnType<typeof supplierTaxWorkingPaperData>>;
 type Allocation=Payroll['totals'];
 const amountKeys=['gross','net','nonTaxDeductions','reportableIncome','excludedGstHst','excludedPst','otherExcluded'] as const;
-function sum(rows:Allocation[]):Allocation {
- return {paymentCount:rows.reduce((n,r)=>n+r.paymentCount,0),...Object.fromEntries(amountKeys.map(k=>[k,exactReportMoney(rows.reduce((n,r)=>n+readMinorUnits(r[k].minor),0n),2)])) as Pick<Allocation,typeof amountKeys[number]>,fields:(['020','048','022'] as const).map(box=>{const amount=exactReportMoney(rows.reduce((n,r)=>n+readMinorUnits(r.fields.find(f=>f.box===box)!.amount.minor),0n),2);return {box,amount,printBlank:amount.minor==='0'};})};
-}
 export function consolidateT4aSources(payroll:Payroll,supplier:Supplier|null,atomicSnapshot=false){
  if(supplier&&(supplier.employerId!==payroll.employerId||supplier.taxYear!==payroll.taxYear||supplier.timeZone!==payroll.timeZone||supplier.recipientKind!=='person'))throw new ApiError(409,'T4A_CONSOLIDATION_SOURCE_MISMATCH');
  const sources=[...payroll.paymentSources.map(p=>({...p,sourceKind:'payroll' as const})),...(supplier?.paymentSources??[]).map(p=>({...p,sourceKind:'expense' as const}))];
+ const zero=payroll.zeroNetSettlementRecognitionIncluded===true?payroll:null;
  const keys=sources.map(p=>p.sourceKind+':'+p.paymentId);if(new Set(keys).size!==keys.length)throw new ApiError(409,'T4A_CONSOLIDATION_DUPLICATE_SOURCE');
- const paymentCount=payroll.paymentCount+(supplier?.paymentCount??0);assertT4aReportBounds(paymentCount,0,0);
- const accounts=new Map<string,typeof sources>(),months=new Map<string,typeof sources>();
- for(const p of sources)for(const [map,key]of [[accounts,p.reportingAccount.id],[months,p.paidOn!.slice(0,7)]] as const){const list=map.get(key)??[];list.push(p);map.set(key,list);}
+ const paymentCount=payroll.paymentCount+(supplier?.paymentCount??0),eventCount=paymentCount+(zero?.zeroNetSettlementCount??0);assertT4aReportBounds(eventCount,0,0);
+ const allocations=[...sources.map(p=>({reportingAccount:p.reportingAccount,on:p.paidOn!,allocation:p})),...(zero?.zeroNetSettlementSources??[]).map(p=>({reportingAccount:p.reportingAccount,on:p.recognizedOn,allocation:p}))];
+ const accounts=new Map<string,typeof allocations>(),months=new Map<string,typeof allocations>();
+ for(const p of allocations)for(const [map,key]of [[accounts,p.reportingAccount.id],[months,p.on.slice(0,7)]] as const){const list=map.get(key)??[];list.push(p);map.set(key,list);}
  const unresolvedPayments=[...payroll.unresolvedPayments.map(p=>({...p,sourceKind:'payroll' as const})),...(supplier?.unresolvedPayments??[]).map(p=>({...p,sourceKind:'expense' as const}))];
  const data={report:'consolidated_reviewed_t4a_working_paper',personId:payroll.personId,employerId:payroll.employerId,taxYear:payroll.taxYear,timeZone:payroll.timeZone,currency:'CAD',linkedSupplierPayeeId:supplier?.payeeId??null,paymentCount,recognizedPaymentCount:sources.length,correctedPaymentCount:payroll.correctedPaymentCount+(supplier?.correctedPaymentCount??0),unresolvedPaymentCount:unresolvedPayments.length,
-  totals:sum(sources),slips:[...accounts].sort(([a],[b])=>a.localeCompare(b)).map(([reportingAccountId,rows])=>({reportingAccountId,reportingAccountVersions:[...new Set(rows.map(p=>p.reportingAccount.version))].sort((a,b)=>a-b),...sum(rows)})),chartData:[...months].sort(([a],[b])=>a.localeCompare(b)).map(([month,rows])=>({month,...sum(rows)})),paymentSources:sources,unresolvedPayments,otherReviewedPayerPaymentIds:supplier?.otherReviewedPayerPaymentIds??[],
+  totals:sum(allocations.map(p=>p.allocation)),slips:[...accounts].sort(([a],[b])=>a.localeCompare(b)).map(([reportingAccountId,rows])=>({reportingAccountId,reportingAccountVersions:[...new Set(rows.map(p=>p.reportingAccount.version))].sort((a,b)=>a-b),...sum(rows.map(p=>p.allocation))})),chartData:[...months].sort(([a],[b])=>a.localeCompare(b)).map(([month,rows])=>({month,...sum(rows.map(p=>p.allocation))})),paymentSources:sources,unresolvedPayments,otherReviewedPayerPaymentIds:supplier?.otherReviewedPayerPaymentIds??[],
   supplierForeignCurrencyRecognitionIncluded:supplier?.foreignCurrencyRecognitionIncluded??false,foreignPayrollRecognitionIncluded:false,referenceRatesIndependentlyVerified:false,taxConversionLegallyVerified:false,
   sourceSnapshots:{payroll:payroll.snapshotAt,supplier:supplier?.snapshotAt??null},sourceConsistency:atomicSnapshot?'single_statement_payroll_supplier_and_person_link_snapshot':'sequential_authorized_source_snapshots_not_a_single_atomic_snapshot',identityBasis:'immutable_financial_payee_person_id_not_name_or_email_matching',deduplicationBasis:'unique_source_kind_and_payment_id;independently_recorded_economic_duplicates_require_review',completeWithinSelectedRecordedPayments:unresolvedPayments.length===0,coverage:{payroll:true,linkedPersonExpensePayee:supplier!==null,unlinkedAliases:false,externalPayments:false,foreignCurrencyRecognition:false,zeroNetAndNonCashRecognition:false},yearToDateComplete:false,isOfficialT4A:false,pdfGenerated:false,readyToIssue:false,craFilingPerformed:false,additionalLedgerPosting:false,paymentExecuted:false};
- assertT4aReportBounds(paymentCount,0,Buffer.byteLength(JSON.stringify(data)));return data;
+ const legacy:typeof data&{zeroNetSettlementRecognitionIncluded?:false}=data;
+ if(!zero){assertT4aReportBounds(eventCount,0,Buffer.byteLength(JSON.stringify(data)));return legacy;}
+ const result={...data,zeroNetSettlementCount:zero.zeroNetSettlementCount,recognizedZeroNetSettlementCount:zero.recognizedZeroNetSettlementCount,correctedZeroNetSettlementCount:zero.correctedZeroNetSettlementCount,unresolvedZeroNetSettlementCount:zero.unresolvedZeroNetSettlementCount,zeroNetSettlementSources:zero.zeroNetSettlementSources,unresolvedZeroNetSettlements:zero.unresolvedZeroNetSettlements,completeWithinSelectedRecordedSources:unresolvedPayments.length===0&&zero.unresolvedZeroNetSettlementCount===0,zeroNetSettlementRecognitionIncluded:true as const,nonCashBenefitsIncluded:false};assertT4aReportBounds(eventCount,0,Buffer.byteLength(JSON.stringify(result)));return result;
 }
 export async function consolidatedT4aWorkingPaperData(ctx:ApiContext,captureAuthorization=false){
  if(ctx.request.method!=='GET')throw new ApiError(405,'METHOD_NOT_ALLOWED');const params=new URL(ctx.request.url).searchParams;if([...params].length!==new Set(params.keys()).size)throw new ApiError(400,'DUPLICATE_QUERY');const q=query.parse(Object.fromEntries(params)),payrollStatement=await t4aWorkingPaperStatement(ctx,q);
@@ -62,7 +62,7 @@ export async function consolidatedT4aWorkingPaperData(ctx:ApiContext,captureAuth
  if(JSON.stringify(r.payees)!==JSON.stringify(payees.map(p=>p.id)))throw new ApiError(409,'T4A_PERSON_PAYEE_IDENTITY_CHANGED');
  if(supplierQuery&&!r.supplier)throw new Error('T4A_SUPPLIER_SNAPSHOT_MISSING');
  const payroll=projectT4aWorkingPaper(q,r.payroll,captureAuthorization);
- assertT4aReportBounds(r.payroll.candidates+(r.supplier?.count??0),r.payroll.lines+(r.supplier?.lines??0),2*(Number(r.payroll.bytes)+Number(r.supplier?.bytes??0)));
+ assertT4aReportBounds(r.payroll.candidates+(r.payroll.zeroNet?.candidates??0)+(r.supplier?.count??0),r.payroll.lines+(r.payroll.zeroNet?.lines??0)+(r.supplier?.lines??0),2*(Number(r.payroll.bytes)+Number(r.payroll.zeroNet?.bytes??0)+Number(r.supplier?.bytes??0)));
  const supplier=supplierQuery&&recipient&&r.supplier?projectSupplierTaxWorkingPaper(supplierQuery,recipient,await requireSupplierTaxWorkingPaperRows(ctx,r.supplier),captureAuthorization):null;
  return {...consolidateT4aSources(payroll,supplier,true),...(captureAuthorization?{authorizationContext:consolidatedT4aAuthorization.parse({kind:'consolidated_t4a_tax_year',payroll:payroll.authorizationContext,supplier:supplier?.authorizationContext??null})}:{})};
 }
@@ -82,9 +82,20 @@ export function consolidatedT4aCsv(d:Awaited<ReturnType<typeof consolidatedT4aWo
   }
  }
  for(const p of d.unresolvedPayments)rows.push(['unresolved_payment','warning',p.code,p.sourceKind,p.paymentId,'postingId'in p?p.postingId:p.billId]);
- const body='\uFEFF'+rows.map(r=>csvRow(Array.from({length:12},(_,i)=>r[i]))).join('\r\n')+'\r\n';assertT4aReportBounds(d.paymentCount,0,Buffer.byteLength(body));return {status:200,body,csv:{filename:`consolidated-t4a-working-paper-${d.taxYear}.csv`}};
+ if(d.zeroNetSettlementRecognitionIncluded===true){
+  for(const k of ['zeroNetSettlementCount','recognizedZeroNetSettlementCount','correctedZeroNetSettlementCount','unresolvedZeroNetSettlementCount','completeWithinSelectedRecordedSources','zeroNetSettlementRecognitionIncluded','nonCashBenefitsIncluded'] as const)meta(k,d[k]);
+  meta('zeroNetDateBasis','Actual independently reviewed settlement date,not a cash payment or planned payroll date.');
+  for(const p of d.zeroNetSettlementSources){
+   const refs=['zero_net_settlement','',p.postingId,p.recognitionVersion,p.recognizedOn,p.reportingAccount.id];
+   rows.push(['zero_net_settlement','settlement_version',p.settlementVersion,...refs]);
+   for(const k of amountKeys)rows.push(['zero_net_settlement',k,'',...refs,'',p[k].minor,p[k].amount]);
+   for(const f of p.fields)rows.push(['zero_net_settlement','reporting_box','',...refs,f.box,f.amount.minor,f.amount.amount]);
+  }
+  for(const p of d.unresolvedZeroNetSettlements??[])rows.push(['unresolved_zero_net_settlement','warning',p.code,'zero_net_settlement','',p.postingId]);
+ }
+ const body='\uFEFF'+rows.map(r=>csvRow(Array.from({length:12},(_,i)=>r[i]))).join('\r\n')+'\r\n';assertT4aReportBounds(d.paymentCount+(d.zeroNetSettlementRecognitionIncluded===true?d.zeroNetSettlementCount:0),0,Buffer.byteLength(body));return {status:200,body,csv:{filename:`consolidated-t4a-working-paper-${d.taxYear}.csv`}};
 }
 export async function completeConsolidatedT4aExport(ctx:ApiContext,provenance?:Parameters<typeof paidTaxYtdCsv>[1]){return consolidatedT4aCsv(await consolidatedT4aWorkingPaperData(ctx),provenance);}
 export async function consolidatedT4aWorkingPaper(ctx:ApiContext):Promise<Reply|null>{if(!['reports/payroll/t4a-consolidated-working-paper','reports/payroll/t4a-consolidated-working-paper/export'].includes(ctx.path))return null;return ctx.path.endsWith('/export')?completeConsolidatedT4aExport(ctx):{status:200,body:{data:await consolidatedT4aWorkingPaperData(ctx)}};}
-export const consolidatedT4aContract=[{path:'/api/v1/reports/payroll/t4a-consolidated-working-paper',method:'get',querySchema:query,summary:'One-person/payer/year reviewed payroll plus immutably linked person supplier-payment working paper. Current whole-source authorization for both domains;exact CAD annual/RP/monthly totals and namespaced payment references,unresolved warnings. Payroll,supplier money/recognition and person link share one database statement snapshot;concurrently changed configuration links require retry. Reviewed supplier CAD conversion retains original money and quote;no independent rate or tax-conversion certification. Not a year-end certificate;economic duplicates,aliases,external,foreign payroll and zero-net/noncash require further review. No official form or CRA filing. Combined500payment/4MiB bound refuses truncation.'}] as const;
+export const consolidatedT4aContract=[{path:'/api/v1/reports/payroll/t4a-consolidated-working-paper',method:'get',querySchema:query,summary:'One-person/payer/year reviewed payroll,supplier-payment and separately identified actual zero-net settlement working paper. Current whole-source authorization across all domains;exact CAD annual/RP/monthly totals,no fabricated zero-net cash/payment count and explicit unresolved warnings. All money,recognition,settlement and immutable person links share one database statement snapshot. Reviewed supplier CAD conversion retains original money and quote;no independent rate or tax-conversion certification. Economic duplicates,aliases,external/foreign payroll and general noncash benefits require further review. No official form or CRA filing. Combined500event/4MiB bound refuses truncation.'}] as const;
 export const consolidatedT4aExportContract=[{path:'/api/v1/reports/payroll/t4a-consolidated-working-paper/export',method:'get',querySchema:query,responseContentType:'text/csv' as const,summary:'Same-source private consolidated payroll/supplier annual CSV,exact decimals,RP editions,monthly charts and unresolved warning references. Retains original supplier currency/precision/settlement and explicit reviewed FX reference alongside CAD allocation;does not independently verify reference rates,tax conversion or include foreign payroll recognition. No private notes,legal recipient identity,RP account numbers or official form.'}] as const;

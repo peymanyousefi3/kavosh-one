@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Kavosh One Foundation API",
-    "version": "0.465.0",
+    "version": "0.466.0",
     "description": "Tested backend foundation and human identity APIs, not a complete academy/accounting platform. Bots use scoped bearer credentials; verified humans use host-only HttpOnly sessions plus X-Academy-Id, with membership and current role grants checked server-side. Cookie-authenticated mutations require exact APP_ORIGIN. Explicit denial wins. All sensitive responses are no-store."
   },
   "security": [
@@ -54112,6 +54112,375 @@
         }
       }
     },
+    "/api/v1/payroll/net-postings/{id}/t4a-recognition": {
+      "post": {
+        "summary": "Upper-human-reviewed explicit CAD contractor T4A recognition of a current actual zero-net settlement. Reuses exact source-coded deduction classification and gross/service/sales-tax allocation checks,requires all posted deductions exactly once and the original retained settlement/RP editions. Full original posting/accounts,payment-view,private worker-tax and employer authority. Immutable corrections/withdrawals;no invented cash,bank movement,journal,automatic eligibility,official slip or CRA filing.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/idempotency"
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "expectedVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483646
+                  },
+                  "settlementVersion": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "definition": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "timeZone": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 100,
+                            "pattern": "^[A-Za-z0-9_+./-]+$"
+                          },
+                          "reportingAccount": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 2147483646
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "allocation": {
+                            "type": "object",
+                            "properties": {
+                              "income": {
+                                "minItems": 1,
+                                "maxItems": 2,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "box": {
+                                      "type": "string",
+                                      "enum": [
+                                        "020",
+                                        "048"
+                                      ]
+                                    },
+                                    "amount": {
+                                      "type": "string",
+                                      "maxLength": 80,
+                                      "pattern": "^\\d+(?:\\.\\d+)?$"
+                                    }
+                                  },
+                                  "required": [
+                                    "box",
+                                    "amount"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "gstHst": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^\\d+(?:\\.\\d+)?$"
+                              },
+                              "pst": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^\\d+(?:\\.\\d+)?$"
+                              },
+                              "incomeTaxDeducted": {
+                                "type": "string",
+                                "maxLength": 80,
+                                "pattern": "^\\d+(?:\\.\\d+)?$"
+                              },
+                              "otherExcluded": {
+                                "maxItems": 100,
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "code": {
+                                      "type": "string",
+                                      "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                    },
+                                    "amount": {
+                                      "type": "string",
+                                      "maxLength": 80,
+                                      "pattern": "^\\d+(?:\\.\\d+)?$"
+                                    },
+                                    "sourceReference": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 2000
+                                    }
+                                  },
+                                  "required": [
+                                    "code",
+                                    "amount",
+                                    "sourceReference"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "eligibilityReview": {
+                                "type": "object",
+                                "properties": {
+                                  "canadianRecipient": {
+                                    "type": "boolean",
+                                    "const": true,
+                                    "description": "Explicit reviewed Canadian tax residency for this payment reporting;not citizenship,address,workplace or government verification."
+                                  },
+                                  "nonEmployment": {
+                                    "type": "boolean",
+                                    "const": true
+                                  },
+                                  "serviceReportingReviewed": {
+                                    "type": "boolean",
+                                    "const": true
+                                  },
+                                  "sourceReference": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 2000
+                                  }
+                                },
+                                "required": [
+                                  "canadianRecipient",
+                                  "nonEmployment",
+                                  "serviceReportingReviewed",
+                                  "sourceReference"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "review": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 2000
+                              }
+                            },
+                            "required": [
+                              "income",
+                              "gstHst",
+                              "pst",
+                              "incomeTaxDeducted",
+                              "otherExcluded",
+                              "eligibilityReview",
+                              "review"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "incomeTaxSources": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "amount"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "nonTaxDeductionSources": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "type": "string",
+                                  "pattern": "^[A-Z0-9][A-Z0-9._-]{0,31}$"
+                                },
+                                "amount": {
+                                  "type": "string",
+                                  "maxLength": 80,
+                                  "pattern": "^\\d+(?:\\.\\d+)?$"
+                                },
+                                "sourceReference": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 2000
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "amount",
+                                "sourceReference"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "timeZone",
+                          "reportingAccount",
+                          "allocation",
+                          "incomeTaxSources"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "expectedVersion",
+                  "settlementVersion",
+                  "definition",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      },
+      "get": {
+        "summary": "Private reviewed zero-net contractor recognition and live settlement,posting reversal and exact-source usability flags. No cash payment or legal recipient identity.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
+    "/api/v1/payroll/net-postings/{id}/t4a-recognition/history": {
+      "get": {
+        "summary": "Editor-only immutable contractor settlement tax editions,original approvals/reasons and bounded ascending cursor at most10rows. Never rewrites financial postings.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "afterVersion",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 5,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          }
+        ],
+        "description": "Permission-aware academy/backend API. Approval-required actions return pending proposals for non-masters; ordinary catalogue edits apply within granted scope using optimistic versions. Unmentioned patch fields retain their values. Course modules, when supplied, replace the complete ordered outline; earlier revisions are preserved. No UI or live-provider verification is implied.",
+        "responses": {
+          "200": {
+            "description": "Current data or applied change"
+          },
+          "201": {
+            "description": "Created within granted rights or master self-approval"
+          },
+          "202": {
+            "description": "Pending upper approval; domain change NOT applied"
+          },
+          "default": {
+            "$ref": "#/components/responses/error"
+          }
+        }
+      }
+    },
     "/api/v1/payroll/net-postings/{id}/zero-net-settlement": {
       "post": {
         "summary": "Upper-human-reviewed explicit date/timezone/reference for a current positive-gross fully offset zero-net payroll posting. No caller amount,bank account,method,cash payment,journal or guessed planned-pay date. Future actual-settlement assertions refused. Versioned corrections and explicit null withdrawal retain original history;source/account permissions and worker locking apply. This is an attestation,not deduction remittance,statutory classification or tax-year recognition.",
@@ -81365,7 +81734,7 @@
     },
     "/api/v1/reports/payroll/t4a-consolidated-working-paper": {
       "get": {
-        "summary": "One-person/payer/year reviewed payroll plus immutably linked person supplier-payment working paper. Current whole-source authorization for both domains;exact CAD annual/RP/monthly totals and namespaced payment references,unresolved warnings. Payroll,supplier money/recognition and person link share one database statement snapshot;concurrently changed configuration links require retry. Reviewed supplier CAD conversion retains original money and quote;no independent rate or tax-conversion certification. Not a year-end certificate;economic duplicates,aliases,external,foreign payroll and zero-net/noncash require further review. No official form or CRA filing. Combined500payment/4MiB bound refuses truncation.",
+        "summary": "One-person/payer/year reviewed payroll,supplier-payment and separately identified actual zero-net settlement working paper. Current whole-source authorization across all domains;exact CAD annual/RP/monthly totals,no fabricated zero-net cash/payment count and explicit unresolved warnings. All money,recognition,settlement and immutable person links share one database statement snapshot. Reviewed supplier CAD conversion retains original money and quote;no independent rate or tax-conversion certification. Economic duplicates,aliases,external/foreign payroll and general noncash benefits require further review. No official form or CRA filing. Combined500event/4MiB bound refuses truncation.",
         "parameters": [
           {
             "name": "personId",
@@ -81639,7 +82008,7 @@
     },
     "/api/v1/reports/payroll/t4a-working-paper": {
       "get": {
-        "summary": "Private complete bounded one-worker/employer/calendar-year T4A service/commission working paper,grouped by explicitly reviewed RP identity with retained account editions,exact boxes020/048/022,excluded sales taxes,monthly charts and missing/reversed/timezone-mismatch/incompatible-legal-context warnings;all selected-payer payroll contexts are considered rather than silently dropping uncertain or other-form payments. Whole original payment/funding/source and private tax/employer rights. Up to500positive payroll payments/20000components/4MiB;not official slips or all-source T4A completeness.",
+        "summary": "Private bounded one-worker/employer/year T4A service/commission working paper,grouped by reviewed RP identity and retained editions,exact boxes020/048/022,sales-tax exclusions and monthly charts. Positive payroll payments and separately reviewed actual zero-net settlements share one statement snapshot;zero-net sources never add cash or payment counts. Missing,reversed,stale,date/context and undated-source warnings are explicit. Whole original source/account and private tax/employer rights;queued downloads retain all source postings. Combined500events/20000components/4MiB;not general noncash benefits,official slips or all-source T4A completeness.",
         "parameters": [
           {
             "name": "personId",

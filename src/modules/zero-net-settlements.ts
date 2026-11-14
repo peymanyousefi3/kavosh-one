@@ -13,6 +13,7 @@ const history=z.object({afterVersion:z.coerce.number().int().min(0).max(21474836
 async function authority(ctx:ApiContext,id:string,edit=false){
  const p=await authorizedNetPosting(ctx,id);for(const cap of ['payrun-payments.view',...edit?['payrun-payments.edit']:[]] as Capability[]){const scope=permissionScope(ctx,cap);if(!scopeNonempty(scope))throw new ApiError(403,'FORBIDDEN');if(!(await ctx.db.query<{ok:boolean}>('SELECT public.scope_contains($1::jsonb,$2::jsonb) ok',[JSON.stringify(scope),JSON.stringify(p.plan.source.scope)])).rows[0].ok)throw new ApiError(404,'NOT_FOUND');}return p;
 }
+export {authority as authorizedZeroNetPosting};
 async function plan(ctx:ApiContext,raw:unknown){
  const i=input.parse(raw);await authority(ctx,i.postingId,true);
  const h=(await ctx.db.query<{version:number}>('SELECT version FROM public.zero_net_settlements WHERE posting_id=$1',[i.postingId])).rows[0];if((h?.version??0)!==i.expectedVersion)throw new ApiError(409,'ZERO_NET_SETTLEMENT_VERSION_CHANGED');

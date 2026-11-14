@@ -21,13 +21,20 @@ const sourceSchema=z.object({currencyCode:z.literal('CAD'),unitScale:z.literal(2
 
 // The caller must supply retained,authorized payment facts,not client claims.
 // Never infer gross from net or proportional tax from a partial payment.
-export function projectT4aServicePayment(raw:unknown,source:unknown){
+function projectServiceAllocation(raw:unknown,source:unknown,zeroNet:boolean){
  const d=t4aServiceAllocation.parse(raw),s=sourceSchema.safeParse(source);if(!s.success)throw new ApiError(409,'T4A_SERVICE_PAYMENT_SOURCE_INVALID');
  const gross=readMinorUnits(s.data.grossMinor),net=readMinorUnits(s.data.netMinor),withheld=readMinorUnits(s.data.incomeTaxDeductedMinor),nonTax=readMinorUnits(s.data.nonTaxDeductedMinor??'0');
- if(gross!==net+withheld+nonTax||net<=0n)throw new ApiError(409,'T4A_SERVICE_PAYMENT_SOURCE_UNRECONCILED');
+ if(gross!==net+withheld+nonTax||(zeroNet?net!==0n||gross<=0n:net<=0n))throw new ApiError(409,'T4A_SERVICE_PAYMENT_SOURCE_UNRECONCILED');
  if(parseMoney(d.incomeTaxDeducted,2)!==withheld)throw new ApiError(409,'T4A_SERVICE_WITHHOLDING_SOURCE_MISMATCH');
  const byBox={'020':0n,'048':0n,'022':withheld};for(const line of d.income)byBox[line.box]+=parseMoney(line.amount,2);
  const gstHst=parseMoney(d.gstHst,2),pst=parseMoney(d.pst,2),excluded=d.otherExcluded.reduce((n,l)=>n+parseMoney(l.amount,2),0n),reportable=byBox['020']+byBox['048'];
  if(reportable+gstHst+pst+excluded!==gross)throw new ApiError(409,'T4A_SERVICE_ALLOCATION_UNRECONCILED');
  return {fields:(['020','048','022'] as const).map(box=>({box,amount:exact(byBox[box],2),printBlank:byBox[box]===0n})),gross:exact(gross,2),net:exact(net,2),nonTaxDeductions:exact(nonTax,2),reportableIncome:exact(reportable,2),excludedGstHst:exact(gstHst,2),excludedPst:exact(pst,2),otherExcluded:exact(excluded,2),monetarySourceReconciled:true,eligibilityVerified:false,yearToDateComplete:false,isOfficialT4A:false,readyToIssue:false,craFilingPerformed:false,additionalLedgerPosting:false,paymentExecuted:false};
+}
+export function projectT4aServicePayment(raw:unknown,source:unknown){return projectServiceAllocation(raw,source,false);}
+export function projectT4aZeroNetSettlement(raw:unknown,source:unknown){return projectServiceAllocation(raw,source,true);}
+export const t4aAmountKeys=['gross','net','nonTaxDeductions','reportableIncome','excludedGstHst','excludedPst','otherExcluded'] as const;
+export type T4aAllocationTotals={paymentCount:number}&Pick<ReturnType<typeof projectT4aServicePayment>,typeof t4aAmountKeys[number]|'fields'>;
+export function sumT4aAllocations(rows:T4aAllocationTotals[]):T4aAllocationTotals{
+ return {paymentCount:rows.reduce((n,r)=>n+r.paymentCount,0),...Object.fromEntries(t4aAmountKeys.map(k=>[k,exact(rows.reduce((n,r)=>n+readMinorUnits(r[k].minor),0n),2)])) as Pick<T4aAllocationTotals,typeof t4aAmountKeys[number]>,fields:(['020','048','022'] as const).map(box=>{const amount=exact(rows.reduce((n,r)=>n+readMinorUnits(r.fields.find(f=>f.box===box)!.amount.minor),0n),2);return {box,amount,printBlank:amount.minor==='0'};})};
 }

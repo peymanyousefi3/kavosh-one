@@ -5,6 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { quickCheckGroups,quickCheckGroupCount,verifyQuickCheckFiles } from '../scripts/run-quick-checks.mjs';
 
 const prefix="node --import tsx --test --test-concurrency=1 --test-skip-pattern='large|one thousand' ";
+test('contractor zero-net recognition runs exactly once with native concurrency in the existing accounting job',async()=>{
+ const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),step=workflow.split('      - name: Native reviewed contractor settlement deductions')[1]?.split('      - name:')[0];assert.ok(step);assert.ok(step.includes('if: matrix.group == 3'));assert.ok(step.includes('tests/zero-net-t4a-records.test.ts'));assert.equal(workflow.match(/tests\/zero-net-t4a-records\.test\.ts/g)?.length,1);assert.doesNotMatch(step,/continue-on-error|test-name-pattern|test-skip-pattern/);
+});
 test('new contractor deduction allocation and native concurrency run once in an existing isolated database job',async()=>{
  const workflow=await readFile(new URL('../.github/workflows/backend.yml',import.meta.url),'utf8'),step=workflow.split('      - name: Native reviewed contractor settlement deductions')[1]?.split('      - name:')[0];assert.ok(step);assert.ok(step.includes('if: matrix.group == 3'));assert.ok(step.includes('node --import tsx --test --test-concurrency=1 tests/t4a-non-tax-deductions.test.ts tests/consolidated-private-package.test.ts'));assert.equal(workflow.match(/tests\/t4a-non-tax-deductions\.test\.ts/g)?.length,1);assert.equal(workflow.match(/tests\/consolidated-private-package\.test\.ts/g)?.length,1);assert.doesNotMatch(step,/continue-on-error|test-name-pattern|test-skip-pattern/);
 });
