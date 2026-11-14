@@ -4,6 +4,34 @@ import { test } from 'node:test';
 import { t4aRecordFixture,zeroNetSource } from './t4a-record-fixture.ts';
 import { createPayrollPrivateVault } from '../src/core/payroll-private-data.ts';
 import { assertYearEndPrivatePackageBytes } from '../src/modules/year-end-private-package.ts';
+import { prepareYearEndFormDraft } from '../src/modules/year-end-form-draft.ts';
+
+for(const kind of ['t4','t4a'] as const)test('nonvisual '+kind+' form draft separates recipient and payer copies without caching identity',async()=>{
+ const f=await fixture(kind);try{
+  const path=f.packagePath.replace('private-package','form-draft'),before=(await f.pg.query('SELECT * FROM public.request_keys ORDER BY key')).rows,journals=(await f.pg.query('SELECT * FROM public.finance_journals ORDER BY id')).rows;
+  for(const copyKind of ['recipient','payer'] as const){const r=await f.request(path,{...f.packageInput,copyKind});assert.equal(r.response.status,200,JSON.stringify(r.body));const d=r.body.data;assert.equal(d.copyKind,copyKind);assert.equal(d.readyToIssue,false);assert.equal(d.pdfGenerated,false);assert.equal(d.layoutPrepared,false);assert.equal(d.isOfficialForm,false);assert.equal(d.craFilingPerformed,false);assert.equal(r.response.headers.get('cache-control'),'no-store');assert.equal(d.workingPaper,undefined);assert.equal(d.payerReportingEditions,undefined);const fields=d.slips[0].fields;assert.equal(fields.find((e:any)=>e.box===(kind==='t4'?'12':'012')).value,f.identity.sin);assert.equal(fields.find((e:any)=>e.box===(kind==='t4'?'14':'048')).minor,kind==='t4'?'50850':'45000');assert.deepEqual(d.slips[0].payer.address.lines,['123 Synthetic Street']);if(copyKind==='recipient'){assert.doesNotMatch(JSON.stringify(d),/123456789RP0001/);assert.equal(fields.find((e:any)=>e.box===(kind==='t4'?'54':'061')),undefined);}else assert.equal(fields.find((e:any)=>e.box===(kind==='t4'?'54':'061')).value,'123456789RP0001');}
+  assert.deepEqual((await f.pg.query('SELECT * FROM public.request_keys ORDER BY key')).rows,before);assert.deepEqual((await f.pg.query('SELECT * FROM public.finance_journals ORDER BY id')).rows,journals);for(const table of ['request_keys','audit_events','outbox_events','report_job_results'])assert.doesNotMatch(JSON.stringify((await f.pg.query('SELECT * FROM public.'+table)).rows),/PACKAGE_PRIVATE_GIVEN|123456782/);
+  for(const patch of [{copyKind:'cra'},{payerEditionSelections:[{reportingAccountId:f.rp.id,version:2}]},{amount:'1.00'},{identity:f.identity}])assert.ok([400,409].includes((await f.request(path,{...f.packageInput,...patch})).response.status));
+  const key=randomUUID();assert.equal((await f.request(path,f.packageInput,'manager',{key})).response.status,200);await f.pg.query("DELETE FROM public.role_permissions WHERE role_id=$1 AND capability='payroll-identity.reveal'",[f.role.id]);assert.equal((await f.request(path,f.packageInput,'manager',{key})).response.status,403);
+  await f.pg.query("UPDATE public.academies SET status='read_only' WHERE id=$1",[f.a]);assert.equal((await f.request(path,f.packageInput)).response.status,200);
+ }finally{await f.pg.close();}
+});
+test('form draft fails closed on missing audit evidence,bot access and foreign schools',async()=>{
+ const f=await fixture();try{
+  const path=f.packagePath.replace('private-package','form-draft');const probe=await f.request('people',undefined,'bot');if(probe.response.status===401)await f.refreshBotCredential();else assert.equal(probe.response.status,200);assert.equal((await f.request(path,f.packageInput,'bot')).response.status,403);assert.equal((await f.request(path,f.packageInput,'foreignMaster',{academy:f.b})).response.status,404);
+  for(const [table,field] of [['audit_events','action'],['outbox_events','event_type']]){await f.pg.exec(`CREATE FUNCTION public.synthetic_skip_form_draft() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.${field}='work.year-end-private-package.revealed' THEN RETURN NULL;END IF;RETURN NEW;END $$;CREATE TRIGGER synthetic_skip_form_draft BEFORE INSERT ON public.${table} FOR EACH ROW EXECUTE FUNCTION public.synthetic_skip_form_draft()`);const r=await f.request(path,f.packageInput);assert.equal(r.response.status,503);assert.doesNotMatch(JSON.stringify(r.body),/PACKAGE_PRIVATE|123456782|123456789RP0001/);await f.pg.exec(`DROP TRIGGER synthetic_skip_form_draft ON public.${table};DROP FUNCTION public.synthetic_skip_form_draft()`);}
+  assert.equal((await f.pg.query("SELECT * FROM public.audit_events WHERE action='work.payroll-identity.revealed'")).rows.length,0);
+ }finally{await f.pg.close();}
+});
+test('form draft requires an explicit retained payer edition when source addresses differ and never invents a missing SIN',async()=>{
+ const f=await fixture();try{
+  const packet=await f.request(f.packagePath,f.packageInput);assert.equal(packet.response.status,200);const p=packet.body.data,first=p.payerReportingEditions[0];p.payerReportingEditions.push({...first,version:2,address:{...first.address,lines:['Second retained address']}});p.workingPaper.slips[0].reportingAccountVersions=[1,2];p.recipient.sin=null;
+  const ambiguous=prepareYearEndFormDraft(p,{});assert.equal(ambiguous.slips[0].payer,null);assert.ok(ambiguous.slips[0].reviewIssues.includes('PAYER_RETAINED_EDITION_SELECTION_REQUIRED'));assert.ok(ambiguous.slips[0].reviewIssues.includes('RECIPIENT_SIN_NOT_RECORDED'));assert.equal(ambiguous.slips[0].fields.some(e=>e.box==='012'),false);assert.doesNotMatch(JSON.stringify(ambiguous),/000000000/);
+  for(const version of [1,2]){const d=prepareYearEndFormDraft(p,{payerEditionSelections:[{reportingAccountId:f.rp.id,version}]});assert.deepEqual(d.slips[0].payer?.address.lines,version===1?['123 Synthetic Street']:['Second retained address']);assert.deepEqual(d.slips[0].fields,ambiguous.slips[0].fields);assert.equal(d.slips[0].payerSelection.basis,'explicit_retained_edition');assert.equal(d.readyToIssue,false);}
+  assert.throws(()=>prepareYearEndFormDraft(p,{payerEditionSelections:[{reportingAccountId:f.rp.id,version:3}]}),/YEAR_END_PAYER_SELECTION_SOURCE_REQUIRED/);assert.throws(()=>prepareYearEndFormDraft(p,{payerEditionSelections:[{reportingAccountId:f.rp.id,version:1},{reportingAccountId:f.rp.id,version:2}]}));
+  p.payerReportingEditions[1].address=first.address;const same=prepareYearEndFormDraft(p,{});assert.equal(same.slips[0].payerSelection.basis,'identical_retained_payer_fields');assert.deepEqual(same.slips[0].payerSelection.sourceEditions.map(e=>e.version),[1,2]);
+ }finally{await f.pg.close();}
+});
 
 async function fixture(kind:'t4'|'t4a'='t4a'){
  const settings={activeKeyId:'initial',keys:{initial:randomBytes(32).toString('base64url')},fingerprintKey:randomBytes(32).toString('base64url')},vault=createPayrollPrivateVault(settings);let activeVault=vault;const f=await t4aRecordFixture({classification:kind==='t4'?'employee':'contractor',reportingForm:kind==='t4'?'T4':'T4A',payrollPrivateVault:()=>activeVault});try{
