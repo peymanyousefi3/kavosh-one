@@ -1,0 +1,59 @@
+{
+  "status": "Staged and independently recovery-checked; activation held after a historical-upgrade test assertion failed. No production migration or service switch.",
+  "sourceCommit": "69ed8a0fa8d97d8f6dfbc4002b3960d522b239f0",
+  "apiVersion": "0.475.0",
+  "schemaRevision": 427,
+  "host": "vps-239b6953.vps.ovh.ca",
+  "productionStill": {"source": "b3cfe50e220d3beccddb526a784e84eb2d16ef28", "apiVersion": "0.474.0", "schemaRevision": 426},
+  "gates": {"nativeRun": 43602726755, "nativeConclusion": "Not accepted: business-logic (2) failed; other unfinished jobs are allowed to finish", "secretRun": 43602726764, "secretConclusion": "success", "failure": "Website-policy historical upgrade called upgradeToCurrent then asserted revision426; current revision is427. Corrected test applies426 and checks its own effects before upgrading to current and checking preservation again. No production-code change or weakened assertion."},
+  "nativeCapacityEvidence": {"job": 132470753802, "jobResult": "success", "capacityCases": 13, "capacityCasesPassed": 13, "capacityCasesSkipped": 0, "briefTwoReservationRaceMs": 71, "groupTests": 551, "groupPass": 538, "groupFail": 0, "groupSkip": 13, "groupDurationMs": 770352.433208, "testedMerge": "26141f903e9322d7fb613d82993b06a2c2933d80", "testedTree": "3e933d6fd80844c86fb8aa20d79cfc222b3406ae", "treeMatchesSource": true},
+  "historicalTestCorrection": {"file": "tests/website-policies.test.ts", "localFocusedTests": 1, "passed": 1, "failed": 0, "skipped": 0, "durationMs": 2851.106958, "productionCodeChanged": false, "correctionHostedGate": "pending", "oldOperatorActivationAuthorized": false},
+  "build": {
+    "invocation": "001e11a2f5354307886338b487379e22",
+    "result": "success", "exitCode": 0,
+    "wallMs": 127034.469, "cpuMs": 95283.231, "peakBytes": 2094448640,
+    "privateNetwork": true, "productionCredentialsProvided": false,
+    "memoryLimitBytes": 2147483648, "cpuQuotaPercent": 75,
+    "nextBuildAndTypecheck": true, "backgroundBuild": true,
+    "recoveryBuild": true, "healthBuild": true, "fileWorkerBuild": true
+  },
+  "sealedPackages": {"originalGitBlobsCompared": 1536, "compiledBackgroundFilesCompared": 186, "internalPackageLinksVerified": 554, "rootOwnedAndNotGroupWritable": true},
+  "isolatedHttp": {
+    "invocation": "71a632812941402d89046fd672d75b1c", "result": "success", "exitCode": 0,
+    "commonHttpSmokePassed": true, "additionalPrivateChecks": 11,
+    "exactCompactContractPassed": true,
+    "contractSha256": "51b1441d6fe964c2dc66db7ef47596d27031c8265c24e1f9ca5a7609c752e74c",
+    "contractBytes": 2316500, "spreadsheetSmokes": 2, "spreadsheetBytesEach": 2837,
+    "privateNetwork": true, "productionCredentialsProvided": false
+  },
+  "preMigrationRecovery": {
+    "backupId": "0b1494ff-9821-4c9e-b234-abf8df86953e",
+    "invocation": "d241459dba234948aef68f453bd7565f", "sourceSchemaRevision": 426,
+    "ciphertextSha256": "4056e4c224c42579b6658241db5e15c02a38342af7e10ad0c91028097c05764f", "encryptedBytes": 7691111,
+    "permanentTablesCompared": 449, "rowsCompared": 848,
+    "columnPrivilegesVerified": true, "originalDataPermissionsFunctionsAndPoliciesMatch": true,
+    "independentDriveAndCompanionDownloadsVerified": true,
+    "authenticatedOffServerDecryptionVerified": true,
+    "actualIsolatedPostgresRestoreVerified": true,
+    "recoveredDatabaseOrdinaryConnectionsBlocked": true,
+    "sourceDatabaseRestoreCommandsIssued": 0, "privateRecoveryKeyTransferredToVps": false,
+    "globalRoleRecoveryVerified": false, "sequenceValuesRecoveryVerified": false, "mediaRecoveryVerified": false
+  },
+  "activationPreflight": {
+    "passed": true, "databaseMigrationsApplied": 0, "liveServicesChanged": false,
+    "protectedServicesAndRoutingUnchanged": true,
+    "workerUnitOnlyChangesRuntimePin": true,
+    "operatorSha256": "db47d7baf886c1a8159edaaea98e34787989bb69ab581b281ba09a6d8b897a34",
+    "configuredWorkerUnitSha256": "aeadbe5ef7c42f6d81d707d1ef790036df18ce991d606b0a43b00d05e0b2e205",
+    "plannedDaemonRestarts": ["notifications", "messages"],
+    "otherWorkerPinsPreserved": true,
+    "rollback": "Previous web and worker package; revoke four newly granted direct message brokers before starting its legacy strict whitelist. Never restore or downgrade the source database automatically."
+  },
+  "limits": [
+    "Exact-source native acceptance remains required before activation; the failed old-source gate is not bypassed by passing feature-specific tests.",
+    "Measures durable reserved-byte/file quota, not provider physical usage or billing.",
+    "No provider test sends, fabricated production business activity, storage purchases or provider-source deletion.",
+    "Post-migration database and changed-settings recovery are not yet verified for this release.",
+    "No complete-backend, zero-downtime, UI/UX or legal-certification claim."
+  ]
+}

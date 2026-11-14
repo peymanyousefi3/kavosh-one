@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {randomUUID,createHmac} from 'node:crypto';
 import test from 'node:test';
+import {readFile} from 'node:fs/promises';
 import {operationsFixture} from './operations-fixture.ts';
 import {upgradeToCurrent} from './migration-upgrade.ts';
 import type {Database} from '../src/core/database.ts';
@@ -116,7 +117,10 @@ check('public policy output fails closed on unexpected private fields and shares
  await f.pg.exec("CREATE OR REPLACE FUNCTION public.read_published_website_policy(p_academy uuid,p_code text,p_locale text,p_budget text) RETURNS jsonb LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$ SELECT jsonb_build_object('limited',false,'data',jsonb_build_object('privateNote','PRIVATE injected projection')) $$");const invalid=await f.read();assert.equal(invalid.response.status,503);assert.doesNotMatch(JSON.stringify(invalid.body),/PRIVATE|privateNote|stack/);
 });
 test('actual425to426 policy upgrade preserves prior business records and existing public-reader authority',async()=>{
- const f=await operationsFixture({throughSchema:425});try{const tables=['public.academies','public.people','public.audit_events','public.outbox_events'],snapshot=async()=>{const rows=[];for(const table of tables)rows.push((await f.pg.query('SELECT to_jsonb(t) data FROM '+table+' t ORDER BY to_jsonb(t)::text')).rows);return rows;},before=await snapshot(),authority=(await f.pg.query("SELECT oid,proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid='public.read_published_organization_profile(uuid,text)'::regprocedure")).rows;await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query("SELECT oid,proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid='public.read_published_organization_profile(uuid,text)'::regprocedure")).rows,authority);assert.equal((await f.pg.query('SELECT * FROM public.website_policies')).rows.length,0);assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,426);
+ const f=await operationsFixture({throughSchema:425});try{const tables=['public.academies','public.people','public.audit_events','public.outbox_events'],snapshot=async()=>{const rows=[];for(const table of tables)rows.push((await f.pg.query('SELECT to_jsonb(t) data FROM '+table+' t ORDER BY to_jsonb(t)::text')).rows);return rows;},before=await snapshot(),authoritySql="SELECT oid,proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid='public.read_published_organization_profile(uuid,text)'::regprocedure",authority=(await f.pg.query(authoritySql)).rows;
+ await f.pg.exec(await readFile(new URL('../db/migrations/426_website_policy_publication.sql',import.meta.url),'utf8'));
+ assert.equal((await f.pg.query('SELECT public.schema_revision() revision')).rows[0].revision,426);
+ for(const current of [false,true]){if(current)await upgradeToCurrent(f.pg);assert.deepEqual(await snapshot(),before);assert.deepEqual((await f.pg.query(authoritySql)).rows,authority);assert.equal((await f.pg.query('SELECT * FROM public.website_policies')).rows.length,0);}
  }finally{await f.pg.close();}
 });
 check('two simultaneous native policy publications apply only one original publication version',async f=>{
